@@ -1,0 +1,6 @@
+Towertail.xcodeproj/
+xcuserdata/
+DerivedData/
+build/
+*.xcworkspace/xcuserdata/
+.DS_Store
