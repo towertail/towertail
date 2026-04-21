@@ -98,6 +98,12 @@ One JSON object per sample. Newline-delimited in streaming mode. Fields are stab
     { "mount": "/",     "fs": "ext4", "used": 42949672960, "total": 107374182400 },
     { "mount": "/data", "fs": "xfs",  "used": 17179869184, "total": 53687091200 }
   ],
+  "disk_io": {
+    "read_bps":   4194304,
+    "write_bps":  1048576,
+    "read_cum":   2800479338496,
+    "write_cum":  1525421113344
+  },
   "net": {
     "rx_bps": 3355443,
     "tx_bps": 838860,
@@ -110,7 +116,7 @@ One JSON object per sample. Newline-delimited in streaming mode. Fields are stab
     "total": 312,
     "visible": 311,
     "items": [
-      { "pid": 812, "ppid": 1, "name": "postgres", "cmd": "postgres: main", "user": "postgres", "cpu_pct": 42.7, "rss": 536870912, "threads": 6, "state": "S" },
+      { "pid": 812, "ppid": 1, "name": "postgres", "cmd": "postgres: main", "user": "postgres", "cpu_pct": 42.7, "rss": 536870912, "threads": 6, "state": "S", "read_bytes": 58720256, "write_bytes": 12582912 },
       { "pid": 914, "ppid": 1, "name": "node",     "cmd": "node /app/server.js", "user": "app", "cpu_pct": 18.3, "rss": 430080000, "threads": 12, "state": "S" }
     ]
   },
@@ -124,13 +130,15 @@ One JSON object per sample. Newline-delimited in streaming mode. Fields are stab
 - **`cpu.pct`**: aggregate across cores, 0–100 (not 0–1). Computed as a ~200ms delta inside the sampler so one-shot mode doesn't need prior state.
 - **`mem.used`**: `total - available` on Linux, `app + wired + compressed` on Darwin. Excludes cached/inactive so the percentage matches what a human would call "memory in use."
 - **`disks`**: one object per mount after filtering `tmpfs`, `devfs`, `devtmpfs`, `overlay`, `map auto_home`, `squashfs`, `autofs`. If `--no-disk` is set, omit the array entirely (not `[]`).
+- **`disk_io`**: system-wide aggregate disk I/O summed across physical block devices (partitions are rolled up into their parent device to avoid double-counting). `read_cum` / `write_cum` are lifetime byte counters (same contract as `net.rx_cum` / `tx_cum`); the Mac app recomputes deltas across polls. `read_bps` / `write_bps` are from a short in-sampler delta window so one-shot mode produces a usable rate without prior state. Omitted when `--no-disk` is set.
 - **`net.rx_bps` / `tx_bps`**: delta over the ~200ms self-sampling window in one-shot mode; delta over the actual tick interval in streaming mode. Sum across non-loopback interfaces.
 - **`net.rx_cum` / `tx_cum`**: lifetime counters. The Mac app can recompute deltas across polls as a cross-check, and detect counter resets (reboots) when `rx_cum` decreases.
 - **`errors`**: non-fatal collector errors (e.g., "netstat returned -1 for iface veth0"). The Mac app logs these but still ingests the rest of the sample.
 - **`machine_id`**: optional, read-only. `/etc/machine-id` on Linux, `IOPlatformUUID` on Darwin. Omitted when unavailable (containers without `machine-id`, hardened kernels, etc.). The app uses it as a secondary key to detect hostname renames or collisions — the primary key is still the user-configured SSH target.
 - **`procs`**: optional per-process table. Omitted when `--no-proc` is set. `root=true` means the sampler ran with euid 0, so the list is comprehensive across users (Linux: full `/proc` visibility; macOS: `kinfo_proc` with other-user fields filled). `root=false` + macOS means the list only contains the SSH user's own processes. `top_n` echoes the requested cap; `total` is the full process count on the host; `visible` is how many the sampler could inspect (lower than `total` when some entries were gated). `items` is the union of top-N by `cpu_pct` and top-N by `rss`, deduped by pid, ordered CPU-desc. `cpu_pct` is computed from a ~200ms self-sampling delta (same window as aggregate CPU) so it matches `top(1)`'s aggregate-across-cores convention (0..100×cores). `rss` is resident set size in bytes. Per-proc `user`, `cmd`, `threads`, `state`, `ppid`, `start_ts` are best-effort and omitted when the kernel denies access.
+- **`procs.items[].read_bytes` / `write_bytes`**: lifetime cumulative per-process disk I/O in bytes. Only present when the sampler can read the counters: **Linux** reads `/proc/<pid>/io`, which is mode 0400 and requires either owning the process or `CAP_SYS_PTRACE` (grant once via `sudo setcap cap_sys_ptrace+ep ~/.towertail/towertail-sampler`); rows without the capability will simply omit both fields. **macOS** does not surface per-process I/O via any API gopsutil supports today, so both fields are always omitted there. The Mac app distinguishes `null` (no visibility) from `0` (truly no I/O since start).
 
-Omitted fields for v1: per-CPU breakdown, temperature, GPU, sensors, per-process I/O (root-gated). All go in `v=2` stretch.
+Omitted fields for v1: per-CPU breakdown, temperature, GPU, sensors, per-process network bytes (not exposed by Linux or macOS kernels without root + eBPF / private frameworks). Per-process disk I/O **is** included but may be `null` per-row on Linux without `CAP_SYS_PTRACE` and is always `null` on macOS.
 
 ---
 
@@ -198,12 +206,14 @@ Running as the SSH-authenticated **non-root** user:
 - `gopsutil/cpu` — aggregate CPU %, load avg, core count (reads `/proc/stat`, `/proc/loadavg` on Linux; `host_statistics` / `sysctl` on Darwin).
 - `gopsutil/mem` — total/available/used/swap (reads `/proc/meminfo`; `host_statistics64` on Darwin).
 - `gopsutil/disk` — mount list and usage via `statfs`. Mounts the user can `read` on.
+- `gopsutil/disk.IOCounters` — aggregate device-level read/write byte counters via `/proc/diskstats` (world-readable on Linux) or IOKit (Darwin, no elevation needed).
 - `gopsutil/net` — interface counters via `/proc/net/dev` (world-readable on Linux); `getifaddrs` on Darwin.
 - Hostname, uptime, kernel version, arch.
 - **Per-process basics** (pid, ppid, name, cmdline, user, CPU%, RSS, threads, state) — `/proc/<pid>/stat` + `/proc/<pid>/cmdline` are world-readable on Linux. On Darwin the sampler sees **only the SSH user's own processes** via `sysctl kinfo_proc` when running non-root — the `procs.root` field in the sample signals which regime is active so the Mac app can show a "running as non-root on macOS" badge.
+- **Per-process disk I/O for the SSH user's own processes** — `/proc/<pid>/io` is 0400 but owned by the process's user, so the SSH user sees their own rows without elevation. Other users' rows require `CAP_SYS_PTRACE` (see below). Always omitted on macOS.
 
-**Needs root (auto-detected; out of scope for v1 sample):**
-- Per-process **I/O** counters for processes owned by other users (`/proc/<pid>/io` is 0400 root on Linux).
+**Needs elevated access (auto-detected; sampler degrades gracefully):**
+- Per-process **I/O** counters for processes owned by **other** users (`/proc/<pid>/io` is 0400). Granted by `CAP_SYS_PTRACE` on the binary — see §7 bottom. Without it, the sampler still emits the field for the SSH user's own processes and silently omits it for the rest.
 - Per-process **open fd** enumeration across other users (`/proc/<pid>/fd` is 0500 user-only).
 - `/proc/1/mounts` on some hardened distros — use `/proc/self/mounts` instead. gopsutil does this correctly.
 - `/proc/net/sockstat` on kernels with `restricted_net_hostname` — surface in `errors[]`, keep going.

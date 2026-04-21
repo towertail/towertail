@@ -8,9 +8,16 @@ struct Sample: Decodable, Sendable {
     let mem: MemInfo
     let swap: MemInfo
     let disks: [DiskSample]?
+    let diskIO: DiskIOInfo?
     let net: NetInfo?
     let procs: ProcList?
     let errors: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case v, ts, host, cpu, mem, swap, disks
+        case diskIO = "disk_io"
+        case net, procs, errors
+    }
 
     init(
         v: Int,
@@ -20,6 +27,7 @@ struct Sample: Decodable, Sendable {
         mem: MemInfo,
         swap: MemInfo,
         disks: [DiskSample]? = nil,
+        diskIO: DiskIOInfo? = nil,
         net: NetInfo? = nil,
         procs: ProcList? = nil,
         errors: [String]
@@ -31,6 +39,7 @@ struct Sample: Decodable, Sendable {
         self.mem = mem
         self.swap = swap
         self.disks = disks
+        self.diskIO = diskIO
         self.net = net
         self.procs = procs
         self.errors = errors
@@ -149,6 +158,20 @@ struct NetInfo: Decodable, Sendable {
     }
 }
 
+struct DiskIOInfo: Decodable, Sendable {
+    let readBps: Int64
+    let writeBps: Int64
+    let readCum: Int64
+    let writeCum: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case readBps = "read_bps"
+        case writeBps = "write_bps"
+        case readCum = "read_cum"
+        case writeCum = "write_cum"
+    }
+}
+
 struct ProcList: Decodable, Sendable {
     let root: Bool
     let topN: Int
@@ -174,6 +197,8 @@ struct ProcSample: Decodable, Sendable, Identifiable {
     let threads: Int32?
     let state: String?
     let startTS: Date?
+    let readBytes: Int64?
+    let writeBytes: Int64?
 
     var id: Int32 { pid }
 
@@ -182,6 +207,36 @@ struct ProcSample: Decodable, Sendable, Identifiable {
         case cpuPct = "cpu_pct"
         case rss, threads, state
         case startTS = "start_ts"
+        case readBytes = "read_bytes"
+        case writeBytes = "write_bytes"
+    }
+
+    init(
+        pid: Int32,
+        ppid: Int32? = nil,
+        name: String,
+        cmd: String? = nil,
+        user: String? = nil,
+        cpuPct: Double,
+        rss: Int64,
+        threads: Int32? = nil,
+        state: String? = nil,
+        startTS: Date? = nil,
+        readBytes: Int64? = nil,
+        writeBytes: Int64? = nil
+    ) {
+        self.pid = pid
+        self.ppid = ppid
+        self.name = name
+        self.cmd = cmd
+        self.user = user
+        self.cpuPct = cpuPct
+        self.rss = rss
+        self.threads = threads
+        self.state = state
+        self.startTS = startTS
+        self.readBytes = readBytes
+        self.writeBytes = writeBytes
     }
 }
 

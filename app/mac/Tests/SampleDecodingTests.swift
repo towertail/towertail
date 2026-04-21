@@ -93,6 +93,38 @@ final class SampleDecodingTests: XCTestCase {
         XCTAssertEqual(p.threads, 2)
     }
 
+    func testDecodesDiskIOAndPerProcIO() throws {
+        let json = """
+        {
+          "v": 1,
+          "ts": "2026-04-21T12:00:00.000Z",
+          "host": {"name":"h","os":"linux","arch":"arm64","kernel":"6.6","uptime_s":1,"sampler":"x"},
+          "cpu": {"pct":10,"load_1":0,"load_5":0,"load_15":0,"cores":4},
+          "mem": {"used":1,"total":2},
+          "swap": {"used":10,"total":100},
+          "disk_io": {"read_bps": 4194304, "write_bps": 1048576, "read_cum": 123456789, "write_cum": 98765432},
+          "procs": {
+            "root": false, "top_n": 20, "total": 2, "visible": 2,
+            "items": [
+              {"pid": 1, "name": "postgres", "cpu_pct": 1.0, "rss": 100, "read_bytes": 5000, "write_bytes": 2000},
+              {"pid": 2, "name": "cron",     "cpu_pct": 0.1, "rss":  50}
+            ]
+          },
+          "errors": []
+        }
+        """.data(using: .utf8)!
+        let sample = try SampleCodec.decoder().decode(Sample.self, from: json)
+        XCTAssertEqual(sample.diskIO?.readBps, 4_194_304)
+        XCTAssertEqual(sample.diskIO?.writeCum, 98_765_432)
+        XCTAssertEqual(sample.swap.used, 10)
+        let items = sample.procs?.items ?? []
+        XCTAssertEqual(items.count, 2)
+        XCTAssertEqual(items[0].readBytes, 5000)
+        XCTAssertEqual(items[0].writeBytes, 2000)
+        XCTAssertNil(items[1].readBytes, "omitted read_bytes should decode as nil (no visibility), not 0")
+        XCTAssertNil(items[1].writeBytes)
+    }
+
     func testMissingMachineIDDecodes() throws {
         let json = """
         {"v":1,"ts":"2026-04-20T12:00:00Z","host":{"name":"h","os":"linux","arch":"arm64","kernel":"6.6","uptime_s":1,"sampler":"x"},"cpu":{"pct":10,"load_1":0,"load_5":0,"load_15":0,"cores":4},"mem":{"used":1,"total":2},"swap":{"used":0,"total":0},"errors":[]}
