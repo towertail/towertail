@@ -3,6 +3,7 @@ import SwiftUI
 struct ServerCardView: View {
     @Bindable var vm: ServerViewModel
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismiss) private var dismiss
     @Environment(AppSettings.self) private var settings
 
     var body: some View {
@@ -17,6 +18,7 @@ struct ServerCardView: View {
 
     private func openFullView(metric: Metric) {
         openWindow(id: "full-view", value: FullViewContext(hostId: vm.id, metric: metric))
+        dismiss()
     }
 
     private var header: some View {

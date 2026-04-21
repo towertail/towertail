@@ -194,8 +194,66 @@ final class SyntheticHost: @unchecked Sendable {
             swap: MemInfo(used: 0, total: 0),
             disks: [DiskSample(mount: "/", fs: "ext4", used: usedDisk, total: totalDisk)],
             net: NetInfo(rxBps: rxBps, txBps: txBps, rxCum: netRxCum, txCum: netTxCum),
+            procs: mockProcs(cpuPct: cpuPct, tickIndex: tickIndex),
             errors: []
         )
+    }
+
+    /// Build a small, varying process list so the full-view table animates
+    /// along with the rest of the mock data. CPU% across rows sums to
+    /// roughly the host's aggregate CPU%, weighted so the "top" process
+    /// dominates when the host is busy.
+    private func mockProcs(cpuPct: Double, tickIndex: Int) -> ProcList {
+        struct Template {
+            let name: String
+            let cmd: String
+            let user: String
+            let rssMB: Int
+            let threads: Int32
+            let weight: Double
+        }
+        let templates: [Template] = [
+            .init(name: "nginx",     cmd: "nginx: master process",             user: "root",    rssMB: 45,   threads: 2,  weight: 0.05),
+            .init(name: "nginx",     cmd: "nginx: worker process",             user: "www-data", rssMB: 32,  threads: 1,  weight: 0.20),
+            .init(name: "postgres",  cmd: "postgres: main",                    user: "postgres", rssMB: 512, threads: 6,  weight: 0.30),
+            .init(name: "node",      cmd: "node /app/server.js",               user: "app",      rssMB: 410, threads: 12, weight: 0.25),
+            .init(name: "python3",   cmd: "python3 worker.py --queue default", user: "app",      rssMB: 180, threads: 4,  weight: 0.10),
+            .init(name: "redis-server", cmd: "redis-server *:6379",            user: "redis",    rssMB: 84,  threads: 4,  weight: 0.05),
+            .init(name: "sshd",      cmd: "sshd: ubuntu [priv]",               user: "root",    rssMB: 8,    threads: 1,  weight: 0.01),
+            .init(name: "systemd",   cmd: "/sbin/init",                        user: "root",    rssMB: 12,   threads: 1,  weight: 0.01),
+            .init(name: "dockerd",   cmd: "/usr/bin/dockerd",                  user: "root",    rssMB: 220,  threads: 14, weight: 0.03),
+        ]
+        var items: [ProcSample] = []
+        let baseTS = Date(timeIntervalSince1970: 1_700_000_000)
+        for (i, tpl) in templates.enumerated() {
+            // Slight per-tick jitter so the sort order shifts over time.
+            let jitter = (Double((tickIndex &+ i * 7) % 20) - 10) / 20.0
+            let share = max(0, tpl.weight * cpuPct * (1 + 0.4 * jitter))
+            items.append(ProcSample(
+                pid: Int32(1000 + i * 37 + (seed() % 90)),
+                ppid: i < 2 ? 1 : Int32(1000 + max(0, i - 1) * 37),
+                name: tpl.name,
+                cmd: tpl.cmd,
+                user: tpl.user,
+                cpuPct: share,
+                rss: Int64(tpl.rssMB) * 1_048_576,
+                threads: tpl.threads,
+                state: "S",
+                startTS: baseTS.addingTimeInterval(Double(i) * 3600)
+            ))
+        }
+        return ProcList(
+            root: true,
+            topN: 20,
+            total: 312,
+            visible: items.count,
+            items: items
+        )
+    }
+
+    private func seed() -> Int {
+        // Use the existing RNG so the mock is deterministic per host.
+        Int(rng.next() & 0x7fffffff)
     }
 }
 

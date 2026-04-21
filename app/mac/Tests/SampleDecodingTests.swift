@@ -58,6 +58,41 @@ final class SampleDecodingTests: XCTestCase {
         XCTAssertNil(decoded.first?.net)
     }
 
+    func testDecodesProcsPayload() throws {
+        let json = """
+        {
+          "v": 1,
+          "ts": "2026-04-21T12:00:00.000Z",
+          "host": {"name":"h","os":"linux","arch":"arm64","kernel":"6.6","uptime_s":1,"agent":"x"},
+          "cpu": {"pct":10,"load_1":0,"load_5":0,"load_15":0,"cores":4},
+          "mem": {"used":1,"total":2},
+          "swap": {"used":0,"total":0},
+          "procs": {
+            "root": false,
+            "top_n": 20,
+            "total": 312,
+            "visible": 7,
+            "items": [
+              {"pid": 1234, "ppid": 1, "name": "nginx", "cmd": "nginx: master", "user": "root", "cpu_pct": 5.2, "rss": 45678912, "threads": 2, "state": "S"}
+            ]
+          },
+          "errors": []
+        }
+        """.data(using: .utf8)!
+        let sample = try SampleCodec.decoder().decode(Sample.self, from: json)
+        XCTAssertNotNil(sample.procs)
+        XCTAssertEqual(sample.procs?.root, false)
+        XCTAssertEqual(sample.procs?.topN, 20)
+        XCTAssertEqual(sample.procs?.total, 312)
+        XCTAssertEqual(sample.procs?.items.count, 1)
+        let p = sample.procs!.items[0]
+        XCTAssertEqual(p.pid, 1234)
+        XCTAssertEqual(p.name, "nginx")
+        XCTAssertEqual(p.cpuPct, 5.2, accuracy: 0.0001)
+        XCTAssertEqual(p.rss, 45_678_912)
+        XCTAssertEqual(p.threads, 2)
+    }
+
     func testMissingMachineIDDecodes() throws {
         let json = """
         {"v":1,"ts":"2026-04-20T12:00:00Z","host":{"name":"h","os":"linux","arch":"arm64","kernel":"6.6","uptime_s":1,"agent":"x"},"cpu":{"pct":10,"load_1":0,"load_5":0,"load_15":0,"cores":4},"mem":{"used":1,"total":2},"swap":{"used":0,"total":0},"errors":[]}

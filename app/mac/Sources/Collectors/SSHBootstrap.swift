@@ -4,7 +4,7 @@ enum SSHBootstrap {
     static let sshExecutable = URL(fileURLWithPath: "/usr/bin/ssh")
     static let scpExecutable = URL(fileURLWithPath: "/usr/bin/scp")
     static let remoteAgentDir = "~/.towertail"
-    static let remoteAgentPath = "~/.towertail/agent"
+    static let remoteAgentPath = "~/.towertail/towertail-agent"
 
     static let commonFlags: [String] = [
         "-o", "BatchMode=yes",
@@ -93,7 +93,7 @@ enum SSHBootstrap {
             throw AgentInvokeError.sshFailed(stderr: err, exitCode: mk.exitCode)
         }
 
-        // scp localBinary user@host:~/.towertail/agent
+        // scp localBinary user@host:~/.towertail/towertail-agent
         let scpArgs = commonFlags + [
             localBinary.path,
             "\(user)@\(host):\(remoteAgentPath)",
@@ -108,7 +108,7 @@ enum SSHBootstrap {
             throw AgentInvokeError.sshFailed(stderr: err, exitCode: scp.exitCode)
         }
 
-        // chmod +x ~/.towertail/agent
+        // chmod +x ~/.towertail/towertail-agent
         let chmodArgs = commonFlags + ["\(user)@\(host)", "chmod +x \(remoteAgentPath)"]
         let ch = try await ProcessRunner.run(executable: sshExecutable, arguments: chmodArgs)
         if ch.exitCode != 0 {
@@ -118,7 +118,7 @@ enum SSHBootstrap {
         return remoteAgentPath
     }
 
-    /// Runs `~/.towertail/agent --once` over ssh and decodes the sample.
+    /// Runs `~/.towertail/towertail-agent --once` over ssh and decodes the sample.
     static func runOnce(user: String, host: String) async throws -> Sample {
         let args = commonFlags + ["\(user)@\(host)", "\(remoteAgentPath) --once"]
         let r = try await ProcessRunner.run(executable: sshExecutable, arguments: args)

@@ -29,7 +29,7 @@ towertail/
 
 Each folder has its own toolchain and CI pipeline; they never share a build graph. **Today only `app/mac` and `agent/` have real content** — `app/windows`, `server/`, and `proto/` are README-only stubs so the shape reflects the plan and future folder moves don't break Swift imports or doc links. See [Roadmap: phases](#roadmap-phases) for when each turns on.
 
-The Mac app embeds the agent binaries (`Contents/Resources/agents/<triple>/`) and pushes the right one to `~/.towertail/agent` on each monitored server on first connect. Agent and server are siblings (not nested) because they run in different trust zones with different deploy cadences; the only thing they'll share is the wire contract in `proto/`. See [`agent.md`](agent.md) for the agent details.
+The Mac app embeds the agent binaries (`Contents/Resources/agents/<triple>/`) and pushes the right one to `~/.towertail/towertail-agent` on each monitored server on first connect. Agent and server are siblings (not nested) because they run in different trust zones with different deploy cadences; the only thing they'll share is the wire contract in `proto/`. See [`agent.md`](agent.md) for the agent details.
 
 <a id="roadmap-phases"></a>
 ### Roadmap: phases
@@ -60,7 +60,7 @@ The lines between these phases are deliberately sharp — each is a separately s
 | Distribution             | **Developer ID + notarized .dmg**, Sparkle 2 auto-update                                     | Shelling out to `ssh` rules out App Sandbox → no App Store                            |
 | Data collection          | **Shell out to `/usr/bin/ssh`** with `ControlMaster=auto, ControlPersist=10m`                | Respects ssh-agent, `~/.ssh/config`, MagicDNS; Tailscale "just works"                 |
 | Host discovery           | **`tailscale status --json`** + a manual "Add server" path                                   | Tailnet is the target network; manual option for non-Tailscale hosts                  |
-| Metrics source on host   | **`towertail-agent`** — static Go binary pushed to `~/.towertail/agent` on first connect, `gopsutil` under the hood | Uniform JSON schema across Linux/macOS/BSD, single exec per poll, runs fine as non-root. See [`agent.md`](agent.md). |
+| Metrics source on host   | **`towertail-agent`** — static Go binary pushed to `~/.towertail/towertail-agent` on first connect, `gopsutil` under the hood | Uniform JSON schema across Linux/macOS/BSD, single exec per poll, runs fine as non-root. See [`agent.md`](agent.md). |
 | Storage                  | **SQLite via GRDB**                                                                          | ~50 MB for 20 hosts × 7 d × 30 s; WAL; idiomatic Swift                                |
 | Sampling cadence         | **30 s default** (15/30/60 s preference) with ±0–5 s per-host jitter                         | Balance between signal freshness and laptop battery                                   |
 | History retention        | **7 days** rolling (hourly delete job)                                                       | User spec; plenty for "how was last week"                                             |
@@ -228,7 +228,7 @@ All numbers use `.monospacedDigit()` so columns don't jitter across ticks.
              ▼
    ┌─────────────────────────────────────┐
    │ Remote host (Linux / macOS)         │
-   │  ~/.towertail/agent --once          │
+   │  ~/.towertail/towertail-agent --once          │
    │    └─ reads /proc, sysctl,          │
    │       gopsutil collectors           │
    │    └─ prints one JSON line, exits   │
@@ -369,7 +369,7 @@ Host-side metrics come from a small static Go binary (`towertail-agent`) that th
 On every poll, the per-host actor runs:
 
 ```
-/usr/bin/ssh -F <cfg> user@dns '~/.towertail/agent --once'
+/usr/bin/ssh -F <cfg> user@dns '~/.towertail/towertail-agent --once'
 ```
 
 - **One JSON object on stdout** per invocation. The app decodes it into a `Sample` via `SampleDecoder`. Parse failures are logged and the sample is dropped — no partial ingestion.
@@ -381,10 +381,10 @@ On every poll, the per-host actor runs:
 `AgentBootstrap.swift` runs before the first poll for a host, and again whenever the bundled agent's SHA differs from the on-host `agent.version` file. Five steps:
 
 1. **Detect arch:** `ssh host 'uname -sm'` → one of `{linux-amd64, linux-arm64, linux-armv7, darwin-arm64, darwin-amd64}`.
-2. **Probe existing:** `ssh host '~/.towertail/agent --version'`; if missing or version mismatch, proceed to step 3.
-3. **Upload:** `scp Resources/agents/<triple>/towertail-agent host:~/.towertail/agent.new`, then `ssh host 'mkdir -p ~/.towertail && chmod +x ~/.towertail/agent.new && mv -f ~/.towertail/agent.new ~/.towertail/agent'`. Atomic replace avoids `ETXTBSY` with any concurrent streaming invocation.
-4. **Self-check:** `ssh host '~/.towertail/agent --self-check'` must print `ok`. On failure (e.g., musl-only distro where a gopsutil path needs cgo), mark host as `offline(reason: "agent incompatible")` and stop retrying until user clicks refresh.
-5. **Integrity:** `ssh host 'shasum -a 256 ~/.towertail/agent'` must match the entry in `Resources/agents/manifest.json`. Mismatch → abort bootstrap, flag as offline with "agent integrity check failed."
+2. **Probe existing:** `ssh host '~/.towertail/towertail-agent --version'`; if missing or version mismatch, proceed to step 3.
+3. **Upload:** `scp Resources/agents/<triple>/towertail-agent host:~/.towertail/towertail-agent.new`, then `ssh host 'mkdir -p ~/.towertail && chmod +x ~/.towertail/towertail-agent.new && mv -f ~/.towertail/towertail-agent.new ~/.towertail/towertail-agent'`. Atomic replace avoids `ETXTBSY` with any concurrent streaming invocation.
+4. **Self-check:** `ssh host '~/.towertail/towertail-agent --self-check'` must print `ok`. On failure (e.g., musl-only distro where a gopsutil path needs cgo), mark host as `offline(reason: "agent incompatible")` and stop retrying until user clicks refresh.
+5. **Integrity:** `ssh host 'shasum -a 256 ~/.towertail/towertail-agent'` must match the entry in `Resources/agents/manifest.json`. Mismatch → abort bootstrap, flag as offline with "agent integrity check failed."
 
 See [`agent.md` §6](agent.md) for the full handshake diagram and failure modes.
 

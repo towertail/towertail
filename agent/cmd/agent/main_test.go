@@ -67,6 +67,48 @@ func TestRunOnceNoDiskNoNetOmitsFields(t *testing.T) {
 	}
 }
 
+func TestRunOnceEmitsProcs(t *testing.T) {
+	var out, errb bytes.Buffer
+	code := run([]string{"--once", "--top-n", "5"}, &out, &errb)
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, errb.String())
+	}
+	var m map[string]any
+	if err := json.Unmarshal(out.Bytes(), &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	procs, ok := m["procs"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected procs object, got: %v", m["procs"])
+	}
+	if procs["top_n"].(float64) != 5 {
+		t.Errorf("top_n: got %v want 5", procs["top_n"])
+	}
+	items, ok := procs["items"].([]any)
+	if !ok || len(items) == 0 {
+		t.Fatalf("expected non-empty items array, got: %v", procs["items"])
+	}
+	// Union of top 5 by CPU and top 5 by RSS ≤ 10.
+	if len(items) > 10 {
+		t.Errorf("expected ≤ 10 items (union of 2×5), got %d", len(items))
+	}
+}
+
+func TestRunOnceNoProcOmitsField(t *testing.T) {
+	var out, errb bytes.Buffer
+	code := run([]string{"--once", "--no-proc"}, &out, &errb)
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, errb.String())
+	}
+	var m map[string]any
+	if err := json.Unmarshal(out.Bytes(), &m); err != nil {
+		t.Fatalf("invalid json: %v", err)
+	}
+	if _, ok := m["procs"]; ok {
+		t.Error("procs should be omitted with --no-proc")
+	}
+}
+
 func TestRunDefaultsToOnce(t *testing.T) {
 	// Spec §3.1: one-shot is the default for v1.
 	var out, errb bytes.Buffer

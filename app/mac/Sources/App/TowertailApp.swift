@@ -43,6 +43,6 @@ struct TowertailApp: App {
             }
         }
         .windowResizability(.contentSize)
-        .defaultSize(width: 1000, height: 600)
+        .defaultSize(width: 1080, height: 760)
     }
 }

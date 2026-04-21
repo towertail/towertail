@@ -1,6 +1,6 @@
 # Towertail Agent — Spec
 
-A tiny Go binary that runs on each monitored server, reads OS metrics via `gopsutil`, and emits one JSON sample per invocation (one-shot) or one JSON line per interval (streaming). The Mac app bundles all target binaries, pushes the right one to `~/.towertail/agent` on first connect, and invokes it over SSH.
+A tiny Go binary that runs on each monitored server, reads OS metrics via `gopsutil`, and emits one JSON sample per invocation (one-shot) or one JSON line per interval (streaming). The Mac app bundles all target binaries, pushes the right one to `~/.towertail/towertail-agent` on first connect, and invokes it over SSH.
 
 This document replaces the earlier `probe.sh` design in [`PLAN.md`](PLAN.md). For the rationale behind choosing an agent over raw-SSH command parsing, see the session summary in that file's §4 intro.
 
@@ -8,17 +8,17 @@ This document replaces the earlier `probe.sh` design in [`PLAN.md`](PLAN.md). Fo
 
 ## 1. Goals & non-goals
 
-**Goals.** One uniform sample schema across Linux / macOS / BSD; single round-trip per poll; sub-10MB static binary; no host-side dependencies beyond the binary itself; runs fine as the SSH-authenticated non-root user for the metrics Towertail needs (CPU, mem, disk, net).
+**Goals.** One uniform sample schema across Linux / macOS / BSD; single round-trip per poll; sub-10MB static binary; no host-side dependencies beyond the binary itself; runs fine as the SSH-authenticated non-root user for the metrics Towertail needs (CPU, mem, disk, net, top-N processes).
 
-**Non-goals for v1.** Root-only collectors (per-process I/O across users, disk SMART, temperature). No on-host daemon, no systemd unit, no listening socket. No plugin system. No metric aggregation on the host — the Mac app decimates and stores.
+**Non-goals for v1.** Root-only collectors that require kernel capabilities the SSH user doesn't have: per-process **I/O** counters across all users, per-process open-fd enumeration across all users, disk SMART, temperature. No on-host daemon, no systemd unit, no listening socket. No plugin system. No metric aggregation on the host — the Mac app decimates and stores.
 
 ---
 
 ## 2. Binary name & location
 
 - **Binary name:** `towertail-agent`
-- **Install path on remote:** `~/.towertail/agent` (symlink or direct)
-- **Version/metadata file:** `~/.towertail/agent.version` — one line, the SHA-256 of the binary the app uploaded.
+- **Install path on remote:** `~/.towertail/towertail-agent` (symlink or direct)
+- **Version/metadata file:** `~/.towertail/towertail-agent.version` — one line, the SHA-256 of the binary the app uploaded.
 - **Working dir on invocation:** `$HOME` — no files written.
 
 The agent never writes files on the host. All state lives on the Mac side.
@@ -30,17 +30,17 @@ The agent never writes files on the host. All state lives on the Mac side.
 ### 3.1 One-shot (default for v1)
 
 ```
-~/.towertail/agent --once
+~/.towertail/towertail-agent --once
 ```
 
 Collects one sample, prints one JSON object on stdout, exits 0. Exit non-zero on fatal collection error (unlikely — partial data is preferred over failure).
 
-Used by the app like: `ssh host '~/.towertail/agent --once'`. Combined with `ControlMaster` this is one TCP round-trip per poll and matches the current 30-second cadence trivially.
+Used by the app like: `ssh host '~/.towertail/towertail-agent --once'`. Combined with `ControlMaster` this is one TCP round-trip per poll and matches the current 30-second cadence trivially.
 
 ### 3.2 Streaming (M4+ / opt-in)
 
 ```
-~/.towertail/agent --interval 1s
+~/.towertail/towertail-agent --interval 1s
 ```
 
 Emits one JSON object per tick as newline-delimited JSON (NDJSON) until stdin closes or the process is killed. Same schema as one-shot. Exits 0 on clean EOF.
@@ -56,6 +56,7 @@ Used over a persistent SSH channel when the user wants sub-30s updates without p
 | `--version` | — | Print `towertail-agent <semver> <sha>` and exit 0. Used by the bootstrap handshake. |
 | `--self-check` | — | Collect one sample, throw it away, print `ok` + exit 0. Used to verify the binary runs on the target kernel before the app commits to using it. |
 | `--no-disk` / `--no-net` / `--no-proc` | off | Escape hatches if a specific collector hangs on a weird host — Mac-side config disables it for that server. |
+| `--top-n <int>` | 20 | Cap on the process list. Returns the union of top-N by CPU% and top-N by RSS, deduped (so you get between N and 2N rows). `0` disables the cap. |
 
 No other flags for v1. No config file. No env vars beyond what Go reads by default.
 
@@ -103,6 +104,16 @@ One JSON object per sample. Newline-delimited in streaming mode. Fields are stab
     "rx_cum": 198723849203,
     "tx_cum":  48239874321
   },
+  "procs": {
+    "root": false,
+    "top_n": 20,
+    "total": 312,
+    "visible": 311,
+    "items": [
+      { "pid": 812, "ppid": 1, "name": "postgres", "cmd": "postgres: main", "user": "postgres", "cpu_pct": 42.7, "rss": 536870912, "threads": 6, "state": "S" },
+      { "pid": 914, "ppid": 1, "name": "node",     "cmd": "node /app/server.js", "user": "app", "cpu_pct": 18.3, "rss": 430080000, "threads": 12, "state": "S" }
+    ]
+  },
   "errors": []
 }
 ```
@@ -117,8 +128,9 @@ One JSON object per sample. Newline-delimited in streaming mode. Fields are stab
 - **`net.rx_cum` / `tx_cum`**: lifetime counters. The Mac app can recompute deltas across polls as a cross-check, and detect counter resets (reboots) when `rx_cum` decreases.
 - **`errors`**: non-fatal collector errors (e.g., "netstat returned -1 for iface veth0"). The Mac app logs these but still ingests the rest of the sample.
 - **`machine_id`**: optional, read-only. `/etc/machine-id` on Linux, `IOPlatformUUID` on Darwin. Omitted when unavailable (containers without `machine-id`, hardened kernels, etc.). The app uses it as a secondary key to detect hostname renames or collisions — the primary key is still the user-configured SSH target.
+- **`procs`**: optional per-process table. Omitted when `--no-proc` is set. `root=true` means the agent ran with euid 0, so the list is comprehensive across users (Linux: full `/proc` visibility; macOS: `kinfo_proc` with other-user fields filled). `root=false` + macOS means the list only contains the SSH user's own processes. `top_n` echoes the requested cap; `total` is the full process count on the host; `visible` is how many the agent could inspect (lower than `total` when some entries were gated). `items` is the union of top-N by `cpu_pct` and top-N by `rss`, deduped by pid, ordered CPU-desc. `cpu_pct` is computed from a ~200ms self-sampling delta (same window as aggregate CPU) so it matches `top(1)`'s aggregate-across-cores convention (0..100×cores). `rss` is resident set size in bytes. Per-proc `user`, `cmd`, `threads`, `state`, `ppid`, `start_ts` are best-effort and omitted when the kernel denies access.
 
-Omitted fields for v1: per-CPU breakdown, per-process table, temperature, GPU, sensors. All go in `v=2` stretch.
+Omitted fields for v1: per-CPU breakdown, temperature, GPU, sensors, per-process I/O (root-gated). All go in `v=2` stretch.
 
 ---
 
@@ -149,20 +161,20 @@ Runs once per host, and again whenever the Mac app's bundled agent version diffe
 │                                    │            │                          │
 │ 1. detect arch                     │─── ssh ───▶│ uname -sm → "Linux aarch64" │
 │                                    │◀────────── │                          │
-│ 2. probe existing                  │─── ssh ───▶│ ~/.towertail/agent --version │
+│ 2. probe existing                  │─── ssh ───▶│ ~/.towertail/towertail-agent --version │
 │                                    │◀────────── │ (or: command not found)  │
 │                                    │            │                          │
 │ 3. if missing OR version mismatch: │            │                          │
 │    choose Resources/agents/linux-arm64/towertail-agent                     │
-│                                    │─── scp ───▶│ ~/.towertail/agent.new   │
+│                                    │─── scp ───▶│ ~/.towertail/towertail-agent.new   │
 │                                    │─── ssh ───▶│ mkdir -p ~/.towertail &&  │
-│                                    │            │ chmod +x ~/.towertail/agent.new && │
-│                                    │            │ mv -f ~/.towertail/agent.new ~/.towertail/agent │
+│                                    │            │ chmod +x ~/.towertail/towertail-agent.new && │
+│                                    │            │ mv -f ~/.towertail/towertail-agent.new ~/.towertail/towertail-agent │
 │                                    │            │                          │
-│ 4. self-check                      │─── ssh ───▶│ ~/.towertail/agent --self-check │
+│ 4. self-check                      │─── ssh ───▶│ ~/.towertail/towertail-agent --self-check │
 │                                    │◀────────── │ ok                       │
 │                                    │            │                          │
-│ 5. steady state: poll              │─── ssh ───▶│ ~/.towertail/agent --once │
+│ 5. steady state: poll              │─── ssh ───▶│ ~/.towertail/towertail-agent --once │
 │                                    │◀── json ── │                          │
 └────────────────────────────────────┘            └──────────────────────────┘
 ```
@@ -188,14 +200,16 @@ Running as the SSH-authenticated **non-root** user:
 - `gopsutil/disk` — mount list and usage via `statfs`. Mounts the user can `read` on.
 - `gopsutil/net` — interface counters via `/proc/net/dev` (world-readable on Linux); `getifaddrs` on Darwin.
 - Hostname, uptime, kernel version, arch.
+- **Per-process basics** (pid, ppid, name, cmdline, user, CPU%, RSS, threads, state) — `/proc/<pid>/stat` + `/proc/<pid>/cmdline` are world-readable on Linux. On Darwin the agent sees **only the SSH user's own processes** via `sysctl kinfo_proc` when running non-root — the `procs.root` field in the sample signals which regime is active so the Mac app can show a "running as non-root on macOS" badge.
 
-**Doesn't work without root (explicitly out of scope for v1):**
-- Per-process I/O for processes owned by other users (`/proc/<pid>/io` is 0400 root on Linux).
+**Needs root (auto-detected; out of scope for v1 sample):**
+- Per-process **I/O** counters for processes owned by other users (`/proc/<pid>/io` is 0400 root on Linux).
+- Per-process **open fd** enumeration across other users (`/proc/<pid>/fd` is 0500 user-only).
 - `/proc/1/mounts` on some hardened distros — use `/proc/self/mounts` instead. gopsutil does this correctly.
 - `/proc/net/sockstat` on kernels with `restricted_net_hostname` — surface in `errors[]`, keep going.
-- macOS: per-process CPU across all users needs root. v1 doesn't collect per-process metrics, so N/A.
+- **macOS**: per-process CPU/mem/cmdline across **other users** requires root (or a signed entitlement + taskgated trust). The agent auto-detects this via `geteuid() == 0` and sets `procs.root` accordingly so the Mac app can display visibility honestly instead of a misleadingly short list.
 
-**If the user later wants root-only metrics**, the path is `sudo setcap cap_sys_ptrace,cap_dac_read_search+ep ~/.towertail/agent` on Linux — the agent detects the capability at startup and lights up extra fields. Not wired in v1.
+**If the user later wants root-gated metrics** (per-proc I/O, cross-user visibility on macOS), the path is `sudo setcap cap_sys_ptrace,cap_dac_read_search+ep ~/.towertail/towertail-agent` on Linux, or invoking the agent under `sudo` via SSH. The agent checks euid at startup and widens the `procs` payload automatically.
 
 ---
 
@@ -203,7 +217,7 @@ Running as the SSH-authenticated **non-root** user:
 
 - **Open-source.** The agent source is in `agent/` of this repo. Reproducible build: `CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=<semver> -X main.sha=<sha>" ./cmd/agent`.
 - **Signing.** The agent binary itself is unsigned (Linux doesn't care; macOS targets don't check because `scp` doesn't set `com.apple.quarantine`). The Mac **app** is Developer ID signed and notarized, so users trust the binary transitively through the app bundle.
-- **Fingerprint verification.** After scp, the Mac app runs `shasum -a 256 ~/.towertail/agent` and compares against the embedded manifest. Mismatch → abort bootstrap, flag as offline with reason "agent integrity check failed" and log.
+- **Fingerprint verification.** After scp, the Mac app runs `shasum -a 256 ~/.towertail/towertail-agent` and compares against the embedded manifest. Mismatch → abort bootstrap, flag as offline with reason "agent integrity check failed" and log.
 - **No network calls from the agent.** It reads local counters and writes stdout. It does not resolve DNS, open sockets outbound, or contact any server. Grep the source for `net.Dial` — there should be nothing.
 
 ---

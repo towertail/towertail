@@ -29,9 +29,21 @@ final class ServerViewModel: Identifiable {
     var mem: MetricSeries
     var disk: MetricSeries
     var net: MetricSeries
+    /// Per-sample rx/tx in MB/s so hover can reconstruct the historical rate.
+    var netRx: MetricSeries
+    var netTx: MetricSeries
 
     var netRxMBps: Double = 0
     var netTxMBps: Double = 0
+
+    var procs: ProcSeries
+    /// True when at least one ingested sample included a procs payload —
+    /// lets the UI show a clear "process collection disabled" state for
+    /// agents invoked with `--no-proc` rather than a flicker of empty.
+    var procsAvailable: Bool = false
+    /// Latest-known root status of the agent binary on the remote host.
+    /// Drives the "root" vs "user scope" badge in the process table.
+    var procsRoot: Bool = false
 
     var hoverDate: Date?
 
@@ -63,6 +75,9 @@ final class ServerViewModel: Identifiable {
         self.mem = MetricSeries()
         self.disk = MetricSeries()
         self.net = MetricSeries()
+        self.netRx = MetricSeries()
+        self.netTx = MetricSeries()
+        self.procs = ProcSeries()
     }
 
     @discardableResult
@@ -87,21 +102,33 @@ final class ServerViewModel: Identifiable {
         disk.append(MetricPoint(t: s.ts, v: diskV))
 
         var netV: Double? = nil
+        var rxV: Double? = nil
+        var txV: Double? = nil
         if let n = s.net {
             let (rxBps, txBps) = computeNetRates(rxCum: n.rxCum, txCum: n.txCum, ts: s.ts, fallbackRx: n.rxBps, fallbackTx: n.txBps)
             netRxMBps = Double(rxBps) / 1_048_576.0
             netTxMBps = Double(txBps) / 1_048_576.0
             let normalized = min(1.0, (netRxMBps + netTxMBps) / 100.0)
             netV = normalized
+            rxV = netRxMBps
+            txV = netTxMBps
             net.append(MetricPoint(t: s.ts, v: normalized))
+            netRx.append(MetricPoint(t: s.ts, v: netRxMBps))
+            netTx.append(MetricPoint(t: s.ts, v: netTxMBps))
+        }
+
+        if let ps = s.procs {
+            procs.append(ProcSeries.Snapshot(t: s.ts, items: ps.items))
+            procsAvailable = true
+            procsRoot = ps.root
         }
 
         state = computeState()
         return HistoryPoint(
             t: s.ts,
             cpu: cpuV, mem: memV, disk: diskV, net: netV,
-            rxMBps: s.net.map { Double($0.rxBps) / 1_048_576.0 },
-            txMBps: s.net.map { Double($0.txBps) / 1_048_576.0 }
+            rxMBps: rxV,
+            txMBps: txV
         )
     }
 
@@ -113,6 +140,8 @@ final class ServerViewModel: Identifiable {
             if let v = p.mem { mem.append(MetricPoint(t: p.t, v: v)) }
             if let v = p.disk { disk.append(MetricPoint(t: p.t, v: v)) }
             if let v = p.net { net.append(MetricPoint(t: p.t, v: v)) }
+            if let v = p.rxMBps { netRx.append(MetricPoint(t: p.t, v: v)) }
+            if let v = p.txMBps { netTx.append(MetricPoint(t: p.t, v: v)) }
         }
         if let last = points.last {
             lastSeen = last.t

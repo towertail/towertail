@@ -20,7 +20,11 @@ struct FullViewWindow: View {
             Divider()
             toolbar(vm: vm)
         }
-        .frame(minWidth: 800, minHeight: 500)
+        // Baseline layout: header (~40) + picker (~36) + chart (min 240)
+        // + value row (~24) + process table (min 220) + toolbar (~40) +
+        // paddings/dividers. 720 comfortably fits all of that so no
+        // section clips before the user ever resizes.
+        .frame(minWidth: 860, minHeight: 720)
         .focusable()
         .focusEffectDisabled()
         .onKeyPress(.space) {
@@ -29,6 +33,8 @@ struct FullViewWindow: View {
             model.togglePlayPause(latest: latest)
             return .handled
         }
+        .onAppear { ActivationPolicyCoordinator.shared.acquire() }
+        .onDisappear { ActivationPolicyCoordinator.shared.release() }
     }
 
     @ViewBuilder
@@ -58,7 +64,7 @@ struct FullViewWindow: View {
 
             if let vm {
                 chartArea(vm: vm)
-                emptyProcessTableStub
+                processTable(vm: vm)
             } else {
                 ContentUnavailableView("No data", systemImage: "questionmark.circle")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -104,6 +110,10 @@ struct FullViewWindow: View {
                 critical: critical,
                 hoverAt: model.hoverAt,
                 pinnedAt: pinned,
+                yDomain: model.metric == .net ? nil : 0...1,
+                yAxisLabel: model.metric == .net
+                    ? { v in Self.formatByteRate(bytesPerSec: v * 100.0 * 1_048_576.0) }
+                    : { v in "\(Int(v * 100))%" },
                 onHover: { t in
                     model.hoverAt = t
                 },
@@ -111,24 +121,25 @@ struct FullViewWindow: View {
                     model.pin(at: t)
                 }
             )
-            .frame(minHeight: 240)
+            // Flex vertically: the chart grows into whatever height is
+            // left over after the fixed-height table, so resizing the
+            // window expands the chart rather than the process list.
+            .frame(minHeight: 240, maxHeight: .infinity)
+            .layoutPriority(1)
             .padding(.horizontal, 16)
         }
     }
 
-    private var emptyProcessTableStub: some View {
-        VStack(spacing: 6) {
-            Image(systemName: "list.bullet.rectangle")
-                .font(.title2)
-                .foregroundStyle(.secondary)
-            Text("Per-process metrics land in v2")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, minHeight: 120)
-        .padding(8)
-        .background(Color.secondary.opacity(0.05))
-        .padding(.horizontal, 16)
+    @ViewBuilder
+    private func processTable(vm: ServerViewModel) -> some View {
+        let effective = model.effectiveTimestamp(latest: vm.procs.latest?.t)
+        ProcessTable(
+            series: vm.procs,
+            effectiveAt: effective,
+            available: vm.procsAvailable,
+            isRootAgent: vm.procsRoot,
+            metric: model.metric
+        )
     }
 
     @ViewBuilder
@@ -174,7 +185,17 @@ struct FullViewWindow: View {
         let text: String
         switch model.metric {
         case .net:
-            text = String(format: "↓%.1f MB/s · ↑%.1f MB/s", vm.netRxMBps, vm.netTxMBps)
+            let rxMBps: Double = {
+                if let t = effective, let p = vm.netRx.nearest(to: t) { return p.v }
+                return vm.netRx.latest?.v ?? vm.netRxMBps
+            }()
+            let txMBps: Double = {
+                if let t = effective, let p = vm.netTx.nearest(to: t) { return p.v }
+                return vm.netTx.latest?.v ?? vm.netTxMBps
+            }()
+            let rx = Self.formatByteRate(bytesPerSec: rxMBps * 1_048_576.0)
+            let tx = Self.formatByteRate(bytesPerSec: txMBps * 1_048_576.0)
+            text = "↓\(rx) · ↑\(tx)"
         default:
             text = "\(Int(round(v * 100)))%"
         }
@@ -213,5 +234,21 @@ struct FullViewWindow: View {
         let age = Int(max(0, Date().timeIntervalSince(latest)))
         if age < 60 { return "\(age)s ago" }
         return "\(age / 60)m ago"
+    }
+
+    /// Formats a byte-rate with an adaptive unit so small values stay readable.
+    /// 500 B/s stays in bytes; 120_000 B/s becomes "117.2 KB/s"; >1 MiB/s in MB/s.
+    static func formatByteRate(bytesPerSec: Double) -> String {
+        let v = max(0, bytesPerSec)
+        if v < 1_024 {
+            return String(format: "%.0f B/s", v)
+        }
+        if v < 1_048_576 {
+            return String(format: "%.1f KB/s", v / 1_024)
+        }
+        if v < 1_073_741_824 {
+            return String(format: "%.1f MB/s", v / 1_048_576)
+        }
+        return String(format: "%.2f GB/s", v / 1_073_741_824)
     }
 }

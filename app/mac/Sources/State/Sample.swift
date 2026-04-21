@@ -9,7 +9,32 @@ struct Sample: Decodable, Sendable {
     let swap: MemInfo
     let disks: [DiskSample]?
     let net: NetInfo?
+    let procs: ProcList?
     let errors: [String]
+
+    init(
+        v: Int,
+        ts: Date,
+        host: HostInfo,
+        cpu: CPUInfo,
+        mem: MemInfo,
+        swap: MemInfo,
+        disks: [DiskSample]? = nil,
+        net: NetInfo? = nil,
+        procs: ProcList? = nil,
+        errors: [String]
+    ) {
+        self.v = v
+        self.ts = ts
+        self.host = host
+        self.cpu = cpu
+        self.mem = mem
+        self.swap = swap
+        self.disks = disks
+        self.net = net
+        self.procs = procs
+        self.errors = errors
+    }
 }
 
 struct HostInfo: Decodable, Sendable {
@@ -121,6 +146,42 @@ struct NetInfo: Decodable, Sendable {
         case txBps = "tx_bps"
         case rxCum = "rx_cum"
         case txCum = "tx_cum"
+    }
+}
+
+struct ProcList: Decodable, Sendable {
+    let root: Bool
+    let topN: Int
+    let total: Int
+    let visible: Int
+    let items: [ProcSample]
+
+    enum CodingKeys: String, CodingKey {
+        case root
+        case topN = "top_n"
+        case total, visible, items
+    }
+}
+
+struct ProcSample: Decodable, Sendable, Identifiable {
+    let pid: Int32
+    let ppid: Int32?
+    let name: String
+    let cmd: String?
+    let user: String?
+    let cpuPct: Double
+    let rss: Int64
+    let threads: Int32?
+    let state: String?
+    let startTS: Date?
+
+    var id: Int32 { pid }
+
+    enum CodingKeys: String, CodingKey {
+        case pid, ppid, name, cmd, user
+        case cpuPct = "cpu_pct"
+        case rss, threads, state
+        case startTS = "start_ts"
     }
 }
 

@@ -2,7 +2,7 @@ import Foundation
 
 struct SSHAgentInvoker: AgentInvoker {
     static let sshExecutable = URL(fileURLWithPath: "/usr/bin/ssh")
-    static let remoteAgentPath = "~/.towertail/agent"
+    static let remoteAgentPath = "~/.towertail/towertail-agent"
 
     func invokeOnce(node: Node) async throws -> Sample {
         guard node.kind == .ssh else {

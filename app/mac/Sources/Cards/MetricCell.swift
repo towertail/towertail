@@ -87,7 +87,7 @@ struct MetricCell: View {
             case .percent:
                 Sparkline(samples: points, tint: seriesTint, warn: warn, windowSeconds: windowSeconds)
             case .netDualRate:
-                Sparkline(samples: points, tint: ThresholdTint.nominal.color, warn: nil, windowSeconds: windowSeconds)
+                Sparkline(samples: points, tint: ThresholdTint.nominal.color, warn: nil, windowSeconds: windowSeconds, yDomain: nil)
             case .diskBars:
                 DiskBars(samples: points, tint: seriesTint, slots: sparklineSlots)
             }

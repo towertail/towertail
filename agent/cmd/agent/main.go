@@ -22,7 +22,8 @@ type options struct {
 	selfCheck bool
 	noDisk    bool
 	noNet     bool
-	noProc    bool // reserved; v1 does not collect per-process
+	noProc    bool
+	topN      int
 }
 
 func parseFlags(args []string) (*options, error) {
@@ -35,7 +36,8 @@ func parseFlags(args []string) (*options, error) {
 	fs.BoolVar(&opts.selfCheck, "self-check", false, "collect one sample, print 'ok', exit 0")
 	fs.BoolVar(&opts.noDisk, "no-disk", false, "skip disk collection")
 	fs.BoolVar(&opts.noNet, "no-net", false, "skip net collection")
-	fs.BoolVar(&opts.noProc, "no-proc", false, "skip process collection (reserved)")
+	fs.BoolVar(&opts.noProc, "no-proc", false, "skip per-process collection")
+	fs.IntVar(&opts.topN, "top-n", 20, "number of top processes to return (union of top-by-CPU and top-by-RSS, deduped). 0 disables the cap.")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -75,6 +77,12 @@ func buildSample(opts *options, window time.Duration) schema.Sample {
 		n, errs := collect.Net(window)
 		allErrs = append(allErrs, errs...)
 		s.Net = &n
+	}
+
+	if !opts.noProc {
+		p, errs := collect.Proc(window, opts.topN)
+		allErrs = append(allErrs, errs...)
+		s.Procs = &p
 	}
 
 	if allErrs == nil {

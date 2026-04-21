@@ -15,7 +15,37 @@ type Sample struct {
 	Swap   MemInfo       `json:"swap"`
 	Disks  *[]DiskSample `json:"disks,omitempty"`
 	Net    *NetInfo      `json:"net,omitempty"`
+	Procs  *ProcList     `json:"procs,omitempty"`
 	Errors []string      `json:"errors"`
+}
+
+// ProcList is the per-process top-N slice plus the meta the Mac app needs to
+// know how to display it: whether the agent ran as root (so "missing" rows
+// are because the user doesn't have visibility), how many rows were asked
+// for, and the total/visible counts on the host.
+type ProcList struct {
+	Root    bool         `json:"root"`
+	TopN    int          `json:"top_n"`
+	Total   int          `json:"total"`
+	Visible int          `json:"visible"`
+	Items   []ProcSample `json:"items"`
+}
+
+// ProcSample is one process. Fields that require elevated access are
+// omitted when the agent can't read them — zero-valued rather than
+// emitting nonsense. CPUPct is 0-100 (aggregate across cores, matches
+// top(1) behavior on the host).
+type ProcSample struct {
+	PID     int32   `json:"pid"`
+	PPID    int32   `json:"ppid,omitempty"`
+	Name    string  `json:"name"`
+	Cmd     string  `json:"cmd,omitempty"`
+	User    string  `json:"user,omitempty"`
+	CPUPct  float64 `json:"cpu_pct"`
+	RSS     int64   `json:"rss"`
+	Threads int32   `json:"threads,omitempty"`
+	State   string  `json:"state,omitempty"`
+	StartTS string  `json:"start_ts,omitempty"`
 }
 
 type HostInfo struct {
