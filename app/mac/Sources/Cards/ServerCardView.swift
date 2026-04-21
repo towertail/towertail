@@ -90,9 +90,15 @@ struct ServerCardView: View {
             Text("·")
                 .font(Typography.metaText)
                 .foregroundStyle(.secondary)
-            Text(lastSeenText)
-                .font(Typography.metaText)
-                .foregroundStyle(lastSeenColor)
+            // TimelineView isolates the 1Hz rebuild to just this label —
+            // the rest of the card (charts, metric grid) stays static
+            // between real sample ingestions. Also pauses when the popover
+            // is closed because off-screen TimelineViews don't schedule.
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                Text(lastSeenText(now: ctx.date))
+                    .font(Typography.metaText)
+                    .foregroundStyle(lastSeenColor)
+            }
         }
     }
 
@@ -183,9 +189,9 @@ struct ServerCardView: View {
         return series.nearest(to: h)?.v
     }
 
-    private var lastSeenText: String {
+    private func lastSeenText(now: Date) -> String {
         guard let seen = vm.lastSeen else { return "—" }
-        let secs = max(0, Int(Date().timeIntervalSince(seen)))
+        let secs = max(0, Int(now.timeIntervalSince(seen)))
         if secs < 60 { return "\(secs)s" }
         let mins = secs / 60
         if mins < 60 { return "\(mins)m ago" }

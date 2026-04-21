@@ -83,6 +83,13 @@ final class ServerViewModel: Identifiable {
     @discardableResult
     func ingest(_ s: Sample) -> HistoryPoint {
         lastSeen = s.ts
+        // Pick up the OS/arch the agent reported. Without this, remote
+        // hosts stay stuck on their placeholder "—" because osArch is
+        // only set at VM creation time.
+        let os = Self.prettyOSName(s.host.os)
+        if !os.isEmpty {
+            osArch = s.host.arch.isEmpty ? os : "\(os) · \(s.host.arch)"
+        }
         let cpuFrac = computeCPUFraction(from: s.cpu)
         let cpuV = min(max(cpuFrac, 0), 1)
         cpu.append(MetricPoint(t: s.ts, v: cpuV))
@@ -153,6 +160,19 @@ final class ServerViewModel: Identifiable {
     func markOffline(reason: String, at t: Date) {
         state = .offline(reason: reason)
         lastSeen = t
+    }
+
+    /// Map the raw `runtime.GOOS`-style strings the agent emits onto names
+    /// a human would expect to see in the UI (darwin → macOS).
+    private static func prettyOSName(_ raw: String) -> String {
+        switch raw.lowercased() {
+        case "": return ""
+        case "darwin": return "macOS"
+        case "linux": return "Linux"
+        case "windows": return "Windows"
+        case "freebsd": return "FreeBSD"
+        default: return raw
+        }
     }
 
     /// Prefer counter-delta math when the agent supplies cumulative totals;

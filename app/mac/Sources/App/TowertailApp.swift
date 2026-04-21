@@ -45,6 +45,14 @@ struct TowertailApp: App {
                 .environment(env.store)
                 .environment(env.settings)
                 .environment(env.nodeStore)
+                // Settings is an .accessory-policy scene by default, so
+                // without flipping activation policy the app never gets a
+                // Dock icon while it's open — meaning the user can't ⌘-Tab
+                // or Mission Control their way back to it. Acquire on
+                // appear, release on disappear (same pattern as the
+                // full-view chart window).
+                .onAppear { ActivationPolicyCoordinator.shared.acquire() }
+                .onDisappear { ActivationPolicyCoordinator.shared.release() }
         }
 
         WindowGroup(id: "full-view", for: FullViewContext.self) { $ctx in

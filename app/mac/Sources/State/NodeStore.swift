@@ -21,6 +21,15 @@ final class NodeStore {
         persist()
     }
 
+    /// Appends multiple nodes in one shot and persists once at the end.
+    /// A 20-node bulk import would otherwise hit disk 20 times and flash
+    /// the UI through 20 intermediate states.
+    func addMany(_ newNodes: [Node]) {
+        guard !newNodes.isEmpty else { return }
+        nodes.append(contentsOf: newNodes)
+        persist()
+    }
+
     func remove(id: UUID) {
         nodes.removeAll { $0.id == id }
         persist()

@@ -20,19 +20,23 @@ struct MenuBarIcon: View {
     /// doesn't work here: MenuBarExtra flattens its label to a template
     /// bitmap, stripping both symbol tints and filled-shape colors.
     private static func rendered(state: AggregateState) -> NSImage {
-        // Canvas is larger than the glyph so the bottom-right badge has
-        // room to sit outside the server-rack bounds without clipping.
-        let canvas = NSSize(width: 20, height: 18)
-        let glyphSize = NSSize(width: 16, height: 16)
+        // Canvas sized so an 18pt glyph fills the menu bar nicely and the
+        // bottom-right badge still sits fully inside the bounds. Menu bar
+        // draw area is ~22pt tall; we stay at 20 so there's a 1pt gap
+        // top/bottom and the badge doesn't get clipped.
+        let canvas = NSSize(width: 22, height: 20)
+        let glyphSize = NSSize(width: 18, height: 18)
         let image = NSImage(size: canvas)
         image.isTemplate = false
         image.lockFocus()
 
         let base = NSImage(systemSymbolName: "server.rack", accessibilityDescription: nil)!
         let tint = NSColor(state.tint)
-        // Tint the base glyph: warn → yellow, critical → red, nominal →
-        // labelColor so it reads correctly on both light and dark menu bars.
-        let glyph = base.tinted(with: state == .nominal ? NSColor.labelColor : tint)
+        // Menu bar background is effectively dark on macOS (even in light
+        // mode the system vibrancy keeps it near-black), so force white for
+        // nominal instead of labelColor which resolves to black when the
+        // app's effective appearance is light.
+        let glyph = base.tinted(with: state == .nominal ? NSColor.white : tint)
         let glyphRect = NSRect(
             x: 0,
             y: canvas.height - glyphSize.height,
@@ -41,21 +45,20 @@ struct MenuBarIcon: View {
         )
         glyph.draw(in: glyphRect, from: .zero, operation: .sourceOver, fraction: 1.0)
 
-        // Tiny solid badge for warn/critical — nudged inside the canvas so
-        // it's fully visible after the menu bar draws its label.
-        if state != .nominal {
-            let badgeDiameter: CGFloat = 8
-            let badgeRect = NSRect(
-                x: canvas.width - badgeDiameter - 1,
-                y: 1,
-                width: badgeDiameter,
-                height: badgeDiameter
-            )
-            NSColor.windowBackgroundColor.setFill()
-            NSBezierPath(ovalIn: badgeRect.insetBy(dx: -1.2, dy: -1.2)).fill()
-            tint.setFill()
-            NSBezierPath(ovalIn: badgeRect).fill()
-        }
+        // Permanent status badge: green at nominal, yellow at warn, red at
+        // critical. Sits fully inside the canvas with enough margin for the
+        // white halo so nothing clips.
+        let badgeDiameter: CGFloat = 8
+        let badgeRect = NSRect(
+            x: canvas.width - badgeDiameter - 2,
+            y: 2,
+            width: badgeDiameter,
+            height: badgeDiameter
+        )
+        NSColor.windowBackgroundColor.setFill()
+        NSBezierPath(ovalIn: badgeRect.insetBy(dx: -1.2, dy: -1.2)).fill()
+        tint.setFill()
+        NSBezierPath(ovalIn: badgeRect).fill()
 
         image.unlockFocus()
         return image

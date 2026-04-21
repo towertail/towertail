@@ -7,6 +7,16 @@ enum PopoverFilter: Hashable {
     case down
 }
 
+private func severityRank(_ s: ServerConnState) -> Int {
+    switch s {
+    case .critical: return 3
+    case .offline: return 2
+    case .warn: return 1
+    case .online: return 0
+    case .unknown: return -1
+    }
+}
+
 struct PopoverRoot: View {
     @Environment(ServerStore.self) private var store
     @State private var filter: PopoverFilter = .all
@@ -41,12 +51,18 @@ struct PopoverRoot: View {
                 return false
             }
         case .warn:
-            return store.serverVMs.filter { vm in
-                switch vm.state {
-                case .warn, .critical: return true
-                default: return false
+            // Rank critical above warn so the most severe hosts are seen
+            // first when the user clicks the warn pill.
+            return store.serverVMs
+                .filter { vm in
+                    switch vm.state {
+                    case .warn, .critical: return true
+                    default: return false
+                    }
                 }
-            }
+                .sorted { a, b in
+                    severityRank(a.state) > severityRank(b.state)
+                }
         case .down:
             return store.serverVMs.filter { vm in
                 if case .offline = vm.state { return true }

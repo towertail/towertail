@@ -19,7 +19,7 @@ struct PopoverHeader: View {
             HStack(spacing: 2) {
                 pill(kind: .online, count: s.online)
                 sep
-                pill(kind: .warn, count: s.warn)
+                warnPill(warn: s.warn, critical: s.critical)
                 sep
                 pill(kind: .down, count: s.down)
             }
@@ -58,6 +58,46 @@ struct PopoverHeader: View {
 
     private var sep: some View {
         Text("·").foregroundStyle(.secondary)
+    }
+
+    /// Combined warn/critical pill. When any host is critical the pill
+    /// switches to the critical tint and shows "{critical}/{warn}" so the
+    /// more-severe count leads. With no criticals it behaves identically
+    /// to the plain warn pill.
+    @ViewBuilder
+    private func warnPill(warn: Int, critical: Int) -> some View {
+        let active = filter == .warn
+        let hasCritical = critical > 0
+        let tint = hasCritical ? ThresholdTint.critical.color : ThresholdTint.warn.color
+        let label: String = {
+            if hasCritical {
+                return "\(critical) critical"
+            }
+            return "\(warn) warn"
+        }()
+        Button {
+            filter = active ? .all : .warn
+        } label: {
+            Text(label)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(active ? tint.opacity(0.22) : .clear)
+                )
+                .foregroundStyle(active ? tint : Color.secondary)
+        }
+        .buttonStyle(.plain)
+        .help(warnPillHelp(active: active, critical: critical, warn: warn))
+        .pointingHandOnHover()
+    }
+
+    private func warnPillHelp(active: Bool, critical: Int, warn: Int) -> String {
+        if active { return "Show all hosts" }
+        if critical > 0 {
+            return "Show \(critical) critical and \(warn) warn host\(warn == 1 ? "" : "s")"
+        }
+        return "Show only hosts in warn or critical"
     }
 
     /// Clickable pill. Click once to filter, click again to clear. Active

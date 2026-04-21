@@ -84,17 +84,17 @@ final class ServerStore {
         return .nominal
     }
 
-    var summary: (online: Int, warn: Int, down: Int) {
-        var online = 0, warn = 0, down = 0
+    var summary: (online: Int, warn: Int, critical: Int, down: Int) {
+        var online = 0, warn = 0, critical = 0, down = 0
         for vm in serverVMs {
             switch vm.state {
             case .online: online += 1
             case .warn: warn += 1; online += 1
-            case .critical: warn += 1; online += 1
+            case .critical: critical += 1; online += 1
             case .offline: down += 1
             case .unknown: break
             }
         }
-        return (online, warn, down)
+        return (online, warn, critical, down)
     }
 }

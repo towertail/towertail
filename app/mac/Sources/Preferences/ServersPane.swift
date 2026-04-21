@@ -9,6 +9,7 @@ struct ServersPane: View {
     @State private var sheet: ServerEditSheetContext?
     @State private var testResult: TestResult?
     @State private var bulkRunning: Bool = false
+    @State private var showBulkImport: Bool = false
 
     private struct TestResult: Identifiable {
         let id = UUID()
@@ -74,6 +75,14 @@ struct ServersPane: View {
                     Image(systemName: "plus")
                 }
                 .disabled(bulkRunning)
+
+                Button {
+                    showBulkImport = true
+                } label: {
+                    Label("Bulk import…", systemImage: "square.and.arrow.down.on.square")
+                }
+                .disabled(bulkRunning)
+                .help("Import servers from Tailscale, a CSV file, or a pasted host list.")
 
                 Button {
                     for id in selection {
@@ -145,6 +154,11 @@ struct ServersPane: View {
             }
             .environment(nodeStore)
             .environment(appSettings)
+        }
+        .sheet(isPresented: $showBulkImport) {
+            BulkImportWizard()
+                .environment(nodeStore)
+                .environment(appSettings)
         }
     }
 
