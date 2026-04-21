@@ -29,11 +29,19 @@ type HostInfo struct {
 }
 
 type CPUInfo struct {
-	Pct    float64 `json:"pct"`
-	Load1  float64 `json:"load_1"`
-	Load5  float64 `json:"load_5"`
-	Load15 float64 `json:"load_15"`
-	Cores  int     `json:"cores"`
+	Pct       float64 `json:"pct"`
+	Load1     float64 `json:"load_1"`
+	Load5     float64 `json:"load_5"`
+	Load15    float64 `json:"load_15"`
+	Cores     int     `json:"cores"`
+	UserMs    int64   `json:"user_ms,omitempty"`
+	SystemMs  int64   `json:"system_ms,omitempty"`
+	IdleMs    int64   `json:"idle_ms,omitempty"`
+	IowaitMs  int64   `json:"iowait_ms,omitempty"`
+	IrqMs     int64   `json:"irq_ms,omitempty"`
+	NiceMs    int64   `json:"nice_ms,omitempty"`
+	StealMs   int64   `json:"steal_ms,omitempty"`
+	TotalMs   int64   `json:"total_ms,omitempty"`
 }
 
 type MemInfo struct {

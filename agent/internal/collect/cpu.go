@@ -8,14 +8,35 @@ import (
 	"github.com/towertail/agent/internal/schema"
 )
 
-// SampleWindow is the duration used for delta-based metrics (CPU %, net bps)
-// inside a single --once invocation so the agent can stay stateless.
+// SampleWindow is retained for compatibility with net delta sampling.
+// CPU% is now derived by the consumer from cumulative counters; the agent
+// no longer blocks for an in-process delta window for CPU.
 const SampleWindow = 200 * time.Millisecond
 
 func CPU(window time.Duration) (schema.CPUInfo, []string) {
 	var errs []string
 	c := schema.CPUInfo{}
 
+	// Cumulative CPU time counters (aggregate across all cores).
+	times, err := cpu.Times(false)
+	if err != nil {
+		errs = append(errs, "cpu.Times: "+err.Error())
+	} else if len(times) > 0 {
+		t := times[0]
+		// gopsutil reports seconds as float64; convert to ms.
+		c.UserMs = secondsToMs(t.User)
+		c.SystemMs = secondsToMs(t.System)
+		c.IdleMs = secondsToMs(t.Idle)
+		c.IowaitMs = secondsToMs(t.Iowait)
+		c.IrqMs = secondsToMs(t.Irq) + secondsToMs(t.Softirq)
+		c.NiceMs = secondsToMs(t.Nice)
+		c.StealMs = secondsToMs(t.Steal)
+		c.TotalMs = c.UserMs + c.SystemMs + c.IdleMs + c.IowaitMs + c.IrqMs + c.NiceMs + c.StealMs
+	}
+
+	// Short-window percent: retained so single --once invocations produce a
+	// usable number without requiring a prior sample. The counter-based
+	// fields above are authoritative when a previous tick is available.
 	pcts, err := cpu.Percent(window, false)
 	if err != nil {
 		errs = append(errs, "cpu.Percent: "+err.Error())
@@ -40,4 +61,8 @@ func CPU(window time.Duration) (schema.CPUInfo, []string) {
 	}
 
 	return c, errs
+}
+
+func secondsToMs(s float64) int64 {
+	return int64(s * 1000.0)
 }
