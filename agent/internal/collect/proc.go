@@ -41,6 +41,26 @@ func Proc(window time.Duration, topN int) (schema.ProcList, []string) {
 	}
 	list.Total = len(procs)
 
+	// Hide the agent from its own output. If we included ourselves, we'd
+	// always rank at or near the top simply because we're doing CPU work
+	// (walking /proc, computing deltas) during the very window we measure
+	// — a self-referential artifact that's confusing and uninteresting.
+	// Filter both by PID (our own) and by name (catches any stray sibling
+	// `towertail-agent` processes so a stale parent/child can't poke
+	// through).
+	selfPID := int32(os.Getpid())
+	filtered := procs[:0]
+	for _, p := range procs {
+		if p.Pid == selfPID {
+			continue
+		}
+		if name, err := p.Name(); err == nil && name == "towertail-agent" {
+			continue
+		}
+		filtered = append(filtered, p)
+	}
+	procs = filtered
+
 	// First pass: snapshot CPU times. process.Percent(0, ...) returns the
 	// % since process start — useless for our needs. We need the delta
 	// across `window` so the reading matches what top(1) shows.

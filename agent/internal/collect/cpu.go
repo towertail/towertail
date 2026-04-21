@@ -8,10 +8,12 @@ import (
 	"github.com/towertail/agent/internal/schema"
 )
 
-// SampleWindow is retained for compatibility with net delta sampling.
-// CPU% is now derived by the consumer from cumulative counters; the agent
-// no longer blocks for an in-process delta window for CPU.
-const SampleWindow = 200 * time.Millisecond
+// SampleWindow is the self-sampling interval used by CPU%, net throughput,
+// and per-process CPU% calculations. 500ms is a compromise: short enough
+// that --once completes in well under a second, long enough that per-process
+// CPU% readings aren't dominated by measurement noise (processes that only
+// run for a handful of ticks within the window).
+const SampleWindow = 500 * time.Millisecond
 
 func CPU(window time.Duration) (schema.CPUInfo, []string) {
 	var errs []string
