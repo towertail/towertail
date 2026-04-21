@@ -8,13 +8,52 @@ enum CardDensity: String, CaseIterable, Sendable {
 @Observable
 @MainActor
 final class AppSettings {
-    var cardDensity: CardDensity = .a
-    var thresholds: MetricThresholds = .defaults
+    var cardDensity: CardDensity
+    var thresholds: MetricThresholds
+    var pollingIntervalSeconds: Int
+    var notificationsEnabled: Bool
+    var notifyWarn: Bool
+    var notifyCritical: Bool
+    var notifyDebounceSeconds: Int
+    var launchAtLogin: Bool
 
-    init() {
-        if let raw = UserDefaults.standard.string(forKey: "cardDensity"),
-           let d = CardDensity(rawValue: raw) {
-            cardDensity = d
-        }
+    private let url: URL
+
+    init(url: URL = SettingsPersistence.defaultURL()) {
+        self.url = url
+        let p = SettingsPersistence.load(from: url)
+        self.cardDensity = CardDensity(rawValue: p.cardDensity) ?? .a
+        self.thresholds = MetricThresholds(
+            cpuWarn: p.thresholds.cpuWarn, cpuCritical: p.thresholds.cpuCritical,
+            memWarn: p.thresholds.memWarn, memCritical: p.thresholds.memCritical,
+            diskWarn: p.thresholds.diskWarn, diskCritical: p.thresholds.diskCritical
+        )
+        self.pollingIntervalSeconds = max(5, min(300, p.pollingIntervalSeconds))
+        self.notificationsEnabled = p.notificationsEnabled
+        self.notifyWarn = p.notifyWarn
+        self.notifyCritical = p.notifyCritical
+        self.notifyDebounceSeconds = p.notifyDebounceSeconds
+        self.launchAtLogin = p.launchAtLogin
+    }
+
+    static func loadFromDisk() -> AppSettings {
+        AppSettings()
+    }
+
+    func persist() {
+        var p = SettingsPersistence.load(from: url)
+        p.cardDensity = cardDensity.rawValue
+        p.thresholds = PersistedThresholds(
+            cpuWarn: thresholds.cpuWarn, cpuCritical: thresholds.cpuCritical,
+            memWarn: thresholds.memWarn, memCritical: thresholds.memCritical,
+            diskWarn: thresholds.diskWarn, diskCritical: thresholds.diskCritical
+        )
+        p.pollingIntervalSeconds = pollingIntervalSeconds
+        p.notificationsEnabled = notificationsEnabled
+        p.notifyWarn = notifyWarn
+        p.notifyCritical = notifyCritical
+        p.notifyDebounceSeconds = notifyDebounceSeconds
+        p.launchAtLogin = launchAtLogin
+        SettingsPersistence.save(p, to: url)
     }
 }

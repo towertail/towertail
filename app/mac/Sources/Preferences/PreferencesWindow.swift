@@ -3,30 +3,16 @@ import SwiftUI
 struct PreferencesWindow: View {
     var body: some View {
         TabView {
-            ComingSoonPane(title: "Servers")
+            ServersPane()
                 .tabItem { Label("Servers", systemImage: "server.rack") }
-            ComingSoonPane(title: "Thresholds")
+            ThresholdsPane()
                 .tabItem { Label("Thresholds", systemImage: "gauge") }
-            ComingSoonPane(title: "Notifications")
+            NotificationsPane()
                 .tabItem { Label("Notifications", systemImage: "bell") }
-            ComingSoonPane(title: "General")
+            GeneralPane()
                 .tabItem { Label("General", systemImage: "gear") }
         }
-        .frame(minWidth: 540, minHeight: 360)
-    }
-}
-
-struct ComingSoonPane: View {
-    let title: String
-    var body: some View {
-        VStack(spacing: 12) {
-            Text(title)
-                .font(.title2).bold()
-            Text("Coming soon")
-                .font(.body)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(minWidth: 600, minHeight: 420)
         .padding()
     }
 }

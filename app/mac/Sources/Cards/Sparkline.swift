@@ -5,6 +5,7 @@ struct Sparkline: View {
     let samples: [MetricPoint]
     let tint: Color
     let warn: Double?
+    let windowSeconds: TimeInterval
     var onHover: ((Date?) -> Void)? = nil
 
     var body: some View {
@@ -28,6 +29,7 @@ struct Sparkline: View {
         .chartYAxis(.hidden)
         .chartPlotStyle { $0.background(.clear) }
         .chartYScale(domain: 0...1)
+        .chartXScale(domain: xDomain)
         .frame(height: 28)
         .drawingGroup()
         .chartOverlay { proxy in
@@ -47,5 +49,11 @@ struct Sparkline: View {
                     }
             }
         }
+    }
+
+    private var xDomain: ClosedRange<Date> {
+        let latest = samples.last?.t ?? Date()
+        let earliest = latest.addingTimeInterval(-max(1, windowSeconds))
+        return earliest...latest
     }
 }

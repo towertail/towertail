@@ -35,6 +35,14 @@ struct CPUInfo: Decodable, Sendable {
     let load5: Double
     let load15: Double
     let cores: Int
+    let userMs: Int64?
+    let systemMs: Int64?
+    let idleMs: Int64?
+    let iowaitMs: Int64?
+    let irqMs: Int64?
+    let niceMs: Int64?
+    let stealMs: Int64?
+    let totalMs: Int64?
 
     enum CodingKeys: String, CodingKey {
         case pct
@@ -42,6 +50,51 @@ struct CPUInfo: Decodable, Sendable {
         case load5 = "load_5"
         case load15 = "load_15"
         case cores
+        case userMs = "user_ms"
+        case systemMs = "system_ms"
+        case idleMs = "idle_ms"
+        case iowaitMs = "iowait_ms"
+        case irqMs = "irq_ms"
+        case niceMs = "nice_ms"
+        case stealMs = "steal_ms"
+        case totalMs = "total_ms"
+    }
+
+    /// Sum of "doing work" time — anything that isn't idle/iowait.
+    var busyMs: Int64? {
+        guard let totalMs, let idleMs else { return nil }
+        let iow = iowaitMs ?? 0
+        return totalMs - idleMs - iow
+    }
+
+    init(
+        pct: Double,
+        load1: Double,
+        load5: Double,
+        load15: Double,
+        cores: Int,
+        userMs: Int64? = nil,
+        systemMs: Int64? = nil,
+        idleMs: Int64? = nil,
+        iowaitMs: Int64? = nil,
+        irqMs: Int64? = nil,
+        niceMs: Int64? = nil,
+        stealMs: Int64? = nil,
+        totalMs: Int64? = nil
+    ) {
+        self.pct = pct
+        self.load1 = load1
+        self.load5 = load5
+        self.load15 = load15
+        self.cores = cores
+        self.userMs = userMs
+        self.systemMs = systemMs
+        self.idleMs = idleMs
+        self.iowaitMs = iowaitMs
+        self.irqMs = irqMs
+        self.niceMs = niceMs
+        self.stealMs = stealMs
+        self.totalMs = totalMs
     }
 }
 

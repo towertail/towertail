@@ -33,6 +33,17 @@ targets:
           - "**/*.md"
     resources:
       - Sources/Design/Assets.xcassets
+    preBuildScripts:
+      - name: "Bundle agents"
+        basedOnDependencyAnalysis: false
+        script: |
+          set -e
+          SRC="${SRCROOT}/../../dist/agents"
+          DEST="${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/agents"
+          if [ -d "$SRC" ]; then
+            mkdir -p "$DEST"
+            /usr/bin/rsync -a --delete "$SRC/" "$DEST/"
+          fi
     info:
       path: Sources/App/Info.plist
       properties:
@@ -59,3 +70,18 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Sources/App/Towertail.entitlements
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
+
+  TowertailTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Tests
+    dependencies:
+      - target: Towertail
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.towertail.TowertailTests
+        GENERATE_INFOPLIST_FILE: YES
+        BUNDLE_LOADER: $(TEST_HOST)
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Towertail.app/Contents/MacOS/Towertail

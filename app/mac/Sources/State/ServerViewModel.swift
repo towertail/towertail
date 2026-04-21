@@ -36,6 +36,9 @@ final class ServerViewModel: Identifiable {
 
     var thresholds: MetricThresholds
 
+    private var prevCPUTotalMs: Int64?
+    private var prevCPUBusyMs: Int64?
+
     init(
         id: UUID = UUID(),
         hostname: String,
@@ -58,7 +61,8 @@ final class ServerViewModel: Identifiable {
 
     func ingest(_ s: Sample) {
         lastSeen = s.ts
-        cpu.append(MetricPoint(t: s.ts, v: min(max(s.cpu.pct / 100.0, 0), 1)))
+        let cpuFrac = computeCPUFraction(from: s.cpu)
+        cpu.append(MetricPoint(t: s.ts, v: min(max(cpuFrac, 0), 1)))
 
         let memFrac = s.mem.total > 0 ? Double(s.mem.used) / Double(s.mem.total) : 0
         mem.append(MetricPoint(t: s.ts, v: min(max(memFrac, 0), 1)))
@@ -85,6 +89,27 @@ final class ServerViewModel: Identifiable {
     func markOffline(reason: String, at t: Date) {
         state = .offline(reason: reason)
         lastSeen = t
+    }
+
+    /// Prefer counter-delta math when the agent supplies cumulative totals;
+    /// fall back to the agent's short-window `pct` when counters are absent
+    /// (first tick after launch, or agents that don't emit them).
+    private func computeCPUFraction(from info: CPUInfo) -> Double {
+        if let total = info.totalMs, let busy = info.busyMs, total > 0 {
+            defer {
+                prevCPUTotalMs = total
+                prevCPUBusyMs = busy
+            }
+            if let prevTotal = prevCPUTotalMs, let prevBusy = prevCPUBusyMs {
+                let dt = total - prevTotal
+                let db = busy - prevBusy
+                // Reboot / counter reset: dt < 0, or busy went backwards.
+                if dt > 0 && db >= 0 {
+                    return Double(db) / Double(dt)
+                }
+            }
+        }
+        return info.pct / 100.0
     }
 
     private func computeState() -> ServerConnState {

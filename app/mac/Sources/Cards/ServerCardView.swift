@@ -2,6 +2,8 @@ import SwiftUI
 
 struct ServerCardView: View {
     @Bindable var vm: ServerViewModel
+    @Environment(\.openWindow) private var openWindow
+    @Environment(AppSettings.self) private var settings
 
     var body: some View {
         let offline = vm.state.isOffline
@@ -11,6 +13,10 @@ struct ServerCardView: View {
             metricGrid
         }
         .opacity(offline ? 0.55 : 1.0)
+    }
+
+    private func openFullView(metric: Metric) {
+        openWindow(id: "full-view", value: FullViewContext(hostId: vm.id, metric: metric))
     }
 
     private var header: some View {
@@ -61,8 +67,10 @@ struct ServerCardView: View {
                     offline: vm.state.isOffline,
                     warn: vm.thresholds.cpuWarn,
                     critical: vm.thresholds.cpuCritical,
-                    hoverValue: hoverValue(for: vm.cpu)
+                    hoverValue: hoverValue(for: vm.cpu),
+                    pollingIntervalSeconds: settings.pollingIntervalSeconds
                 )
+                .onTapGesture { openFullView(metric: .cpu) }
                 MetricCell(
                     label: "MEM",
                     series: vm.mem,
@@ -70,8 +78,10 @@ struct ServerCardView: View {
                     offline: vm.state.isOffline,
                     warn: vm.thresholds.memWarn,
                     critical: vm.thresholds.memCritical,
-                    hoverValue: hoverValue(for: vm.mem)
+                    hoverValue: hoverValue(for: vm.mem),
+                    pollingIntervalSeconds: settings.pollingIntervalSeconds
                 )
+                .onTapGesture { openFullView(metric: .mem) }
             }
             GridRow {
                 MetricCell(
@@ -81,8 +91,10 @@ struct ServerCardView: View {
                     offline: vm.state.isOffline,
                     warn: vm.thresholds.diskWarn,
                     critical: vm.thresholds.diskCritical,
-                    hoverValue: hoverValue(for: vm.disk)
+                    hoverValue: hoverValue(for: vm.disk),
+                    pollingIntervalSeconds: settings.pollingIntervalSeconds
                 )
+                .onTapGesture { openFullView(metric: .disk) }
                 MetricCell(
                     label: "NET",
                     series: vm.net,
@@ -91,8 +103,10 @@ struct ServerCardView: View {
                     warn: 0.6,
                     critical: 0.9,
                     rxMBps: vm.netRxMBps,
-                    txMBps: vm.netTxMBps
+                    txMBps: vm.netTxMBps,
+                    pollingIntervalSeconds: settings.pollingIntervalSeconds
                 )
+                .onTapGesture { openFullView(metric: .net) }
             }
         }
     }

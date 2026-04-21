@@ -9,6 +9,7 @@ struct TowertailApp: App {
             PopoverRoot()
                 .environment(env.store)
                 .environment(env.settings)
+                .environment(env.nodeStore)
                 .task { env.start() }
         } label: {
             MenuBarIcon(state: env.store.aggregateState)
@@ -27,6 +28,21 @@ struct TowertailApp: App {
             PreferencesWindow()
                 .environment(env.store)
                 .environment(env.settings)
+                .environment(env.nodeStore)
         }
+
+        WindowGroup(id: "full-view", for: FullViewContext.self) { $ctx in
+            Group {
+                if let ctx {
+                    FullViewWindow(context: ctx)
+                        .environment(env.store)
+                        .environment(env.settings)
+                } else {
+                    ContentUnavailableView("No host", systemImage: "server.rack")
+                }
+            }
+        }
+        .windowResizability(.contentSize)
+        .defaultSize(width: 1000, height: 600)
     }
 }

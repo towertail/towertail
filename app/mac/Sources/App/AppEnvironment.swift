@@ -5,13 +5,15 @@ import SwiftUI
 final class AppEnvironment {
     let store: ServerStore
     let settings: AppSettings
+    let nodeStore: NodeStore
     let collector: any Collector
     private var task: Task<Void, Never>?
 
     init() {
+        self.settings = AppSettings.loadFromDisk()
+        self.nodeStore = NodeStore.loadFromDisk()
         self.store = ServerStore()
-        self.settings = AppSettings()
-        self.collector = MockCollector()
+        self.collector = RealCollector(nodeStore: nodeStore, settings: settings)
     }
 
     func start() {

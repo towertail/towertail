@@ -16,6 +16,8 @@ struct MetricCell: View {
     var rxMBps: Double = 0
     var txMBps: Double = 0
     var hoverValue: Double? = nil
+    var pollingIntervalSeconds: Int = 15
+    var sparklineSlots: Int = 60
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -80,13 +82,14 @@ struct MetricCell: View {
             }
         } else {
             let points = series.snapshot()
+            let windowSeconds = TimeInterval(max(1, pollingIntervalSeconds) * sparklineSlots)
             switch mode {
             case .percent:
-                Sparkline(samples: points, tint: seriesTint, warn: warn)
+                Sparkline(samples: points, tint: seriesTint, warn: warn, windowSeconds: windowSeconds)
             case .netDualRate:
-                Sparkline(samples: points, tint: ThresholdTint.nominal.color, warn: nil)
+                Sparkline(samples: points, tint: ThresholdTint.nominal.color, warn: nil, windowSeconds: windowSeconds)
             case .diskBars:
-                DiskBars(samples: points, tint: seriesTint)
+                DiskBars(samples: points, tint: seriesTint, slots: sparklineSlots)
             }
         }
     }
