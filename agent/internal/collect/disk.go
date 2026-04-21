@@ -36,6 +36,15 @@ var excludedFS = map[string]bool{
 	"hugetlbfs":     true,
 }
 
+func isReadOnly(opts []string) bool {
+	for _, o := range opts {
+		if o == "ro" || o == "read-only" {
+			return true
+		}
+	}
+	return false
+}
+
 func Disk() ([]schema.DiskSample, []string) {
 	var errs []string
 	parts, err := disk.Partitions(false)
@@ -61,6 +70,23 @@ func Disk() ([]schema.DiskSample, []string) {
 		// but it reports identical stats to "/" so we skip it too —
 		// the user only cares about one row for the root volume.
 		if strings.HasPrefix(p.Mountpoint, "/System/Volumes/") {
+			continue
+		}
+		// Read-only mounts are almost always app-bundle DMGs, installer
+		// images, or snap-style overlays that report 100% full by design
+		// (they're sized exactly to their contents). Including them makes
+		// the "worst disk" metric permanently pinned at 100% whenever any
+		// such image is mounted. The actual root filesystem on macOS is
+		// also `ro` + `sealed`, but we already pick up the writable
+		// /System/Volumes/Data equivalent via its own entry — except we
+		// skip /System/Volumes/* above, so allow "/" through even if `ro`.
+		if isReadOnly(p.Opts) && p.Mountpoint != "/" {
+			continue
+		}
+		// DMG-style ephemeral mounts sometimes land under user temp dirs
+		// rather than /Volumes; skip those explicitly in case the ro flag
+		// doesn't surface on some FS drivers.
+		if strings.Contains(p.Mountpoint, "/var/folders/") {
 			continue
 		}
 		if seen[p.Mountpoint] {
