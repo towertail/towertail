@@ -10,7 +10,7 @@ struct ProcessTable: View {
     let series: ProcSeries
     let effectiveAt: Date?
     let available: Bool
-    let isRootAgent: Bool
+    let isRootSampler: Bool
     /// The metric the full view is currently focused on. Drives the table's
     /// default sort column so "MEM" surfaces the RAM hogs without the user
     /// having to click the RSS header.
@@ -112,7 +112,7 @@ struct ProcessTable: View {
     private var header: some View {
         HStack(spacing: 6) {
             Text("Processes").font(.headline)
-            if isRootAgent {
+            if isRootSampler {
                 Label("root", systemImage: "shield.lefthalf.filled")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -120,7 +120,7 @@ struct ProcessTable: View {
                 Text("user scope")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .help("Agent running as a non-root user; on macOS this limits visibility to your own processes.")
+                    .help("Sampler running as a non-root user; on macOS this limits visibility to your own processes.")
             }
             Spacer()
             if let t = effectiveAt {

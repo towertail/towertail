@@ -1,10 +1,10 @@
 import Foundation
 
-protocol AgentInvoker: Sendable {
+protocol SamplerInvoker: Sendable {
     func invokeOnce(node: Node) async throws -> Sample
 }
 
-enum AgentInvokeError: LocalizedError {
+enum SamplerInvokeError: LocalizedError {
     case binaryMissing
     case sshFailed(stderr: String, exitCode: Int32)
     case decodeFailed(underlying: Error)
@@ -15,16 +15,16 @@ enum AgentInvokeError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .binaryMissing:
-            return "Bundled agent binary not found."
+            return "Bundled sampler binary not found."
         case .sshFailed(let stderr, let code):
             let trimmed = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             return "ssh exit \(code): \(trimmed.isEmpty ? "(no stderr)" : trimmed)"
         case .decodeFailed(let err):
             return "decode failed: \(err.localizedDescription)"
         case .timeout:
-            return "agent timed out"
+            return "sampler timed out"
         case .emptyOutput:
-            return "agent produced no output"
+            return "sampler produced no output"
         case .misconfigured(let reason):
             return reason
         }
@@ -32,8 +32,8 @@ enum AgentInvokeError: LocalizedError {
 }
 
 @Sendable
-func makeInvoker(for node: Node) -> AgentInvoker {
-    node.kind == .local ? LocalAgentInvoker() : SSHAgentInvoker()
+func makeInvoker(for node: Node) -> SamplerInvoker {
+    node.kind == .local ? LocalSamplerInvoker() : SSHSamplerInvoker()
 }
 
 enum ProcessRunner {
@@ -54,10 +54,10 @@ enum ProcessRunner {
             }
             defer { group.cancelAll() }
             guard let result = try await group.next() else {
-                throw AgentInvokeError.timeout
+                throw SamplerInvokeError.timeout
             }
             if let result { return result }
-            throw AgentInvokeError.timeout
+            throw SamplerInvokeError.timeout
         }
     }
 

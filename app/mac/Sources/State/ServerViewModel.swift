@@ -36,18 +36,18 @@ final class ServerViewModel: Identifiable {
     var netRxMBps: Double = 0
     var netTxMBps: Double = 0
 
-    /// Agent version+sha string reported in the most recent sample's
-    /// `host.agent` field. Empty until the first successful sample
+    /// Sampler version+sha string reported in the most recent sample's
+    /// `host.sampler` field. Empty until the first successful sample
     /// arrives. Surfaced in the Servers table so users can see which
     /// hosts are on the current binary and which still need an update.
-    var agentVersion: String = ""
+    var samplerVersion: String = ""
 
     var procs: ProcSeries
     /// True when at least one ingested sample included a procs payload —
     /// lets the UI show a clear "process collection disabled" state for
-    /// agents invoked with `--no-proc` rather than a flicker of empty.
+    /// samplers invoked with `--no-proc` rather than a flicker of empty.
     var procsAvailable: Bool = false
-    /// Latest-known root status of the agent binary on the remote host.
+    /// Latest-known root status of the sampler binary on the remote host.
     /// Drives the "root" vs "user scope" badge in the process table.
     var procsRoot: Bool = false
 
@@ -89,15 +89,15 @@ final class ServerViewModel: Identifiable {
     @discardableResult
     func ingest(_ s: Sample) -> HistoryPoint {
         lastSeen = s.ts
-        // Pick up the OS/arch the agent reported. Without this, remote
+        // Pick up the OS/arch the sampler reported. Without this, remote
         // hosts stay stuck on their placeholder "—" because osArch is
         // only set at VM creation time.
         let os = Self.prettyOSName(s.host.os)
         if !os.isEmpty {
             osArch = s.host.arch.isEmpty ? os : "\(os) · \(s.host.arch)"
         }
-        if !s.host.agent.isEmpty {
-            agentVersion = s.host.agent
+        if !s.host.sampler.isEmpty {
+            samplerVersion = s.host.sampler
         }
         let cpuFrac = computeCPUFraction(from: s.cpu)
         let cpuV = min(max(cpuFrac, 0), 1)
@@ -171,7 +171,7 @@ final class ServerViewModel: Identifiable {
         lastSeen = t
     }
 
-    /// Map the raw `runtime.GOOS`-style strings the agent emits onto names
+    /// Map the raw `runtime.GOOS`-style strings the sampler emits onto names
     /// a human would expect to see in the UI (darwin → macOS).
     private static func prettyOSName(_ raw: String) -> String {
         switch raw.lowercased() {
@@ -184,9 +184,9 @@ final class ServerViewModel: Identifiable {
         }
     }
 
-    /// Prefer counter-delta math when the agent supplies cumulative totals;
-    /// fall back to the agent's short-window `pct` when counters are absent
-    /// (first tick after launch, or agents that don't emit them).
+    /// Prefer counter-delta math when the sampler supplies cumulative totals;
+    /// fall back to the sampler's short-window `pct` when counters are absent
+    /// (first tick after launch, or samplers that don't emit them).
     private func computeCPUFraction(from info: CPUInfo) -> Double {
         if let total = info.totalMs, let busy = info.busyMs, total > 0 {
             defer {
@@ -205,7 +205,7 @@ final class ServerViewModel: Identifiable {
         return info.pct / 100.0
     }
 
-    /// Prefer counter-delta math for network rates. The agent's in-process
+    /// Prefer counter-delta math for network rates. The sampler's in-process
     /// `rx_bps`/`tx_bps` are sampled over a short window and massively
     /// undersample bursty traffic; cumulative counters delta'd against the
     /// previous tick give a true rate over the full poll interval.

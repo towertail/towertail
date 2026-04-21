@@ -186,7 +186,7 @@ struct DeployProgress: View {
 
         do {
             if let i = rows.firstIndex(where: { $0.id == id }) {
-                rows[i].status = .deploying("copying agent…")
+                rows[i].status = .deploying("copying sampler…")
             }
             let report = try await SSHBootstrap.bootstrapAndVerify(node: node)
             if let i = rows.firstIndex(where: { $0.id == id }) {
@@ -194,7 +194,7 @@ struct DeployProgress: View {
             }
             commit(id: id, enabled: true)
         } catch {
-            let msg = (error as? AgentInvokeError)?.errorDescription ?? error.localizedDescription
+            let msg = (error as? SamplerInvokeError)?.errorDescription ?? error.localizedDescription
             if let i = rows.firstIndex(where: { $0.id == id }) {
                 rows[i].status = .failed(msg)
             }

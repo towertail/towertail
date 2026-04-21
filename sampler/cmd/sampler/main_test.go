@@ -13,7 +13,7 @@ func TestRunVersion(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, stderr=%s", code, errb.String())
 	}
-	if !strings.HasPrefix(out.String(), "towertail-agent ") {
+	if !strings.HasPrefix(out.String(), "towertail-sampler ") {
 		t.Errorf("unexpected version output: %q", out.String())
 	}
 }

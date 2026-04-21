@@ -187,7 +187,7 @@ final class SyntheticHost: @unchecked Sendable {
             host: HostInfo(
                 name: name, os: os, arch: arch,
                 kernel: os == "linux" ? "6.6.22-1-\(arch)" : "24.0.0",
-                uptimeS: 1048273, agent: "0.1.0+mock", machineID: nil
+                uptimeS: 1048273, sampler: "0.1.0+mock", machineID: nil
             ),
             cpu: CPUInfo(pct: cpuPct, load1: cpuPct / 100 * 2, load5: cpuPct / 100 * 1.8, load15: cpuPct / 100 * 1.5, cores: 8),
             mem: MemInfo(used: usedMem, total: totalMem),

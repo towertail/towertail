@@ -34,12 +34,12 @@ targets:
     resources:
       - Sources/Design/Assets.xcassets
     preBuildScripts:
-      - name: "Bundle agents"
+      - name: "Bundle samplers"
         basedOnDependencyAnalysis: false
         script: |
           set -e
-          SRC="${SRCROOT}/../../dist/agents"
-          DEST="${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/agents"
+          SRC="${SRCROOT}/../../dist/samplers"
+          DEST="${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/samplers"
           if [ -d "$SRC" ]; then
             mkdir -p "$DEST"
             /usr/bin/rsync -a --delete "$SRC/" "$DEST/"

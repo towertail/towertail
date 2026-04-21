@@ -11,7 +11,7 @@ struct PersistedSettings: Codable, Equatable {
     var notifyCritical: Bool
     var notifyDebounceSeconds: Int
     var launchAtLogin: Bool
-    var autoUpdateAgentsEnabled: Bool
+    var autoUpdateSamplersEnabled: Bool
 
     static let defaults = PersistedSettings(
         nodes: [Node.localMac()],
@@ -24,7 +24,7 @@ struct PersistedSettings: Codable, Equatable {
         notifyCritical: true,
         notifyDebounceSeconds: 60,
         launchAtLogin: false,
-        autoUpdateAgentsEnabled: false
+        autoUpdateSamplersEnabled: false
     )
 
     enum CodingKeys: String, CodingKey {
@@ -33,7 +33,7 @@ struct PersistedSettings: Codable, Equatable {
         case cardDensity
         case notificationsEnabled, notifyWarn, notifyCritical, notifyDebounceSeconds
         case launchAtLogin
-        case autoUpdateAgentsEnabled
+        case autoUpdateSamplersEnabled
         case pollingIntervalSeconds // legacy single-value field
     }
 
@@ -47,8 +47,8 @@ struct PersistedSettings: Codable, Equatable {
         self.notifyCritical = try c.decode(Bool.self, forKey: .notifyCritical)
         self.notifyDebounceSeconds = try c.decode(Int.self, forKey: .notifyDebounceSeconds)
         self.launchAtLogin = try c.decode(Bool.self, forKey: .launchAtLogin)
-        self.autoUpdateAgentsEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoUpdateAgentsEnabled)
-            ?? PersistedSettings.defaults.autoUpdateAgentsEnabled
+        self.autoUpdateSamplersEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoUpdateSamplersEnabled)
+            ?? PersistedSettings.defaults.autoUpdateSamplersEnabled
 
         if let local = try c.decodeIfPresent(Int.self, forKey: .localPollingIntervalSeconds) {
             self.localPollingIntervalSeconds = local
@@ -78,7 +78,7 @@ struct PersistedSettings: Codable, Equatable {
         try c.encode(notifyCritical, forKey: .notifyCritical)
         try c.encode(notifyDebounceSeconds, forKey: .notifyDebounceSeconds)
         try c.encode(launchAtLogin, forKey: .launchAtLogin)
-        try c.encode(autoUpdateAgentsEnabled, forKey: .autoUpdateAgentsEnabled)
+        try c.encode(autoUpdateSamplersEnabled, forKey: .autoUpdateSamplersEnabled)
     }
 
     init(
@@ -92,7 +92,7 @@ struct PersistedSettings: Codable, Equatable {
         notifyCritical: Bool,
         notifyDebounceSeconds: Int,
         launchAtLogin: Bool,
-        autoUpdateAgentsEnabled: Bool
+        autoUpdateSamplersEnabled: Bool
     ) {
         self.nodes = nodes
         self.thresholds = thresholds
@@ -104,7 +104,7 @@ struct PersistedSettings: Codable, Equatable {
         self.notifyCritical = notifyCritical
         self.notifyDebounceSeconds = notifyDebounceSeconds
         self.launchAtLogin = launchAtLogin
-        self.autoUpdateAgentsEnabled = autoUpdateAgentsEnabled
+        self.autoUpdateSamplersEnabled = autoUpdateSamplersEnabled
     }
 }
 

@@ -2,7 +2,7 @@ package collect
 
 import (
 	"github.com/shirou/gopsutil/v4/mem"
-	"github.com/towertail/agent/internal/schema"
+	"github.com/towertail/sampler/internal/schema"
 )
 
 func Mem() (schema.MemInfo, schema.MemInfo, []string) {

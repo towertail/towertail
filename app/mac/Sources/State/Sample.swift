@@ -43,13 +43,13 @@ struct HostInfo: Decodable, Sendable {
     let arch: String
     let kernel: String
     let uptimeS: Int64
-    let agent: String
+    let sampler: String
     let machineID: String?
 
     enum CodingKeys: String, CodingKey {
         case name, os, arch, kernel
         case uptimeS = "uptime_s"
-        case agent
+        case sampler
         case machineID = "machine_id"
     }
 }

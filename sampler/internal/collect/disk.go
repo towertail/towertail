@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"github.com/shirou/gopsutil/v4/disk"
-	"github.com/towertail/agent/internal/schema"
+	"github.com/towertail/sampler/internal/schema"
 )
 
 // fstypes we never want to report — synthetic, ephemeral, or not meaningful

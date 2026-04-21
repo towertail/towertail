@@ -15,7 +15,7 @@ final class ServerViewModelTests: XCTestCase {
         let totalDisk: Int64 = 100_000_000_000
         return Sample(
             v: 1, ts: t,
-            host: HostInfo(name: "h", os: "linux", arch: "arm64", kernel: "6.6", uptimeS: 1, agent: "x", machineID: nil),
+            host: HostInfo(name: "h", os: "linux", arch: "arm64", kernel: "6.6", uptimeS: 1, sampler: "x", machineID: nil),
             cpu: CPUInfo(pct: cpuPct, load1: 0, load5: 0, load15: 0, cores: 4),
             mem: MemInfo(used: Int64(Double(totalMem) * memFrac), total: totalMem),
             swap: MemInfo(used: 0, total: 0),
@@ -43,7 +43,7 @@ final class ServerViewModelTests: XCTestCase {
         let total: Int64 = 1_000
         let s = Sample(
             v: 1, ts: Date(),
-            host: HostInfo(name: "h", os: "linux", arch: "arm64", kernel: "k", uptimeS: 1, agent: "x", machineID: nil),
+            host: HostInfo(name: "h", os: "linux", arch: "arm64", kernel: "k", uptimeS: 1, sampler: "x", machineID: nil),
             cpu: CPUInfo(pct: 0, load1: 0, load5: 0, load15: 0, cores: 1),
             mem: MemInfo(used: 0, total: 1),
             swap: MemInfo(used: 0, total: 1),
@@ -61,7 +61,7 @@ final class ServerViewModelTests: XCTestCase {
     func testNetRatesInMBps() {
         let vm = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x")
         let oneMB: Int64 = 1_048_576
-        // First tick has no prev → falls back to the agent-provided rx_bps/tx_bps.
+        // First tick has no prev → falls back to the sampler-provided rx_bps/tx_bps.
         vm.ingest(makeSample(cpuPct: 10, memFrac: 0.1, diskFrac: 0.1, rxBps: 2 * oneMB, txBps: oneMB))
         XCTAssertEqual(vm.netRxMBps, 2.0, accuracy: 0.0001)
         XCTAssertEqual(vm.netTxMBps, 1.0, accuracy: 0.0001)
@@ -71,10 +71,10 @@ final class ServerViewModelTests: XCTestCase {
         let vm = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x")
         let oneMB: Int64 = 1_048_576
         let t0 = Date()
-        // Seed prev counters via a first tick. Agent rx_bps/tx_bps are 0 now.
+        // Seed prev counters via a first tick. Sampler rx_bps/tx_bps are 0 now.
         let s1 = Sample(
             v: 1, ts: t0,
-            host: HostInfo(name: "h", os: "linux", arch: "arm64", kernel: "k", uptimeS: 1, agent: "x", machineID: nil),
+            host: HostInfo(name: "h", os: "linux", arch: "arm64", kernel: "k", uptimeS: 1, sampler: "x", machineID: nil),
             cpu: CPUInfo(pct: 0, load1: 0, load5: 0, load15: 0, cores: 1),
             mem: MemInfo(used: 1, total: 2), swap: MemInfo(used: 0, total: 0),
             disks: nil,
@@ -97,13 +97,13 @@ final class ServerViewModelTests: XCTestCase {
         XCTAssertEqual(vm.netTxMBps, 1.0, accuracy: 0.01)
     }
 
-    func testNetCounterResetFallsBackToAgentBps() {
+    func testNetCounterResetFallsBackToSamplerBps() {
         let vm = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x")
         let oneMB: Int64 = 1_048_576
         let t0 = Date()
         let s1 = Sample(
             v: 1, ts: t0,
-            host: HostInfo(name: "h", os: "linux", arch: "arm64", kernel: "k", uptimeS: 1, agent: "x", machineID: nil),
+            host: HostInfo(name: "h", os: "linux", arch: "arm64", kernel: "k", uptimeS: 1, sampler: "x", machineID: nil),
             cpu: CPUInfo(pct: 0, load1: 0, load5: 0, load15: 0, cores: 1),
             mem: MemInfo(used: 1, total: 2), swap: MemInfo(used: 0, total: 0),
             disks: nil,
@@ -136,7 +136,7 @@ final class ServerViewModelTests: XCTestCase {
         let t0 = Date()
         let s1 = Sample(
             v: 1, ts: t0,
-            host: HostInfo(name: "h", os: "linux", arch: "arm64", kernel: "6.6", uptimeS: 1, agent: "x", machineID: nil),
+            host: HostInfo(name: "h", os: "linux", arch: "arm64", kernel: "6.6", uptimeS: 1, sampler: "x", machineID: nil),
             cpu: CPUInfo(pct: 99, load1: 0, load5: 0, load15: 0, cores: 4,
                          idleMs: 8_000, totalMs: 10_000),
             mem: MemInfo(used: 1, total: 2), swap: MemInfo(used: 0, total: 0),
@@ -170,7 +170,7 @@ final class ServerViewModelTests: XCTestCase {
         let mkSample: (Int64, Int64, Double) -> Sample = { idle, total, pct in
             Sample(
                 v: 1, ts: t0,
-                host: HostInfo(name: "h", os: "linux", arch: "arm64", kernel: "6.6", uptimeS: 1, agent: "x", machineID: nil),
+                host: HostInfo(name: "h", os: "linux", arch: "arm64", kernel: "6.6", uptimeS: 1, sampler: "x", machineID: nil),
                 cpu: CPUInfo(pct: pct, load1: 0, load5: 0, load15: 0, cores: 4, idleMs: idle, totalMs: total),
                 mem: MemInfo(used: 1, total: 2), swap: MemInfo(used: 0, total: 0),
                 disks: nil, net: nil, errors: []

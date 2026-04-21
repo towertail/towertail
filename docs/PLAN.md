@@ -5,9 +5,9 @@
 This document is the single source of truth for building v1. It consolidates the research reports in `docs/`:
 
 - [`research-stats.md`](research-stats.md) — visual language analysis of exelban/Stats and mac-stats.com, palette derivation.
-- [`research-backend.md`](research-backend.md) — SSH transport, Tailscale, SQLite schema, cadence, notifications. *(The host-side probe design in that doc is superseded by [`agent.md`](agent.md) — see §4 below.)*
+- [`research-backend.md`](research-backend.md) — SSH transport, Tailscale, SQLite schema, cadence, notifications. *(The host-side probe design in that doc is superseded by [`sampler.md`](sampler.md) — see §4 below.)*
 - [`research-frontend.md`](research-frontend.md) — MenuBarExtra scaffolding, SwiftUI Charts sparklines, `@Observable` state, preferences.
-- [`agent.md`](agent.md) — Go agent binary spec: JSON schema, build matrix, bootstrap handshake, permissions.
+- [`sampler.md`](sampler.md) — Go sampler binary spec: JSON schema, build matrix, bootstrap handshake, permissions.
 
 Reference imagery in [`screenshots/`](screenshots/): the Stats popover strip (`stats-popups.png`), menu-bar widget strip (`stats-menus.png`), and `mac-stats.com` hero.
 
@@ -21,15 +21,15 @@ towertail/
 │   ├── mac/       # Phase 1 — SwiftUI macOS menu-bar app (Xcode project, v1 shipping target)
 │   ├── windows/   # Phase 2 — stub; native Windows client, not started
 │   └── (shared/)  # speculative; create only when something is truly shared
-├── agent/         # Go collector binary, 5 target triples, bundled into app/mac
+├── sampler/         # Go collector binary, 5 target triples, bundled into app/mac
 ├── server/        # Phase 3 — stub; Go control-plane service (ingest, store, alert), Dockerised, self-hostable
-├── proto/         # Phase 3 — stub; wire contract shared by agent ↔ server ↔ app
-└── docs/          # this doc, research notes, agent spec, design.pen, screenshots/
+├── proto/         # Phase 3 — stub; wire contract shared by sampler ↔ server ↔ app
+└── docs/          # this doc, research notes, sampler spec, design.pen, screenshots/
 ```
 
-Each folder has its own toolchain and CI pipeline; they never share a build graph. **Today only `app/mac` and `agent/` have real content** — `app/windows`, `server/`, and `proto/` are README-only stubs so the shape reflects the plan and future folder moves don't break Swift imports or doc links. See [Roadmap: phases](#roadmap-phases) for when each turns on.
+Each folder has its own toolchain and CI pipeline; they never share a build graph. **Today only `app/mac` and `sampler/` have real content** — `app/windows`, `server/`, and `proto/` are README-only stubs so the shape reflects the plan and future folder moves don't break Swift imports or doc links. See [Roadmap: phases](#roadmap-phases) for when each turns on.
 
-The Mac app embeds the agent binaries (`Contents/Resources/agents/<triple>/`) and pushes the right one to `~/.towertail/towertail-agent` on each monitored server on first connect. Agent and server are siblings (not nested) because they run in different trust zones with different deploy cadences; the only thing they'll share is the wire contract in `proto/`. See [`agent.md`](agent.md) for the agent details.
+The Mac app embeds the sampler binaries (`Contents/Resources/samplers/<triple>/`) and pushes the right one to `~/.towertail/towertail-sampler` on each monitored server on first connect. Sampler and server are siblings (not nested) because they run in different trust zones with different deploy cadences; the only thing they'll share is the wire contract in `proto/`. See [`sampler.md`](sampler.md) for the sampler details.
 
 <a id="roadmap-phases"></a>
 ### Roadmap: phases
@@ -38,16 +38,16 @@ The lines between these phases are deliberately sharp — each is a separately s
 
 | Phase | Scope | Components |
 |---|---|---|
-| **Phase 1 — Local Mac client** *(active)* | A single user watches their own fleet from a menu bar, all state local. No server, no account, no cloud. | `app/mac`, `agent/` |
-| **Phase 2 — Windows client** | Ship the same product on Windows. Still local-only. Shared wire format with the agent; UI is a from-scratch native build. | + `app/windows`, maybe `app/shared/` for icons/protocol decode if it's a meaningful saving |
-| **Phase 3 — Self-hosted server** | A company runs a Go service in their own network. Agents ship samples to the server (not to a desktop). Desktop clients become read-only consoles talking to the server. Alert rules live on the server. | + `server/`, `proto/` formalised |
+| **Phase 1 — Local Mac client** *(active)* | A single user watches their own fleet from a menu bar, all state local. No server, no account, no cloud. | `app/mac`, `sampler/` |
+| **Phase 2 — Windows client** | Ship the same product on Windows. Still local-only. Shared wire format with the sampler; UI is a from-scratch native build. | + `app/windows`, maybe `app/shared/` for icons/protocol decode if it's a meaningful saving |
+| **Phase 3 — Self-hosted server** | A company runs a Go service in their own network. Samplers ship samples to the server (not to a desktop). Desktop clients become read-only consoles talking to the server. Alert rules live on the server. | + `server/`, `proto/` formalised |
 | **Phase 4 — Managed cloud** | We run the server. Multi-tenant, auth, billing. Same desktop client, a URL+key away from either a customer's self-hosted server or ours. | infrastructure repo (separate), no new top-level folder |
 
 **Guardrails.**
 
 - Don't leak later-phase concerns into earlier code. Phase 1 has no "account" concept, no "server URL" field, no "org." When Phase 3 lands, those get added in one well-scoped migration, not drip-fed through v1.
-- The desktop app's data source is an abstraction behind one protocol (local-agents vs remote-server). Introducing the server in Phase 3 replaces the implementation, not the call sites.
-- `proto/` stays empty until Phase 3 starts. Before then, the JSON in [`agent.md`](agent.md) §4 *is* the contract.
+- The desktop app's data source is an abstraction behind one protocol (local-samplers vs remote-server). Introducing the server in Phase 3 replaces the implementation, not the call sites.
+- `proto/` stays empty until Phase 3 starts. Before then, the JSON in [`sampler.md`](sampler.md) §4 *is* the contract.
 
 ---
 
@@ -58,9 +58,9 @@ The lines between these phases are deliberately sharp — each is a separately s
 | Target                   | **macOS 14 Sonoma+**, Apple silicon + Intel                                                  | `MenuBarExtra(.window)` + Observation framework; covers ~85% of active Macs in 2026  |
 | Language / UI            | **Swift 5.9+, SwiftUI** for popover & prefs                                                  | Native, fast, tight binary, minimal deps                                              |
 | Distribution             | **Developer ID + notarized .dmg**, Sparkle 2 auto-update                                     | Shelling out to `ssh` rules out App Sandbox → no App Store                            |
-| Data collection          | **Shell out to `/usr/bin/ssh`** with `ControlMaster=auto, ControlPersist=10m`                | Respects ssh-agent, `~/.ssh/config`, MagicDNS; Tailscale "just works"                 |
+| Data collection          | **Shell out to `/usr/bin/ssh`** with `ControlMaster=auto, ControlPersist=10m`                | Respects ssh-sampler, `~/.ssh/config`, MagicDNS; Tailscale "just works"                 |
 | Host discovery           | **`tailscale status --json`** + a manual "Add server" path                                   | Tailnet is the target network; manual option for non-Tailscale hosts                  |
-| Metrics source on host   | **`towertail-agent`** — static Go binary pushed to `~/.towertail/towertail-agent` on first connect, `gopsutil` under the hood | Uniform JSON schema across Linux/macOS/BSD, single exec per poll, runs fine as non-root. See [`agent.md`](agent.md). |
+| Metrics source on host   | **`towertail-sampler`** — static Go binary pushed to `~/.towertail/towertail-sampler` on first connect, `gopsutil` under the hood | Uniform JSON schema across Linux/macOS/BSD, single exec per poll, runs fine as non-root. See [`sampler.md`](sampler.md). |
 | Storage                  | **SQLite via GRDB**                                                                          | ~50 MB for 20 hosts × 7 d × 30 s; WAL; idiomatic Swift                                |
 | Sampling cadence         | **30 s default** (15/30/60 s preference) with ±0–5 s per-host jitter                         | Balance between signal freshness and laptop battery                                   |
 | History retention        | **7 days** rolling (hourly delete job)                                                       | User spec; plenty for "how was last week"                                             |
@@ -214,21 +214,21 @@ All numbers use `.monospacedDigit()` so columns don't jitter across ticks.
 │   │ PerHost actor   │ │ SQLiteStore   │ (GRDB)                  │
 │   │ (one per server)│ │ WAL, 7-d ring │                         │
 │   │ poll() loop     │ └──────┬────────┘                         │
-│   │ + AgentBootstrap│        │                                  │
+│   │ + SamplerBootstrap│        │                                  │
 │   └────────┬────────┘        ▼                                  │
 │            │          ~/Library/Application Support/            │
 │            │           Towertail/history.sqlite                 │
 │            ▼                                                    │
 │   ┌──────────────────┐                                          │
-│   │ /usr/bin/ssh     │   bundled agents:                        │
+│   │ /usr/bin/ssh     │   bundled samplers:                        │
 │   │ (ControlMaster)  │   Towertail.app/Contents/Resources/      │
-│   └────────┬─────────┘     agents/<triple>/towertail-agent      │
+│   └────────┬─────────┘     samplers/<triple>/towertail-sampler      │
 └────────────┼────────────────────────────────────────────────────┘
              │   scp once  ── or ── ssh exec per poll
              ▼
    ┌─────────────────────────────────────┐
    │ Remote host (Linux / macOS)         │
-   │  ~/.towertail/towertail-agent --once          │
+   │  ~/.towertail/towertail-sampler --once          │
    │    └─ reads /proc, sysctl,          │
    │       gopsutil collectors           │
    │    └─ prints one JSON line, exits   │
@@ -237,7 +237,7 @@ All numbers use `.monospacedDigit()` so columns don't jitter across ticks.
 
 ### 3.2 Module layout
 
-Two sibling trees at the repo root. The Swift app consumes the Go agent as a build artifact, never as source.
+Two sibling trees at the repo root. The Swift app consumes the Go sampler as a build artifact, never as source.
 
 ```
 towertail/
@@ -274,7 +274,7 @@ towertail/
 │   │   │   └── Assets.xcassets              # Tint/* colors
 │   │   ├── Collectors/
 │   │   │   ├── SSHCollector.swift           # per-host actor, wraps /usr/bin/ssh
-│   │   │   ├── AgentBootstrap.swift         # detect arch, scp, chmod, self-check
+│   │   │   ├── SamplerBootstrap.swift         # detect arch, scp, chmod, self-check
 │   │   │   ├── SampleDecoder.swift          # JSONDecoder → Sample
 │   │   │   └── TailscaleDiscovery.swift
 │   │   ├── Storage/
@@ -288,26 +288,26 @@ towertail/
 │   │   └── Updates/
 │   │       └── SparkleUpdater.swift
 │   ├── Tests/
-│   │   ├── SampleDecoderTests/              # JSON fixtures from ../../agent/test/fixtures/
+│   │   ├── SampleDecoderTests/              # JSON fixtures from ../../sampler/test/fixtures/
 │   │   ├── StoreTests/
 │   │   └── ThresholdTests/
 │   ├── Resources/
-│   │   └── agents/                          # populated by Packaging/build-agents.sh
-│   │       ├── manifest.json                # sha256 per triple, agent semver
-│   │       ├── linux-amd64/towertail-agent
-│   │       ├── linux-arm64/towertail-agent
-│   │       ├── linux-armv7/towertail-agent
-│   │       ├── darwin-arm64/towertail-agent
-│   │       └── darwin-amd64/towertail-agent
+│   │   └── samplers/                          # populated by Packaging/build-samplers.sh
+│   │       ├── manifest.json                # sha256 per triple, sampler semver
+│   │       ├── linux-amd64/towertail-sampler
+│   │       ├── linux-arm64/towertail-sampler
+│   │       ├── linux-armv7/towertail-sampler
+│   │       ├── darwin-arm64/towertail-sampler
+│   │       └── darwin-amd64/towertail-sampler
 │   └── Packaging/
-│       ├── build-agents.sh                  # cross-compiles from ../../agent/, writes Resources/agents/
+│       ├── build-samplers.sh                  # cross-compiles from ../../sampler/, writes Resources/samplers/
 │       ├── create-dmg.sh
 │       ├── sparkle-sign.sh
 │       └── entitlements.plist
 │
-└── agent/                                   # Go — the remote collector
+└── sampler/                                   # Go — the remote collector
     ├── go.mod
-    ├── cmd/agent/main.go                    # see docs/agent.md §9 for the full tree
+    ├── cmd/sampler/main.go                    # see docs/sampler.md §9 for the full tree
     ├── internal/collect/ …
     ├── internal/schema/sample.go            # canonical JSON schema
     ├── Makefile                             # build-all, build-<triple>
@@ -316,7 +316,7 @@ towertail/
 
 A **`TowertailCore`** SPM package wrapping `State/`, `Collectors/`, `Storage/`, `System/Notifier`, `System/KeychainStore` is worth extracting once APIs settle — enables pure unit tests and keeps UI ignorant of SSH.
 
-The agent's JSON fixtures in `agent/test/fixtures/` are the **shared contract** between the two trees: Go tests emit them, Swift tests decode them. Any schema drift fails both CI jobs.
+The sampler's JSON fixtures in `sampler/test/fixtures/` are the **shared contract** between the two trees: Go tests emit them, Swift tests decode them. Any schema drift fails both CI jobs.
 
 ### 3.3 Key data types
 
@@ -362,31 +362,31 @@ enum ThresholdTint { case nominal, warn, critical, stale }
 
 ## 4. Data collection
 
-Host-side metrics come from a small static Go binary (`towertail-agent`) that the app bundles, pushes, and invokes over SSH. The full spec — JSON schema, flags, build matrix, bootstrap handshake, permissions — lives in [`agent.md`](agent.md). What follows is the view from the app's side.
+Host-side metrics come from a small static Go binary (`towertail-sampler`) that the app bundles, pushes, and invokes over SSH. The full spec — JSON schema, flags, build matrix, bootstrap handshake, permissions — lives in [`sampler.md`](sampler.md). What follows is the view from the app's side.
 
-### 4.1 Agent invocation
+### 4.1 Sampler invocation
 
 On every poll, the per-host actor runs:
 
 ```
-/usr/bin/ssh -F <cfg> user@dns '~/.towertail/towertail-agent --once'
+/usr/bin/ssh -F <cfg> user@dns '~/.towertail/towertail-sampler --once'
 ```
 
 - **One JSON object on stdout** per invocation. The app decodes it into a `Sample` via `SampleDecoder`. Parse failures are logged and the sample is dropped — no partial ingestion.
-- **No shell indirection.** The agent does all OS branching internally via `gopsutil`, so the app doesn't care whether the host is Linux, macOS, or BSD.
+- **No shell indirection.** The sampler does all OS branching internally via `gopsutil`, so the app doesn't care whether the host is Linux, macOS, or BSD.
 - **One-shot in v1.** Streaming mode (`--interval 1s` over a persistent SSH channel) is wired only if a user opts into sub-30s cadence in M4+.
 
 ### 4.2 Bootstrap (first connect & upgrade)
 
-`AgentBootstrap.swift` runs before the first poll for a host, and again whenever the bundled agent's SHA differs from the on-host `agent.version` file. Five steps:
+`SamplerBootstrap.swift` runs before the first poll for a host, and again whenever the bundled sampler's SHA differs from the on-host `sampler.version` file. Five steps:
 
 1. **Detect arch:** `ssh host 'uname -sm'` → one of `{linux-amd64, linux-arm64, linux-armv7, darwin-arm64, darwin-amd64}`.
-2. **Probe existing:** `ssh host '~/.towertail/towertail-agent --version'`; if missing or version mismatch, proceed to step 3.
-3. **Upload:** `scp Resources/agents/<triple>/towertail-agent host:~/.towertail/towertail-agent.new`, then `ssh host 'mkdir -p ~/.towertail && chmod +x ~/.towertail/towertail-agent.new && mv -f ~/.towertail/towertail-agent.new ~/.towertail/towertail-agent'`. Atomic replace avoids `ETXTBSY` with any concurrent streaming invocation.
-4. **Self-check:** `ssh host '~/.towertail/towertail-agent --self-check'` must print `ok`. On failure (e.g., musl-only distro where a gopsutil path needs cgo), mark host as `offline(reason: "agent incompatible")` and stop retrying until user clicks refresh.
-5. **Integrity:** `ssh host 'shasum -a 256 ~/.towertail/towertail-agent'` must match the entry in `Resources/agents/manifest.json`. Mismatch → abort bootstrap, flag as offline with "agent integrity check failed."
+2. **Probe existing:** `ssh host '~/.towertail/towertail-sampler --version'`; if missing or version mismatch, proceed to step 3.
+3. **Upload:** `scp Resources/samplers/<triple>/towertail-sampler host:~/.towertail/towertail-sampler.new`, then `ssh host 'mkdir -p ~/.towertail && chmod +x ~/.towertail/towertail-sampler.new && mv -f ~/.towertail/towertail-sampler.new ~/.towertail/towertail-sampler'`. Atomic replace avoids `ETXTBSY` with any concurrent streaming invocation.
+4. **Self-check:** `ssh host '~/.towertail/towertail-sampler --self-check'` must print `ok`. On failure (e.g., musl-only distro where a gopsutil path needs cgo), mark host as `offline(reason: "sampler incompatible")` and stop retrying until user clicks refresh.
+5. **Integrity:** `ssh host 'shasum -a 256 ~/.towertail/towertail-sampler'` must match the entry in `Resources/samplers/manifest.json`. Mismatch → abort bootstrap, flag as offline with "sampler integrity check failed."
 
-See [`agent.md` §6](agent.md) for the full handshake diagram and failure modes.
+See [`sampler.md` §6](sampler.md) for the full handshake diagram and failure modes.
 
 ### 4.3 SSH config
 
@@ -517,7 +517,7 @@ Per-server overrides exist on every rule.
 
 Per-row edit opens inline sheet with: display name, ssh user, per-server thresholds (override), tags, enable toggle.
 
-Secrets: we don't store passwords; key material comes from the user's agent. If a server requires a passphrase-protected key, we rely on the agent prompt on first connect.
+Secrets: we don't store passwords; key material comes from the user's sampler. If a server requires a passphrase-protected key, we rely on the sampler prompt on first connect.
 
 ### Thresholds
 Global defaults: three sliders per metric (warn, critical). Preview swatch changes color as you drag. "Reset to defaults" per metric.
@@ -535,20 +535,20 @@ Storage: scalars → `@AppStorage`. Structured data (`servers.json`, `thresholds
 ## 7. Testing strategy
 
 - **Unit tests**
-  - `SampleDecoder`: decode every `agent/test/fixtures/*.json` (Linux, Darwin, no-swap, counter-reset, iface-rename) → expected `Sample`. Unknown-field policy is strict — protocol drift fails CI on both sides.
+  - `SampleDecoder`: decode every `sampler/test/fixtures/*.json` (Linux, Darwin, no-swap, counter-reset, iface-rename) → expected `Sample`. Unknown-field policy is strict — protocol drift fails CI on both sides.
   - `MetricSeries`: ring buffer correctness, decimation invariants.
   - `ThresholdTint`: boundary behavior, hysteresis if we add it.
   - `AlertEvaluator`: state machine transitions using an injected clock.
-  - **Go side** (`agent/internal/collect/*_test.go`): deterministic fakes for procfs/sysctl, emit fixture JSON that the Swift tests consume.
+  - **Go side** (`sampler/internal/collect/*_test.go`): deterministic fakes for procfs/sysctl, emit fixture JSON that the Swift tests consume.
 - **Integration tests**
   - `SQLiteStore` with in-memory DB: write/read/delete round-trip, 7-day rollover.
-  - `AgentBootstrap` against a local Docker container running `sshd`: uploads the binary, runs `--self-check`, verifies sha256 — exercised in CI for `linux-amd64` and `linux-arm64` (via emulation).
-  - `SSHCollector` end-to-end: ssh into the same container, run `agent --once`, decode the sample.
+  - `SamplerBootstrap` against a local Docker container running `sshd`: uploads the binary, runs `--self-check`, verifies sha256 — exercised in CI for `linux-amd64` and `linux-arm64` (via emulation).
+  - `SSHCollector` end-to-end: ssh into the same container, run `sampler --once`, decode the sample.
 - **Snapshot tests**
   - `ServerCardView` in nominal, warn, critical, offline, stale states → PNGs checked in as fixtures.
 - **Manual QA checklist** (lives in `docs/qa-checklist.md`):
   - Cold launch with 0 / 1 / 10 / 30 servers on tailnet.
-  - Put laptop to sleep for 1 h, wake, verify agent poll reconnects via `ControlMaster`.
+  - Put laptop to sleep for 1 h, wake, verify sampler poll reconnects via `ControlMaster`.
   - Kill `tailscaled`, confirm all hosts flip to `offline(reason:)`.
   - Disk fill → notification → resolve → resolution notification.
   - Dark mode, reduced transparency, increased contrast.
@@ -584,15 +584,15 @@ A rough, ~6–8 week arc for a single engineer working part time. Each milestone
 ### M2 — Real SSH + real data (week 2)
 **Goal:** real remote polling to one manually-configured host.
 
-- `towertail-agent` v0.1: `--once`, `--version`, `--self-check`. Linux amd64/arm64 and darwin-arm64 first; other triples by end of milestone. Fixtures checked in.
-- `Packaging/build-agents.sh` cross-compiles all five targets and writes `Resources/agents/` + `manifest.json`.
-- `AgentBootstrap` handles detect → scp → chmod → self-check → sha256 verify.
-- `SSHCollector` shells out via `Process` → runs `agent --once` → decodes JSON → emits `Sample`.
+- `towertail-sampler` v0.1: `--once`, `--version`, `--self-check`. Linux amd64/arm64 and darwin-arm64 first; other triples by end of milestone. Fixtures checked in.
+- `Packaging/build-samplers.sh` cross-compiles all five targets and writes `Resources/samplers/` + `manifest.json`.
+- `SamplerBootstrap` handles detect → scp → chmod → self-check → sha256 verify.
+- `SSHCollector` shells out via `Process` → runs `sampler --once` → decodes JSON → emits `Sample`.
 - Per-host actor with 30 s loop, `ControlMaster` config.
 - `Server` record persisted in `servers.json`; Servers pane can add/remove manually.
 - Menu-bar icon switches to critical state when host metric ≥ critical.
 
-**Exit criteria:** Add a server via Settings, first connect uploads the agent within 5 s, subsequent polls show real CPU/mem/disk/net on the card. Pull ethernet, watch it go stale then offline. Reconnect, recover.
+**Exit criteria:** Add a server via Settings, first connect uploads the sampler within 5 s, subsequent polls show real CPU/mem/disk/net on the card. Pull ethernet, watch it go stale then offline. Reconnect, recover.
 
 ### M3 — Storage + sparklines over time (week 3)
 **Goal:** 7-day history, real sparklines from SQLite.
@@ -643,7 +643,7 @@ A rough, ~6–8 week arc for a single engineer working part time. Each milestone
 ## 10. Open questions & pre-M1 decisions
 
 1. **SSH user defaulting.** Do we default to the local user's `$USER`? Yes — but prompt on first add with a "looks wrong?" hint if the Tailscale hostname OS reports `linux` and our username has no shell match.
-2. **Key picking.** We read `~/.ssh/config` and offer its `Host` entries as a picker. Do we add a "use ssh-agent only" mode? **Yes, default.** Explicit key path is an advanced field.
+2. **Key picking.** We read `~/.ssh/config` and offer its `Host` entries as a picker. Do we add a "use ssh-sampler only" mode? **Yes, default.** Explicit key path is an advanced field.
 3. **Multiple mounts on disk card.** Show worst by used %. Hovering the disk cell (popover is a window, hover works) reveals a compact list of all mounts for 1.5 s. Alternative: expand-to-full-detail by clicking card → skip for v1.
 4. **What if Tailscale isn't installed?** Show an empty state in the Servers pane — "No Tailscale found. Add servers manually." Don't block the app.
 5. **Telemetry.** None in v1. No phone-home except Sparkle's appcast fetch.

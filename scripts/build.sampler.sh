@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Build the towertail-agent Go binary for all v1 target triples.
+# Build the towertail-sampler Go binary for all v1 target triples.
 #
 # Usage:
-#   scripts/build.agent.sh              # build all five targets
-#   scripts/build.agent.sh linux-arm64  # build a single target (fast iteration)
+#   scripts/build.sampler.sh              # build all five targets
+#   scripts/build.sampler.sh linux-arm64  # build a single target (fast iteration)
 #
-# Output: dist/agents/<triple>/towertail-agent (+ manifest.json with sha256s).
+# Output: dist/samplers/<triple>/towertail-sampler (+ manifest.json with sha256s).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 REPO_ROOT="$(pwd)"
-AGENT_DIR="$REPO_ROOT/agent"
-OUT_DIR="$REPO_ROOT/dist/agents"
+SAMPLER_DIR="$REPO_ROOT/sampler"
+OUT_DIR="$REPO_ROOT/dist/samplers"
 
 if ! command -v go >/dev/null 2>&1; then
   echo "error: go toolchain not found in PATH" >&2
@@ -42,19 +42,19 @@ SINGLE="${1:-}"
 build_one() {
   local triple="$1" goos="$2" goarch="$3" goarm="${4:-}"
   local dest_dir="$OUT_DIR/$triple"
-  local dest="$dest_dir/towertail-agent"
+  local dest="$dest_dir/towertail-sampler"
   mkdir -p "$dest_dir"
 
   echo "→ $triple  (GOOS=$goos GOARCH=$goarch${goarm:+ GOARM=$goarm})"
   (
-    cd "$AGENT_DIR"
+    cd "$SAMPLER_DIR"
     env -i \
       PATH="$PATH" HOME="$HOME" \
       CGO_ENABLED=0 \
       GOOS="$goos" GOARCH="$goarch" ${goarm:+GOARM="$goarm"} \
       go build -trimpath \
-        -ldflags="-s -w -X github.com/towertail/agent/internal/version.Version=$VERSION -X github.com/towertail/agent/internal/version.SHA=$SHA" \
-        -o "$dest" ./cmd/agent
+        -ldflags="-s -w -X github.com/towertail/sampler/internal/version.Version=$VERSION -X github.com/towertail/sampler/internal/version.SHA=$SHA" \
+        -o "$dest" ./cmd/sampler
   )
 
   local size
@@ -103,7 +103,7 @@ MANIFEST="$OUT_DIR/manifest.json"
   printf '  "binaries": {\n'
   first=1
   for triple in "${BUILT[@]}"; do
-    bin="$OUT_DIR/$triple/towertail-agent"
+    bin="$OUT_DIR/$triple/towertail-sampler"
     hash="$(sha256_of "$bin")"
     if [[ $first -eq 0 ]]; then printf ',\n'; fi
     printf '    "%s": "%s"' "$triple" "$hash"

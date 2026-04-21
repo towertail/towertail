@@ -14,7 +14,7 @@ func TestSampleJSONKeysMatchSwift(t *testing.T) {
 		TS: FormatTS(time.Date(2026, 4, 20, 19, 42, 7, 103*int(time.Millisecond), time.UTC)),
 		Host: HostInfo{
 			Name: "h", OS: "linux", Arch: "arm64", Kernel: "6.6",
-			UptimeS: 1000, Agent: "0.1.0+abc",
+			UptimeS: 1000, Sampler: "0.1.0+abc",
 		},
 		CPU:    CPUInfo{Pct: 42.3, Load1: 1.24, Load5: 0.98, Load15: 0.81, Cores: 8},
 		Mem:    MemInfo{Used: 10, Total: 20},

@@ -1,4 +1,4 @@
-module github.com/towertail/agent
+module github.com/towertail/sampler
 
 go 1.24.0
 

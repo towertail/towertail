@@ -265,13 +265,13 @@ This replaces `sample.net_rx_bps` / `sample.net_tx_bps` / `sample.rx_cum` / `sam
 
 | Option                               | Pros                                                                                  | Cons                                                                                                   |
 | ------------------------------------ | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| **SwiftNIO SSH** (apple/swift-nio-ssh) | First-party, async/await, modern                                                      | Low-level — you build auth, channel mgmt, keepalives yourself. No OpenSSH config / agent integration.  |
+| **SwiftNIO SSH** (apple/swift-nio-ssh) | First-party, async/await, modern                                                      | Low-level — you build auth, channel mgmt, keepalives yourself. No OpenSSH config / sampler integration.  |
 | **Citadel**                            | Higher-level API over SwiftNIO SSH                                                  | Smaller community; doesn't read `~/.ssh/config`; limited Tailscale-aware behaviour.                    |
-| **Shell out to `/usr/bin/ssh`**        | Zero integration cost. Respects `~/.ssh/config`, `ssh-agent`, `ControlMaster`, Tailscale's MagicDNS. Certs, jump hosts, `known_hosts`, 2FA prompts all Just Work. | Process-per-poll overhead unless you use `ControlMaster`. Parsing stderr is fiddly.                    |
+| **Shell out to `/usr/bin/ssh`**        | Zero integration cost. Respects `~/.ssh/config`, `ssh-sampler`, `ControlMaster`, Tailscale's MagicDNS. Certs, jump hosts, `known_hosts`, 2FA prompts all Just Work. | Process-per-poll overhead unless you use `ControlMaster`. Parsing stderr is fiddly.                    |
 
 **Recommendation: shell out to `/usr/bin/ssh` with `ControlMaster=auto` + `ControlPersist=10m`.**
 
-For Tailscale, `ssh user@hostname.tailnet.ts.net` via system SSH is the path of least resistance — ssh-agent, keys, certs, `known_hosts` all Just Work. A pure-Swift client has to reimplement that stack. `ControlMaster` multiplexes over one persistent TCP connection per host; subsequent polls skip the handshake and finish in <50ms.
+For Tailscale, `ssh user@hostname.tailnet.ts.net` via system SSH is the path of least resistance — ssh-sampler, keys, certs, `known_hosts` all Just Work. A pure-Swift client has to reimplement that stack. `ControlMaster` multiplexes over one persistent TCP connection per host; subsequent polls skip the handshake and finish in <50ms.
 
 Config in Application Support:
 
@@ -481,7 +481,7 @@ Why **not** one long-lived `ssh host 'while true; do probe.sh; sleep 10; done'` 
 - `ControlMaster` already gives us the performance win.
 
 Why **not** a pure-Swift SSH client (SwiftNIO SSH / Citadel) with a held connection?
-- Have to reimplement `~/.ssh/config`, agent, certs, MagicDNS, `known_hosts`, jump hosts — see §2 tradeoff table.
+- Have to reimplement `~/.ssh/config`, sampler, certs, MagicDNS, `known_hosts`, jump hosts — see §2 tradeoff table.
 
 ---
 
@@ -739,7 +739,7 @@ Any row with `pct > 0.90` fires `disk_gt_90` scoped to `(host_id, mount)`. Notif
 ## Summary
 
 - **Collection**: one `probe.sh` per host, dispatched via `/usr/bin/ssh` with `ControlMaster`. OS-branch inside the script; emit one line of `key=value` + a JSON disks array.
-- **SSH**: shell out to system SSH — Tailscale MagicDNS + ssh-agent + `known_hosts` all work for free. Not sandbox-compatible; Developer ID distribution.
+- **SSH**: shell out to system SSH — Tailscale MagicDNS + ssh-sampler + `known_hosts` all work for free. Not sandbox-compatible; Developer ID distribution.
 - **Tailscale**: `tailscale status --json`, filter by `Online` + tag; refresh every 30s.
 - **Identity**: `machine_id` from `/etc/machine-id` (Linux) or `IOPlatformUUID` (Darwin), falling back to a Mac-generated UUID persisted at `~/.towertail/host-id`. Hostname is mutable display metadata.
 - **Storage**: SQLite/GRDB, `(host_id, ts)` composite PK, ~20MB for 20 hosts × 24h × 10s. WAL + 10-minute purge job.

@@ -6,7 +6,7 @@ struct ServerCardView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AppSettings.self) private var settings
     @Environment(NodeStore.self) private var nodeStore
-    @Environment(AgentUpdateCoordinator.self) private var agentUpdater
+    @Environment(SamplerUpdateCoordinator.self) private var samplerUpdater
 
     private var node: Node? { nodeStore.node(withId: vm.id) }
 
@@ -84,15 +84,15 @@ struct ServerCardView: View {
                     .foregroundStyle(.secondary)
                     .help(snoozeTooltip)
             }
-            if agentUpdater.isUpdating(id: vm.id) {
+            if samplerUpdater.isUpdating(id: vm.id) {
                 HStack(spacing: 4) {
                     ProgressView()
                         .controlSize(.mini)
-                    Text("Updating agent…")
+                    Text("Updating sampler…")
                         .font(Typography.metaText)
                         .foregroundStyle(.secondary)
                 }
-                .help("Pushing the bundled agent binary because the remote version doesn't match this app build.")
+                .help("Pushing the bundled sampler binary because the remote version doesn't match this app build.")
             }
             Spacer(minLength: 4)
             Text(vm.osArch)

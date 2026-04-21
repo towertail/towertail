@@ -13,7 +13,7 @@ final class SampleDecodingTests: XCTestCase {
             "arch": "arm64",
             "kernel": "24.6.0",
             "uptime_s": 12345,
-            "agent": "0.1.0+abc",
+            "sampler": "0.1.0+abc",
             "machine_id": "24c63e84-ed40-5734-bf08-72572b9bea7d"
           },
           "cpu": { "pct": 42.5, "load_1": 1.2, "load_5": 1.1, "load_15": 0.9, "cores": 10 },
@@ -43,7 +43,7 @@ final class SampleDecodingTests: XCTestCase {
 
     func testDecodesNDJsonStream() throws {
         let line = """
-        {"v":1,"ts":"2026-04-20T12:00:00Z","host":{"name":"h","os":"linux","arch":"arm64","kernel":"6.6","uptime_s":1,"agent":"x"},"cpu":{"pct":10,"load_1":0,"load_5":0,"load_15":0,"cores":4},"mem":{"used":1,"total":2},"swap":{"used":0,"total":0},"errors":[]}
+        {"v":1,"ts":"2026-04-20T12:00:00Z","host":{"name":"h","os":"linux","arch":"arm64","kernel":"6.6","uptime_s":1,"sampler":"x"},"cpu":{"pct":10,"load_1":0,"load_5":0,"load_15":0,"cores":4},"mem":{"used":1,"total":2},"swap":{"used":0,"total":0},"errors":[]}
         """
         let blob = ([line, line, line].joined(separator: "\n")).data(using: .utf8)!
         let decoder = SampleCodec.decoder()
@@ -63,7 +63,7 @@ final class SampleDecodingTests: XCTestCase {
         {
           "v": 1,
           "ts": "2026-04-21T12:00:00.000Z",
-          "host": {"name":"h","os":"linux","arch":"arm64","kernel":"6.6","uptime_s":1,"agent":"x"},
+          "host": {"name":"h","os":"linux","arch":"arm64","kernel":"6.6","uptime_s":1,"sampler":"x"},
           "cpu": {"pct":10,"load_1":0,"load_5":0,"load_15":0,"cores":4},
           "mem": {"used":1,"total":2},
           "swap": {"used":0,"total":0},
@@ -95,7 +95,7 @@ final class SampleDecodingTests: XCTestCase {
 
     func testMissingMachineIDDecodes() throws {
         let json = """
-        {"v":1,"ts":"2026-04-20T12:00:00Z","host":{"name":"h","os":"linux","arch":"arm64","kernel":"6.6","uptime_s":1,"agent":"x"},"cpu":{"pct":10,"load_1":0,"load_5":0,"load_15":0,"cores":4},"mem":{"used":1,"total":2},"swap":{"used":0,"total":0},"errors":[]}
+        {"v":1,"ts":"2026-04-20T12:00:00Z","host":{"name":"h","os":"linux","arch":"arm64","kernel":"6.6","uptime_s":1,"sampler":"x"},"cpu":{"pct":10,"load_1":0,"load_5":0,"load_15":0,"cores":4},"mem":{"used":1,"total":2},"swap":{"used":0,"total":0},"errors":[]}
         """.data(using: .utf8)!
         let sample = try SampleCodec.decoder().decode(Sample.self, from: json)
         XCTAssertNil(sample.host.machineID)

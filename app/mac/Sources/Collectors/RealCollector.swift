@@ -4,20 +4,20 @@ final class RealCollector: Collector {
     let nodeStore: NodeStore
     let settings: AppSettings
     let history: HistoryStore?
-    let invokerFactory: @Sendable (Node) -> AgentInvoker
-    let agentUpdater: AgentUpdateCoordinator?
+    let invokerFactory: @Sendable (Node) -> SamplerInvoker
+    let samplerUpdater: SamplerUpdateCoordinator?
 
     init(
         nodeStore: NodeStore,
         settings: AppSettings,
         history: HistoryStore? = nil,
-        agentUpdater: AgentUpdateCoordinator? = nil,
-        invokerFactory: @escaping @Sendable (Node) -> AgentInvoker = makeInvoker(for:)
+        samplerUpdater: SamplerUpdateCoordinator? = nil,
+        invokerFactory: @escaping @Sendable (Node) -> SamplerInvoker = makeInvoker(for:)
     ) {
         self.nodeStore = nodeStore
         self.settings = settings
         self.history = history
-        self.agentUpdater = agentUpdater
+        self.samplerUpdater = samplerUpdater
         self.invokerFactory = invokerFactory
     }
 
@@ -45,7 +45,7 @@ final class RealCollector: Collector {
                 let factory = self.invokerFactory
                 let settings = self.settings
                 let history = self.history
-                let updater = self.agentUpdater
+                let updater = self.samplerUpdater
                 tasks[node.id] = Task.detached(priority: .utility) {
                     await Self.pacer(
                         node: node,
@@ -53,7 +53,7 @@ final class RealCollector: Collector {
                         sink: sink,
                         settings: settings,
                         history: history,
-                        agentUpdater: updater
+                        samplerUpdater: updater
                     )
                 }
             }
@@ -67,11 +67,11 @@ final class RealCollector: Collector {
     /// every tick so slider changes apply immediately.
     private static func pacer(
         node: Node,
-        factory: @Sendable (Node) -> AgentInvoker,
+        factory: @Sendable (Node) -> SamplerInvoker,
         sink: ServerStore,
         settings: AppSettings,
         history: HistoryStore?,
-        agentUpdater: AgentUpdateCoordinator?
+        samplerUpdater: SamplerUpdateCoordinator?
     ) async {
         let kind = node.kind
         let invoker = factory(node)
@@ -84,10 +84,10 @@ final class RealCollector: Collector {
                     // every successful sample. Read the opt-in flag here so
                     // the coordinator never touches AppSettings — keeps the
                     // two observables on separate dependency paths.
-                    let enabled = settings.autoUpdateAgentsEnabled
-                    agentUpdater?.maybeUpdate(
+                    let enabled = settings.autoUpdateSamplersEnabled
+                    samplerUpdater?.maybeUpdate(
                         node: node,
-                        reportedAgent: sample.host.agent,
+                        reportedSampler: sample.host.sampler,
                         enabled: enabled
                     )
                 }
@@ -134,9 +134,9 @@ final class RealCollector: Collector {
 }
 
 private func shortReason(for error: Error) -> String {
-    if let agentErr = error as? AgentInvokeError {
-        switch agentErr {
-        case .binaryMissing: return "agent binary missing"
+    if let samplerErr = error as? SamplerInvokeError {
+        switch samplerErr {
+        case .binaryMissing: return "sampler binary missing"
         case .timeout: return "timeout"
         case .emptyOutput: return "no output"
         case .sshFailed(let stderr, let code):

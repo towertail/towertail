@@ -8,7 +8,7 @@ struct TowertailApp: App {
 
     init() {
         // Start the collector pacer as soon as the app launches, not when
-        // the menu-bar popover is first opened. Otherwise the agent sits
+        // the menu-bar popover is first opened. Otherwise the sampler sits
         // idle and no history accumulates until the user clicks the icon.
         env.start()
     }
@@ -19,7 +19,7 @@ struct TowertailApp: App {
                 .environment(env.store)
                 .environment(env.settings)
                 .environment(env.nodeStore)
-                .environment(env.agentUpdater)
+                .environment(env.samplerUpdater)
         } label: {
             // The menu-bar label is instantiated eagerly at launch (unlike
             // the popover content). Piggyback the tap-routing installer
@@ -46,7 +46,7 @@ struct TowertailApp: App {
                 .environment(env.store)
                 .environment(env.settings)
                 .environment(env.nodeStore)
-                .environment(env.agentUpdater)
+                .environment(env.samplerUpdater)
                 // Injected so the Servers pane's Version column can show
                 // "updating…" while a push is in flight. Safe now that
                 // PreferencesWindow only instantiates the active tab's

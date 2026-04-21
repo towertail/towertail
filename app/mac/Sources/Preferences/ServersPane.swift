@@ -85,10 +85,10 @@ struct ServersPane: View {
                 Button {
                     runBulkReinstall()
                 } label: {
-                    Text(sshSelectionCount > 1 ? "Reinstall agent (\(sshSelectionCount))" : "Reinstall agent")
+                    Text(sshSelectionCount > 1 ? "Reinstall sampler (\(sshSelectionCount))" : "Reinstall sampler")
                 }
                 .disabled(!hasSSHSelection || bulkRunning)
-                .help("Force-upload the bundled agent binary to ~/.towertail/towertail-agent on every selected SSH host. Use this after upgrading the app when remote agents are out of date.")
+                .help("Force-upload the bundled sampler binary to ~/.towertail/towertail-sampler on every selected SSH host. Use this after upgrading the app when remote samplers are out of date.")
 
                 if bulkRunning {
                     ProgressView().controlSize(.small)
@@ -117,7 +117,7 @@ struct ServersPane: View {
             // SwiftUI 6 bug).
             AutoUpdateToggleRow()
 
-            Text("SSH nodes require the agent at `~/.towertail/towertail-agent` on the remote host. **Test** runs a sample end-to-end (uploading the bundled binary if missing). **Reinstall agent** force-pushes the binary — use this after upgrading Towertail if the remote agent is out of date. Key-based auth only; add the relevant key to `~/.ssh/config` or an ssh-agent.")
+            Text("SSH nodes require the sampler at `~/.towertail/towertail-sampler` on the remote host. **Test** runs a sample end-to-end (uploading the bundled binary if missing). **Reinstall sampler** force-pushes the binary — use this after upgrading Towertail if the remote sampler is out of date. Key-based auth only; add the relevant key to `~/.ssh/config` or an ssh-sampler.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -137,13 +137,13 @@ struct ServersPane: View {
         }
     }
 
-    /// Force-uploads the bundled agent to the remote host and runs a sanity
+    /// Force-uploads the bundled sampler to the remote host and runs a sanity
     /// sample. Distinct from Test so users have an unambiguous way to push
     /// a new binary (e.g. after upgrading the Mac app) without reading
     /// source to realize Test already does this as a side effect.
-    private func reinstallAgent(node: Node) {
+    private func reinstallSampler(node: Node) {
         guard node.kind == .ssh else { return }
-        testResult = TestResult(ok: true, message: "Reinstalling agent on \(node.displayName)…")
+        testResult = TestResult(ok: true, message: "Reinstalling sampler on \(node.displayName)…")
         Task {
             do {
                 let report = try await SSHBootstrap.bootstrapAndVerify(node: node)
@@ -161,7 +161,7 @@ struct ServersPane: View {
                     )
                 }
             } catch {
-                let msg = (error as? AgentInvokeError)?.errorDescription ?? error.localizedDescription
+                let msg = (error as? SamplerInvokeError)?.errorDescription ?? error.localizedDescription
                 await MainActor.run {
                     testResult = TestResult(ok: false, message: "Reinstall failed: \(msg)")
                 }
@@ -193,7 +193,7 @@ struct ServersPane: View {
                     }
                 }
             } catch {
-                let msg = (error as? AgentInvokeError)?.errorDescription ?? error.localizedDescription
+                let msg = (error as? SamplerInvokeError)?.errorDescription ?? error.localizedDescription
                 await MainActor.run {
                     testResult = TestResult(ok: false, message: msg)
                 }
@@ -227,7 +227,7 @@ struct ServersPane: View {
                     }
                     okCount += 1
                 } catch {
-                    let msg = (error as? AgentInvokeError)?.errorDescription ?? error.localizedDescription
+                    let msg = (error as? SamplerInvokeError)?.errorDescription ?? error.localizedDescription
                     failures.append((node.displayName, msg))
                 }
             }
@@ -247,18 +247,18 @@ struct ServersPane: View {
         }
     }
 
-    /// Force-reinstalls the agent on every selected SSH node. Local nodes
+    /// Force-reinstalls the sampler on every selected SSH node. Local nodes
     /// in the selection are skipped silently — their binary is always
     /// served from the bundled Resources path.
     private func runBulkReinstall() {
         let nodes = selectedNodes.filter { $0.kind == .ssh }
         guard !nodes.isEmpty else { return }
         if nodes.count == 1 {
-            reinstallAgent(node: nodes[0])
+            reinstallSampler(node: nodes[0])
             return
         }
         bulkRunning = true
-        testResult = TestResult(ok: true, message: "Reinstalling agent on \(nodes.count) hosts…")
+        testResult = TestResult(ok: true, message: "Reinstalling sampler on \(nodes.count) hosts…")
         Task {
             var okCount = 0
             var failures: [(String, String)] = []
@@ -267,14 +267,14 @@ struct ServersPane: View {
                     _ = try await SSHBootstrap.bootstrapAndVerify(node: node)
                     okCount += 1
                 } catch {
-                    let msg = (error as? AgentInvokeError)?.errorDescription ?? error.localizedDescription
+                    let msg = (error as? SamplerInvokeError)?.errorDescription ?? error.localizedDescription
                     failures.append((node.displayName, msg))
                 }
             }
             await MainActor.run {
                 bulkRunning = false
                 if failures.isEmpty {
-                    testResult = TestResult(ok: true, message: "Reinstalled agent on \(okCount)/\(nodes.count) hosts")
+                    testResult = TestResult(ok: true, message: "Reinstalled sampler on \(okCount)/\(nodes.count) hosts")
                 } else {
                     let head = "Reinstalled \(okCount)/\(nodes.count) · \(failures.count) failed:"
                     let detail = failures.prefix(3)
@@ -308,7 +308,7 @@ enum ServerEditSheetContext: Identifiable {
 private struct ServersTable: View {
     @Environment(NodeStore.self) private var nodeStore
     @Environment(ServerStore.self) private var serverStore
-    @Environment(AgentUpdateCoordinator.self) private var agentUpdater
+    @Environment(SamplerUpdateCoordinator.self) private var samplerUpdater
     @Binding var selection: Set<Node.ID>
 
     var body: some View {
@@ -348,15 +348,15 @@ private struct ServersTable: View {
 
     @ViewBuilder
     private func versionCell(for n: Node) -> some View {
-        if agentUpdater.isUpdating(id: n.id) {
+        if samplerUpdater.isUpdating(id: n.id) {
             HStack(spacing: 4) {
                 ProgressView().controlSize(.mini)
                 Text("updating…")
                     .foregroundStyle(.secondary)
             }
         } else if let vm = serverStore.serverVMs.first(where: { $0.id == n.id }),
-                  !vm.agentVersion.isEmpty {
-            Text(vm.agentVersion)
+                  !vm.samplerVersion.isEmpty {
+            Text(vm.samplerVersion)
                 .font(.system(.body, design: .monospaced))
                 .foregroundStyle(.secondary)
         } else {
@@ -391,10 +391,10 @@ private struct AutoUpdateToggleRow: View {
     @Environment(AppSettings.self) private var appSettings
 
     var body: some View {
-        Toggle("Auto-update remote agents", isOn: Binding(
-            get: { appSettings.autoUpdateAgentsEnabled },
-            set: { appSettings.autoUpdateAgentsEnabled = $0; appSettings.persist() }
+        Toggle("Auto-update remote samplers", isOn: Binding(
+            get: { appSettings.autoUpdateSamplersEnabled },
+            set: { appSettings.autoUpdateSamplersEnabled = $0; appSettings.persist() }
         ))
-        .help("When enabled, Towertail silently pushes the bundled agent binary to any SSH host running an older build. Off by default — turn on only after verifying Test works for your hosts.")
+        .help("When enabled, Towertail silently pushes the bundled sampler binary to any SSH host running an older build. Off by default — turn on only after verifying Test works for your hosts.")
     }
 }

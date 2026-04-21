@@ -3,8 +3,8 @@ import Foundation
 enum SSHBootstrap {
     static let sshExecutable = URL(fileURLWithPath: "/usr/bin/ssh")
     static let scpExecutable = URL(fileURLWithPath: "/usr/bin/scp")
-    static let remoteAgentDir = "~/.towertail"
-    static let remoteAgentPath = "~/.towertail/towertail-agent"
+    static let remoteSamplerDir = "~/.towertail"
+    static let remoteSamplerPath = "~/.towertail/towertail-sampler"
 
     static let commonFlags: [String] = [
         "-o", "BatchMode=yes",
@@ -19,13 +19,13 @@ enum SSHBootstrap {
         let r = try await ProcessRunner.run(executable: sshExecutable, arguments: args)
         if r.exitCode != 0 {
             let err = String(data: r.stderr, encoding: .utf8) ?? ""
-            throw AgentInvokeError.sshFailed(stderr: err, exitCode: r.exitCode)
+            throw SamplerInvokeError.sshFailed(stderr: err, exitCode: r.exitCode)
         }
         let out = String(data: r.stdout, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let parts = out.split(separator: " ").map(String.init)
         guard parts.count == 2 else {
-            throw AgentInvokeError.misconfigured("unexpected uname output: \(out)")
+            throw SamplerInvokeError.misconfigured("unexpected uname output: \(out)")
         }
         let os = parts[0].lowercased()
         let arch = parts[1].lowercased()
@@ -33,40 +33,40 @@ enum SSHBootstrap {
         switch os {
         case "darwin": goos = "darwin"
         case "linux": goos = "linux"
-        default: throw AgentInvokeError.misconfigured("unsupported remote OS: \(os)")
+        default: throw SamplerInvokeError.misconfigured("unsupported remote OS: \(os)")
         }
         let goarch: String
         switch arch {
         case "arm64", "aarch64": goarch = "arm64"
         case "x86_64", "amd64": goarch = "amd64"
-        default: throw AgentInvokeError.misconfigured("unsupported remote arch: \(arch)")
+        default: throw SamplerInvokeError.misconfigured("unsupported remote arch: \(arch)")
         }
         return "\(goos)-\(goarch)"
     }
 
-    /// Locates the bundled agent binary for `triple` inside Towertail.app/Contents/Resources/agents/.
+    /// Locates the bundled sampler binary for `triple` inside Towertail.app/Contents/Resources/samplers/.
     static func bundledBinary(forTriple triple: String) -> URL? {
         if let url = Bundle.main.url(
-            forResource: "towertail-agent",
+            forResource: "towertail-sampler",
             withExtension: nil,
-            subdirectory: "agents/\(triple)"
+            subdirectory: "samplers/\(triple)"
         ) {
             return url
         }
         if let resourceURL = Bundle.main.resourceURL {
             let candidate = resourceURL
-                .appendingPathComponent("agents", isDirectory: true)
+                .appendingPathComponent("samplers", isDirectory: true)
                 .appendingPathComponent(triple, isDirectory: true)
-                .appendingPathComponent("towertail-agent")
+                .appendingPathComponent("towertail-sampler")
             if FileManager.default.fileExists(atPath: candidate.path) {
                 return candidate
             }
         }
-        // Development fallback — walk up to find dist/agents/<triple>/towertail-agent
+        // Development fallback — walk up to find dist/samplers/<triple>/towertail-sampler
         let fm = FileManager.default
         var url = URL(fileURLWithPath: fm.currentDirectoryPath)
         for _ in 0..<8 {
-            let candidate = url.appendingPathComponent("dist/agents/\(triple)/towertail-agent")
+            let candidate = url.appendingPathComponent("dist/samplers/\(triple)/towertail-sampler")
             if fm.fileExists(atPath: candidate.path) {
                 return candidate
             }
@@ -86,17 +86,17 @@ enum SSHBootstrap {
         timeout: TimeInterval = 30
     ) async throws -> String {
         // mkdir -p ~/.towertail
-        let mkdirArgs = commonFlags + ["\(user)@\(host)", "mkdir -p \(remoteAgentDir)"]
+        let mkdirArgs = commonFlags + ["\(user)@\(host)", "mkdir -p \(remoteSamplerDir)"]
         let mk = try await ProcessRunner.run(executable: sshExecutable, arguments: mkdirArgs)
         if mk.exitCode != 0 {
             let err = String(data: mk.stderr, encoding: .utf8) ?? ""
-            throw AgentInvokeError.sshFailed(stderr: err, exitCode: mk.exitCode)
+            throw SamplerInvokeError.sshFailed(stderr: err, exitCode: mk.exitCode)
         }
 
-        // scp localBinary user@host:~/.towertail/towertail-agent
+        // scp localBinary user@host:~/.towertail/towertail-sampler
         let scpArgs = commonFlags + [
             localBinary.path,
-            "\(user)@\(host):\(remoteAgentPath)",
+            "\(user)@\(host):\(remoteSamplerPath)",
         ]
         let scp = try await ProcessRunner.run(
             executable: scpExecutable,
@@ -105,34 +105,34 @@ enum SSHBootstrap {
         )
         if scp.exitCode != 0 {
             let err = String(data: scp.stderr, encoding: .utf8) ?? ""
-            throw AgentInvokeError.sshFailed(stderr: err, exitCode: scp.exitCode)
+            throw SamplerInvokeError.sshFailed(stderr: err, exitCode: scp.exitCode)
         }
 
-        // chmod +x ~/.towertail/towertail-agent
-        let chmodArgs = commonFlags + ["\(user)@\(host)", "chmod +x \(remoteAgentPath)"]
+        // chmod +x ~/.towertail/towertail-sampler
+        let chmodArgs = commonFlags + ["\(user)@\(host)", "chmod +x \(remoteSamplerPath)"]
         let ch = try await ProcessRunner.run(executable: sshExecutable, arguments: chmodArgs)
         if ch.exitCode != 0 {
             let err = String(data: ch.stderr, encoding: .utf8) ?? ""
-            throw AgentInvokeError.sshFailed(stderr: err, exitCode: ch.exitCode)
+            throw SamplerInvokeError.sshFailed(stderr: err, exitCode: ch.exitCode)
         }
-        return remoteAgentPath
+        return remoteSamplerPath
     }
 
-    /// Runs `~/.towertail/towertail-agent --once` over ssh and decodes the sample.
+    /// Runs `~/.towertail/towertail-sampler --once` over ssh and decodes the sample.
     static func runOnce(user: String, host: String) async throws -> Sample {
-        let args = commonFlags + ["\(user)@\(host)", "\(remoteAgentPath) --once"]
+        let args = commonFlags + ["\(user)@\(host)", "\(remoteSamplerPath) --once"]
         let r = try await ProcessRunner.run(executable: sshExecutable, arguments: args)
         if r.exitCode != 0 {
             let err = String(data: r.stderr, encoding: .utf8) ?? ""
-            throw AgentInvokeError.sshFailed(stderr: err, exitCode: r.exitCode)
+            throw SamplerInvokeError.sshFailed(stderr: err, exitCode: r.exitCode)
         }
         guard !r.stdout.isEmpty else {
-            throw AgentInvokeError.emptyOutput
+            throw SamplerInvokeError.emptyOutput
         }
         do {
             return try SampleCodec.decoder().decode(Sample.self, from: r.stdout)
         } catch {
-            throw AgentInvokeError.decodeFailed(underlying: error)
+            throw SamplerInvokeError.decodeFailed(underlying: error)
         }
     }
 }
@@ -151,12 +151,12 @@ extension SSHBootstrap {
               let user = node.sshUser, !user.isEmpty,
               let host = node.sshHost, !host.isEmpty
         else {
-            throw AgentInvokeError.misconfigured("SSH node missing user or host")
+            throw SamplerInvokeError.misconfigured("SSH node missing user or host")
         }
         let triple = try await detectTriple(user: user, host: host)
         guard let binary = bundledBinary(forTriple: triple) else {
-            throw AgentInvokeError.misconfigured(
-                "no bundled agent for remote triple \(triple) — expected at agents/\(triple)/towertail-agent"
+            throw SamplerInvokeError.misconfigured(
+                "no bundled sampler for remote triple \(triple) — expected at samplers/\(triple)/towertail-sampler"
             )
         }
         let remotePath = try await copyBinary(localBinary: binary, user: user, host: host)

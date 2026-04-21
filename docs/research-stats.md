@@ -45,7 +45,7 @@ The popover is a single vertical `NSStackView` with `spacing = 0`. Sections are 
 - **Threshold inputs** are dropdowns (not free-text), values from `notificationLevels` in `Kit/types.swift`: `Disabled, 3%, 5%, 10%, 15% … 100%`. Each metric has its own threshold (CPU total/system/user/eCores/pCores; RAM/Swap; Disk free; Net throughput; Battery level/temperature).
 - **Notifications** route through `UNUserNotificationCenter`. Each notification has a stable ID (e.g. `totalUsage`) so it dedupes — Stats re-fires only when the value crosses back below and above the threshold again.
 - **Update intervals** for the *app itself*: `Silent / At start / Once per day / Once per week / Once per month / Never`.
-- **Color picker per widget**: the widget can be tinted from `SColor.allColors` (~25 named choices including `systemAccent`, monochrome, all `system*` colors plus extras like `magenta`, `cyan`, `indigo`). Two semantic options on top: `utilization` (auto-color by value), `pressure` (RAM-pressure-aware), `cluster` (per-CPU-cluster coloring). This is the elegant part: you pick *how* a widget gets colored, not just one color.
+- **Color picker per widget**: the widget can be tinted from `SColor.allColors` (~25 named choices including `systemAccent`, monochrome, all `system*` colors plus extras like `msamplera`, `cyan`, `indigo`). Two semantic options on top: `utilization` (auto-color by value), `pressure` (RAM-pressure-aware), `cluster` (per-CPU-cluster coloring). This is the elegant part: you pick *how* a widget gets colored, not just one color.
 
 ## 4. What to borrow vs. what to drop for Towertail
 

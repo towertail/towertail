@@ -9,7 +9,7 @@
 # Prerequisites:
 #   - Xcode command line tools
 #   - xcodegen (brew install xcodegen)
-#   - dist/agents/ populated (run scripts/build.agent.sh first)
+#   - dist/samplers/ populated (run scripts/build.sampler.sh first)
 #
 # Output: app/mac/build/<Configuration>/Towertail.app
 set -euo pipefail
@@ -25,9 +25,9 @@ if ! command -v xcodegen >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ ! -d "$REPO_ROOT/dist/agents/darwin-arm64" ]]; then
-  echo "warning: dist/agents/ missing — running scripts/build.agent.sh first" >&2
-  "$REPO_ROOT/scripts/build.agent.sh"
+if [[ ! -d "$REPO_ROOT/dist/samplers/darwin-arm64" ]]; then
+  echo "warning: dist/samplers/ missing — running scripts/build.sampler.sh first" >&2
+  "$REPO_ROOT/scripts/build.sampler.sh"
 fi
 
 echo "→ regenerating Xcode project"

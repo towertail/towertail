@@ -10,9 +10,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/towertail/agent/internal/collect"
-	"github.com/towertail/agent/internal/schema"
-	"github.com/towertail/agent/internal/version"
+	"github.com/towertail/sampler/internal/collect"
+	"github.com/towertail/sampler/internal/schema"
+	"github.com/towertail/sampler/internal/version"
 )
 
 type options struct {
@@ -27,7 +27,7 @@ type options struct {
 }
 
 func parseFlags(args []string) (*options, error) {
-	fs := flag.NewFlagSet("towertail-agent", flag.ContinueOnError)
+	fs := flag.NewFlagSet("towertail-sampler", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	opts := &options{}
 	fs.BoolVar(&opts.once, "once", false, "emit one sample and exit")
@@ -114,7 +114,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	if opts.ver {
-		fmt.Fprintf(stdout, "towertail-agent %s %s\n", version.Version, version.SHA)
+		fmt.Fprintf(stdout, "towertail-sampler %s %s\n", version.Version, version.SHA)
 		return 0
 	}
 

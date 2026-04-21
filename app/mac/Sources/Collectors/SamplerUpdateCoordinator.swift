@@ -1,16 +1,16 @@
 import Foundation
 import Observation
 
-/// Decides when a remote SSH agent is outdated and silently redeploys it.
+/// Decides when a remote SSH sampler is outdated and silently redeploys it.
 /// Observable so SwiftUI cards can show an "Updating…" affordance while a
 /// push is in flight; main-actor because its state is read by views and
 /// mutated by the collector callback.
 @Observable
 @MainActor
-final class AgentUpdateCoordinator {
-    private let manifest: AgentManifest?
+final class SamplerUpdateCoordinator {
+    private let manifest: SamplerManifest?
     /// Node IDs with an in-flight copyBinary task. Observed by the UI to
-    /// render the per-card "Updating agent…" affordance.
+    /// render the per-card "Updating sampler…" affordance.
     private(set) var updatingNodeIDs: Set<UUID> = []
     /// Cooldown table: a failed push won't be retried for the cooldown
     /// window. Prevents a loop of scp failures from hammering the host.
@@ -23,7 +23,7 @@ final class AgentUpdateCoordinator {
     /// remote side time to settle avoids spamming on a misconfigured host.
     private let cooldown: TimeInterval = 300
 
-    init(manifest: AgentManifest?) {
+    init(manifest: SamplerManifest?) {
         self.manifest = manifest
     }
 
@@ -32,17 +32,17 @@ final class AgentUpdateCoordinator {
     }
 
     /// Called from the collector pacer after each successful sample. The
-    /// caller is responsible for checking `settings.autoUpdateAgentsEnabled`
+    /// caller is responsible for checking `settings.autoUpdateSamplersEnabled`
     /// and passing `enabled: true` only when the user has opted in — keeping
     /// settings access out of this class avoids crossing two observable
     /// dependency graphs in one call and is simpler to reason about.
     /// No-op for local nodes or when the manifest isn't available.
-    func maybeUpdate(node: Node, reportedAgent: String, enabled: Bool) {
+    func maybeUpdate(node: Node, reportedSampler: String, enabled: Bool) {
         guard enabled else { return }
         guard node.kind == .ssh else { return }
         guard let manifest else { return }
-        guard !reportedAgent.isEmpty else { return }
-        if reportedAgent == manifest.expectedAgentField { return }
+        guard !reportedSampler.isEmpty else { return }
+        if reportedSampler == manifest.expectedSamplerField { return }
         if updatingNodeIDs.contains(node.id) { return }
         if let last = lastAttempt[node.id],
            Date().timeIntervalSince(last) < cooldown {

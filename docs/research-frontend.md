@@ -286,7 +286,7 @@ Settings state lives in a small `@Observable AppSettings` saved via `@AppStorage
   try SMAppService.mainApp.register()   // or .unregister()
   ```
 
-  No helper app or LaunchAgent plist needed. Surface the current `.status` so we can show "Blocked by user" if they denied it in System Settings.
+  No helper app or LaunchSampler plist needed. Surface the current `.status` so we can show "Blocked by user" if they denied it in System Settings.
 
 ---
 

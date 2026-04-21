@@ -16,7 +16,7 @@ func TestHost(t *testing.T) {
 	if h.Arch == "" {
 		t.Error("arch empty")
 	}
-	if h.Agent == "" {
-		t.Error("agent version empty")
+	if h.Sampler == "" {
+		t.Error("sampler version empty")
 	}
 }

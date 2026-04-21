@@ -4,8 +4,8 @@ import (
 	"runtime"
 
 	"github.com/shirou/gopsutil/v4/host"
-	"github.com/towertail/agent/internal/schema"
-	"github.com/towertail/agent/internal/version"
+	"github.com/towertail/sampler/internal/schema"
+	"github.com/towertail/sampler/internal/version"
 )
 
 func Host() (schema.HostInfo, []string) {
@@ -13,7 +13,7 @@ func Host() (schema.HostInfo, []string) {
 	h := schema.HostInfo{
 		OS:    runtime.GOOS,
 		Arch:  runtime.GOARCH,
-		Agent: version.String(),
+		Sampler: version.String(),
 	}
 	info, err := host.Info()
 	if err != nil {

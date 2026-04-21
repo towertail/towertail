@@ -1,7 +1,7 @@
 import Foundation
 
-struct LocalAgentInvoker: AgentInvoker {
-    static let relativeBundledPath = "agents/\(LocalAgentInvoker.hostTripleDefault)/towertail-agent"
+struct LocalSamplerInvoker: SamplerInvoker {
+    static let relativeBundledPath = "samplers/\(LocalSamplerInvoker.hostTripleDefault)/towertail-sampler"
 
     static var hostTripleDefault: String {
         #if arch(arm64)
@@ -14,17 +14,17 @@ struct LocalAgentInvoker: AgentInvoker {
     static func bundledBinaryURL() -> URL? {
         let triple = hostTripleDefault
         if let url = Bundle.main.url(
-            forResource: "towertail-agent",
+            forResource: "towertail-sampler",
             withExtension: nil,
-            subdirectory: "agents/\(triple)"
+            subdirectory: "samplers/\(triple)"
         ) {
             return url
         }
         if let resourceURL = Bundle.main.resourceURL {
             let candidate = resourceURL
-                .appendingPathComponent("agents", isDirectory: true)
+                .appendingPathComponent("samplers", isDirectory: true)
                 .appendingPathComponent(triple, isDirectory: true)
-                .appendingPathComponent("towertail-agent")
+                .appendingPathComponent("towertail-sampler")
             if FileManager.default.fileExists(atPath: candidate.path) {
                 return candidate
             }
@@ -38,7 +38,7 @@ struct LocalAgentInvoker: AgentInvoker {
         var url = URL(fileURLWithPath: fm.currentDirectoryPath)
         for _ in 0..<8 {
             let candidate = url
-                .appendingPathComponent("dist/agents/\(triple)/towertail-agent")
+                .appendingPathComponent("dist/samplers/\(triple)/towertail-sampler")
             if fm.fileExists(atPath: candidate.path) {
                 return candidate
             }
@@ -55,20 +55,20 @@ struct LocalAgentInvoker: AgentInvoker {
 
     func invokeOnce(node: Node) async throws -> Sample {
         guard let binary = Self.resolveBinary() else {
-            throw AgentInvokeError.binaryMissing
+            throw SamplerInvokeError.binaryMissing
         }
         let result = try await ProcessRunner.run(executable: binary, arguments: ["--once"])
         if result.exitCode != 0 {
             let err = String(data: result.stderr, encoding: .utf8) ?? ""
-            throw AgentInvokeError.sshFailed(stderr: err, exitCode: result.exitCode)
+            throw SamplerInvokeError.sshFailed(stderr: err, exitCode: result.exitCode)
         }
         guard !result.stdout.isEmpty else {
-            throw AgentInvokeError.emptyOutput
+            throw SamplerInvokeError.emptyOutput
         }
         do {
             return try SampleCodec.decoder().decode(Sample.self, from: result.stdout)
         } catch {
-            throw AgentInvokeError.decodeFailed(underlying: error)
+            throw SamplerInvokeError.decodeFailed(underlying: error)
         }
     }
 }

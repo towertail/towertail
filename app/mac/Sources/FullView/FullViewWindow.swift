@@ -137,7 +137,7 @@ struct FullViewWindow: View {
             series: vm.procs,
             effectiveAt: effective,
             available: vm.procsAvailable,
-            isRootAgent: vm.procsRoot,
+            isRootSampler: vm.procsRoot,
             metric: model.metric
         )
     }

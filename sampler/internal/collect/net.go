@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/shirou/gopsutil/v4/net"
-	"github.com/towertail/agent/internal/schema"
+	"github.com/towertail/sampler/internal/schema"
 )
 
 func isIncludedIface(name string) bool {

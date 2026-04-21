@@ -295,7 +295,7 @@ struct ReviewGrid: View {
                 rows[idx2].status = .ok("reachable (\(report.triple))")
             }
         } catch {
-            let msg = (error as? AgentInvokeError)?.errorDescription ?? error.localizedDescription
+            let msg = (error as? SamplerInvokeError)?.errorDescription ?? error.localizedDescription
             if let idx2 = rows.firstIndex(where: { $0.id == id }) {
                 rows[idx2].status = .failed(msg)
             }

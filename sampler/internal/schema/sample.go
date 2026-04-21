@@ -20,7 +20,7 @@ type Sample struct {
 }
 
 // ProcList is the per-process top-N slice plus the meta the Mac app needs to
-// know how to display it: whether the agent ran as root (so "missing" rows
+// know how to display it: whether the sampler ran as root (so "missing" rows
 // are because the user doesn't have visibility), how many rows were asked
 // for, and the total/visible counts on the host.
 type ProcList struct {
@@ -32,7 +32,7 @@ type ProcList struct {
 }
 
 // ProcSample is one process. Fields that require elevated access are
-// omitted when the agent can't read them — zero-valued rather than
+// omitted when the sampler can't read them — zero-valued rather than
 // emitting nonsense. CPUPct is 0-100 (aggregate across cores, matches
 // top(1) behavior on the host).
 type ProcSample struct {
@@ -54,7 +54,7 @@ type HostInfo struct {
 	Arch      string `json:"arch"`
 	Kernel    string `json:"kernel"`
 	UptimeS   int64  `json:"uptime_s"`
-	Agent     string `json:"agent"`
+	Sampler     string `json:"sampler"`
 	MachineID string `json:"machine_id,omitempty"`
 }
 

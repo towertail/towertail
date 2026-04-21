@@ -1,16 +1,16 @@
 import Foundation
 
-struct SSHAgentInvoker: AgentInvoker {
+struct SSHSamplerInvoker: SamplerInvoker {
     static let sshExecutable = URL(fileURLWithPath: "/usr/bin/ssh")
-    static let remoteAgentPath = "~/.towertail/towertail-agent"
+    static let remoteSamplerPath = "~/.towertail/towertail-sampler"
 
     func invokeOnce(node: Node) async throws -> Sample {
         guard node.kind == .ssh else {
-            throw AgentInvokeError.misconfigured("SSHAgentInvoker called for non-ssh node")
+            throw SamplerInvokeError.misconfigured("SSHSamplerInvoker called for non-ssh node")
         }
         guard let user = node.sshUser, !user.isEmpty,
               let host = node.sshHost, !host.isEmpty else {
-            throw AgentInvokeError.misconfigured("SSH node missing user or host")
+            throw SamplerInvokeError.misconfigured("SSH node missing user or host")
         }
 
         let args = [
@@ -18,7 +18,7 @@ struct SSHAgentInvoker: AgentInvoker {
             "-o", "ConnectTimeout=5",
             "-o", "StrictHostKeyChecking=accept-new",
             "\(user)@\(host)",
-            "\(Self.remoteAgentPath) --once"
+            "\(Self.remoteSamplerPath) --once"
         ]
 
         let result = try await ProcessRunner.run(
@@ -27,15 +27,15 @@ struct SSHAgentInvoker: AgentInvoker {
         )
         if result.exitCode != 0 {
             let err = String(data: result.stderr, encoding: .utf8) ?? ""
-            throw AgentInvokeError.sshFailed(stderr: err, exitCode: result.exitCode)
+            throw SamplerInvokeError.sshFailed(stderr: err, exitCode: result.exitCode)
         }
         guard !result.stdout.isEmpty else {
-            throw AgentInvokeError.emptyOutput
+            throw SamplerInvokeError.emptyOutput
         }
         do {
             return try SampleCodec.decoder().decode(Sample.self, from: result.stdout)
         } catch {
-            throw AgentInvokeError.decodeFailed(underlying: error)
+            throw SamplerInvokeError.decodeFailed(underlying: error)
         }
     }
 }

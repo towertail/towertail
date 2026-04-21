@@ -6,10 +6,10 @@ import (
 	"time"
 
 	"github.com/shirou/gopsutil/v4/process"
-	"github.com/towertail/agent/internal/schema"
+	"github.com/towertail/sampler/internal/schema"
 )
 
-// IsRoot reports whether the agent is running with euid 0. Linux drops into
+// IsRoot reports whether the sampler is running with euid 0. Linux drops into
 // the "can read every /proc/<pid>" regime here; macOS gets to enumerate
 // other users' processes. We use this both to gate optional fields and to
 // tell the Mac app the list is comprehensive.
@@ -41,12 +41,12 @@ func Proc(window time.Duration, topN int) (schema.ProcList, []string) {
 	}
 	list.Total = len(procs)
 
-	// Hide the agent from its own output. If we included ourselves, we'd
+	// Hide the sampler from its own output. If we included ourselves, we'd
 	// always rank at or near the top simply because we're doing CPU work
 	// (walking /proc, computing deltas) during the very window we measure
 	// — a self-referential artifact that's confusing and uninteresting.
 	// Filter both by PID (our own) and by name (catches any stray sibling
-	// `towertail-agent` processes so a stale parent/child can't poke
+	// `towertail-sampler` processes so a stale parent/child can't poke
 	// through).
 	selfPID := int32(os.Getpid())
 	filtered := procs[:0]
@@ -54,7 +54,7 @@ func Proc(window time.Duration, topN int) (schema.ProcList, []string) {
 		if p.Pid == selfPID {
 			continue
 		}
-		if name, err := p.Name(); err == nil && name == "towertail-agent" {
+		if name, err := p.Name(); err == nil && name == "towertail-sampler" {
 			continue
 		}
 		filtered = append(filtered, p)
@@ -126,7 +126,7 @@ func Proc(window time.Duration, topN int) (schema.ProcList, []string) {
 		}
 		// NOTE: intentionally NOT calling p.Status() here. On macOS gopsutil
 		// shells out to /bin/ps per PID for Status(), which spawns hundreds
-		// of short-lived subprocesses per sample and makes the agent flicker
+		// of short-lived subprocesses per sample and makes the sampler flicker
 		// all over Activity Monitor. We don't surface process state in the
 		// UI, so pay the cost only if that changes.
 		if ct, err := f.p.CreateTime(); err == nil && ct > 0 {
