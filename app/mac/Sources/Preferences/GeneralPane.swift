@@ -1,8 +1,19 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 
 struct GeneralPane: View {
     @Environment(AppSettings.self) private var settings
+    @Environment(NodeStore.self) private var nodeStore
     @State private var launchAtLoginError: String?
+    @State private var importStaged: SettingsExport?
+    @State private var transferStatus: TransferStatus?
+
+    private struct TransferStatus: Identifiable {
+        let id = UUID()
+        let ok: Bool
+        let message: String
+    }
 
     var body: some View {
         @Bindable var settings = settings
@@ -92,6 +103,115 @@ struct GeneralPane: View {
                 }
             }
 
+            Section("Import & Export") {
+                HStack(spacing: 8) {
+                    Button("Export settings…") { exportSettings() }
+                    Button("Import settings…") { importSettings() }
+                    Spacer()
+                }
+                if let s = transferStatus {
+                    HStack(spacing: 6) {
+                        Image(systemName: s.ok ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                            .foregroundStyle(s.ok ? .green : .red)
+                        Text(s.message)
+                            .font(.callout)
+                    }
+                }
+                Text("Export writes a JSON file with your servers, thresholds, notification preferences, and general settings. Import lets you pick which sections to bring in and whether to merge or overwrite the server list.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+        }
+        .sheet(item: $importStaged) { export in
+            ImportSettingsSheet(
+                imported: export,
+                onApply: { selection in
+                    applyImport(export, selection: selection)
+                    importStaged = nil
+                },
+                onCancel: { importStaged = nil }
+            )
         }
     }
+
+    // MARK: - Export
+
+    private func exportSettings() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = defaultExportName()
+        panel.canCreateDirectories = true
+        panel.title = "Export Towertail Settings"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let p = SettingsPersistence.load(from: SettingsPersistence.defaultURL())
+            let export = SettingsExport.from(
+                p,
+                appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+            )
+            let data = try SettingsTransfer.encode(export)
+            try data.write(to: url, options: .atomic)
+            transferStatus = TransferStatus(ok: true, message: "Exported \(p.nodes.count) server\(p.nodes.count == 1 ? "" : "s") to \(url.lastPathComponent)")
+            Logger.shared.info(
+                "settings: exported",
+                category: "settings",
+                kv: ["nodes": String(p.nodes.count), "path": url.path]
+            )
+        } catch {
+            transferStatus = TransferStatus(ok: false, message: "Export failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func defaultExportName() -> String {
+        let df = DateFormatter()
+        df.dateFormat = "yyyy-MM-dd"
+        let host = Host.current().localizedName?.replacingOccurrences(of: " ", with: "-") ?? "mac"
+        return "towertail-\(host)-\(df.string(from: Date())).json"
+    }
+
+    // MARK: - Import
+
+    private func importSettings() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.title = "Import Towertail Settings"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let data = try Data(contentsOf: url)
+            let export = try SettingsTransfer.decode(data)
+            importStaged = export
+        } catch {
+            transferStatus = TransferStatus(ok: false, message: error.localizedDescription)
+        }
+    }
+
+    private func applyImport(_ export: SettingsExport, selection: ImportSelection) {
+        let url = SettingsPersistence.defaultURL()
+        let base = SettingsPersistence.load(from: url)
+        let (merged, report) = SettingsTransfer.apply(export, to: base, selection: selection)
+        _ = SettingsPersistence.save(merged, to: url)
+        settings.reloadFromDisk()
+        nodeStore.replaceAllFromDisk()
+        transferStatus = TransferStatus(ok: true, message: "Imported: \(report.summary)")
+        Logger.shared.info(
+            "settings: imported",
+            category: "settings",
+            kv: [
+                "general": String(report.generalApplied),
+                "thresholds": String(report.globalThresholdsApplied),
+                "notifications": String(report.notificationsApplied),
+                "serversAdded": String(report.serversAdded),
+                "serversUpdated": String(report.serversUpdated),
+                "serversRemoved": String(report.serversRemoved),
+                "serverThresholdsUpdated": String(report.serverThresholdsUpdated)
+            ]
+        )
+    }
+}
+
+extension SettingsExport: Identifiable {
+    var id: Date { exportedAt }
 }

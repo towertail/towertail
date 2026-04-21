@@ -46,6 +46,29 @@ final class AppSettings {
         AppSettings()
     }
 
+    /// Repopulates every field from disk. Used by settings-import after
+    /// the merged PersistedSettings has been written — cheaper and less
+    /// error-prone than copying each property by hand from a
+    /// PersistedSettings instance that the caller already has.
+    func reloadFromDisk() {
+        let p = SettingsPersistence.load(from: url)
+        self.cardDensity = CardDensity(rawValue: p.cardDensity) ?? .a
+        self.thresholds = MetricThresholds(
+            cpuWarn: p.thresholds.cpuWarn, cpuCritical: p.thresholds.cpuCritical,
+            memWarn: p.thresholds.memWarn, memCritical: p.thresholds.memCritical,
+            diskWarn: p.thresholds.diskWarn, diskCritical: p.thresholds.diskCritical
+        )
+        self.localPollingIntervalSeconds = max(1, min(300, p.localPollingIntervalSeconds))
+        self.sshPollingIntervalSeconds = max(1, min(300, p.sshPollingIntervalSeconds))
+        self.notificationsEnabled = p.notificationsEnabled
+        self.notifyWarn = p.notifyWarn
+        self.notifyCritical = p.notifyCritical
+        self.notifyDebounceSeconds = p.notifyDebounceSeconds
+        self.launchAtLogin = p.launchAtLogin
+        self.autoUpdateSamplersEnabled = p.autoUpdateSamplersEnabled
+        self.defaultTerminalApp = p.defaultTerminalApp
+    }
+
     func pollingInterval(for kind: NodeKind) -> Int {
         switch kind {
         case .local: return localPollingIntervalSeconds
