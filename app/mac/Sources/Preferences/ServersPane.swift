@@ -3,6 +3,7 @@ import SwiftUI
 struct ServersPane: View {
     @Environment(NodeStore.self) private var nodeStore
     @Environment(ServerStore.self) private var serverStore
+    @Environment(AppSettings.self) private var appSettings
 
     @State private var selection: Set<Node.ID> = []
     @State private var sheet: ServerEditSheetContext?
@@ -143,6 +144,7 @@ struct ServersPane: View {
                 sheet = nil
             }
             .environment(nodeStore)
+            .environment(appSettings)
         }
     }
 

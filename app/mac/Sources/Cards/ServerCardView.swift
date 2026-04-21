@@ -5,6 +5,9 @@ struct ServerCardView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismiss) private var dismiss
     @Environment(AppSettings.self) private var settings
+    @Environment(NodeStore.self) private var nodeStore
+
+    private var node: Node? { nodeStore.node(withId: vm.id) }
 
     var body: some View {
         let offline = vm.state.isOffline
@@ -14,6 +17,51 @@ struct ServerCardView: View {
             metricGrid
         }
         .opacity(offline ? 0.55 : 1.0)
+        .contextMenu { contextMenuContent }
+    }
+
+    @ViewBuilder
+    private var contextMenuContent: some View {
+        Menu("Snooze notifications") {
+            Button("15 minutes") { snooze(.minutes(15)) }
+            Button("1 hour") { snooze(.minutes(60)) }
+            Button("4 hours") { snooze(.minutes(240)) }
+            Button("Until tomorrow 9am") { snooze(.untilTomorrow9am) }
+            Button("1 day") { snooze(.minutes(24 * 60)) }
+            Button("1 week") { snooze(.minutes(7 * 24 * 60)) }
+        }
+        if node?.isSnoozed == true {
+            Divider()
+            Button("Clear snooze") {
+                nodeStore.setSnooze(id: vm.id, until: nil)
+            }
+        }
+    }
+
+    private enum SnoozePreset {
+        case minutes(Int)
+        case untilTomorrow9am
+    }
+
+    private func snooze(_ preset: SnoozePreset) {
+        let until: Date
+        switch preset {
+        case .minutes(let m):
+            until = Date().addingTimeInterval(TimeInterval(m * 60))
+        case .untilTomorrow9am:
+            // Next occurrence of 09:00 local. If it's already past 09:00
+            // today, that's tomorrow; if it's before, that's still today —
+            // "until tomorrow 9am" means the next 9am that's at least a few
+            // hours out, so we always advance by one day from today's 9am.
+            let cal = Calendar.current
+            let now = Date()
+            var comps = cal.dateComponents([.year, .month, .day], from: now)
+            comps.hour = 9
+            comps.minute = 0
+            let todayAt9 = cal.date(from: comps) ?? now
+            until = cal.date(byAdding: .day, value: 1, to: todayAt9) ?? now.addingTimeInterval(24 * 3600)
+        }
+        nodeStore.setSnooze(id: vm.id, until: until)
     }
 
     private func openFullView(metric: Metric) {
@@ -29,6 +77,12 @@ struct ServerCardView: View {
             Text(vm.hostname)
                 .font(Typography.hostname)
                 .foregroundStyle(.primary)
+            if node?.isSnoozed == true {
+                Image(systemName: "bell.slash.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help(snoozeTooltip)
+            }
             Spacer(minLength: 4)
             Text(vm.osArch)
                 .font(Typography.metaText)
@@ -40,6 +94,13 @@ struct ServerCardView: View {
                 .font(Typography.metaText)
                 .foregroundStyle(lastSeenColor)
         }
+    }
+
+    private var snoozeTooltip: String {
+        guard let until = node?.snoozedUntil else { return "Snoozed" }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return "Notifications snoozed \(formatter.localizedString(for: until, relativeTo: Date()))"
     }
 
     private var subtitle: some View {
@@ -73,6 +134,7 @@ struct ServerCardView: View {
                     pollingIntervalSeconds: settings.pollingInterval(for: vm.kind)
                 )
                 .onTapGesture { openFullView(metric: .cpu) }
+                .pointingHandOnHover()
                 MetricCell(
                     label: "MEM",
                     series: vm.mem,
@@ -84,6 +146,7 @@ struct ServerCardView: View {
                     pollingIntervalSeconds: settings.pollingInterval(for: vm.kind)
                 )
                 .onTapGesture { openFullView(metric: .mem) }
+                .pointingHandOnHover()
             }
             GridRow {
                 MetricCell(
@@ -97,6 +160,7 @@ struct ServerCardView: View {
                     pollingIntervalSeconds: settings.pollingInterval(for: vm.kind)
                 )
                 .onTapGesture { openFullView(metric: .disk) }
+                .pointingHandOnHover()
                 MetricCell(
                     label: "NET",
                     series: vm.net,
@@ -109,6 +173,7 @@ struct ServerCardView: View {
                     pollingIntervalSeconds: settings.pollingInterval(for: vm.kind)
                 )
                 .onTapGesture { openFullView(metric: .net) }
+                .pointingHandOnHover()
             }
         }
     }

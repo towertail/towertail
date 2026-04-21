@@ -1,15 +1,23 @@
 import SwiftUI
 
+enum PopoverFilter: Hashable {
+    case all
+    case online
+    case warn
+    case down
+}
+
 struct PopoverRoot: View {
     @Environment(ServerStore.self) private var store
+    @State private var filter: PopoverFilter = .all
 
     var body: some View {
         VStack(spacing: 0) {
-            PopoverHeader()
+            PopoverHeader(filter: $filter)
             Divider().opacity(0.3)
             ScrollView {
                 LazyVStack(spacing: 10) {
-                    ForEach(store.serverVMs) { vm in
+                    ForEach(filteredVMs) { vm in
                         ServerCardView(vm: vm)
                     }
                 }
@@ -18,5 +26,32 @@ struct PopoverRoot: View {
         }
         .frame(width: 360, height: 620)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var filteredVMs: [ServerViewModel] {
+        switch filter {
+        case .all: return store.serverVMs
+        case .online:
+            // "Online" means healthy — online-without-warnings. A server in
+            // warn is counted as online in the header summary but users
+            // clicking the Online pill mean "show me the ones that are
+            // actually fine," so we exclude warn/critical here.
+            return store.serverVMs.filter { vm in
+                if case .online = vm.state { return true }
+                return false
+            }
+        case .warn:
+            return store.serverVMs.filter { vm in
+                switch vm.state {
+                case .warn, .critical: return true
+                default: return false
+                }
+            }
+        case .down:
+            return store.serverVMs.filter { vm in
+                if case .offline = vm.state { return true }
+                return false
+            }
+        }
     }
 }

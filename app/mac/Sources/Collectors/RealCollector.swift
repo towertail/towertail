@@ -85,6 +85,7 @@ final class RealCollector: Collector {
     @MainActor
     private static func syncViewModels(for nodes: [Node], store: ServerStore, settings: AppSettings) {
         let existing = Set(store.serverVMs.map(\.id))
+        let byID: [UUID: Node] = Dictionary(uniqueKeysWithValues: nodes.map { ($0.id, $0) })
         for node in nodes where !existing.contains(node.id) {
             let vm = ServerViewModel(
                 id: node.id,
@@ -92,12 +93,20 @@ final class RealCollector: Collector {
                 dnsName: node.kind == .ssh ? node.userAtHost : "local",
                 osArch: node.kind == .local ? "macOS" : "—",
                 kind: node.kind,
-                thresholds: settings.thresholds
+                thresholds: node.customThresholds ?? settings.thresholds
             )
             store.register(vm)
         }
+        // On every sync, push the currently-effective thresholds per VM —
+        // node override takes precedence, otherwise the global. This also
+        // picks up edits to either the global sliders or a node's custom
+        // set without waiting for the next collector tick.
         for vm in store.serverVMs {
-            vm.thresholds = settings.thresholds
+            if let node = byID[vm.id], let custom = node.customThresholds {
+                vm.thresholds = custom
+            } else {
+                vm.thresholds = settings.thresholds
+            }
         }
     }
 }

@@ -1,7 +1,9 @@
 import SwiftUI
+import AppKit
 
 @main
 struct TowertailApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var env = AppEnvironment()
 
     init() {
@@ -18,7 +20,15 @@ struct TowertailApp: App {
                 .environment(env.settings)
                 .environment(env.nodeStore)
         } label: {
-            MenuBarIcon(state: env.store.aggregateState)
+            // The menu-bar label is instantiated eagerly at launch (unlike
+            // the popover content). Piggyback the tap-routing installer
+            // here so the delegate has a way to open a full-view window as
+            // soon as the app is running, not just after the user has
+            // clicked the menu-bar icon.
+            ZStack {
+                MenuBarIcon(store: env.store)
+                SceneTapInstaller()
+            }
         }
         .menuBarExtraStyle(.window)
         .commands {
@@ -50,5 +60,44 @@ struct TowertailApp: App {
         }
         .windowResizability(.contentSize)
         .defaultSize(width: 1080, height: 760)
+    }
+}
+
+/// App delegate: the one place we can reliably wire cross-app hooks at
+/// launch regardless of which SwiftUI scenes happen to be on screen. The
+/// status-bar popover and the full-view WindowGroup both build lazily, so
+/// wiring notification-tap routing here (rather than inside a View body) is
+/// the only way to handle a tap when neither is currently instantiated.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NotificationTapRouter.shared.setHandler { ctx in
+            Task { @MainActor in
+                AppDelegate.opener?(ctx)
+            }
+        }
+    }
+
+    /// Set by `SceneTapInstaller` once the scene graph has `openWindow`
+    /// available. AppKit-only code paths (e.g. the notification delegate
+    /// callback) use this to route to SwiftUI's WindowGroup.
+    @MainActor static var opener: ((FullViewContext) -> Void)?
+}
+
+/// Zero-size view that captures `openWindow` from the scene environment
+/// and publishes it to the AppDelegate. Attached to the menu-bar label
+/// (which instantiates eagerly) so a tap immediately after launch still
+/// finds a handler.
+private struct SceneTapInstaller: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onAppear {
+                AppDelegate.opener = { ctx in
+                    openWindow(id: "full-view", value: ctx)
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+            }
     }
 }

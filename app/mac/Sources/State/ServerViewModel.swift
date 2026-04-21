@@ -222,12 +222,24 @@ final class ServerViewModel: Identifiable {
         }
     }
 
+    /// Per-metric tint derived from the latest sample against current
+    /// thresholds. Used by the notifier to attribute a transition to the
+    /// specific metric that crossed, and by the UI when focusing a notif.
+    func tint(for metric: Metric) -> ThresholdTint {
+        switch metric {
+        case .cpu: return cpu.tint(warn: thresholds.cpuWarn, critical: thresholds.cpuCritical)
+        case .mem: return mem.tint(warn: thresholds.memWarn, critical: thresholds.memCritical)
+        case .disk: return disk.tint(warn: thresholds.diskWarn, critical: thresholds.diskCritical)
+        case .net: return .nominal
+        }
+    }
+
     var statusDotColor: Color {
         worstTint.color
     }
 }
 
-struct MetricThresholds: Sendable, Equatable {
+struct MetricThresholds: Sendable, Equatable, Codable {
     var cpuWarn: Double
     var cpuCritical: Double
     var memWarn: Double

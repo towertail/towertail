@@ -40,6 +40,17 @@ final class NodeStore {
         }
     }
 
+    /// Sets the node's snooze expiry (or clears it with `nil`). Persists
+    /// immediately so an app restart doesn't un-snooze — a user quieting a
+    /// noisy disk and getting re-buzzed within minutes would be worse than
+    /// no snooze at all.
+    func setSnooze(id: UUID, until: Date?) {
+        if let i = nodes.firstIndex(where: { $0.id == id }) {
+            nodes[i].snoozedUntil = until
+            persist()
+        }
+    }
+
     func node(withId id: UUID) -> Node? {
         nodes.first(where: { $0.id == id })
     }
