@@ -13,10 +13,27 @@ struct MetricChart: View {
     var yDomain: ClosedRange<Double>? = 0...1
     /// Formats the Y axis tick labels. Defaults to a 0–100% formatter.
     var yAxisLabel: (Double) -> String = { v in "\(Int(v * 100))%" }
+    /// Live drag selection (start, end dates) — not necessarily ordered.
+    /// When non-nil, rendered as a translucent orange rectangle so the
+    /// user can see what the "Zoom in" button will act on.
+    var selectionRange: ClosedRange<Date>? = nil
     var onHover: ((Date?) -> Void)? = nil
     var onPinTap: ((Date) -> Void)? = nil
+    /// Drag lifecycle. `onDragBegin` fires on the first movement past the
+    /// click threshold, `onDragUpdate` on every subsequent movement, and
+    /// `onDragEnd` once the mouse is released. A gesture with no movement
+    /// is treated as a tap and routes through `onPinTap` instead.
+    var onDragBegin: ((Date) -> Void)? = nil
+    var onDragUpdate: ((Date) -> Void)? = nil
+    var onDragEnd: (() -> Void)? = nil
 
     @State private var lastHoverEmit: Date = .distantPast
+    @State private var dragStartLocation: CGPoint?
+    @State private var dragActive = false
+
+    /// Pixels the mouse must travel before we treat a click as a drag.
+    /// Below this, the gesture is interpreted as a tap (pin) on release.
+    private static let dragActivationThreshold: CGFloat = 3
 
     var body: some View {
         Chart(samples) { p in
@@ -39,16 +56,13 @@ struct MetricChart: View {
                     .foregroundStyle(Color.red.opacity(0.35))
                     .lineStyle(.init(lineWidth: 0.8, dash: [3, 3]))
             }
-            if let pinnedAt {
-                RuleMark(x: .value("pin", pinnedAt))
-                    .foregroundStyle(Color.orange)
-                    .lineStyle(.init(lineWidth: 1.2))
-            }
-            if let hoverAt {
-                RuleMark(x: .value("hover", hoverAt))
-                    .foregroundStyle(Color.primary.opacity(0.35))
-                    .lineStyle(.init(lineWidth: 0.6, dash: [2, 2]))
-            }
+            // NOTE: hover + pinned indicators are intentionally NOT plotted
+            // as RuleMarks here. Any change to their date would rebuild the
+            // whole Chart (diffing every sample), which caps their refresh
+            // at the chart's throttle rate and produces a visibly laggy
+            // cursor. They're drawn in `chartOverlay` below instead, where
+            // the overlay redraws independently of the Chart body at full
+            // SwiftUI refresh rate.
         }
         .chartYScale(domain: effectiveYDomain)
         .chartXAxis {
@@ -66,32 +80,129 @@ struct MetricChart: View {
         }
         .chartOverlay { proxy in
             GeometryReader { geo in
-                Rectangle().fill(.clear).contentShape(.rect)
-                    .onContinuousHover { phase in
-                        switch phase {
-                        case .active(let point):
-                            let now = Date()
-                            guard now.timeIntervalSince(lastHoverEmit) >= 1.0 / 30.0 else { return }
-                            lastHoverEmit = now
-                            let plotFrame = proxy.plotFrame.map { geo[$0] } ?? .zero
-                            let x = point.x - plotFrame.origin.x
-                            if let t: Date = proxy.value(atX: x) {
-                                onHover?(clampToSamples(t))
+                ZStack(alignment: .topLeading) {
+                    // Selection highlight. Drawn under the gesture surface
+                    // so it doesn't block hover/drag.
+                    selectionOverlay(proxy: proxy, geo: geo)
+                        .allowsHitTesting(false)
+
+                    // Pinned & hover rules — drawn as plain shapes over the
+                    // plot frame. Changes here re-layout only this overlay,
+                    // so the cursor line moves at full refresh rate even
+                    // while the underlying Chart is throttled.
+                    cursorOverlay(proxy: proxy, geo: geo)
+                        .allowsHitTesting(false)
+
+                    Rectangle().fill(.clear).contentShape(.rect)
+                        .onContinuousHover { phase in
+                            switch phase {
+                            case .active(let point):
+                                let now = Date()
+                                // 60fps. The hover indicator now lives in
+                                // an overlay that doesn't rebuild the Chart,
+                                // so we can emit on every frame for a
+                                // cursor that tracks the mouse immediately.
+                                guard now.timeIntervalSince(lastHoverEmit) >= 1.0 / 60.0 else { return }
+                                lastHoverEmit = now
+                                if let t = time(at: point, proxy: proxy, geo: geo) {
+                                    onHover?(clampToSamples(t))
+                                }
+                            case .ended:
+                                lastHoverEmit = .distantPast
+                                onHover?(nil)
                             }
-                        case .ended:
-                            lastHoverEmit = .distantPast
-                            onHover?(nil)
                         }
-                    }
-                    .onTapGesture { location in
-                        let plotFrame = proxy.plotFrame.map { geo[$0] } ?? .zero
-                        let x = location.x - plotFrame.origin.x
-                        if let t: Date = proxy.value(atX: x) {
-                            onPinTap?(clampToSamples(t))
-                        }
-                    }
+                        .gesture(
+                            DragGesture(minimumDistance: 0)
+                                .onChanged { value in
+                                    handleDragChanged(value, proxy: proxy, geo: geo)
+                                }
+                                .onEnded { value in
+                                    handleDragEnded(value, proxy: proxy, geo: geo)
+                                }
+                        )
+                }
             }
         }
+    }
+
+    @ViewBuilder
+    private func cursorOverlay(proxy: ChartProxy, geo: GeometryProxy) -> some View {
+        if let plot = proxy.plotFrame.map({ geo[$0] }) {
+            if let pinnedAt, let x = proxy.position(forX: pinnedAt) {
+                Rectangle()
+                    .fill(Color.orange)
+                    .frame(width: 1.2, height: plot.height)
+                    .offset(x: plot.origin.x + x - 0.6, y: plot.origin.y)
+            }
+            if let hoverAt, let x = proxy.position(forX: hoverAt) {
+                DashedVerticalLine()
+                    .stroke(Color.primary.opacity(0.35),
+                            style: StrokeStyle(lineWidth: 0.6, dash: [2, 2]))
+                    .frame(width: 0.6, height: plot.height)
+                    .offset(x: plot.origin.x + x - 0.3, y: plot.origin.y)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func selectionOverlay(proxy: ChartProxy, geo: GeometryProxy) -> some View {
+        if let range = selectionRange,
+           let plot = proxy.plotFrame.map({ geo[$0] }),
+           let xStart = proxy.position(forX: range.lowerBound),
+           let xEnd = proxy.position(forX: range.upperBound) {
+            let lo = min(xStart, xEnd)
+            let hi = max(xStart, xEnd)
+            Rectangle()
+                .fill(Color.orange.opacity(0.18))
+                .overlay(
+                    Rectangle()
+                        .stroke(Color.orange.opacity(0.7), lineWidth: 1)
+                )
+                .frame(width: max(hi - lo, 1), height: plot.height)
+                .offset(x: plot.origin.x + lo, y: plot.origin.y)
+        }
+    }
+
+    private func handleDragChanged(_ value: DragGesture.Value, proxy: ChartProxy, geo: GeometryProxy) {
+        if dragStartLocation == nil {
+            dragStartLocation = value.startLocation
+        }
+        let dx = value.location.x - (dragStartLocation?.x ?? value.location.x)
+        let dy = value.location.y - (dragStartLocation?.y ?? value.location.y)
+        let moved = (dx * dx + dy * dy).squareRoot()
+
+        if !dragActive && moved >= Self.dragActivationThreshold {
+            dragActive = true
+            if let t = time(at: value.startLocation, proxy: proxy, geo: geo) {
+                onDragBegin?(clampToSamples(t))
+            }
+        }
+
+        if dragActive, let t = time(at: value.location, proxy: proxy, geo: geo) {
+            onDragUpdate?(clampToSamples(t))
+        }
+    }
+
+    private func handleDragEnded(_ value: DragGesture.Value, proxy: ChartProxy, geo: GeometryProxy) {
+        defer {
+            dragStartLocation = nil
+            dragActive = false
+        }
+        if dragActive {
+            onDragEnd?()
+            return
+        }
+        // No drag movement → treat as a tap/pin.
+        if let t = time(at: value.location, proxy: proxy, geo: geo) {
+            onPinTap?(clampToSamples(t))
+        }
+    }
+
+    private func time(at point: CGPoint, proxy: ChartProxy, geo: GeometryProxy) -> Date? {
+        let plotFrame = proxy.plotFrame.map { geo[$0] } ?? .zero
+        let x = point.x - plotFrame.origin.x
+        return proxy.value(atX: x)
     }
 
     /// Swift Charts auto-pads the X-axis domain to fill the plot width, so
@@ -110,5 +221,18 @@ struct MetricChart: View {
         let peak = samples.map(\.v).max() ?? 0
         let ceiling = max(peak * 1.15, 0.0001)
         return 0...ceiling
+    }
+}
+
+/// A vertical stroke path used by the hover overlay. Drawing the dash via
+/// `stroke(style:)` on a `Path` is cheaper than going through the Chart's
+/// RuleMark pipeline and, crucially, doesn't invalidate the Chart body.
+private struct DashedVerticalLine: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        let x = rect.midX
+        p.move(to: CGPoint(x: x, y: rect.minY))
+        p.addLine(to: CGPoint(x: x, y: rect.maxY))
+        return p
     }
 }

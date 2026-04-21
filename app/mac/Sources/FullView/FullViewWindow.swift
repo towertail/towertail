@@ -5,6 +5,22 @@ struct FullViewWindow: View {
     @Environment(ServerStore.self) private var store
     @Environment(AppSettings.self) private var settings
     @State private var model: FullViewModel
+    /// Throttle rate for chart + process-table rebuilds. Ingests can
+    /// arrive at 0.5s (local) or faster; rebuilding SwiftUI Charts +
+    /// Table on every ingest is wasted work. 5Hz is smooth visually and
+    /// matches the table's own throttle so both panels update in lockstep.
+    private static let renderInterval: TimeInterval = 0.2
+
+    /// Cached snapshots for the active chart. Refreshed on a 5Hz timer so
+    /// SwiftUI Charts only diffs when we say so, not on every ingest. The
+    /// body reads these arrays; hover/pin changes rebuild the body without
+    /// touching the underlying `MetricSeries`.
+    @State private var cachedMainSamples: [MetricPoint] = []
+    @State private var cachedDiskCapacity: [MetricPoint] = []
+    @State private var cachedDiskIO: [MetricPoint] = []
+    /// Timer publisher driving the cache refresh. `.autoconnect` subscribes
+    /// the moment the view mounts and releases on teardown.
+    private let renderTimer = Timer.publish(every: FullViewWindow.renderInterval, tolerance: 0.05, on: .main, in: .common).autoconnect()
 
     init(context: FullViewContext) {
         self.context = context
@@ -32,8 +48,57 @@ struct FullViewWindow: View {
             model.togglePlayPause(latest: latest)
             return .handled
         }
-        .onAppear { ActivationPolicyCoordinator.shared.acquire() }
+        .onAppear {
+            ActivationPolicyCoordinator.shared.acquire()
+            // Only the full view reads proc history, so we defer the
+            // SQLite hydration until someone actually opens this window.
+            // Launch stays cheap even with tens of MB of proc snapshots
+            // on disk; we pay the decode once, here, per session.
+            store.ensureProcsHydrated(for: context.hostId)
+            refreshCaches(vm: vm)
+        }
         .onDisappear { ActivationPolicyCoordinator.shared.release() }
+        .onReceive(renderTimer) { _ in
+            refreshCaches(vm: vm)
+        }
+        .onChange(of: model.metric) { _, _ in refreshCaches(vm: vm) }
+        .onChange(of: model.zoomRange) { _, _ in refreshCaches(vm: vm) }
+        .onChange(of: model.diskMount) { _, _ in refreshCaches(vm: vm) }
+        .onChange(of: model.diskDevice) { _, _ in refreshCaches(vm: vm) }
+    }
+
+    /// Pull snapshots from the live series and publish them to the cached
+    /// @State arrays. Everything below the body reads from the caches —
+    /// this is the only place we call `series.snapshot()`.
+    private func refreshCaches(vm: ServerViewModel?) {
+        guard let vm else { return }
+        switch model.metric {
+        case .cpu:  updateMain(clipToZoom(vm.cpu.snapshot()))
+        case .mem:  updateMain(clipToZoom(vm.mem.snapshot()))
+        case .net:  updateMain(clipToZoom(vm.net.snapshot()))
+        case .disk:
+            let capacity: [MetricPoint] = {
+                switch model.diskMount {
+                case .max: return vm.disksPerMount.max.snapshot()
+                case .mount(let m): return (vm.disksPerMount.series(forMount: m) ?? vm.disksPerMount.max).snapshot()
+                }
+            }()
+            let deviceSeries: DiskIOSeries.DeviceSeries = {
+                switch model.diskDevice {
+                case .total: return vm.diskIO.total
+                case .device(let name): return vm.diskIO.series(forDevice: name) ?? vm.diskIO.total
+                }
+            }()
+            let combined = combinedIOSeries(read: deviceSeries.read, write: deviceSeries.write)
+            let clippedCapacity = clipToZoom(capacity)
+            let clippedIO = clipToZoom(combined)
+            if cachedDiskCapacity != clippedCapacity { cachedDiskCapacity = clippedCapacity }
+            if cachedDiskIO != clippedIO { cachedDiskIO = clippedIO }
+        }
+    }
+
+    private func updateMain(_ samples: [MetricPoint]) {
+        if cachedMainSamples != samples { cachedMainSamples = samples }
     }
 
     @ViewBuilder
@@ -56,6 +121,22 @@ struct FullViewWindow: View {
         HStack(spacing: 6) {
             if case .pinned = model.mode {
                 Button("Unpin") { model.unpin() }
+            }
+            if model.canZoomIn {
+                Button {
+                    model.zoomInToSelection()
+                } label: {
+                    Label("Zoom in", systemImage: "plus.magnifyingglass")
+                }
+                .help("Zoom the chart to the highlighted range")
+            }
+            if model.canResetZoom {
+                Button {
+                    model.resetZoom()
+                } label: {
+                    Label("Reset zoom", systemImage: "arrow.up.left.and.arrow.down.right")
+                }
+                .help("Return to the full two-hour window")
             }
             Button {
                 let latest = vm.map { currentSeries(vm: $0).latest?.t } ?? nil
@@ -157,7 +238,7 @@ struct FullViewWindow: View {
             .padding(.horizontal, 16)
 
             MetricChart(
-                samples: series.snapshot(),
+                samples: cachedDiskCapacity,
                 tint: {
                     if let w = warn, let c = critical {
                         return series.tint(warn: w, critical: c).color
@@ -170,8 +251,12 @@ struct FullViewWindow: View {
                 pinnedAt: pinned,
                 yDomain: 0...1,
                 yAxisLabel: { v in "\(Int(v * 100))%" },
+                selectionRange: model.pendingSelection,
                 onHover: { model.hoverAt = $0 },
-                onPinTap: { model.pin(at: $0) }
+                onPinTap: { model.pin(at: $0) },
+                onDragBegin: { model.beginSelection(at: $0) },
+                onDragUpdate: { model.updateSelection(to: $0) },
+                onDragEnd: { }
             )
             // Shorter minHeight so a cramped window can still fit both
             // disk charts + the process table + toolbar. Flex up to infinity
@@ -209,7 +294,6 @@ struct FullViewWindow: View {
         // The chart currently supports one series, so we plot read+write
         // as a single combined throughput line. The header shows them
         // individually so no information is lost.
-        let combined = combinedIOSeries(read: deviceSeries.read, write: deviceSeries.write)
 
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 12) {
@@ -224,7 +308,7 @@ struct FullViewWindow: View {
             .padding(.horizontal, 16)
 
             MetricChart(
-                samples: combined,
+                samples: cachedDiskIO,
                 tint: ThresholdTint.nominal.color,
                 warn: nil,
                 critical: nil,
@@ -232,13 +316,22 @@ struct FullViewWindow: View {
                 pinnedAt: pinned,
                 yDomain: nil,
                 yAxisLabel: { v in Self.formatByteRate(bytesPerSec: v * 1_048_576.0) },
+                selectionRange: model.pendingSelection,
                 onHover: { model.hoverAt = $0 },
-                onPinTap: { model.pin(at: $0) }
+                onPinTap: { model.pin(at: $0) },
+                onDragBegin: { model.beginSelection(at: $0) },
+                onDragUpdate: { model.updateSelection(to: $0) },
+                onDragEnd: { }
             )
             .frame(minHeight: 90, maxHeight: .infinity)
             .layoutPriority(1)
             .padding(.horizontal, 16)
         }
+    }
+
+    private func clipToZoom(_ samples: [MetricPoint]) -> [MetricPoint] {
+        guard let z = model.zoomRange else { return samples }
+        return samples.filter { $0.t >= z.lowerBound && $0.t <= z.upperBound }
     }
 
     /// Merge read & write series into one "total throughput MB/s" series
@@ -350,7 +443,7 @@ struct FullViewWindow: View {
             .padding(.horizontal, 16)
 
             MetricChart(
-                samples: series.snapshot(),
+                samples: cachedMainSamples,
                 tint: tint(vm: vm, series: series, metric: model.metric),
                 warn: warn,
                 critical: critical,
@@ -360,12 +453,16 @@ struct FullViewWindow: View {
                 yAxisLabel: model.metric == .net
                     ? { v in Self.formatByteRate(bytesPerSec: v * 100.0 * 1_048_576.0) }
                     : { v in "\(Int(v * 100))%" },
+                selectionRange: model.pendingSelection,
                 onHover: { t in
                     model.hoverAt = t
                 },
                 onPinTap: { t in
                     model.pin(at: t)
-                }
+                },
+                onDragBegin: { model.beginSelection(at: $0) },
+                onDragUpdate: { model.updateSelection(to: $0) },
+                onDragEnd: { }
             )
             // Flex vertically: the chart grows into whatever height is
             // left over after the fixed-height table, so resizing the

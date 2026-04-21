@@ -18,6 +18,7 @@ final class HistoryStore: @unchecked Sendable {
     private var db: OpaquePointer?
     private var insertStmt: OpaquePointer?
     private var insertProcsStmt: OpaquePointer?
+    private var pruneProcsStmt: OpaquePointer?
     /// Lazily-initialized JSON codec for proc item lists. Decoder uses
     /// fractional-seconds ISO-8601 so round-trip with sampler-produced
     /// start_ts works; encoder mirrors that format.
@@ -57,6 +58,7 @@ final class HistoryStore: @unchecked Sendable {
         queue.sync {
             if let insertStmt { sqlite3_finalize(insertStmt) }
             if let insertProcsStmt { sqlite3_finalize(insertProcsStmt) }
+            if let pruneProcsStmt { sqlite3_finalize(pruneProcsStmt) }
             if let db { sqlite3_close(db) }
         }
     }
@@ -101,6 +103,12 @@ final class HistoryStore: @unchecked Sendable {
         VALUES (?, ?, ?, ?);
         """
         sqlite3_prepare_v2(db, insertProcsSQL, -1, &insertProcsStmt, nil)
+
+        // Cached so the per-append retention prune avoids recompiling the
+        // statement every tick — with ~8 hosts polling every 2s that was
+        // 4 prepare/finalize cycles per second of otherwise-idle work.
+        let pruneProcsSQL = "DELETE FROM proc_snapshots WHERE node_id = ? AND ts < ?;"
+        sqlite3_prepare_v2(db, pruneProcsSQL, -1, &pruneProcsStmt, nil)
     }
 
     /// Append a point for a node. Called from any context; non-blocking.
@@ -218,11 +226,10 @@ final class HistoryStore: @unchecked Sendable {
             sqlite3_step(stmt)
 
             // Prune older than retention — indexed range delete is ~O(log N + K).
-            let cutoff = ts - Self.procRetention
-            let pruneSQL = "DELETE FROM proc_snapshots WHERE node_id = ? AND ts < ?;"
-            var prune: OpaquePointer?
-            if sqlite3_prepare_v2(self.db, pruneSQL, -1, &prune, nil) == SQLITE_OK {
-                defer { sqlite3_finalize(prune) }
+            if let prune = self.pruneProcsStmt {
+                let cutoff = ts - Self.procRetention
+                sqlite3_reset(prune)
+                sqlite3_clear_bindings(prune)
                 _ = id.withCString { cstr in
                     sqlite3_bind_text(prune, 1, cstr, -1, Self.sqliteTransient)
                 }

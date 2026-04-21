@@ -56,6 +56,12 @@ final class ServerViewModel: Identifiable {
     /// Latest-known root status of the sampler binary on the remote host.
     /// Drives the "root" vs "user scope" badge in the process table.
     var procsRoot: Bool = false
+    /// Set to true the first time `ServerStore.ensureProcsHydrated` is
+    /// asked to load this host's proc history from SQLite. Used to
+    /// debounce repeated hydration kickoffs when the user opens and
+    /// closes the full view multiple times in a session.
+    @ObservationIgnored
+    var procsHydrationStarted: Bool = false
 
     var hoverDate: Date?
 
@@ -195,9 +201,8 @@ final class ServerViewModel: Identifiable {
     /// the most recent row so the UI doesn't flicker through the
     /// "disabled" state on cold start.
     func hydrateProcs(from rows: [HistoryStore.ProcHistoryRow]) {
-        for row in rows {
-            procs.append(ProcSeries.Snapshot(t: row.t, items: row.items))
-        }
+        let snapshots = rows.map { ProcSeries.Snapshot(t: $0.t, items: $0.items) }
+        procs.replace(with: snapshots)
         if let last = rows.last {
             procsAvailable = true
             procsRoot = last.root

@@ -27,12 +27,39 @@ final class ServerStore {
 
     func register(_ vm: ServerViewModel) {
         if let history {
+            // Scalar history is small (a few KB) and cheap to decode —
+            // keep it synchronous so the very first render already has
+            // CPU/MEM/DISK/NET lines drawn.
             let recent = history.loadRecent(nodeID: vm.id)
             vm.hydrate(from: recent)
-            let procs = history.loadRecentProcs(nodeID: vm.id)
-            vm.hydrateProcs(from: procs)
         }
         serverVMs.append(vm)
+        // Proc history is deliberately NOT hydrated here. The popover and
+        // cards never read it — only the full-view process table does —
+        // and decoding ~5 MB of JSON per host at launch was pinning the
+        // main thread for seconds while users were just trying to open
+        // the menu bar. We hydrate lazily in `ensureProcsHydrated(for:)`
+        // when the full view actually opens.
+    }
+
+    /// One-shot, on-demand hydration of a single host's proc history
+    /// from SQLite. Safe to call multiple times: the first call kicks
+    /// off a background decode, subsequent calls are no-ops.
+    ///
+    /// Called from `FullViewWindow.onAppear`. The small latency between
+    /// window-open and proc-table-populated is acceptable — the table
+    /// already shows a "Waiting for first process sample…" placeholder.
+    func ensureProcsHydrated(for id: UUID) {
+        guard let history, let vm = serverVMs.first(where: { $0.id == id }) else { return }
+        if vm.procsHydrationStarted { return }
+        vm.procsHydrationStarted = true
+        Task.detached(priority: .utility) { [weak vm, history] in
+            let rows = history.loadRecentProcs(nodeID: id)
+            guard let vm else { return }
+            await MainActor.run {
+                vm.hydrateProcs(from: rows)
+            }
+        }
     }
 
     func ingest(_ sample: Sample, for id: UUID) {
@@ -46,6 +73,38 @@ final class ServerStore {
         }
         if let notifier, let node = nodeLookup?(id) {
             notifier.evaluate(vm: vm, node: node)
+        }
+        logAggregateIfChanged()
+    }
+
+    /// Bulk-ingest pre-generated samples. Used by MockCollector to
+    /// backfill 2h of demo data in one main-actor hop instead of ~2,000
+    /// individual hops (which pegged the main thread for ~10s at launch).
+    /// Notifier evaluation and aggregate logging happen only once at the
+    /// end, not per sample. When `skipPersistence` is true we bypass
+    /// SQLite entirely — backfilled demo data is regenerated on every
+    /// launch so writing it out just to read it back would be wasted work.
+    func ingestBatch(_ items: [(UUID, Sample)], skipPersistence: Bool = false) {
+        var lastVMByID: [UUID: ServerViewModel] = [:]
+        for (id, sample) in items {
+            guard let vm = serverVMs.first(where: { $0.id == id }) else { continue }
+            let point = vm.ingest(sample)
+            lastVMByID[id] = vm
+            if !skipPersistence {
+                history?.append(nodeID: id, point: point)
+                if let history, let ps = sample.procs {
+                    history.appendProcs(
+                        nodeID: id, t: sample.ts, root: ps.root, items: ps.items
+                    )
+                }
+            }
+        }
+        if let notifier {
+            for (id, vm) in lastVMByID {
+                if let node = nodeLookup?(id) {
+                    notifier.evaluate(vm: vm, node: node)
+                }
+            }
         }
         logAggregateIfChanged()
     }

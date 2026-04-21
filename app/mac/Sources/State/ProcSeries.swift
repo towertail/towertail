@@ -56,6 +56,32 @@ struct ProcSeries: Sendable {
         }
     }
 
+    /// Replace the whole buffer with `snapshots` (oldest first), then
+    /// apply retention + cap once. Hydration on launch uses this instead
+    /// of calling `append` in a loop — a 3,600-row replay was O(n²) under
+    /// the per-append trim (~13M compares) and fired one @Observable
+    /// invalidation per snapshot. Both showed up as a long launch stall
+    /// and a beach-ball on first menu-bar open.
+    mutating func replace(with snapshots: [Snapshot]) {
+        var buf = ContiguousArray<Snapshot>()
+        buf.reserveCapacity(min(snapshots.count, Self.hardSlotCap))
+        buf.append(contentsOf: snapshots)
+        if let newest = buf.last?.t {
+            let cutoff = newest.addingTimeInterval(-retention)
+            var drop = 0
+            while drop < buf.count && buf[drop].t < cutoff {
+                drop += 1
+            }
+            if drop > 0 {
+                buf.removeFirst(drop)
+            }
+        }
+        if buf.count > Self.hardSlotCap {
+            buf.removeFirst(buf.count - Self.hardSlotCap)
+        }
+        buffer = buf
+    }
+
     /// Binary-search for the snapshot nearest the given timestamp.
     func nearest(to date: Date) -> Snapshot? {
         guard !buffer.isEmpty else { return nil }

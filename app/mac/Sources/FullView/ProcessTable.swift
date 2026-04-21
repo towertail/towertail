@@ -28,11 +28,11 @@ struct ProcessTable: View {
     @State private var lastRequestedT: Date?
     @State private var pendingTask: Task<Void, Never>?
 
-    /// Target ≈ 10fps. The chart already throttles hover emits to 30fps
-    /// and most of those fall within the same nearest-snapshot slot, so
-    /// in practice we rebuild the table more like 2-3 times per second
-    /// while the user drags across the timeline.
-    private static let minUpdateInterval: TimeInterval = 0.1
+    /// Target ≈ 5fps to match the chart's render throttle. Ingests can
+    /// arrive every 0.5s (local) and each one walks the proc snapshot +
+    /// rebuilds the Table; capping at 5Hz keeps both panels updating in
+    /// lockstep without the table stuttering out of sync with the chart.
+    private static let minUpdateInterval: TimeInterval = 0.2
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {

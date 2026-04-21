@@ -33,8 +33,60 @@ final class FullViewModel {
     /// devices.
     var diskDevice: DiskDeviceSelection = .total
 
+    /// Committed zoom range. When set, charts render only samples within
+    /// it and the x-axis is bounded to this window. Stacking zoom levels
+    /// (each "Zoom in" replaces the current range with the user's new,
+    /// narrower selection) falls out naturally — we only need to remember
+    /// the *current* window, not the stack of previous ones.
+    var zoomRange: ClosedRange<Date>?
+
+    /// Uncommitted drag selection on the chart. Drives the highlight
+    /// rectangle and, while non-nil, the Zoom-in button. Cleared when
+    /// the user zooms, resets, or clicks outside the selection.
+    var selectionStart: Date?
+    var selectionEnd: Date?
+
     init(metric: Metric) {
         self.metric = metric
+    }
+
+    /// Ordered (start ≤ end) view of the live drag selection. `nil` when
+    /// the user hasn't dragged anything or the drag was zero-width.
+    var pendingSelection: ClosedRange<Date>? {
+        guard let s = selectionStart, let e = selectionEnd else { return nil }
+        if s == e { return nil }
+        return s < e ? s...e : e...s
+    }
+
+    var canZoomIn: Bool { pendingSelection != nil }
+    var canResetZoom: Bool { zoomRange != nil }
+
+    func beginSelection(at t: Date) {
+        selectionStart = t
+        selectionEnd = t
+    }
+
+    func updateSelection(to t: Date) {
+        selectionEnd = t
+    }
+
+    func clearSelection() {
+        selectionStart = nil
+        selectionEnd = nil
+    }
+
+    /// Commits the current drag as the new zoom window. Selection is
+    /// cleared afterwards so the user can immediately drag again to zoom
+    /// further.
+    func zoomInToSelection() {
+        guard let range = pendingSelection else { return }
+        zoomRange = range
+        clearSelection()
+    }
+
+    func resetZoom() {
+        zoomRange = nil
+        clearSelection()
     }
 
     var isLive: Bool {

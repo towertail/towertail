@@ -11,23 +11,34 @@ struct MockCollector: Collector {
             for h in hosts { sink.register(h.vm) }
         }
 
+        // Generate the full 2h backfill off-main in one sweep, then
+        // hand it to the store as a single batched main-actor hop. The
+        // prior approach did `await MainActor.run` ~2,000 times (480
+        // ticks × 4 hosts), and each hop also triggered a SQLite write
+        // + JSON encode of the proc list — enough to peg the main
+        // thread for ~10s at launch. Backfilled demo data regenerates
+        // on every start, so skipping persistence here is both a perf
+        // win and correct.
         let now = Date()
         let start = now.addingTimeInterval(-Self.tickInterval * Double(Self.backfillSamples))
+        var batched: [(UUID, Sample)] = []
+        batched.reserveCapacity(Self.backfillSamples * hosts.count)
+        var offlineTransitions: [(UUID, String, Date)] = []
         for i in 0..<Self.backfillSamples {
             let t = start.addingTimeInterval(Self.tickInterval * Double(i))
             for h in hosts {
                 if let sample = h.synth.sample(at: t) {
-                    let id = h.vm.id
-                    await MainActor.run {
-                        sink.ingest(sample, for: id)
-                    }
-                } else if let reason = h.synth.offlineReason {
+                    batched.append((h.vm.id, sample))
+                } else if i == 0, let reason = h.synth.offlineReason {
                     let offlineAt = h.synth.lastSeenAt ?? t
-                    let id = h.vm.id
-                    await MainActor.run {
-                        sink.markOffline(id: id, reason: reason, at: offlineAt)
-                    }
+                    offlineTransitions.append((h.vm.id, reason, offlineAt))
                 }
+            }
+        }
+        await MainActor.run {
+            sink.ingestBatch(batched, skipPersistence: true)
+            for (id, reason, at) in offlineTransitions {
+                sink.markOffline(id: id, reason: reason, at: at)
             }
         }
 
