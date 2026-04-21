@@ -75,7 +75,8 @@ One JSON object per sample. Newline-delimited in streaming mode. Fields are stab
     "arch": "arm64",
     "kernel": "6.6.22-1-arm64",
     "uptime_s": 1048273,
-    "agent": "0.1.0+abc1234"
+    "agent": "0.1.0+abc1234",
+    "machine_id": "24c63e84-ed40-5734-bf08-72572b9bea7d"
   },
   "cpu": {
     "pct": 42.3,
@@ -115,6 +116,7 @@ One JSON object per sample. Newline-delimited in streaming mode. Fields are stab
 - **`net.rx_bps` / `tx_bps`**: delta over the ~200ms self-sampling window in one-shot mode; delta over the actual tick interval in streaming mode. Sum across non-loopback interfaces.
 - **`net.rx_cum` / `tx_cum`**: lifetime counters. The Mac app can recompute deltas across polls as a cross-check, and detect counter resets (reboots) when `rx_cum` decreases.
 - **`errors`**: non-fatal collector errors (e.g., "netstat returned -1 for iface veth0"). The Mac app logs these but still ingests the rest of the sample.
+- **`machine_id`**: optional, read-only. `/etc/machine-id` on Linux, `IOPlatformUUID` on Darwin. Omitted when unavailable (containers without `machine-id`, hardened kernels, etc.). The app uses it as a secondary key to detect hostname renames or collisions — the primary key is still the user-configured SSH target.
 
 Omitted fields for v1: per-CPU breakdown, per-process table, temperature, GPU, sensors. All go in `v=2` stretch.
 
