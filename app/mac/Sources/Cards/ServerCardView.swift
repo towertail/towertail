@@ -7,6 +7,8 @@ struct ServerCardView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(NodeStore.self) private var nodeStore
     @Environment(SamplerUpdateCoordinator.self) private var samplerUpdater
+    @State private var editSheet: ServerEditSheetContext?
+    @State private var terminalError: String?
 
     private var node: Node? { nodeStore.node(withId: vm.id) }
 
@@ -19,6 +21,22 @@ struct ServerCardView: View {
         }
         .opacity(offline ? 0.55 : 1.0)
         .contextMenu { contextMenuContent }
+        .sheet(item: $editSheet) { ctx in
+            ServerEditSheet(context: ctx) { saved in
+                nodeStore.update(saved)
+                editSheet = nil
+            } onCancel: {
+                editSheet = nil
+            }
+        }
+        .alert("Couldn't open terminal", isPresented: Binding(
+            get: { terminalError != nil },
+            set: { if !$0 { terminalError = nil } }
+        )) {
+            Button("OK") { terminalError = nil }
+        } message: {
+            Text(terminalError ?? "")
+        }
     }
 
     @ViewBuilder
@@ -113,6 +131,46 @@ struct ServerCardView: View {
         }
     }
 
+    @ViewBuilder
+    private var headerActions: some View {
+        HStack(spacing: 10) {
+            if let n = node, n.kind == .ssh {
+                Button {
+                    openSSHTerminal(for: n)
+                } label: {
+                    Image(systemName: "terminal")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Open SSH session in \(settings.defaultTerminalApp)")
+                .pointingHandOnHover()
+            }
+            Button {
+                if let n = node {
+                    editSheet = .edit(n)
+                }
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Settings for this server")
+            .pointingHandOnHover()
+            .disabled(node == nil)
+        }
+    }
+
+    private func openSSHTerminal(for n: Node) {
+        let result = TerminalLauncher.openSSH(for: n, app: settings.defaultTerminalApp)
+        if case .failure(let err) = result {
+            terminalError = err.localizedDescription
+        } else {
+            dismiss()
+        }
+    }
+
     private var snoozeTooltip: String {
         guard let until = node?.snoozedUntil else { return "Snoozed" }
         let formatter = RelativeDateTimeFormatter()
@@ -134,6 +192,7 @@ struct ServerCardView: View {
                     .foregroundStyle(ThresholdTint.critical.color)
             }
             Spacer(minLength: 0)
+            headerActions
         }
     }
 

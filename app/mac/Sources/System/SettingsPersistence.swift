@@ -12,6 +12,7 @@ struct PersistedSettings: Codable, Equatable {
     var notifyDebounceSeconds: Int
     var launchAtLogin: Bool
     var autoUpdateSamplersEnabled: Bool
+    var defaultTerminalApp: String
 
     static let defaults = PersistedSettings(
         nodes: [Node.localMac()],
@@ -24,7 +25,8 @@ struct PersistedSettings: Codable, Equatable {
         notifyCritical: true,
         notifyDebounceSeconds: 60,
         launchAtLogin: false,
-        autoUpdateSamplersEnabled: false
+        autoUpdateSamplersEnabled: false,
+        defaultTerminalApp: "Terminal"
     )
 
     enum CodingKeys: String, CodingKey {
@@ -34,6 +36,7 @@ struct PersistedSettings: Codable, Equatable {
         case notificationsEnabled, notifyWarn, notifyCritical, notifyDebounceSeconds
         case launchAtLogin
         case autoUpdateSamplersEnabled
+        case defaultTerminalApp
         case pollingIntervalSeconds // legacy single-value field
     }
 
@@ -49,6 +52,8 @@ struct PersistedSettings: Codable, Equatable {
         self.launchAtLogin = try c.decode(Bool.self, forKey: .launchAtLogin)
         self.autoUpdateSamplersEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoUpdateSamplersEnabled)
             ?? PersistedSettings.defaults.autoUpdateSamplersEnabled
+        self.defaultTerminalApp = try c.decodeIfPresent(String.self, forKey: .defaultTerminalApp)
+            ?? PersistedSettings.defaults.defaultTerminalApp
 
         if let local = try c.decodeIfPresent(Int.self, forKey: .localPollingIntervalSeconds) {
             self.localPollingIntervalSeconds = local
@@ -79,6 +84,7 @@ struct PersistedSettings: Codable, Equatable {
         try c.encode(notifyDebounceSeconds, forKey: .notifyDebounceSeconds)
         try c.encode(launchAtLogin, forKey: .launchAtLogin)
         try c.encode(autoUpdateSamplersEnabled, forKey: .autoUpdateSamplersEnabled)
+        try c.encode(defaultTerminalApp, forKey: .defaultTerminalApp)
     }
 
     init(
@@ -92,7 +98,8 @@ struct PersistedSettings: Codable, Equatable {
         notifyCritical: Bool,
         notifyDebounceSeconds: Int,
         launchAtLogin: Bool,
-        autoUpdateSamplersEnabled: Bool
+        autoUpdateSamplersEnabled: Bool,
+        defaultTerminalApp: String
     ) {
         self.nodes = nodes
         self.thresholds = thresholds
@@ -105,6 +112,7 @@ struct PersistedSettings: Codable, Equatable {
         self.notifyDebounceSeconds = notifyDebounceSeconds
         self.launchAtLogin = launchAtLogin
         self.autoUpdateSamplersEnabled = autoUpdateSamplersEnabled
+        self.defaultTerminalApp = defaultTerminalApp
     }
 }
 

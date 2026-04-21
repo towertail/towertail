@@ -18,6 +18,7 @@ final class AppSettings {
     var notifyDebounceSeconds: Int
     var launchAtLogin: Bool
     var autoUpdateSamplersEnabled: Bool
+    var defaultTerminalApp: String
 
     private let url: URL
 
@@ -38,6 +39,7 @@ final class AppSettings {
         self.notifyDebounceSeconds = p.notifyDebounceSeconds
         self.launchAtLogin = p.launchAtLogin
         self.autoUpdateSamplersEnabled = p.autoUpdateSamplersEnabled
+        self.defaultTerminalApp = p.defaultTerminalApp
     }
 
     static func loadFromDisk() -> AppSettings {
@@ -68,6 +70,7 @@ final class AppSettings {
         p.notifyDebounceSeconds = notifyDebounceSeconds
         p.launchAtLogin = launchAtLogin
         p.autoUpdateSamplersEnabled = autoUpdateSamplersEnabled
+        p.defaultTerminalApp = defaultTerminalApp
         SettingsPersistence.save(p, to: url)
         logDiff(before: before, after: p)
     }
@@ -122,6 +125,9 @@ final class AppSettings {
         }
         if before.autoUpdateSamplersEnabled != after.autoUpdateSamplersEnabled {
             changes["autoUpdateSamplers"] = "\(before.autoUpdateSamplersEnabled)→\(after.autoUpdateSamplersEnabled)"
+        }
+        if before.defaultTerminalApp != after.defaultTerminalApp {
+            changes["defaultTerminalApp"] = "\(before.defaultTerminalApp)→\(after.defaultTerminalApp)"
         }
         if changes.isEmpty { return }
         Logger.shared.info(

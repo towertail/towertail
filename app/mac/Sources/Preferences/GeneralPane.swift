@@ -57,6 +57,20 @@ struct GeneralPane: View {
                 .pickerStyle(.segmented)
             }
 
+            Section("Terminal") {
+                Picker("Default terminal", selection: Binding(
+                    get: { settings.defaultTerminalApp },
+                    set: { settings.defaultTerminalApp = $0; settings.persist() }
+                )) {
+                    ForEach(TerminalLauncher.supportedApps, id: \.self) { app in
+                        Text(app).tag(app)
+                    }
+                }
+                Text("Used when opening an SSH session from a server card.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Startup") {
                 Toggle("Launch at login", isOn: Binding(
                     get: { settings.launchAtLogin },
