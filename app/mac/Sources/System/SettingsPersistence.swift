@@ -3,7 +3,8 @@ import Foundation
 struct PersistedSettings: Codable, Equatable {
     var nodes: [Node]
     var thresholds: PersistedThresholds
-    var pollingIntervalSeconds: Int
+    var localPollingIntervalSeconds: Int
+    var sshPollingIntervalSeconds: Int
     var cardDensity: String
     var notificationsEnabled: Bool
     var notifyWarn: Bool
@@ -14,7 +15,8 @@ struct PersistedSettings: Codable, Equatable {
     static let defaults = PersistedSettings(
         nodes: [Node.localMac()],
         thresholds: .defaults,
-        pollingIntervalSeconds: 15,
+        localPollingIntervalSeconds: 2,
+        sshPollingIntervalSeconds: 10,
         cardDensity: "a",
         notificationsEnabled: false,
         notifyWarn: true,
@@ -22,6 +24,80 @@ struct PersistedSettings: Codable, Equatable {
         notifyDebounceSeconds: 60,
         launchAtLogin: false
     )
+
+    enum CodingKeys: String, CodingKey {
+        case nodes, thresholds
+        case localPollingIntervalSeconds, sshPollingIntervalSeconds
+        case cardDensity
+        case notificationsEnabled, notifyWarn, notifyCritical, notifyDebounceSeconds
+        case launchAtLogin
+        case pollingIntervalSeconds // legacy single-value field
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.nodes = try c.decode([Node].self, forKey: .nodes)
+        self.thresholds = try c.decode(PersistedThresholds.self, forKey: .thresholds)
+        self.cardDensity = try c.decode(String.self, forKey: .cardDensity)
+        self.notificationsEnabled = try c.decode(Bool.self, forKey: .notificationsEnabled)
+        self.notifyWarn = try c.decode(Bool.self, forKey: .notifyWarn)
+        self.notifyCritical = try c.decode(Bool.self, forKey: .notifyCritical)
+        self.notifyDebounceSeconds = try c.decode(Int.self, forKey: .notifyDebounceSeconds)
+        self.launchAtLogin = try c.decode(Bool.self, forKey: .launchAtLogin)
+
+        if let local = try c.decodeIfPresent(Int.self, forKey: .localPollingIntervalSeconds) {
+            self.localPollingIntervalSeconds = local
+        } else if let legacy = try c.decodeIfPresent(Int.self, forKey: .pollingIntervalSeconds) {
+            self.localPollingIntervalSeconds = legacy
+        } else {
+            self.localPollingIntervalSeconds = PersistedSettings.defaults.localPollingIntervalSeconds
+        }
+        if let ssh = try c.decodeIfPresent(Int.self, forKey: .sshPollingIntervalSeconds) {
+            self.sshPollingIntervalSeconds = ssh
+        } else if let legacy = try c.decodeIfPresent(Int.self, forKey: .pollingIntervalSeconds) {
+            self.sshPollingIntervalSeconds = legacy
+        } else {
+            self.sshPollingIntervalSeconds = PersistedSettings.defaults.sshPollingIntervalSeconds
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(nodes, forKey: .nodes)
+        try c.encode(thresholds, forKey: .thresholds)
+        try c.encode(localPollingIntervalSeconds, forKey: .localPollingIntervalSeconds)
+        try c.encode(sshPollingIntervalSeconds, forKey: .sshPollingIntervalSeconds)
+        try c.encode(cardDensity, forKey: .cardDensity)
+        try c.encode(notificationsEnabled, forKey: .notificationsEnabled)
+        try c.encode(notifyWarn, forKey: .notifyWarn)
+        try c.encode(notifyCritical, forKey: .notifyCritical)
+        try c.encode(notifyDebounceSeconds, forKey: .notifyDebounceSeconds)
+        try c.encode(launchAtLogin, forKey: .launchAtLogin)
+    }
+
+    init(
+        nodes: [Node],
+        thresholds: PersistedThresholds,
+        localPollingIntervalSeconds: Int,
+        sshPollingIntervalSeconds: Int,
+        cardDensity: String,
+        notificationsEnabled: Bool,
+        notifyWarn: Bool,
+        notifyCritical: Bool,
+        notifyDebounceSeconds: Int,
+        launchAtLogin: Bool
+    ) {
+        self.nodes = nodes
+        self.thresholds = thresholds
+        self.localPollingIntervalSeconds = localPollingIntervalSeconds
+        self.sshPollingIntervalSeconds = sshPollingIntervalSeconds
+        self.cardDensity = cardDensity
+        self.notificationsEnabled = notificationsEnabled
+        self.notifyWarn = notifyWarn
+        self.notifyCritical = notifyCritical
+        self.notifyDebounceSeconds = notifyDebounceSeconds
+        self.launchAtLogin = launchAtLogin
+    }
 }
 
 struct PersistedThresholds: Codable, Equatable {

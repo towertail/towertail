@@ -18,13 +18,15 @@ struct PopoverHeader: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
             Spacer(minLength: 4)
-            Button {
-                openSettings()
-            } label: {
+            SettingsLink {
                 Image(systemName: "gearshape")
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
+            .help("Settings")
+            .simultaneousGesture(TapGesture().onEnded {
+                NSApp.activate(ignoringOtherApps: true)
+            })
             Button {
                 NSApp.terminate(nil)
             } label: {
@@ -38,14 +40,5 @@ struct PopoverHeader: View {
         .padding(.vertical, 8)
         .frame(height: 36)
         .background(Color.black.opacity(0.001))
-    }
-
-    private func openSettings() {
-        NSApp.activate(ignoringOtherApps: true)
-        if #available(macOS 14.0, *) {
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-        } else {
-            NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-        }
     }
 }

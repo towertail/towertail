@@ -61,9 +61,67 @@ final class ServerViewModelTests: XCTestCase {
     func testNetRatesInMBps() {
         let vm = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x")
         let oneMB: Int64 = 1_048_576
+        // First tick has no prev → falls back to the agent-provided rx_bps/tx_bps.
         vm.ingest(makeSample(cpuPct: 10, memFrac: 0.1, diskFrac: 0.1, rxBps: 2 * oneMB, txBps: oneMB))
         XCTAssertEqual(vm.netRxMBps, 2.0, accuracy: 0.0001)
         XCTAssertEqual(vm.netTxMBps, 1.0, accuracy: 0.0001)
+    }
+
+    func testNetDeltaFromCumulativeCounters() {
+        let vm = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x")
+        let oneMB: Int64 = 1_048_576
+        let t0 = Date()
+        // Seed prev counters via a first tick. Agent rx_bps/tx_bps are 0 now.
+        let s1 = Sample(
+            v: 1, ts: t0,
+            host: HostInfo(name: "h", os: "linux", arch: "arm64", kernel: "k", uptimeS: 1, agent: "x", machineID: nil),
+            cpu: CPUInfo(pct: 0, load1: 0, load5: 0, load15: 0, cores: 1),
+            mem: MemInfo(used: 1, total: 2), swap: MemInfo(used: 0, total: 0),
+            disks: nil,
+            net: NetInfo(rxBps: 0, txBps: 0, rxCum: 10 * oneMB, txCum: 4 * oneMB),
+            errors: []
+        )
+        vm.ingest(s1)
+        // Second tick 2 seconds later: 6 MiB more in, 2 MiB more out → 3 MiB/s rx, 1 MiB/s tx.
+        let s2 = Sample(
+            v: 1, ts: t0.addingTimeInterval(2),
+            host: s1.host,
+            cpu: s1.cpu,
+            mem: s1.mem, swap: s1.swap,
+            disks: nil,
+            net: NetInfo(rxBps: 0, txBps: 0, rxCum: 16 * oneMB, txCum: 6 * oneMB),
+            errors: []
+        )
+        vm.ingest(s2)
+        XCTAssertEqual(vm.netRxMBps, 3.0, accuracy: 0.01)
+        XCTAssertEqual(vm.netTxMBps, 1.0, accuracy: 0.01)
+    }
+
+    func testNetCounterResetFallsBackToAgentBps() {
+        let vm = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x")
+        let oneMB: Int64 = 1_048_576
+        let t0 = Date()
+        let s1 = Sample(
+            v: 1, ts: t0,
+            host: HostInfo(name: "h", os: "linux", arch: "arm64", kernel: "k", uptimeS: 1, agent: "x", machineID: nil),
+            cpu: CPUInfo(pct: 0, load1: 0, load5: 0, load15: 0, cores: 1),
+            mem: MemInfo(used: 1, total: 2), swap: MemInfo(used: 0, total: 0),
+            disks: nil,
+            net: NetInfo(rxBps: 0, txBps: 0, rxCum: 100 * oneMB, txCum: 50 * oneMB),
+            errors: []
+        )
+        vm.ingest(s1)
+        // Reboot: counters regress.
+        let s2 = Sample(
+            v: 1, ts: t0.addingTimeInterval(1),
+            host: s1.host, cpu: s1.cpu, mem: s1.mem, swap: s1.swap,
+            disks: nil,
+            net: NetInfo(rxBps: 2 * oneMB, txBps: oneMB, rxCum: oneMB, txCum: oneMB / 2),
+            errors: []
+        )
+        vm.ingest(s2)
+        XCTAssertEqual(vm.netRxMBps, 2.0, accuracy: 0.01)
+        XCTAssertEqual(vm.netTxMBps, 1.0, accuracy: 0.01)
     }
 
     func testLastSeenUpdated() {

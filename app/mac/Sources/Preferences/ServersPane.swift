@@ -136,14 +136,25 @@ struct ServersPane: View {
     private func runTest(node: Node) {
         testResult = TestResult(ok: true, message: "Testing \(node.displayName)…")
         Task {
-            let invoker = makeInvoker(for: node)
             do {
-                let sample = try await invoker.invokeOnce(node: node)
-                await MainActor.run {
-                    testResult = TestResult(
-                        ok: true,
-                        message: "OK: \(sample.host.name) · cpu \(Int(round(sample.cpu.pct)))% · cores \(sample.cpu.cores)"
-                    )
+                if node.kind == .ssh {
+                    let report = try await SSHBootstrap.bootstrapAndVerify(node: node)
+                    let s = report.sample
+                    await MainActor.run {
+                        testResult = TestResult(
+                            ok: true,
+                            message: "OK (\(report.triple)): \(s.host.name) · cpu \(Int(round(s.cpu.pct)))% · cores \(s.cpu.cores)"
+                        )
+                    }
+                } else {
+                    let invoker = makeInvoker(for: node)
+                    let sample = try await invoker.invokeOnce(node: node)
+                    await MainActor.run {
+                        testResult = TestResult(
+                            ok: true,
+                            message: "OK: \(sample.host.name) · cpu \(Int(round(sample.cpu.pct)))% · cores \(sample.cpu.cores)"
+                        )
+                    }
                 }
             } catch {
                 let msg = (error as? AgentInvokeError)?.errorDescription ?? error.localizedDescription

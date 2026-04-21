@@ -9,19 +9,38 @@ struct GeneralPane: View {
         Form {
             Section("Polling") {
                 HStack {
-                    Text("Interval")
+                    Text("Local")
+                        .frame(width: 60, alignment: .leading)
                     Slider(
                         value: Binding(
-                            get: { Double(settings.pollingIntervalSeconds) },
+                            get: { Double(settings.localPollingIntervalSeconds) },
                             set: {
-                                settings.pollingIntervalSeconds = Int($0.rounded())
+                                settings.localPollingIntervalSeconds = Int($0.rounded())
                                 settings.persist()
                             }
                         ),
-                        in: 5...300,
+                        in: 1...60,
                         step: 1
                     )
-                    Text("\(settings.pollingIntervalSeconds)s")
+                    Text("\(settings.localPollingIntervalSeconds)s")
+                        .font(.system(.body, design: .monospaced))
+                        .frame(width: 56, alignment: .trailing)
+                }
+                HStack {
+                    Text("SSH")
+                        .frame(width: 60, alignment: .leading)
+                    Slider(
+                        value: Binding(
+                            get: { Double(settings.sshPollingIntervalSeconds) },
+                            set: {
+                                settings.sshPollingIntervalSeconds = Int($0.rounded())
+                                settings.persist()
+                            }
+                        ),
+                        in: 1...300,
+                        step: 1
+                    )
+                    Text("\(settings.sshPollingIntervalSeconds)s")
                         .font(.system(.body, design: .monospaced))
                         .frame(width: 56, alignment: .trailing)
                 }

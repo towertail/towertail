@@ -47,50 +47,25 @@ func sumCounters(stats []net.IOCountersStat) (rx, tx uint64) {
 	return
 }
 
-// Net returns the aggregate rx/tx counters and bps deltas across
-// non-loopback, non-virtual interfaces. Self-samples over the given window.
+// Net returns the aggregate cumulative rx/tx counters across
+// non-loopback, non-virtual interfaces. The consumer is expected to
+// compute rates from counter deltas between ticks; rx_bps/tx_bps are
+// left at 0 because in-process self-sampling over a short window
+// severely undersamples bursty traffic.
 func Net(window time.Duration) (schema.NetInfo, []string) {
+	_ = window
 	var errs []string
 	var n schema.NetInfo
 
-	first, err := net.IOCounters(false)
-	if err != nil {
-		errs = append(errs, "net.IOCounters: "+err.Error())
-		return n, errs
-	}
-	// IOCounters(false) returns a single aggregate row on some platforms;
-	// request per-interface so we can filter virtual ones.
-	firstPer, err := net.IOCounters(true)
+	per, err := net.IOCounters(true)
 	if err != nil {
 		errs = append(errs, "net.IOCounters(per): "+err.Error())
 		return n, errs
 	}
-	_ = first
-
-	rx0, tx0 := sumCounters(firstPer)
-	time.Sleep(window)
-
-	secondPer, err := net.IOCounters(true)
-	if err != nil {
-		errs = append(errs, "net.IOCounters(per2): "+err.Error())
-		return n, errs
-	}
-	rx1, tx1 := sumCounters(secondPer)
-
-	var rxDelta, txDelta uint64
-	if rx1 >= rx0 {
-		rxDelta = rx1 - rx0
-	}
-	if tx1 >= tx0 {
-		txDelta = tx1 - tx0
-	}
-	secs := window.Seconds()
-	if secs <= 0 {
-		secs = 1
-	}
-	n.RxBps = int64(float64(rxDelta) / secs)
-	n.TxBps = int64(float64(txDelta) / secs)
-	n.RxCum = int64(rx1)
-	n.TxCum = int64(tx1)
+	rx, tx := sumCounters(per)
+	n.RxCum = int64(rx)
+	n.TxCum = int64(tx)
+	n.RxBps = 0
+	n.TxBps = 0
 	return n, errs
 }

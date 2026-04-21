@@ -21,6 +21,7 @@ final class ServerViewModel: Identifiable {
     var hostname: String
     var dnsName: String
     var osArch: String
+    var kind: NodeKind
     var state: ServerConnState
     var lastSeen: Date?
 
@@ -38,12 +39,16 @@ final class ServerViewModel: Identifiable {
 
     private var prevCPUTotalMs: Int64?
     private var prevCPUBusyMs: Int64?
+    private var prevNetRxCum: Int64?
+    private var prevNetTxCum: Int64?
+    private var prevNetTS: Date?
 
     init(
         id: UUID = UUID(),
         hostname: String,
         dnsName: String,
         osArch: String,
+        kind: NodeKind = .local,
         state: ServerConnState = .unknown,
         thresholds: MetricThresholds = .defaults
     ) {
@@ -51,6 +56,7 @@ final class ServerViewModel: Identifiable {
         self.hostname = hostname
         self.dnsName = dnsName
         self.osArch = osArch
+        self.kind = kind
         self.state = state
         self.thresholds = thresholds
         self.cpu = MetricSeries()
@@ -59,13 +65,16 @@ final class ServerViewModel: Identifiable {
         self.net = MetricSeries()
     }
 
-    func ingest(_ s: Sample) {
+    @discardableResult
+    func ingest(_ s: Sample) -> HistoryPoint {
         lastSeen = s.ts
         let cpuFrac = computeCPUFraction(from: s.cpu)
-        cpu.append(MetricPoint(t: s.ts, v: min(max(cpuFrac, 0), 1)))
+        let cpuV = min(max(cpuFrac, 0), 1)
+        cpu.append(MetricPoint(t: s.ts, v: cpuV))
 
         let memFrac = s.mem.total > 0 ? Double(s.mem.used) / Double(s.mem.total) : 0
-        mem.append(MetricPoint(t: s.ts, v: min(max(memFrac, 0), 1)))
+        let memV = min(max(memFrac, 0), 1)
+        mem.append(MetricPoint(t: s.ts, v: memV))
 
         let worstDisk: Double = {
             guard let disks = s.disks, !disks.isEmpty else { return 0 }
@@ -74,16 +83,42 @@ final class ServerViewModel: Identifiable {
                 return max(acc, f)
             }
         }()
-        disk.append(MetricPoint(t: s.ts, v: min(max(worstDisk, 0), 1)))
+        let diskV = min(max(worstDisk, 0), 1)
+        disk.append(MetricPoint(t: s.ts, v: diskV))
 
+        var netV: Double? = nil
         if let n = s.net {
-            netRxMBps = Double(n.rxBps) / 1_048_576.0
-            netTxMBps = Double(n.txBps) / 1_048_576.0
+            let (rxBps, txBps) = computeNetRates(rxCum: n.rxCum, txCum: n.txCum, ts: s.ts, fallbackRx: n.rxBps, fallbackTx: n.txBps)
+            netRxMBps = Double(rxBps) / 1_048_576.0
+            netTxMBps = Double(txBps) / 1_048_576.0
             let normalized = min(1.0, (netRxMBps + netTxMBps) / 100.0)
+            netV = normalized
             net.append(MetricPoint(t: s.ts, v: normalized))
         }
 
         state = computeState()
+        return HistoryPoint(
+            t: s.ts,
+            cpu: cpuV, mem: memV, disk: diskV, net: netV,
+            rxMBps: s.net.map { Double($0.rxBps) / 1_048_576.0 },
+            txMBps: s.net.map { Double($0.txBps) / 1_048_576.0 }
+        )
+    }
+
+    /// Replay persisted history from a prior session. Called on VM creation;
+    /// safe to call before any live samples arrive.
+    func hydrate(from points: [HistoryPoint]) {
+        for p in points {
+            if let v = p.cpu { cpu.append(MetricPoint(t: p.t, v: v)) }
+            if let v = p.mem { mem.append(MetricPoint(t: p.t, v: v)) }
+            if let v = p.disk { disk.append(MetricPoint(t: p.t, v: v)) }
+            if let v = p.net { net.append(MetricPoint(t: p.t, v: v)) }
+        }
+        if let last = points.last {
+            lastSeen = last.t
+            if let rx = last.rxMBps { netRxMBps = rx }
+            if let tx = last.txMBps { netTxMBps = tx }
+        }
     }
 
     func markOffline(reason: String, at t: Date) {
@@ -110,6 +145,31 @@ final class ServerViewModel: Identifiable {
             }
         }
         return info.pct / 100.0
+    }
+
+    /// Prefer counter-delta math for network rates. The agent's in-process
+    /// `rx_bps`/`tx_bps` are sampled over a short window and massively
+    /// undersample bursty traffic; cumulative counters delta'd against the
+    /// previous tick give a true rate over the full poll interval.
+    private func computeNetRates(
+        rxCum: Int64, txCum: Int64, ts: Date,
+        fallbackRx: Int64, fallbackTx: Int64
+    ) -> (rxBps: Int64, txBps: Int64) {
+        defer {
+            prevNetRxCum = rxCum
+            prevNetTxCum = txCum
+            prevNetTS = ts
+        }
+        if let pRx = prevNetRxCum, let pTx = prevNetTxCum, let pTS = prevNetTS {
+            let dt = ts.timeIntervalSince(pTS)
+            let dRx = rxCum - pRx
+            let dTx = txCum - pTx
+            // Reboot / iface change / counter reset: fall back.
+            if dt > 0 && dRx >= 0 && dTx >= 0 {
+                return (Int64(Double(dRx) / dt), Int64(Double(dTx) / dt))
+            }
+        }
+        return (max(fallbackRx, 0), max(fallbackTx, 0))
     }
 
     private func computeState() -> ServerConnState {

@@ -6,14 +6,20 @@ final class AppEnvironment {
     let store: ServerStore
     let settings: AppSettings
     let nodeStore: NodeStore
+    let history: HistoryStore
     let collector: any Collector
     private var task: Task<Void, Never>?
 
     init() {
         self.settings = AppSettings.loadFromDisk()
         self.nodeStore = NodeStore.loadFromDisk()
-        self.store = ServerStore()
-        self.collector = RealCollector(nodeStore: nodeStore, settings: settings)
+        self.history = HistoryStore(url: HistoryStore.defaultURL())
+        self.store = ServerStore(history: history)
+        self.collector = RealCollector(
+            nodeStore: nodeStore,
+            settings: settings,
+            history: history
+        )
     }
 
     func start() {

@@ -10,7 +10,8 @@ enum CardDensity: String, CaseIterable, Sendable {
 final class AppSettings {
     var cardDensity: CardDensity
     var thresholds: MetricThresholds
-    var pollingIntervalSeconds: Int
+    var localPollingIntervalSeconds: Int
+    var sshPollingIntervalSeconds: Int
     var notificationsEnabled: Bool
     var notifyWarn: Bool
     var notifyCritical: Bool
@@ -28,7 +29,8 @@ final class AppSettings {
             memWarn: p.thresholds.memWarn, memCritical: p.thresholds.memCritical,
             diskWarn: p.thresholds.diskWarn, diskCritical: p.thresholds.diskCritical
         )
-        self.pollingIntervalSeconds = max(5, min(300, p.pollingIntervalSeconds))
+        self.localPollingIntervalSeconds = max(1, min(300, p.localPollingIntervalSeconds))
+        self.sshPollingIntervalSeconds = max(1, min(300, p.sshPollingIntervalSeconds))
         self.notificationsEnabled = p.notificationsEnabled
         self.notifyWarn = p.notifyWarn
         self.notifyCritical = p.notifyCritical
@@ -40,6 +42,13 @@ final class AppSettings {
         AppSettings()
     }
 
+    func pollingInterval(for kind: NodeKind) -> Int {
+        switch kind {
+        case .local: return localPollingIntervalSeconds
+        case .ssh: return sshPollingIntervalSeconds
+        }
+    }
+
     func persist() {
         var p = SettingsPersistence.load(from: url)
         p.cardDensity = cardDensity.rawValue
@@ -48,7 +57,8 @@ final class AppSettings {
             memWarn: thresholds.memWarn, memCritical: thresholds.memCritical,
             diskWarn: thresholds.diskWarn, diskCritical: thresholds.diskCritical
         )
-        p.pollingIntervalSeconds = pollingIntervalSeconds
+        p.localPollingIntervalSeconds = localPollingIntervalSeconds
+        p.sshPollingIntervalSeconds = sshPollingIntervalSeconds
         p.notificationsEnabled = notificationsEnabled
         p.notifyWarn = notifyWarn
         p.notifyCritical = notifyCritical

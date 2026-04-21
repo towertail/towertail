@@ -5,14 +5,24 @@ import SwiftUI
 @MainActor
 final class ServerStore {
     private(set) var serverVMs: [ServerViewModel] = []
+    private let history: HistoryStore?
+
+    init(history: HistoryStore? = nil) {
+        self.history = history
+    }
 
     func register(_ vm: ServerViewModel) {
+        if let history {
+            let recent = history.loadRecent(nodeID: vm.id)
+            vm.hydrate(from: recent)
+        }
         serverVMs.append(vm)
     }
 
     func ingest(_ sample: Sample, for id: UUID) {
         guard let vm = serverVMs.first(where: { $0.id == id }) else { return }
-        vm.ingest(sample)
+        let point = vm.ingest(sample)
+        history?.append(nodeID: id, point: point)
     }
 
     func markOffline(id: UUID, reason: String, at t: Date) {

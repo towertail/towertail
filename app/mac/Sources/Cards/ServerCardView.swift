@@ -68,7 +68,7 @@ struct ServerCardView: View {
                     warn: vm.thresholds.cpuWarn,
                     critical: vm.thresholds.cpuCritical,
                     hoverValue: hoverValue(for: vm.cpu),
-                    pollingIntervalSeconds: settings.pollingIntervalSeconds
+                    pollingIntervalSeconds: settings.pollingInterval(for: vm.kind)
                 )
                 .onTapGesture { openFullView(metric: .cpu) }
                 MetricCell(
@@ -79,7 +79,7 @@ struct ServerCardView: View {
                     warn: vm.thresholds.memWarn,
                     critical: vm.thresholds.memCritical,
                     hoverValue: hoverValue(for: vm.mem),
-                    pollingIntervalSeconds: settings.pollingIntervalSeconds
+                    pollingIntervalSeconds: settings.pollingInterval(for: vm.kind)
                 )
                 .onTapGesture { openFullView(metric: .mem) }
             }
@@ -92,7 +92,7 @@ struct ServerCardView: View {
                     warn: vm.thresholds.diskWarn,
                     critical: vm.thresholds.diskCritical,
                     hoverValue: hoverValue(for: vm.disk),
-                    pollingIntervalSeconds: settings.pollingIntervalSeconds
+                    pollingIntervalSeconds: settings.pollingInterval(for: vm.kind)
                 )
                 .onTapGesture { openFullView(metric: .disk) }
                 MetricCell(
@@ -104,7 +104,7 @@ struct ServerCardView: View {
                     critical: 0.9,
                     rxMBps: vm.netRxMBps,
                     txMBps: vm.netTxMBps,
-                    pollingIntervalSeconds: settings.pollingIntervalSeconds
+                    pollingIntervalSeconds: settings.pollingInterval(for: vm.kind)
                 )
                 .onTapGesture { openFullView(metric: .net) }
             }
