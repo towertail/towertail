@@ -17,6 +17,7 @@ final class AppSettings {
     var notifyCritical: Bool
     var notifyDebounceSeconds: Int
     var launchAtLogin: Bool
+    var autoUpdateAgentsEnabled: Bool
 
     private let url: URL
 
@@ -36,6 +37,7 @@ final class AppSettings {
         self.notifyCritical = p.notifyCritical
         self.notifyDebounceSeconds = p.notifyDebounceSeconds
         self.launchAtLogin = p.launchAtLogin
+        self.autoUpdateAgentsEnabled = p.autoUpdateAgentsEnabled
     }
 
     static func loadFromDisk() -> AppSettings {
@@ -64,6 +66,7 @@ final class AppSettings {
         p.notifyCritical = notifyCritical
         p.notifyDebounceSeconds = notifyDebounceSeconds
         p.launchAtLogin = launchAtLogin
+        p.autoUpdateAgentsEnabled = autoUpdateAgentsEnabled
         SettingsPersistence.save(p, to: url)
     }
 }

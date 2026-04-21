@@ -19,6 +19,7 @@ struct TowertailApp: App {
                 .environment(env.store)
                 .environment(env.settings)
                 .environment(env.nodeStore)
+                .environment(env.agentUpdater)
         } label: {
             // The menu-bar label is instantiated eagerly at launch (unlike
             // the popover content). Piggyback the tap-routing installer
@@ -45,6 +46,12 @@ struct TowertailApp: App {
                 .environment(env.store)
                 .environment(env.settings)
                 .environment(env.nodeStore)
+                .environment(env.agentUpdater)
+                // Injected so the Servers pane's Version column can show
+                // "updating…" while a push is in flight. Safe now that
+                // PreferencesWindow only instantiates the active tab's
+                // content (see paneContent) — the Table-in-TabView
+                // observation crash no longer applies.
                 // Settings is an .accessory-policy scene by default, so
                 // without flipping activation policy the app never gets a
                 // Dock icon while it's open — meaning the user can't ⌘-Tab

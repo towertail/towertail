@@ -36,6 +36,12 @@ final class ServerViewModel: Identifiable {
     var netRxMBps: Double = 0
     var netTxMBps: Double = 0
 
+    /// Agent version+sha string reported in the most recent sample's
+    /// `host.agent` field. Empty until the first successful sample
+    /// arrives. Surfaced in the Servers table so users can see which
+    /// hosts are on the current binary and which still need an update.
+    var agentVersion: String = ""
+
     var procs: ProcSeries
     /// True when at least one ingested sample included a procs payload —
     /// lets the UI show a clear "process collection disabled" state for
@@ -89,6 +95,9 @@ final class ServerViewModel: Identifiable {
         let os = Self.prettyOSName(s.host.os)
         if !os.isEmpty {
             osArch = s.host.arch.isEmpty ? os : "\(os) · \(s.host.arch)"
+        }
+        if !s.host.agent.isEmpty {
+            agentVersion = s.host.agent
         }
         let cpuFrac = computeCPUFraction(from: s.cpu)
         let cpuV = min(max(cpuFrac, 0), 1)

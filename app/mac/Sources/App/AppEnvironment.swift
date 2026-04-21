@@ -9,6 +9,7 @@ final class AppEnvironment {
     let history: HistoryStore
     let collector: any Collector
     let notifier: ThresholdNotifier
+    let agentUpdater: AgentUpdateCoordinator
     private var task: Task<Void, Never>?
 
     init() {
@@ -23,10 +24,14 @@ final class AppEnvironment {
             nodeLookup: { [weak nodeStore] id in nodeStore?.node(withId: id) }
         )
         self.store = store
+        let manifest = AgentManifestLoader.load()
+        let updater = AgentUpdateCoordinator(manifest: manifest)
+        self.agentUpdater = updater
         self.collector = RealCollector(
             nodeStore: nodeStore,
             settings: settings,
-            history: history
+            history: history,
+            agentUpdater: updater
         )
         let notifier = ThresholdNotifier(settings: settings)
         self.notifier = notifier

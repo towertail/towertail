@@ -5,16 +5,19 @@ final class RealCollector: Collector {
     let settings: AppSettings
     let history: HistoryStore?
     let invokerFactory: @Sendable (Node) -> AgentInvoker
+    let agentUpdater: AgentUpdateCoordinator?
 
     init(
         nodeStore: NodeStore,
         settings: AppSettings,
         history: HistoryStore? = nil,
+        agentUpdater: AgentUpdateCoordinator? = nil,
         invokerFactory: @escaping @Sendable (Node) -> AgentInvoker = makeInvoker(for:)
     ) {
         self.nodeStore = nodeStore
         self.settings = settings
         self.history = history
+        self.agentUpdater = agentUpdater
         self.invokerFactory = invokerFactory
     }
 
@@ -42,8 +45,16 @@ final class RealCollector: Collector {
                 let factory = self.invokerFactory
                 let settings = self.settings
                 let history = self.history
+                let updater = self.agentUpdater
                 tasks[node.id] = Task.detached(priority: .utility) {
-                    await Self.pacer(node: node, factory: factory, sink: sink, settings: settings, history: history)
+                    await Self.pacer(
+                        node: node,
+                        factory: factory,
+                        sink: sink,
+                        settings: settings,
+                        history: history,
+                        agentUpdater: updater
+                    )
                 }
             }
 
@@ -59,7 +70,8 @@ final class RealCollector: Collector {
         factory: @Sendable (Node) -> AgentInvoker,
         sink: ServerStore,
         settings: AppSettings,
-        history: HistoryStore?
+        history: HistoryStore?,
+        agentUpdater: AgentUpdateCoordinator?
     ) async {
         let kind = node.kind
         let invoker = factory(node)
@@ -68,6 +80,16 @@ final class RealCollector: Collector {
                 let sample = try await invoker.invokeOnce(node: node)
                 await MainActor.run {
                     sink.ingest(sample, for: node.id)
+                    // Hand the reported version to the update coordinator on
+                    // every successful sample. Read the opt-in flag here so
+                    // the coordinator never touches AppSettings — keeps the
+                    // two observables on separate dependency paths.
+                    let enabled = settings.autoUpdateAgentsEnabled
+                    agentUpdater?.maybeUpdate(
+                        node: node,
+                        reportedAgent: sample.host.agent,
+                        enabled: enabled
+                    )
                 }
             } catch {
                 let reason = shortReason(for: error)

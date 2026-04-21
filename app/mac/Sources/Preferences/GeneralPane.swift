@@ -77,6 +77,7 @@ struct GeneralPane: View {
                         .foregroundStyle(.red)
                 }
             }
+
         }
     }
 }

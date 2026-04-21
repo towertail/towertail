@@ -2,8 +2,6 @@ import SwiftUI
 
 struct ServersPane: View {
     @Environment(NodeStore.self) private var nodeStore
-    @Environment(ServerStore.self) private var serverStore
-    @Environment(AppSettings.self) private var appSettings
 
     @State private var selection: Set<Node.ID> = []
     @State private var sheet: ServerEditSheetContext?
@@ -37,36 +35,8 @@ struct ServersPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Table(nodeStore.nodes, selection: $selection) {
-                TableColumn("Name") { n in
-                    HStack {
-                        Circle()
-                            .fill(statusColor(for: n))
-                            .frame(width: 8, height: 8)
-                        Text(n.displayName)
-                    }
-                }
-                TableColumn("Kind") { n in
-                    Text(n.kind == .local ? "Local" : "SSH")
-                }
-                TableColumn("User@Host") { n in
-                    Text(n.userAtHost)
-                        .font(.system(.body, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                }
-                TableColumn("Status") { n in
-                    Text(statusLabel(for: n))
-                        .foregroundStyle(.secondary)
-                }
-                TableColumn("Enabled") { n in
-                    Toggle("", isOn: Binding(
-                        get: { n.enabled },
-                        set: { nodeStore.setEnabled(id: n.id, enabled: $0) }
-                    ))
-                    .labelsHidden()
-                }
-            }
-            .frame(minHeight: 200)
+            ServersTable(selection: $selection)
+                .frame(minHeight: 200)
 
             HStack(spacing: 8) {
                 Button {
@@ -138,6 +108,15 @@ struct ServersPane: View {
             }
 
             Divider()
+
+            // Scoped to its own view so its AppSettings observation
+            // subgraph doesn't share a parent with the Table above. Placing
+            // a Toggle that reads AppSettings in the same body as a Table
+            // triggers an AGGraphGetAttributeSubgraph precondition crash
+            // when the preferences window tabs switch (macOS 15 /
+            // SwiftUI 6 bug).
+            AutoUpdateToggleRow()
+
             Text("SSH nodes require the agent at `~/.towertail/towertail-agent` on the remote host. **Test** runs a sample end-to-end (uploading the bundled binary if missing). **Reinstall agent** force-pushes the binary — use this after upgrading Towertail if the remote agent is out of date. Key-based auth only; add the relevant key to `~/.ssh/config` or an ssh-agent.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -152,33 +131,9 @@ struct ServersPane: View {
             } onCancel: {
                 sheet = nil
             }
-            .environment(nodeStore)
-            .environment(appSettings)
         }
         .sheet(isPresented: $showBulkImport) {
             BulkImportWizard()
-                .environment(nodeStore)
-                .environment(appSettings)
-        }
-    }
-
-    private func statusColor(for n: Node) -> Color {
-        guard let vm = serverStore.serverVMs.first(where: { $0.id == n.id }) else {
-            return .secondary.opacity(0.5)
-        }
-        return vm.statusDotColor
-    }
-
-    private func statusLabel(for n: Node) -> String {
-        guard let vm = serverStore.serverVMs.first(where: { $0.id == n.id }) else {
-            return n.enabled ? "—" : "disabled"
-        }
-        switch vm.state {
-        case .unknown: return "—"
-        case .online: return "online"
-        case .warn: return "warn"
-        case .critical: return "critical"
-        case .offline(let reason): return "offline: \(reason)"
         }
     }
 
@@ -342,5 +297,104 @@ enum ServerEditSheetContext: Identifiable {
         case .new: return "new"
         case .edit(let n): return n.id.uuidString
         }
+    }
+}
+
+/// The Servers table is extracted into its own view so its observation
+/// subgraph only depends on NodeStore + ServerStore. Keeping the Toggle
+/// that reads AppSettings (`AutoUpdateToggleRow`) in the same parent
+/// body as the Table used to trigger `AGGraphGetAttributeSubgraph`
+/// precondition crashes on tab switch (macOS 15 / SwiftUI 6).
+private struct ServersTable: View {
+    @Environment(NodeStore.self) private var nodeStore
+    @Environment(ServerStore.self) private var serverStore
+    @Environment(AgentUpdateCoordinator.self) private var agentUpdater
+    @Binding var selection: Set<Node.ID>
+
+    var body: some View {
+        Table(nodeStore.nodes, selection: $selection) {
+            TableColumn("Name") { n in
+                HStack {
+                    Circle()
+                        .fill(statusColor(for: n))
+                        .frame(width: 8, height: 8)
+                    Text(n.displayName)
+                }
+            }
+            TableColumn("Kind") { n in
+                Text(n.kind == .local ? "Local" : "SSH")
+            }
+            TableColumn("User@Host") { n in
+                Text(n.userAtHost)
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+            TableColumn("Status") { n in
+                Text(statusLabel(for: n))
+                    .foregroundStyle(.secondary)
+            }
+            TableColumn("Version") { n in
+                versionCell(for: n)
+            }
+            TableColumn("Enabled") { n in
+                Toggle("", isOn: Binding(
+                    get: { n.enabled },
+                    set: { nodeStore.setEnabled(id: n.id, enabled: $0) }
+                ))
+                .labelsHidden()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func versionCell(for n: Node) -> some View {
+        if agentUpdater.isUpdating(id: n.id) {
+            HStack(spacing: 4) {
+                ProgressView().controlSize(.mini)
+                Text("updating…")
+                    .foregroundStyle(.secondary)
+            }
+        } else if let vm = serverStore.serverVMs.first(where: { $0.id == n.id }),
+                  !vm.agentVersion.isEmpty {
+            Text(vm.agentVersion)
+                .font(.system(.body, design: .monospaced))
+                .foregroundStyle(.secondary)
+        } else {
+            Text("—")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func statusColor(for n: Node) -> Color {
+        guard let vm = serverStore.serverVMs.first(where: { $0.id == n.id }) else {
+            return .secondary.opacity(0.5)
+        }
+        return vm.statusDotColor
+    }
+
+    private func statusLabel(for n: Node) -> String {
+        guard let vm = serverStore.serverVMs.first(where: { $0.id == n.id }) else {
+            return n.enabled ? "—" : "disabled"
+        }
+        switch vm.state {
+        case .unknown: return "—"
+        case .online: return "online"
+        case .warn: return "warn"
+        case .critical: return "critical"
+        case .offline(let reason): return "offline: \(reason)"
+        }
+    }
+}
+
+/// Separate view on purpose — see the call site in ServersPane.
+private struct AutoUpdateToggleRow: View {
+    @Environment(AppSettings.self) private var appSettings
+
+    var body: some View {
+        Toggle("Auto-update remote agents", isOn: Binding(
+            get: { appSettings.autoUpdateAgentsEnabled },
+            set: { appSettings.autoUpdateAgentsEnabled = $0; appSettings.persist() }
+        ))
+        .help("When enabled, Towertail silently pushes the bundled agent binary to any SSH host running an older build. Off by default — turn on only after verifying Test works for your hosts.")
     }
 }
