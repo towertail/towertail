@@ -17,16 +17,13 @@ struct FullViewWindow: View {
             header(vm: vm)
             Divider()
             content(vm: vm)
-            Divider()
-            toolbar(vm: vm)
         }
         // Baseline layout with the DISK tab as the tallest worst case:
-        // header (~40) + picker (~36) + capacity chart (min 90) +
-        // i/o chart (min 90) + process table (min 160) + toolbar (~40) +
-        // paddings/dividers ≈ 540. Keep a little breathing room above
-        // that minimum so the window doesn't feel squished on first open,
-        // but let users shrink below 720 without chopping the toolbar.
-        .frame(minWidth: 860, minHeight: 560)
+        // header+transport (~40) + picker (~36) + capacity chart (min 90) +
+        // i/o chart (min 90) + process table (min 160) + paddings/dividers
+        // ≈ 500. Keep a little breathing room above that minimum so the
+        // window doesn't feel squished on first open.
+        .frame(minWidth: 860, minHeight: 520)
         .focusable()
         .focusEffectDisabled()
         .onKeyPress(.space) {
@@ -48,9 +45,40 @@ struct FullViewWindow: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Spacer()
+            transportControls(vm: vm)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+    }
+
+    @ViewBuilder
+    private func transportControls(vm: ServerViewModel?) -> some View {
+        HStack(spacing: 6) {
+            if case .pinned = model.mode {
+                Button("Unpin") { model.unpin() }
+            }
+            Button {
+                let latest = vm.map { currentSeries(vm: $0).latest?.t } ?? nil
+                model.togglePlayPause(latest: latest)
+            } label: {
+                Image(systemName: model.isLive ? "pause.fill" : "play.fill")
+            }
+            .keyboardShortcut(" ", modifiers: [])
+
+            Button {
+                // v1.1 step-back
+            } label: {
+                Image(systemName: "backward.frame")
+            }
+            .disabled(model.isLive)
+
+            Button {
+                // v1.1 step-forward
+            } label: {
+                Image(systemName: "forward.frame")
+            }
+            .disabled(model.isLive)
+        }
     }
 
     @ViewBuilder
@@ -360,42 +388,7 @@ struct FullViewWindow: View {
         )
     }
 
-    @ViewBuilder
-    private func toolbar(vm: ServerViewModel?) -> some View {
-        HStack(spacing: 10) {
-            Button {
-                let latest = vm.map { currentSeries(vm: $0).latest?.t } ?? nil
-                model.togglePlayPause(latest: latest)
-            } label: {
-                Image(systemName: model.isLive ? "pause.fill" : "play.fill")
-            }
-            .keyboardShortcut(" ", modifiers: [])
-
-            Button {
-                // v1.1 step-back
-            } label: {
-                Image(systemName: "backward.frame")
-            }
-            .disabled(model.isLive)
-
-            Button {
-                // v1.1 step-forward
-            } label: {
-                Image(systemName: "forward.frame")
-            }
-            .disabled(model.isLive)
-
-            if case .pinned = model.mode {
-                Button("Unpin") { model.unpin() }
-            }
-
-            Spacer()
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-    }
-
-    private func valueText(vm: ServerViewModel) -> some View {
+private func valueText(vm: ServerViewModel) -> some View {
         let series = currentSeries(vm: vm)
         let effective = model.effectiveTimestamp(latest: series.latest?.t)
         let point = effective.flatMap { series.nearest(to: $0) } ?? series.latest
