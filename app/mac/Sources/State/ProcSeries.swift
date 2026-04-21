@@ -1,15 +1,22 @@
 import Foundation
 
-/// A ring buffer of `(timestamp, [ProcSample])` snapshots. The full-view
-/// process table uses this to look up which procs were running at the
-/// user's hovered timestamp on the timeline.
+/// A time-windowed buffer of `(timestamp, [ProcSample])` snapshots. The
+/// full-view process table uses this to look up which procs were running
+/// at the user's hovered timestamp on the timeline.
 ///
-/// Procs are expensive to keep — 20 processes × ~100 bytes × 720 slots
-/// ≈ 1.4 MB per host. We cap at a smaller capacity than MetricSeries
-/// because historical proc tables are only useful for recent hover and
-/// rarely retained for the full 6h window.
+/// Retention is **time-based**, not slot-based: we keep the last
+/// `retention` of snapshots regardless of polling rate. A slot-based cap
+/// gave wildly different windows on local (2s poll → 8 min) vs. SSH (10s
+/// poll → 40 min) hosts for the same 240 slots.
+///
+/// Procs are expensive: 20 processes × ~100 B × ~3600 snapshots (2h at
+/// 2s) ≈ 7 MB per host. A safety slot cap guards against runaway growth
+/// if a host polls at sub-second rates.
 struct ProcSeries: Sendable {
-    static let capacity = 240
+    static let defaultRetention: TimeInterval = 2 * 60 * 60 // 2 hours
+    static let hardSlotCap = 8_192 // ~2.25h at 1s; ~4.5h at 2s. Defense in depth.
+
+    let retention: TimeInterval
 
     struct Snapshot: Sendable {
         let t: Date
@@ -18,9 +25,10 @@ struct ProcSeries: Sendable {
 
     private var buffer: ContiguousArray<Snapshot>
 
-    init() {
+    init(retention: TimeInterval = ProcSeries.defaultRetention) {
+        self.retention = retention
         buffer = ContiguousArray<Snapshot>()
-        buffer.reserveCapacity(Self.capacity)
+        buffer.reserveCapacity(256)
     }
 
     var latest: Snapshot? { buffer.last }
@@ -28,10 +36,24 @@ struct ProcSeries: Sendable {
     var isEmpty: Bool { buffer.isEmpty }
 
     mutating func append(_ s: Snapshot) {
-        if buffer.count == Self.capacity {
-            buffer.removeFirst()
-        }
         buffer.append(s)
+        // Trim snapshots older than the retention window, measured
+        // relative to the newest snapshot (not wall-clock Date()): when
+        // the user pauses polling on a host, we want the existing window
+        // preserved rather than walked forward by real time.
+        let cutoff = s.t.addingTimeInterval(-retention)
+        var drop = 0
+        while drop < buffer.count && buffer[drop].t < cutoff {
+            drop += 1
+        }
+        if drop > 0 {
+            buffer.removeFirst(drop)
+        }
+        // Safety: cap absolute count so a misconfigured sub-second poller
+        // can't grow the buffer unboundedly.
+        if buffer.count > Self.hardSlotCap {
+            buffer.removeFirst(buffer.count - Self.hardSlotCap)
+        }
     }
 
     /// Binary-search for the snapshot nearest the given timestamp.
