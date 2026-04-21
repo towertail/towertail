@@ -3,6 +3,7 @@ import AppKit
 
 struct PopoverHeader: View {
     @Environment(ServerStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         let s = store.summary
@@ -26,6 +27,10 @@ struct PopoverHeader: View {
             .help("Settings")
             .simultaneousGesture(TapGesture().onEnded {
                 NSApp.activate(ignoringOtherApps: true)
+                // Auto-hide the menu-bar popover (same behavior as tapping a
+                // chart card). Without this the popover stays pinned over
+                // Settings until the user clicks away.
+                dismiss()
             })
             Button {
                 NSApp.terminate(nil)

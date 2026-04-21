@@ -4,13 +4,19 @@ import SwiftUI
 struct TowertailApp: App {
     @State private var env = AppEnvironment()
 
+    init() {
+        // Start the collector pacer as soon as the app launches, not when
+        // the menu-bar popover is first opened. Otherwise the agent sits
+        // idle and no history accumulates until the user clicks the icon.
+        env.start()
+    }
+
     var body: some Scene {
         MenuBarExtra {
             PopoverRoot()
                 .environment(env.store)
                 .environment(env.settings)
                 .environment(env.nodeStore)
-                .task { env.start() }
         } label: {
             MenuBarIcon(state: env.store.aggregateState)
         }

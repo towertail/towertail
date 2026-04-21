@@ -43,18 +43,5 @@ struct PreferencesWindow: View {
         .frame(minWidth: 600, minHeight: 420)
         .padding()
         .navigationTitle(selection.title)
-        // The Settings scene's default title bar doesn't display an icon
-        // next to the title; inject one via a toolbar principal item so
-        // switching tabs updates both the label and its glyph.
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                HStack(spacing: 6) {
-                    Image(systemName: selection.icon)
-                        .foregroundStyle(.tint)
-                    Text(selection.title)
-                        .font(.headline)
-                }
-            }
-        }
     }
 }
