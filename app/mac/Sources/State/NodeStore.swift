@@ -19,6 +19,11 @@ final class NodeStore {
     func add(_ node: Node) {
         nodes.append(node)
         persist()
+        Logger.shared.info(
+            "server: added", category: "servers",
+            hostID: node.id, host: node.displayName,
+            kv: ["kind": node.kind.rawValue]
+        )
     }
 
     /// Appends multiple nodes in one shot and persists once at the end.
@@ -28,17 +33,31 @@ final class NodeStore {
         guard !newNodes.isEmpty else { return }
         nodes.append(contentsOf: newNodes)
         persist()
+        Logger.shared.info(
+            "servers: bulk added \(newNodes.count)",
+            category: "servers",
+            kv: ["count": String(newNodes.count)]
+        )
     }
 
     func remove(id: UUID) {
+        let name = node(withId: id)?.displayName ?? id.uuidString.prefix(8).description
         nodes.removeAll { $0.id == id }
         persist()
+        Logger.shared.info(
+            "server: removed", category: "servers",
+            hostID: id, host: name
+        )
     }
 
     func update(_ node: Node) {
         if let i = nodes.firstIndex(where: { $0.id == node.id }) {
             nodes[i] = node
             persist()
+            Logger.shared.info(
+                "server: updated", category: "servers",
+                hostID: node.id, host: node.displayName
+            )
         }
     }
 
@@ -46,6 +65,11 @@ final class NodeStore {
         if let i = nodes.firstIndex(where: { $0.id == id }) {
             nodes[i].enabled = enabled
             persist()
+            Logger.shared.info(
+                "server: \(enabled ? "enabled" : "disabled")",
+                category: "servers",
+                hostID: id, host: nodes[i].displayName
+            )
         }
     }
 
@@ -57,6 +81,14 @@ final class NodeStore {
         if let i = nodes.firstIndex(where: { $0.id == id }) {
             nodes[i].snoozedUntil = until
             persist()
+            Logger.shared.info(
+                until == nil ? "server: snooze cleared" : "server: snoozed",
+                category: "servers",
+                hostID: id, host: nodes[i].displayName,
+                kv: until == nil ? [:] : [
+                    "until": ISO8601DateFormatter().string(from: until!)
+                ]
+            )
         }
     }
 

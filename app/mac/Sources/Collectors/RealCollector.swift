@@ -75,27 +75,44 @@ final class RealCollector: Collector {
     ) async {
         let kind = node.kind
         let invoker = factory(node)
+        // Only log online↔offline transitions, not every sample — otherwise
+        // the log grows by a line every 2-10 seconds per host.
+        var lastWasSuccess: Bool? = nil
         while !Task.isCancelled {
             do {
                 let sample = try await invoker.invokeOnce(node: node)
                 await MainActor.run {
                     sink.ingest(sample, for: node.id)
-                    // Hand the reported version to the update coordinator on
-                    // every successful sample. Read the opt-in flag here so
-                    // the coordinator never touches AppSettings — keeps the
-                    // two observables on separate dependency paths.
                     let enabled = settings.autoUpdateSamplersEnabled
                     samplerUpdater?.maybeUpdate(
                         node: node,
                         reportedSampler: sample.host.sampler,
                         enabled: enabled
                     )
+                    if lastWasSuccess == false {
+                        Logger.shared.info(
+                            "sample: recovered",
+                            category: "sample",
+                            hostID: node.id, host: node.displayName,
+                            kv: ["kind": kind.rawValue]
+                        )
+                    }
                 }
+                lastWasSuccess = true
             } catch {
                 let reason = shortReason(for: error)
                 await MainActor.run {
                     sink.markOffline(id: node.id, reason: reason, at: Date())
+                    if lastWasSuccess != false {
+                        Logger.shared.warn(
+                            "sample: failed",
+                            category: "sample",
+                            hostID: node.id, host: node.displayName,
+                            kv: ["kind": kind.rawValue, "reason": reason]
+                        )
+                    }
                 }
+                lastWasSuccess = false
             }
             let intervalSec = await MainActor.run { settings.pollingInterval(for: kind) }
             let nanos = UInt64(max(1, intervalSec)) * 1_000_000_000

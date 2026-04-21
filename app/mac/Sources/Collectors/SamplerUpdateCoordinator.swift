@@ -12,16 +12,22 @@ final class SamplerUpdateCoordinator {
     /// Node IDs with an in-flight copyBinary task. Observed by the UI to
     /// render the per-card "Updating sampler…" affordance.
     private(set) var updatingNodeIDs: Set<UUID> = []
+    /// Last update error per node — populated when a push fails, cleared on
+    /// the next successful push. Displayed as a tooltip in the Servers pane
+    /// so failing auto-updates (marginal SSH links, missing permissions) are
+    /// visible without users having to open log files.
+    private(set) var lastUpdateError: [UUID: String] = [:]
     /// Cooldown table: a failed push won't be retried for the cooldown
     /// window. Prevents a loop of scp failures from hammering the host.
     /// Not @Observable-tracked (private + non-UI-facing).
     @ObservationIgnored
     private var lastAttempt: [UUID: Date] = [:]
-
-    /// Retry cooldown after a failed or successful push — either way we
-    /// don't need to try again until the next tick round, and giving the
-    /// remote side time to settle avoids spamming on a misconfigured host.
-    private let cooldown: TimeInterval = 300
+    /// Successful pushes get a much shorter cooldown — we want the very
+    /// next tick to pick up the new version so the UI doesn't show "stale"
+    /// for 5 full minutes. Failures use the longer cooldown so marginal
+    /// hosts aren't hammered.
+    private let cooldownSuccess: TimeInterval = 15
+    private let cooldownFailure: TimeInterval = 300
 
     init(manifest: SamplerManifest?) {
         self.manifest = manifest
@@ -42,11 +48,19 @@ final class SamplerUpdateCoordinator {
         guard node.kind == .ssh else { return }
         guard let manifest else { return }
         guard !reportedSampler.isEmpty else { return }
-        if reportedSampler == manifest.expectedSamplerField { return }
-        if updatingNodeIDs.contains(node.id) { return }
-        if let last = lastAttempt[node.id],
-           Date().timeIntervalSince(last) < cooldown {
+        if reportedSampler == manifest.expectedSamplerField {
+            // Already current: clear any stale error banner from a prior
+            // failed attempt so the UI doesn't lie to the user.
+            lastUpdateError.removeValue(forKey: node.id)
             return
+        }
+        if updatingNodeIDs.contains(node.id) { return }
+        // Per-node cooldown: shorter after success so the next tick picks
+        // up the fresh version promptly.
+        if let last = lastAttempt[node.id] {
+            let hadError = lastUpdateError[node.id] != nil
+            let cd = hadError ? cooldownFailure : cooldownSuccess
+            if Date().timeIntervalSince(last) < cd { return }
         }
         guard let user = node.sshUser, !user.isEmpty,
               let host = node.sshHost, !host.isEmpty
@@ -55,26 +69,56 @@ final class SamplerUpdateCoordinator {
         updatingNodeIDs.insert(node.id)
         lastAttempt[node.id] = Date()
         let nodeID = node.id
+        let nodeHostname = node.displayName
+        let fromVersion = reportedSampler
+        let expected = manifest.expectedSamplerField
+        Logger.shared.info(
+            "auto-update: push starting", hostID: nodeID, host: nodeHostname,
+            kv: ["from": fromVersion, "to": expected]
+        )
         Task.detached(priority: .utility) { [weak self] in
-            // Detect the remote's OS/arch each time rather than caching —
-            // costs one extra ssh round-trip per update, but catches hosts
-            // that swap architecture (rare but possible on SBCs migrating
-            // from 32-bit armv7 to arm64 firmware).
+            let start = Date()
+            var triple: String?
+            var failure: Error?
             do {
-                let triple = try await SSHBootstrap.detectTriple(user: user, host: host)
-                if let binary = SSHBootstrap.bundledBinary(forTriple: triple) {
-                    _ = try await SSHBootstrap.copyBinary(
-                        localBinary: binary, user: user, host: host
+                let t = try await SSHBootstrap.detectTriple(user: user, host: host)
+                triple = t
+                guard let binary = SSHBootstrap.bundledBinary(forTriple: t) else {
+                    throw SamplerInvokeError.misconfigured(
+                        "no bundled sampler for remote triple \(t)"
                     )
                 }
+                _ = try await SSHBootstrap.copyBinary(
+                    localBinary: binary, user: user, host: host
+                )
             } catch {
-                // Swallow — the next successful sample will trigger another
-                // attempt after the cooldown window. Surfacing errors here
-                // would require a notifier plumbed in, which we don't yet
-                // have; the stale-version banner is enough signal.
+                failure = error
             }
+            let elapsed = Date().timeIntervalSince(start)
             await MainActor.run {
                 self?.updatingNodeIDs.remove(nodeID)
+                if let failure {
+                    let msg = SamplerInvokeError.shortDescription(for: failure)
+                    self?.lastUpdateError[nodeID] = msg
+                    Logger.shared.error(
+                        "auto-update: push failed", hostID: nodeID, host: nodeHostname,
+                        kv: [
+                            "triple": triple ?? "-",
+                            "elapsed_s": String(format: "%.1f", elapsed),
+                            "error": msg,
+                        ]
+                    )
+                } else {
+                    self?.lastUpdateError.removeValue(forKey: nodeID)
+                    Logger.shared.info(
+                        "auto-update: push succeeded", hostID: nodeID, host: nodeHostname,
+                        kv: [
+                            "triple": triple ?? "-",
+                            "elapsed_s": String(format: "%.1f", elapsed),
+                            "to": expected,
+                        ]
+                    )
+                }
             }
         }
     }

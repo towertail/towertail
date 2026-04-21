@@ -29,6 +29,16 @@ enum SamplerInvokeError: LocalizedError {
             return reason
         }
     }
+
+    /// Short one-line summary for logs and UI tooltips. Works on any
+    /// Error (not just this enum) so callers don't have to cast before
+    /// emitting a diagnostic string.
+    static func shortDescription(for error: Error) -> String {
+        if let e = error as? SamplerInvokeError {
+            return e.errorDescription ?? "\(e)"
+        }
+        return error.localizedDescription
+    }
 }
 
 @Sendable

@@ -79,15 +79,21 @@ enum SSHBootstrap {
 
     /// Ensures the remote `~/.towertail/` directory exists and copies the local
     /// binary into it, marking it executable. Returns the remote path.
+    ///
+    /// Timeouts are generous (30s each stage, 60s for the scp itself) to
+    /// tolerate marginal hosts — slow SSH negotiation, small uplink, or
+    /// busy kernels — without silently dropping the push.
     static func copyBinary(
         localBinary: URL,
         user: String,
         host: String,
-        timeout: TimeInterval = 30
+        timeout: TimeInterval = 60
     ) async throws -> String {
         // mkdir -p ~/.towertail
         let mkdirArgs = commonFlags + ["\(user)@\(host)", "mkdir -p \(remoteSamplerDir)"]
-        let mk = try await ProcessRunner.run(executable: sshExecutable, arguments: mkdirArgs)
+        let mk = try await ProcessRunner.run(
+            executable: sshExecutable, arguments: mkdirArgs, timeout: 30
+        )
         if mk.exitCode != 0 {
             let err = String(data: mk.stderr, encoding: .utf8) ?? ""
             throw SamplerInvokeError.sshFailed(stderr: err, exitCode: mk.exitCode)
@@ -110,7 +116,9 @@ enum SSHBootstrap {
 
         // chmod +x ~/.towertail/towertail-sampler
         let chmodArgs = commonFlags + ["\(user)@\(host)", "chmod +x \(remoteSamplerPath)"]
-        let ch = try await ProcessRunner.run(executable: sshExecutable, arguments: chmodArgs)
+        let ch = try await ProcessRunner.run(
+            executable: sshExecutable, arguments: chmodArgs, timeout: 30
+        )
         if ch.exitCode != 0 {
             let err = String(data: ch.stderr, encoding: .utf8) ?? ""
             throw SamplerInvokeError.sshFailed(stderr: err, exitCode: ch.exitCode)

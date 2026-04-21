@@ -36,10 +36,23 @@ final class AppEnvironment {
         let notifier = ThresholdNotifier(settings: settings)
         self.notifier = notifier
         store.notifier = notifier
+
+        // Lifecycle breadcrumb — first thing that lands in today's log.
+        let expected = manifest?.expectedSamplerField ?? "(none)"
+        Logger.shared.info(
+            "app: launch",
+            category: "lifecycle",
+            kv: [
+                "nodes": String(nodeStore.nodes.count),
+                "bundled_sampler": expected,
+                "auto_update": String(settings.autoUpdateSamplersEnabled),
+            ]
+        )
     }
 
     func start() {
         guard task == nil else { return }
+        Logger.shared.info("collector: starting", category: "lifecycle")
         let collector = self.collector
         let store = self.store
         notifier.start()
@@ -49,6 +62,7 @@ final class AppEnvironment {
     }
 
     func stop() {
+        Logger.shared.info("collector: stopping", category: "lifecycle")
         task?.cancel()
         task = nil
     }

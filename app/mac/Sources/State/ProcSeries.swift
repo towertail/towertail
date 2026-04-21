@@ -70,4 +70,16 @@ struct ProcSeries: Sendable {
         let b = buffer[lo]
         return abs(a.t.timeIntervalSince(date)) <= abs(b.t.timeIntervalSince(date)) ? a : b
     }
+
+    /// Returns the snapshot immediately preceding `snap` in the buffer,
+    /// or nil if `snap` is the first entry. Used for per-process I/O rate
+    /// computation (cumulative counter delta divided by dt).
+    func previous(before snap: Snapshot) -> Snapshot? {
+        // Match by timestamp — snapshots are appended strictly monotonic
+        // so equality of `t` uniquely identifies the index.
+        guard let idx = buffer.firstIndex(where: { $0.t == snap.t }), idx > 0 else {
+            return nil
+        }
+        return buffer[idx - 1]
+    }
 }

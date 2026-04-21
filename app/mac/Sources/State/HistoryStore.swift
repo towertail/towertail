@@ -6,11 +6,45 @@ import SQLite3
 /// main actor. A single background serial queue guards the sqlite handle.
 final class HistoryStore: @unchecked Sendable {
     static let maxRowsPerNode = 2_000
+    /// Per-process snapshots are ~2-10 KB each. 2h × 2s poll = 3600 rows,
+    /// ~20 MB per host worst case. We keep the same 2h window as the
+    /// in-memory `ProcSeries` so restart restores the full scrubbable
+    /// history without blowing up disk. Rows older than this are pruned
+    /// on each append.
+    static let procRetention: TimeInterval = 2 * 60 * 60
 
     private let url: URL
     private let queue = DispatchQueue(label: "com.towertail.history", qos: .utility)
     private var db: OpaquePointer?
     private var insertStmt: OpaquePointer?
+    private var insertProcsStmt: OpaquePointer?
+    /// Lazily-initialized JSON codec for proc item lists. Decoder uses
+    /// fractional-seconds ISO-8601 so round-trip with sampler-produced
+    /// start_ts works; encoder mirrors that format.
+    private static let procDecoder: JSONDecoder = {
+        let d = JSONDecoder()
+        d.dateDecodingStrategy = .custom { decoder in
+            let c = try decoder.singleValueContainer()
+            let s = try c.decode(String.self)
+            let fmt = ISO8601DateFormatter()
+            fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let parsed = fmt.date(from: s) { return parsed }
+            fmt.formatOptions = [.withInternetDateTime]
+            if let parsed = fmt.date(from: s) { return parsed }
+            throw DecodingError.dataCorruptedError(in: c, debugDescription: "invalid ts: \(s)")
+        }
+        return d
+    }()
+    private static let procEncoder: JSONEncoder = {
+        let e = JSONEncoder()
+        e.dateEncodingStrategy = .custom { date, encoder in
+            let fmt = ISO8601DateFormatter()
+            fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            var c = encoder.singleValueContainer()
+            try c.encode(fmt.string(from: date))
+        }
+        return e
+    }()
 
     init(url: URL) {
         self.url = url
@@ -22,6 +56,7 @@ final class HistoryStore: @unchecked Sendable {
     deinit {
         queue.sync {
             if let insertStmt { sqlite3_finalize(insertStmt) }
+            if let insertProcsStmt { sqlite3_finalize(insertProcsStmt) }
             if let db { sqlite3_close(db) }
         }
     }
@@ -45,6 +80,13 @@ final class HistoryStore: @unchecked Sendable {
             tx_mbps REAL
         );
         CREATE INDEX IF NOT EXISTS idx_samples_node_ts ON samples(node_id, ts);
+        CREATE TABLE IF NOT EXISTS proc_snapshots (
+            node_id TEXT NOT NULL,
+            ts REAL NOT NULL,
+            root INTEGER NOT NULL,
+            items_json BLOB NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_proc_snapshots_node_ts ON proc_snapshots(node_id, ts);
         """
         sqlite3_exec(db, sql, nil, nil, nil)
 
@@ -53,6 +95,12 @@ final class HistoryStore: @unchecked Sendable {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?);
         """
         sqlite3_prepare_v2(db, insertSQL, -1, &insertStmt, nil)
+
+        let insertProcsSQL = """
+        INSERT INTO proc_snapshots (node_id, ts, root, items_json)
+        VALUES (?, ?, ?, ?);
+        """
+        sqlite3_prepare_v2(db, insertProcsSQL, -1, &insertProcsStmt, nil)
     }
 
     /// Append a point for a node. Called from any context; non-blocking.
@@ -137,6 +185,94 @@ final class HistoryStore: @unchecked Sendable {
             }
             sqlite3_bind_int(stmt, 3, Int32(keep))
             sqlite3_step(stmt)
+        }
+    }
+
+    /// Persist a process snapshot. Serializes items as JSON so the full
+    /// sampler payload (cmd line, counters, threads, etc.) round-trips
+    /// without schema churn when we add fields to `ProcSample`.
+    ///
+    /// Also opportunistically prunes rows older than `procRetention`
+    /// relative to this write — cheap to do here (indexed range delete)
+    /// and keeps disk usage bounded without a separate timer.
+    func appendProcs(nodeID: UUID, t: Date, root: Bool, items: [ProcSample]) {
+        let id = nodeID.uuidString
+        let ts = t.timeIntervalSince1970
+        // Encode on the caller's thread so we don't capture `[ProcSample]`
+        // (not Sendable) into a @Sendable DispatchQueue closure. Failures
+        // here mean we drop this one snapshot silently — better than
+        // crashing the collector.
+        guard let payload = try? Self.procEncoder.encode(items) else { return }
+        queue.async { [weak self] in
+            guard let self, let stmt = self.insertProcsStmt else { return }
+            sqlite3_reset(stmt)
+            sqlite3_clear_bindings(stmt)
+            _ = id.withCString { cstr in
+                sqlite3_bind_text(stmt, 1, cstr, -1, Self.sqliteTransient)
+            }
+            sqlite3_bind_double(stmt, 2, ts)
+            sqlite3_bind_int(stmt, 3, root ? 1 : 0)
+            _ = payload.withUnsafeBytes { raw -> Int32 in
+                sqlite3_bind_blob(stmt, 4, raw.baseAddress, Int32(payload.count), Self.sqliteTransient)
+            }
+            sqlite3_step(stmt)
+
+            // Prune older than retention — indexed range delete is ~O(log N + K).
+            let cutoff = ts - Self.procRetention
+            let pruneSQL = "DELETE FROM proc_snapshots WHERE node_id = ? AND ts < ?;"
+            var prune: OpaquePointer?
+            if sqlite3_prepare_v2(self.db, pruneSQL, -1, &prune, nil) == SQLITE_OK {
+                defer { sqlite3_finalize(prune) }
+                _ = id.withCString { cstr in
+                    sqlite3_bind_text(prune, 1, cstr, -1, Self.sqliteTransient)
+                }
+                sqlite3_bind_double(prune, 2, cutoff)
+                sqlite3_step(prune)
+            }
+        }
+    }
+
+    struct ProcHistoryRow: Sendable {
+        let t: Date
+        let root: Bool
+        let items: [ProcSample]
+    }
+
+    /// Load persisted process snapshots for a node, oldest first. Only
+    /// rows newer than `procRetention` are returned — we don't want to
+    /// hydrate an hour of empty space before whatever's fresh.
+    func loadRecentProcs(nodeID: UUID) -> [ProcHistoryRow] {
+        queue.sync {
+            guard let db else { return [] }
+            let cutoff = Date().timeIntervalSince1970 - Self.procRetention
+            let sql = """
+            SELECT ts, root, items_json
+            FROM proc_snapshots
+            WHERE node_id = ? AND ts >= ?
+            ORDER BY ts ASC;
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            _ = nodeID.uuidString.withCString { cstr in
+                sqlite3_bind_text(stmt, 1, cstr, -1, Self.sqliteTransient)
+            }
+            sqlite3_bind_double(stmt, 2, cutoff)
+            var out: [ProcHistoryRow] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let ts = sqlite3_column_double(stmt, 0)
+                let root = sqlite3_column_int(stmt, 1) != 0
+                guard let bytes = sqlite3_column_blob(stmt, 2) else { continue }
+                let n = Int(sqlite3_column_bytes(stmt, 2))
+                let data = Data(bytes: bytes, count: n)
+                let items = (try? Self.procDecoder.decode([ProcSample].self, from: data)) ?? []
+                out.append(ProcHistoryRow(
+                    t: Date(timeIntervalSince1970: ts),
+                    root: root,
+                    items: items
+                ))
+            }
+            return out
         }
     }
 

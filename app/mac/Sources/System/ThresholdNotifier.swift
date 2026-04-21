@@ -106,6 +106,15 @@ final class ThresholdNotifier {
             trigger: nil
         )
         center.add(req, withCompletionHandler: nil)
+        Logger.shared.info(
+            "notification: fired",
+            category: "notifications",
+            hostID: host.id, host: host.hostname,
+            kv: [
+                "metric": metric.rawValue,
+                "level": tint == .critical ? "critical" : "warn",
+            ]
+        )
     }
 
     private static func bodyText(vm: ServerViewModel, metric: Metric) -> String {

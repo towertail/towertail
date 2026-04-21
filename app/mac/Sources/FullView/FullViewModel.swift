@@ -6,12 +6,32 @@ enum FullViewMode: Equatable, Sendable {
     case pinned(Date)
 }
 
+/// DISK tab picker selections. Strings are the sentinel "aggregate"
+/// value (nil semantically) or the specific mount/device name.
+enum DiskMountSelection: Hashable, Sendable {
+    case max                  // worst fill % across all mounts
+    case mount(String)        // specific mount path
+}
+
+enum DiskDeviceSelection: Hashable, Sendable {
+    case total                // sum across all physical devices
+    case device(String)       // specific device (e.g. "nvme0n1")
+}
+
 @Observable
 @MainActor
 final class FullViewModel {
     var metric: Metric
     var mode: FullViewMode = .live
     var hoverAt: Date?
+
+    /// DISK tab — capacity chart mount picker. "Max" is the default so
+    /// the tab opens with the same headline number users have seen since
+    /// v1 (`worstDisk`).
+    var diskMount: DiskMountSelection = .max
+    /// DISK tab — I/O chart device picker. "Total" aggregates across
+    /// devices.
+    var diskDevice: DiskDeviceSelection = .total
 
     init(metric: Metric) {
         self.metric = metric

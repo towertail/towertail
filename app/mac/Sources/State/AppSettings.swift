@@ -52,7 +52,8 @@ final class AppSettings {
     }
 
     func persist() {
-        var p = SettingsPersistence.load(from: url)
+        let before = SettingsPersistence.load(from: url)
+        var p = before
         p.cardDensity = cardDensity.rawValue
         p.thresholds = PersistedThresholds(
             cpuWarn: thresholds.cpuWarn, cpuCritical: thresholds.cpuCritical,
@@ -68,5 +69,65 @@ final class AppSettings {
         p.launchAtLogin = launchAtLogin
         p.autoUpdateSamplersEnabled = autoUpdateSamplersEnabled
         SettingsPersistence.save(p, to: url)
+        logDiff(before: before, after: p)
+    }
+
+    /// Emit one "settings: changed" log line with only the fields that
+    /// differ. Keeps noisy persist-on-slider-drag events from flooding
+    /// the log file while still leaving a clear audit trail of what the
+    /// user changed and when.
+    private func logDiff(before: PersistedSettings, after: PersistedSettings) {
+        var changes: [String: String] = [:]
+        if before.cardDensity != after.cardDensity {
+            changes["cardDensity"] = "\(before.cardDensity)→\(after.cardDensity)"
+        }
+        if before.thresholds.cpuWarn != after.thresholds.cpuWarn {
+            changes["cpuWarn"] = "\(before.thresholds.cpuWarn)→\(after.thresholds.cpuWarn)"
+        }
+        if before.thresholds.cpuCritical != after.thresholds.cpuCritical {
+            changes["cpuCritical"] = "\(before.thresholds.cpuCritical)→\(after.thresholds.cpuCritical)"
+        }
+        if before.thresholds.memWarn != after.thresholds.memWarn {
+            changes["memWarn"] = "\(before.thresholds.memWarn)→\(after.thresholds.memWarn)"
+        }
+        if before.thresholds.memCritical != after.thresholds.memCritical {
+            changes["memCritical"] = "\(before.thresholds.memCritical)→\(after.thresholds.memCritical)"
+        }
+        if before.thresholds.diskWarn != after.thresholds.diskWarn {
+            changes["diskWarn"] = "\(before.thresholds.diskWarn)→\(after.thresholds.diskWarn)"
+        }
+        if before.thresholds.diskCritical != after.thresholds.diskCritical {
+            changes["diskCritical"] = "\(before.thresholds.diskCritical)→\(after.thresholds.diskCritical)"
+        }
+        if before.localPollingIntervalSeconds != after.localPollingIntervalSeconds {
+            changes["localPollSec"] = "\(before.localPollingIntervalSeconds)→\(after.localPollingIntervalSeconds)"
+        }
+        if before.sshPollingIntervalSeconds != after.sshPollingIntervalSeconds {
+            changes["sshPollSec"] = "\(before.sshPollingIntervalSeconds)→\(after.sshPollingIntervalSeconds)"
+        }
+        if before.notificationsEnabled != after.notificationsEnabled {
+            changes["notificationsEnabled"] = "\(before.notificationsEnabled)→\(after.notificationsEnabled)"
+        }
+        if before.notifyWarn != after.notifyWarn {
+            changes["notifyWarn"] = "\(before.notifyWarn)→\(after.notifyWarn)"
+        }
+        if before.notifyCritical != after.notifyCritical {
+            changes["notifyCritical"] = "\(before.notifyCritical)→\(after.notifyCritical)"
+        }
+        if before.notifyDebounceSeconds != after.notifyDebounceSeconds {
+            changes["notifyDebounceSec"] = "\(before.notifyDebounceSeconds)→\(after.notifyDebounceSeconds)"
+        }
+        if before.launchAtLogin != after.launchAtLogin {
+            changes["launchAtLogin"] = "\(before.launchAtLogin)→\(after.launchAtLogin)"
+        }
+        if before.autoUpdateSamplersEnabled != after.autoUpdateSamplersEnabled {
+            changes["autoUpdateSamplers"] = "\(before.autoUpdateSamplersEnabled)→\(after.autoUpdateSamplersEnabled)"
+        }
+        if changes.isEmpty { return }
+        Logger.shared.info(
+            "settings: changed",
+            category: "settings",
+            kv: changes
+        )
     }
 }

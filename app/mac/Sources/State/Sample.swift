@@ -163,8 +163,26 @@ struct DiskIOInfo: Decodable, Sendable {
     let writeBps: Int64
     let readCum: Int64
     let writeCum: Int64
+    let devices: [DiskIODevice]?
 
     enum CodingKeys: String, CodingKey {
+        case readBps = "read_bps"
+        case writeBps = "write_bps"
+        case readCum = "read_cum"
+        case writeCum = "write_cum"
+        case devices
+    }
+}
+
+struct DiskIODevice: Decodable, Sendable, Hashable {
+    let name: String
+    let readBps: Int64
+    let writeBps: Int64
+    let readCum: Int64
+    let writeCum: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case name
         case readBps = "read_bps"
         case writeBps = "write_bps"
         case readCum = "read_cum"
@@ -172,7 +190,7 @@ struct DiskIOInfo: Decodable, Sendable {
     }
 }
 
-struct ProcList: Decodable, Sendable {
+struct ProcList: Codable, Sendable {
     let root: Bool
     let topN: Int
     let total: Int
@@ -186,7 +204,7 @@ struct ProcList: Decodable, Sendable {
     }
 }
 
-struct ProcSample: Decodable, Sendable, Identifiable {
+struct ProcSample: Codable, Sendable, Identifiable {
     let pid: Int32
     let ppid: Int32?
     let name: String

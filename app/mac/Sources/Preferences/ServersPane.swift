@@ -356,9 +356,20 @@ private struct ServersTable: View {
             }
         } else if let vm = serverStore.serverVMs.first(where: { $0.id == n.id }),
                   !vm.samplerVersion.isEmpty {
-            Text(vm.samplerVersion)
-                .font(.system(.body, design: .monospaced))
-                .foregroundStyle(.secondary)
+            let err = samplerUpdater.lastUpdateError[n.id]
+            HStack(spacing: 4) {
+                Text(vm.samplerVersion)
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                if let err {
+                    // Auto-update failed on this host — surface via a
+                    // warning glyph with the exact error as a tooltip so
+                    // the user doesn't have to open Console.app.
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Color.orange)
+                        .help("Auto-update failed: \(err)")
+                }
+            }
         } else {
             Text("—")
                 .foregroundStyle(.secondary)

@@ -68,6 +68,16 @@ struct ProcessTable: View {
                     }
                     .width(min: 60, ideal: 80)
 
+                    TableColumn("Reads", value: \.readBps) { r in
+                        Text(Self.formatIORate(r.readBps)).monospacedDigit()
+                    }
+                    .width(min: 80, ideal: 100)
+
+                    TableColumn("Writes", value: \.writeBps) { r in
+                        Text(Self.formatIORate(r.writeBps)).monospacedDigit()
+                    }
+                    .width(min: 80, ideal: 100)
+
                     TableColumn("Threads", value: \.threads) { r in
                         Text("\(r.threads)").monospacedDigit()
                     }
@@ -77,9 +87,11 @@ struct ProcessTable: View {
                     displayed.sort(using: newSort)
                 }
                 // Enough rows to usefully scan top processes without
-                // crowding the chart. Fixed max so extra vertical space
-                // goes to the chart (which has layoutPriority 1 above).
-                .frame(minHeight: 220, maxHeight: 360)
+                // crowding the chart. Min kept small enough that a short
+                // window still leaves room for the header + chart(s) +
+                // toolbar; the table scrolls within this frame when the
+                // row list doesn't fit.
+                .frame(minHeight: 160, maxHeight: 360)
             }
         }
         .padding(.horizontal, 16)
@@ -104,7 +116,16 @@ struct ProcessTable: View {
         switch metric {
         case .mem:
             sort = [KeyPathComparator(\ProcRow.rss, order: .reverse)]
-        case .cpu, .disk, .net:
+        case .disk:
+            // Surface biggest disk-I/O contributors right now. ioTotalBps
+            // is the hidden read+write rate; falls back to cpuPct for rows
+            // where the sampler couldn't read per-proc counters (macOS, or
+            // Linux without CAP_SYS_PTRACE).
+            sort = [
+                KeyPathComparator(\ProcRow.ioTotalBps, order: .reverse),
+                KeyPathComparator(\ProcRow.cpuPct, order: .reverse),
+            ]
+        case .cpu, .net:
             sort = [KeyPathComparator(\ProcRow.cpuPct, order: .reverse)]
         }
     }
@@ -156,13 +177,38 @@ struct ProcessTable: View {
     }
 
     private func commit(at t: Date?) {
-        let snap: [ProcSample]
+        let current: ProcSeries.Snapshot?
         if let t {
-            snap = series.nearest(to: t)?.items ?? []
+            current = series.nearest(to: t)
         } else {
-            snap = series.latest?.items ?? []
+            current = series.latest
         }
-        let rows = snap.map(ProcRow.init(from:))
+        guard let current else {
+            displayed = []
+            lastUpdateAt = Date()
+            return
+        }
+        // Pair with the previous snapshot so we can turn the sampler's
+        // cumulative read/write counters into a per-second rate. No
+        // previous snapshot (or identical timestamp → dt==0) means the
+        // first tick after launch — rates stay nil (rendered as "—") so
+        // the user can tell "no history yet" from "genuinely idle".
+        let previous = series.previous(before: current)
+        let dt: TimeInterval? = {
+            guard let p = previous else { return nil }
+            let d = current.t.timeIntervalSince(p.t)
+            return d > 0 ? d : nil
+        }()
+        var prevByPid: [Int32: ProcSample] = [:]
+        if let previous, dt != nil {
+            prevByPid.reserveCapacity(previous.items.count)
+            for p in previous.items {
+                prevByPid[p.pid] = p
+            }
+        }
+        let rows = current.items.map { p in
+            ProcRow(from: p, previous: prevByPid[p.pid], dt: dt)
+        }
         let sortedRows: [ProcRow]
         if let cmp = sort.first {
             sortedRows = rows.sorted(using: [cmp] + sort.dropFirst())
@@ -191,10 +237,28 @@ struct ProcessTable: View {
         if v < 1_073_741_824 { return String(format: "%.1f MB", v / 1_048_576) }
         return String(format: "%.2f GB", v / 1_073_741_824)
     }
+
+    /// Formats a per-process I/O rate. -1 is the "no previous snapshot /
+    /// no sampler visibility" sentinel and renders as an em-dash so the
+    /// user can tell "unknown" apart from "0 B/s idle".
+    static func formatIORate(_ bps: Double) -> String {
+        if bps < 0 { return "—" }
+        let v = max(0, bps)
+        if v < 1 { return "0 B/s" }
+        if v < 1_024 { return String(format: "%.0f B/s", v) }
+        if v < 1_048_576 { return String(format: "%.1f KB/s", v / 1_024) }
+        if v < 1_073_741_824 { return String(format: "%.1f MB/s", v / 1_048_576) }
+        return String(format: "%.2f GB/s", v / 1_073_741_824)
+    }
 }
 
 /// Stable, sortable row value. `ProcSample` itself isn't Comparable on any
 /// single field and `KeyPathComparator` needs concrete types, so we project.
+/// readBps/writeBps are the current rate in bytes/sec derived from the
+/// sampler's lifetime counters (current - previous) / dt. -1 encodes
+/// "no previous snapshot" or "no sampler visibility" so the table can
+/// distinguish unknown from genuinely idle. Rows without data sort to the
+/// bottom on the I/O columns since -1 is less than any real rate.
 struct ProcRow: Identifiable, Hashable {
     let id: Int32
     let pid: Int32
@@ -203,8 +267,11 @@ struct ProcRow: Identifiable, Hashable {
     let cpuPct: Double
     let rss: Int64
     let threads: Int32
+    let readBps: Double
+    let writeBps: Double
+    let ioTotalBps: Double
 
-    init(from p: ProcSample) {
+    init(from p: ProcSample, previous: ProcSample?, dt: TimeInterval?) {
         self.id = p.pid
         self.pid = p.pid
         self.user = p.user ?? "—"
@@ -212,5 +279,23 @@ struct ProcRow: Identifiable, Hashable {
         self.cpuPct = p.cpuPct
         self.rss = p.rss
         self.threads = p.threads ?? 0
+
+        // Rate computation: need current + previous + positive dt, and
+        // the counter must not have decreased (PID reuse / sampler
+        // restart resets the counter from the kernel's perspective).
+        func rate(cur: Int64?, prev: Int64?) -> Double {
+            guard let cur, let prev, let dt else { return -1 }
+            if cur < 0 || prev < 0 { return -1 }
+            let delta = cur - prev
+            if delta < 0 { return -1 }
+            return Double(delta) / dt
+        }
+        self.readBps = rate(cur: p.readBytes, prev: previous?.readBytes)
+        self.writeBps = rate(cur: p.writeBytes, prev: previous?.writeBytes)
+        // Treat missing-side as 0 contribution so a row with only reads
+        // still sorts meaningfully on the hidden total.
+        let r = max(self.readBps, 0)
+        let w = max(self.writeBps, 0)
+        self.ioTotalBps = r + w
     }
 }

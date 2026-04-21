@@ -2,7 +2,7 @@ import SwiftUI
 
 struct PreferencesWindow: View {
     enum Tab: String, CaseIterable, Hashable {
-        case servers, thresholds, notifications, general
+        case servers, thresholds, notifications, general, logs
 
         var title: String {
             switch self {
@@ -10,6 +10,7 @@ struct PreferencesWindow: View {
             case .thresholds: return "Thresholds"
             case .notifications: return "Notifications"
             case .general: return "General"
+            case .logs: return "Logs"
             }
         }
 
@@ -19,6 +20,7 @@ struct PreferencesWindow: View {
             case .thresholds: return "gauge"
             case .notifications: return "bell"
             case .general: return "gear"
+            case .logs: return "doc.text.magnifyingglass"
             }
         }
     }
@@ -49,6 +51,10 @@ struct PreferencesWindow: View {
             paneContent(for: .general)
                 .tabItem { Label(Tab.general.title, systemImage: Tab.general.icon) }
                 .tag(Tab.general)
+
+            paneContent(for: .logs)
+                .tabItem { Label(Tab.logs.title, systemImage: Tab.logs.icon) }
+                .tag(Tab.logs)
         }
         .frame(minWidth: 600, minHeight: 420)
         .padding()
@@ -69,6 +75,7 @@ struct PreferencesWindow: View {
             case .thresholds: ThresholdsPane()
             case .notifications: NotificationsPane()
             case .general: GeneralPane()
+            case .logs: LogsPane()
             }
         } else {
             Color.clear

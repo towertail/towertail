@@ -11,6 +11,11 @@ final class ServerStore {
     /// tests and previews construct stores without a NodeStore.
     private let nodeLookup: (@MainActor (UUID) -> Node?)?
     var notifier: ThresholdNotifier?
+    /// Last-logged aggregate state. Used to emit a single log entry when
+    /// the menu-bar icon crosses warn/critical/nominal boundaries, rather
+    /// than spamming every render. Not @Observable-tracked.
+    @ObservationIgnored
+    private var lastLoggedAggregate: AggregateState?
 
     init(
         history: HistoryStore? = nil,
@@ -24,6 +29,8 @@ final class ServerStore {
         if let history {
             let recent = history.loadRecent(nodeID: vm.id)
             vm.hydrate(from: recent)
+            let procs = history.loadRecentProcs(nodeID: vm.id)
+            vm.hydrateProcs(from: procs)
         }
         serverVMs.append(vm)
     }
@@ -32,14 +39,43 @@ final class ServerStore {
         guard let vm = serverVMs.first(where: { $0.id == id }) else { return }
         let point = vm.ingest(sample)
         history?.append(nodeID: id, point: point)
+        if let history, let ps = sample.procs {
+            history.appendProcs(
+                nodeID: id, t: sample.ts, root: ps.root, items: ps.items
+            )
+        }
         if let notifier, let node = nodeLookup?(id) {
             notifier.evaluate(vm: vm, node: node)
         }
+        logAggregateIfChanged()
     }
 
     func markOffline(id: UUID, reason: String, at t: Date) {
         guard let vm = serverVMs.first(where: { $0.id == id }) else { return }
         vm.markOffline(reason: reason, at: t)
+        logAggregateIfChanged()
+    }
+
+    private func logAggregateIfChanged() {
+        let now = aggregateState
+        if lastLoggedAggregate == now { return }
+        let prev = lastLoggedAggregate
+        lastLoggedAggregate = now
+        // Skip the very first emit (transition from nil → anything) so
+        // log lines describe *transitions* the user sees, not startup
+        // noise.
+        guard let prev else { return }
+        let s = summary
+        Logger.shared.info(
+            "icon: \(prev) → \(now)",
+            category: "icon",
+            kv: [
+                "online": String(s.online),
+                "warn": String(s.warn),
+                "critical": String(s.critical),
+                "down": String(s.down),
+            ]
+        )
     }
 
     /// Aggregate menu-bar state: honors per-node `iconOnWarn` /
