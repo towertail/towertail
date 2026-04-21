@@ -104,9 +104,11 @@ func Proc(window time.Duration, topN int) (schema.ProcList, []string) {
 		if n, err := f.p.NumThreads(); err == nil {
 			item.Threads = n
 		}
-		if st, err := f.p.Status(); err == nil && len(st) > 0 {
-			item.State = st[0]
-		}
+		// NOTE: intentionally NOT calling p.Status() here. On macOS gopsutil
+		// shells out to /bin/ps per PID for Status(), which spawns hundreds
+		// of short-lived subprocesses per sample and makes the agent flicker
+		// all over Activity Monitor. We don't surface process state in the
+		// UI, so pay the cost only if that changes.
 		if ct, err := f.p.CreateTime(); err == nil && ct > 0 {
 			item.StartTS = schema.FormatTS(time.UnixMilli(ct))
 		}
