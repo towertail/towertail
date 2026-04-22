@@ -92,6 +92,18 @@ final class NodeStore {
         }
     }
 
+    func setFavorite(id: UUID, favorite: Bool) {
+        if let i = nodes.firstIndex(where: { $0.id == id }) {
+            nodes[i].favorite = favorite
+            persist()
+            Logger.shared.info(
+                favorite ? "server: favorited" : "server: unfavorited",
+                category: "servers",
+                hostID: id, host: nodes[i].displayName
+            )
+        }
+    }
+
     /// Replaces the entire node list in one shot without re-persisting —
     /// used by settings-import, which has already written the merged
     /// PersistedSettings to disk. Persisting again here would stomp any

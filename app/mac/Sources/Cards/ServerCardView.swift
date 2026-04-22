@@ -155,6 +155,19 @@ struct ServerCardView: View {
             .help("Settings for this server")
             .pointingHandOnHover()
             .disabled(node == nil)
+            Button {
+                if let n = node {
+                    nodeStore.setFavorite(id: n.id, favorite: !n.favorite)
+                }
+            } label: {
+                Image(systemName: (node?.favorite ?? false) ? "star.fill" : "star")
+                    .font(.caption)
+                    .foregroundStyle((node?.favorite ?? false) ? Color.yellow : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help((node?.favorite ?? false) ? "Unpin favorite" : "Pin as favorite")
+            .pointingHandOnHover()
+            .disabled(node == nil)
         }
     }
 

@@ -5,55 +5,93 @@ struct PopoverHeader: View {
     @Environment(ServerStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     @Binding var filter: PopoverFilter
+    /// Live, un-debounced query text. The popover owns the debounced copy
+    /// used for filtering — the header just drives the text field.
+    @Binding var searchText: String
+    @FocusState private var searchFocused: Bool
 
     var body: some View {
         let s = store.summary
-        HStack(spacing: 6) {
-            Text("Towertail")
-                .font(Typography.headerTitle)
-                .layoutPriority(0)
-            Spacer(minLength: 6)
-            // Pills are the primary content of the header — give them
-            // priority so `N online` doesn't get truncated when the title
-            // + chrome on either side competes for width.
-            HStack(spacing: 2) {
-                pill(kind: .online, count: s.online)
-                sep
-                warnPill(warn: s.warn, critical: s.critical)
-                sep
-                pill(kind: .down, count: s.down)
+        VStack(spacing: 6) {
+            HStack(spacing: 6) {
+                Text("Towertail")
+                    .font(Typography.headerTitle)
+                    .layoutPriority(0)
+                Spacer(minLength: 6)
+                // Pills are the primary content of the header — give them
+                // priority so `N online` doesn't get truncated when the title
+                // + chrome on either side competes for width.
+                HStack(spacing: 2) {
+                    pill(kind: .online, count: s.online)
+                    sep
+                    warnPill(warn: s.warn, critical: s.critical)
+                    sep
+                    pill(kind: .down, count: s.down)
+                }
+                .font(Typography.metaText)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(1)
+                Spacer(minLength: 6)
+                SettingsLink {
+                    Image(systemName: "gearshape")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Settings")
+                .simultaneousGesture(TapGesture().onEnded {
+                    NSApp.activate(ignoringOtherApps: true)
+                    // Auto-hide the menu-bar popover (same behavior as tapping a
+                    // chart card). Without this the popover stays pinned over
+                    // Settings until the user clicks away.
+                    dismiss()
+                })
+                Button {
+                    NSApp.terminate(nil)
+                } label: {
+                    Image(systemName: "power")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Quit Towertail")
             }
-            .font(Typography.metaText)
-            .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
-            .layoutPriority(1)
-            Spacer(minLength: 6)
-            SettingsLink {
-                Image(systemName: "gearshape")
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Settings")
-            .simultaneousGesture(TapGesture().onEnded {
-                NSApp.activate(ignoringOtherApps: true)
-                // Auto-hide the menu-bar popover (same behavior as tapping a
-                // chart card). Without this the popover stays pinned over
-                // Settings until the user clicks away.
-                dismiss()
-            })
-            Button {
-                NSApp.terminate(nil)
-            } label: {
-                Image(systemName: "power")
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Quit Towertail")
+            searchField
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .frame(height: 36)
         .background(Color.black.opacity(0.001))
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextField("Filter servers", text: $searchText)
+                .textFieldStyle(.plain)
+                .font(Typography.metaText)
+                .focused($searchFocused)
+                .onExitCommand { searchText = "" }
+                .onSubmit { searchFocused = false }
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Clear filter")
+                .pointingHandOnHover()
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.secondary.opacity(0.12))
+        )
     }
 
     private var sep: some View {

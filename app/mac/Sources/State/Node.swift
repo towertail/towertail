@@ -30,6 +30,8 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
     /// check), so we don't have to actively clear expired snoozes — they
     /// fall off naturally as time passes.
     var snoozedUntil: Date?
+    /// User-pinned favorite. Favorites sort to the top of the popover list.
+    var favorite: Bool
 
     init(
         id: UUID = UUID(),
@@ -44,7 +46,8 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         notifyOnWarn: Bool = true,
         notifyOnCritical: Bool = true,
         customThresholds: MetricThresholds? = nil,
-        snoozedUntil: Date? = nil
+        snoozedUntil: Date? = nil,
+        favorite: Bool = false
     ) {
         self.id = id
         self.displayName = displayName
@@ -59,12 +62,13 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         self.notifyOnCritical = notifyOnCritical
         self.customThresholds = customThresholds
         self.snoozedUntil = snoozedUntil
+        self.favorite = favorite
     }
 
     enum CodingKeys: String, CodingKey {
         case id, displayName, kind, sshUser, sshHost, tags, enabled
         case iconOnWarn, iconOnCritical, notifyOnWarn, notifyOnCritical
-        case customThresholds, snoozedUntil
+        case customThresholds, snoozedUntil, favorite
         // Legacy single-toggle flag from the first pass. If present it
         // seeds both iconOnWarn and iconOnCritical so users who already
         // disabled menu-bar icon for a noisy host keep that behavior after
@@ -87,6 +91,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         try c.encode(notifyOnCritical, forKey: .notifyOnCritical)
         try c.encodeIfPresent(customThresholds, forKey: .customThresholds)
         try c.encodeIfPresent(snoozedUntil, forKey: .snoozedUntil)
+        try c.encode(favorite, forKey: .favorite)
     }
 
     init(from decoder: Decoder) throws {
@@ -109,6 +114,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         self.notifyOnCritical = try c.decodeIfPresent(Bool.self, forKey: .notifyOnCritical) ?? true
         self.customThresholds = try c.decodeIfPresent(MetricThresholds.self, forKey: .customThresholds)
         self.snoozedUntil = try c.decodeIfPresent(Date.self, forKey: .snoozedUntil)
+        self.favorite = try c.decodeIfPresent(Bool.self, forKey: .favorite) ?? false
     }
 
     /// True only when snoozedUntil is set and still in the future.
