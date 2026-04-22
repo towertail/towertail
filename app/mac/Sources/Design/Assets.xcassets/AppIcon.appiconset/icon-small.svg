@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Simplified Towertail icon for small sizes (16px, 32px).
+       Same visual language as the large version, but the detail is
+       boosted and some elements removed so the rack slots and status
+       dot stay legible when downscaled to a handful of pixels.
+       Changes vs. icon.svg: thicker rack walls, slots are solid dark
+       bars (no thin text rules), status dot is larger and sits fully
+       outside the rack so its silhouette doesn't merge with anything.
+       Tile padding is reduced so the artwork fills more of the canvas. -->
+
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1C2230"/>
+      <stop offset="1" stop-color="#2A3344"/>
+    </linearGradient>
+    <radialGradient id="dotGreen" cx="0.35" cy="0.3" r="0.85">
+      <stop offset="0" stop-color="#6FE38A"/>
+      <stop offset="0.55" stop-color="#34C759"/>
+      <stop offset="1" stop-color="#1F9C41"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Slightly larger tile (70px padding instead of 100) so the rack is
+       bigger relative to the bounds when this is rasterized small. -->
+  <rect x="70" y="70" width="884" height="884" rx="200" ry="200" fill="url(#tile)"/>
+
+  <!-- Rack chassis, centered, narrower to give the badge breathing room. -->
+  <g transform="translate(260 190)">
+    <rect x="0" y="0" width="504" height="624" rx="64" ry="64" fill="#FFFFFF"/>
+
+    <!-- 3 solid dark slots instead of slots-with-text. High contrast
+         reads at 16px where individual rules would dither away. -->
+    <rect x="64" y="88" width="376" height="112" rx="24" ry="24" fill="#1C2230"/>
+    <circle cx="120" cy="144" r="22" fill="#34C759"/>
+
+    <rect x="64" y="232" width="376" height="112" rx="24" ry="24" fill="#1C2230"/>
+    <circle cx="120" cy="288" r="22" fill="#34C759"/>
+
+    <rect x="64" y="376" width="376" height="112" rx="24" ry="24" fill="#1C2230"/>
+    <circle cx="120" cy="432" r="22" fill="#34C759"/>
+  </g>
+
+  <!-- Status dot, oversized and centered on the bottom-right corner so
+       it still resolves as a distinct shape at 16px. -->
+  <circle cx="808" cy="808" r="150" fill="#FFFFFF"/>
+  <circle cx="808" cy="808" r="128" fill="url(#dotGreen)"/>
+</svg>

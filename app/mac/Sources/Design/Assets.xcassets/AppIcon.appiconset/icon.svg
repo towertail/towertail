@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Towertail app icon.
+       Visual language matches the menu-bar icon: a server rack with a
+       status dot in the bottom-right corner. Dark tile, white rack,
+       green (nominal) LED plus a green status dot.
+       Follows Apple's macOS icon grid: artwork sits inside an ~824px
+       rounded-square tile centered on the 1024 canvas with a ~180
+       corner radius, leaving ~100px padding. -->
+
+  <defs>
+    <!-- Tile gradient: near-black top-left → slightly lighter slate
+         bottom-right so the icon has depth without looking cartoony. -->
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1C2230"/>
+      <stop offset="1" stop-color="#2A3344"/>
+    </linearGradient>
+
+    <!-- Soft highlight across the top of the tile (subtle, for depth). -->
+    <linearGradient id="tileGloss" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.08"/>
+      <stop offset="0.4" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Green used for nominal state, matches Tint/Nominal (0x34C759). -->
+    <radialGradient id="dotGreen" cx="0.35" cy="0.3" r="0.85">
+      <stop offset="0" stop-color="#6FE38A"/>
+      <stop offset="0.55" stop-color="#34C759"/>
+      <stop offset="1" stop-color="#1F9C41"/>
+    </radialGradient>
+
+    <!-- Drop shadow under the status dot so it lifts off the rack. -->
+    <filter id="dotShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="6"/>
+      <feOffset dx="0" dy="3" result="offsetblur"/>
+      <feComponentTransfer>
+        <feFuncA type="linear" slope="0.5"/>
+      </feComponentTransfer>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Tile (rounded square). -->
+  <rect x="100" y="100" width="824" height="824" rx="180" ry="180" fill="url(#tile)"/>
+  <rect x="100" y="100" width="824" height="824" rx="180" ry="180" fill="url(#tileGloss)"/>
+
+  <!-- Server rack, centered. 440w × 560h, white, rounded corners.
+       The 3 rack units are drawn as horizontal strokes inset from the
+       rack edge with an LED dot on the left of each. -->
+  <g transform="translate(292 232)">
+    <!-- Rack chassis -->
+    <rect x="0" y="0" width="440" height="560" rx="48" ry="48"
+          fill="#FFFFFF"/>
+
+    <!-- Rack unit 1 (top) -->
+    <rect x="40" y="72" width="360" height="104" rx="18" ry="18"
+          fill="#E6EAF2"/>
+    <circle cx="78" cy="124" r="14" fill="#34C759"/>
+    <rect x="120" y="112" width="240" height="8" rx="4" ry="4" fill="#1C2230" opacity="0.55"/>
+    <rect x="120" y="130" width="180" height="8" rx="4" ry="4" fill="#1C2230" opacity="0.35"/>
+
+    <!-- Rack unit 2 (middle) -->
+    <rect x="40" y="200" width="360" height="104" rx="18" ry="18"
+          fill="#E6EAF2"/>
+    <circle cx="78" cy="252" r="14" fill="#34C759"/>
+    <rect x="120" y="240" width="220" height="8" rx="4" ry="4" fill="#1C2230" opacity="0.55"/>
+    <rect x="120" y="258" width="160" height="8" rx="4" ry="4" fill="#1C2230" opacity="0.35"/>
+
+    <!-- Rack unit 3 (bottom) -->
+    <rect x="40" y="328" width="360" height="104" rx="18" ry="18"
+          fill="#E6EAF2"/>
+    <circle cx="78" cy="380" r="14" fill="#34C759"/>
+    <rect x="120" y="368" width="260" height="8" rx="4" ry="4" fill="#1C2230" opacity="0.55"/>
+    <rect x="120" y="386" width="200" height="8" rx="4" ry="4" fill="#1C2230" opacity="0.35"/>
+
+    <!-- Front panel base strip (slim, purely decorative) -->
+    <rect x="40" y="464" width="360" height="56" rx="18" ry="18"
+          fill="#E6EAF2"/>
+    <circle cx="340" cy="492" r="10" fill="#1C2230" opacity="0.3"/>
+    <circle cx="374" cy="492" r="10" fill="#1C2230" opacity="0.3"/>
+  </g>
+
+  <!-- Status dot, bottom-right. Echoes the menu-bar badge. Sits outside
+       the rack but inside the tile. White halo so it reads against both
+       the rack and the tile. -->
+  <g filter="url(#dotShadow)">
+    <circle cx="792" cy="792" r="118" fill="#FFFFFF"/>
+    <circle cx="792" cy="792" r="98" fill="url(#dotGreen)"/>
+  </g>
+</svg>
