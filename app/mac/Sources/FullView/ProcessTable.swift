@@ -15,6 +15,11 @@ struct ProcessTable: View {
     /// default sort column so "MEM" surfaces the RAM hogs without the user
     /// having to click the RSS header.
     let metric: Metric
+    /// Node the table is bound to. Needed by the kill flow so the dialog
+    /// can show the exact command and dispatch it via SSH (or locally).
+    /// Optional: older call sites / previews don't wire it up and simply
+    /// hide the kill button.
+    let node: Node?
 
     @State private var sort: [KeyPathComparator<ProcRow>] = [
         KeyPathComparator(\ProcRow.cpuPct, order: .reverse),
@@ -27,6 +32,21 @@ struct ProcessTable: View {
     @State private var lastUpdateAt: Date = .distantPast
     @State private var lastRequestedT: Date?
     @State private var pendingTask: Task<Void, Never>?
+
+    /// PID of the row the pointer is currently over — drives the kill-X
+    /// visibility so only the hovered row shows the button, not every
+    /// row in the table.
+    @State private var hoveredPid: Int32?
+    /// Row the user has chosen to kill; non-nil presents the confirmation
+    /// dialog. Kept as the whole row so the dialog can show the name
+    /// alongside the PID.
+    @State private var killCandidate: ProcRow?
+    /// Post-kill status for the inline toast. `.success` auto-dismisses;
+    /// `.failure` requires the user to acknowledge so the stderr is seen.
+    @State private var killResult: KillResult?
+    /// In-flight flag so the confirmation dialog disables its own Kill
+    /// button while the SSH/local process hasn't returned yet.
+    @State private var killInFlight: Bool = false
 
     /// Target ≈ 5fps to match the chart's render throttle. Ingests can
     /// arrive every 0.5s (local) and each one walks the proc snapshot +
@@ -44,42 +64,49 @@ struct ProcessTable: View {
             } else {
                 Table(displayed, sortOrder: $sort) {
                     TableColumn("PID", value: \.pid) { r in
-                        Text("\(r.pid)").monospacedDigit()
+                        pidCell(r)
                     }
-                    .width(min: 48, ideal: 60)
+                    .width(min: 72, ideal: 88)
 
                     TableColumn("User", value: \.user) { r in
                         Text(r.user).lineLimit(1)
+                            .textSelection(.enabled)
                     }
                     .width(min: 60, ideal: 90)
 
                     TableColumn("Name", value: \.name) { r in
                         Text(r.name).lineLimit(1)
+                            .textSelection(.enabled)
                     }
                     .width(min: 100, ideal: 180)
 
                     TableColumn("CPU %", value: \.cpuPct) { r in
                         Text(String(format: "%.1f", r.cpuPct)).monospacedDigit()
+                            .textSelection(.enabled)
                     }
                     .width(min: 60, ideal: 70)
 
                     TableColumn("RSS", value: \.rss) { r in
                         Text(Self.formatBytes(r.rss)).monospacedDigit()
+                            .textSelection(.enabled)
                     }
                     .width(min: 60, ideal: 80)
 
                     TableColumn("Reads", value: \.readBps) { r in
                         Text(Self.formatIORate(r.readBps)).monospacedDigit()
+                            .textSelection(.enabled)
                     }
                     .width(min: 80, ideal: 100)
 
                     TableColumn("Writes", value: \.writeBps) { r in
                         Text(Self.formatIORate(r.writeBps)).monospacedDigit()
+                            .textSelection(.enabled)
                     }
                     .width(min: 80, ideal: 100)
 
                     TableColumn("Threads", value: \.threads) { r in
-                        Text("\(r.threads)").monospacedDigit()
+                        Text(verbatim: String(r.threads)).monospacedDigit()
+                            .textSelection(.enabled)
                     }
                     .width(min: 50, ideal: 70)
                 }
@@ -105,6 +132,123 @@ struct ProcessTable: View {
         }
         .onChange(of: effectiveAt) { _, _ in refresh(force: false) }
         .onDisappear { pendingTask?.cancel() }
+        .confirmationDialog(
+            killDialogTitle,
+            isPresented: Binding(
+                get: { killCandidate != nil },
+                set: { if !$0 { killCandidate = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: killCandidate
+        ) { row in
+            Button("Kill \(row.pid)", role: .destructive) {
+                runKill(row: row)
+            }
+            .disabled(killInFlight || node == nil)
+            Button("Cancel", role: .cancel) { }
+        } message: { row in
+            Text(killDialogMessage(for: row))
+        }
+        .alert(
+            killAlertTitle,
+            isPresented: Binding(
+                get: { killResult != nil },
+                set: { if !$0 { killResult = nil } }
+            ),
+            presenting: killResult
+        ) { _ in
+            Button("OK", role: .cancel) { killResult = nil }
+        } message: { result in
+            switch result {
+            case .success(let pid, let name):
+                Text("Sent SIGKILL to \(name) (PID \(pid)).")
+            case .failure(let message):
+                Text(message)
+            }
+        }
+    }
+
+    // MARK: - PID cell with hover-revealed kill button
+
+    @ViewBuilder
+    private func pidCell(_ r: ProcRow) -> some View {
+        HStack(spacing: 4) {
+            Text(verbatim: String(r.pid))
+                .monospacedDigit()
+                .textSelection(.enabled)
+            if hoveredPid == r.pid && node != nil {
+                Button {
+                    killCandidate = r
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.red)
+                }
+                .buttonStyle(.plain)
+                .help("Kill PID \(r.pid) (\(r.name))")
+            }
+            Spacer(minLength: 0)
+        }
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            if hovering {
+                hoveredPid = r.pid
+            } else if hoveredPid == r.pid {
+                hoveredPid = nil
+            }
+        }
+    }
+
+    // MARK: - Kill dialog + execution
+
+    private var killDialogTitle: String {
+        guard let row = killCandidate else { return "Kill process" }
+        return "Kill \(row.name)?"
+    }
+
+    private var killAlertTitle: String {
+        guard let r = killResult else { return "" }
+        switch r {
+        case .success: return "Process killed"
+        case .failure: return "Kill failed"
+        }
+    }
+
+    private func killDialogMessage(for row: ProcRow) -> String {
+        let cmd = killCommandPreview(pid: row.pid)
+        return "This will run:\n\n\(cmd)\n\nThe process will be terminated immediately with SIGKILL."
+    }
+
+    /// Shell preview for the confirmation dialog. Mirrors what the app
+    /// will actually dispatch — including the remote invocation prefix —
+    /// so the user sees the exact command that's about to run.
+    private func killCommandPreview(pid: Int32) -> String {
+        guard let node else { return "kill -9 \(pid)" }
+        switch node.kind {
+        case .local:
+            return "kill -9 \(pid)"
+        case .ssh:
+            let user = node.sshUser ?? "?"
+            let host = node.sshHost ?? "?"
+            return "ssh \(user)@\(host) 'kill -9 \(pid)'"
+        }
+    }
+
+    private func runKill(row: ProcRow) {
+        guard let node else { return }
+        killInFlight = true
+        Task {
+            let outcome = await ProcessKiller.kill(pid: row.pid, node: node)
+            await MainActor.run {
+                killInFlight = false
+                killCandidate = nil
+                switch outcome {
+                case .success:
+                    killResult = .success(pid: row.pid, name: row.name)
+                case .failure(let message):
+                    killResult = .failure(message: message)
+                }
+            }
+        }
     }
 
     /// Seeds the sort column based on the active metric. Only fires once per
@@ -297,5 +441,75 @@ struct ProcRow: Identifiable, Hashable {
         let r = max(self.readBps, 0)
         let w = max(self.writeBps, 0)
         self.ioTotalBps = r + w
+    }
+}
+
+enum KillResult: Equatable {
+    case success(pid: Int32, name: String)
+    case failure(message: String)
+}
+
+/// Dispatches SIGKILL against a PID either locally via /bin/kill or
+/// through the same SSH path the sampler uses. Shared module-level helper
+/// rather than a method on ProcessTable so the table stays focused on
+/// display and this logic can be tested / reused.
+enum ProcessKiller {
+    enum Outcome {
+        case success
+        case failure(message: String)
+    }
+
+    static func kill(pid: Int32, node: Node) async -> Outcome {
+        switch node.kind {
+        case .local:
+            return await killLocal(pid: pid)
+        case .ssh:
+            return await killSSH(pid: pid, node: node)
+        }
+    }
+
+    private static func killLocal(pid: Int32) async -> Outcome {
+        do {
+            let result = try await ProcessRunner.run(
+                executable: URL(fileURLWithPath: "/bin/kill"),
+                arguments: ["-9", String(pid)]
+            )
+            if result.exitCode == 0 { return .success }
+            let err = String(data: result.stderr, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return .failure(message: err.isEmpty
+                ? "kill exited \(result.exitCode)"
+                : "kill exited \(result.exitCode): \(err)")
+        } catch {
+            return .failure(message: SamplerInvokeError.shortDescription(for: error))
+        }
+    }
+
+    private static func killSSH(pid: Int32, node: Node) async -> Outcome {
+        guard let user = node.sshUser, !user.isEmpty,
+              let host = node.sshHost, !host.isEmpty else {
+            return .failure(message: "SSH node missing user or host")
+        }
+        let args = [
+            "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=5",
+            "-o", "StrictHostKeyChecking=accept-new",
+            "\(user)@\(host)",
+            "kill -9 \(pid)"
+        ]
+        do {
+            let result = try await ProcessRunner.run(
+                executable: URL(fileURLWithPath: "/usr/bin/ssh"),
+                arguments: args
+            )
+            if result.exitCode == 0 { return .success }
+            let err = String(data: result.stderr, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return .failure(message: err.isEmpty
+                ? "ssh exited \(result.exitCode)"
+                : "ssh exited \(result.exitCode): \(err)")
+        } catch {
+            return .failure(message: SamplerInvokeError.shortDescription(for: error))
+        }
     }
 }

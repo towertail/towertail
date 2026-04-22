@@ -68,6 +68,7 @@ struct TowertailApp: App {
                     FullViewWindow(context: ctx)
                         .environment(env.store)
                         .environment(env.settings)
+                        .environment(env.nodeStore)
                 } else {
                     ContentUnavailableView("No host", systemImage: "server.rack")
                 }
