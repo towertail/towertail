@@ -34,6 +34,27 @@ struct DiskSeries: Sendable {
     func series(forMount mount: String) -> MetricSeries? {
         byMount[mount]
     }
+
+    /// Replay persisted per-mount rows from SQLite. Rows must be sorted
+    /// ascending by timestamp. Rows sharing a timestamp are collapsed
+    /// into one tick so the `max` aggregate matches what `append` would
+    /// have produced live.
+    mutating func hydrate(rows: [HistoryStore.DiskCapacityRow]) {
+        guard !rows.isEmpty else { return }
+        var i = 0
+        while i < rows.count {
+            let t = rows[i].t
+            var worst = 0.0
+            while i < rows.count && rows[i].t == t {
+                let r = rows[i]
+                let v = min(Swift.max(r.frac, 0), 1)
+                byMount[r.mount, default: MetricSeries()].append(MetricPoint(t: t, v: v))
+                if v > worst { worst = v }
+                i += 1
+            }
+            max.append(MetricPoint(t: t, v: worst))
+        }
+    }
 }
 
 /// Per-device disk I/O history. Tracks both read and write rates as
@@ -75,6 +96,23 @@ struct DiskIOSeries: Sendable {
 
     func series(forDevice name: String) -> DeviceSeries? {
         byDevice[name]
+    }
+
+    /// Replay persisted per-device rows from SQLite. Rows must be sorted
+    /// ascending by timestamp. Rows with `device == ""` represent the
+    /// scalar total, matching how `append(at:…, devices:)` persists it.
+    mutating func hydrate(rows: [HistoryStore.DiskIORow]) {
+        for r in rows {
+            if r.device.isEmpty {
+                total.read.append(MetricPoint(t: r.t, v: Swift.max(r.readMBps, 0)))
+                total.write.append(MetricPoint(t: r.t, v: Swift.max(r.writeMBps, 0)))
+            } else {
+                var ds = byDevice[r.device] ?? DeviceSeries()
+                ds.read.append(MetricPoint(t: r.t, v: Swift.max(r.readMBps, 0)))
+                ds.write.append(MetricPoint(t: r.t, v: Swift.max(r.writeMBps, 0)))
+                byDevice[r.device] = ds
+            }
+        }
     }
 
     private func bytesToMBps(_ b: Int64) -> Double {

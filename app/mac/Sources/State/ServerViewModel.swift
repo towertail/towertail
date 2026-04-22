@@ -204,6 +204,20 @@ final class ServerViewModel: Identifiable {
         )
     }
 
+    /// Replay persisted per-mount capacity rows. Driven by `ServerStore`
+    /// at register time so the DISK tab's capacity chart shows a full
+    /// 2h window on launch instead of starting empty.
+    func hydrateDiskCapacity(from rows: [HistoryStore.DiskCapacityRow]) {
+        disksPerMount.hydrate(rows: rows)
+    }
+
+    /// Replay persisted per-device I/O rows. Same rationale as
+    /// `hydrateDiskCapacity` — the DISK tab's I/O chart needs 2h of
+    /// history across an app restart, not a fresh-start 0.
+    func hydrateDiskIO(from rows: [HistoryStore.DiskIORow]) {
+        diskIO.hydrate(rows: rows)
+    }
+
     /// Replay persisted process snapshots from the prior session. Called
     /// on VM creation; the caller loads from SQLite and passes them in
     /// oldest-first, matching the append order `ProcSeries` expects.

@@ -5,6 +5,10 @@ struct FullViewWindow: View {
     @Environment(ServerStore.self) private var store
     @Environment(AppSettings.self) private var settings
     @State private var model: FullViewModel
+    /// Active host id. Seeded from `context` but mutable so the header's
+    /// host picker can swap the view between servers without re-opening
+    /// the window.
+    @State private var activeHostId: UUID
     /// Throttle rate for chart + process-table rebuilds. Ingests can
     /// arrive at 0.5s (local) or faster; rebuilding SwiftUI Charts +
     /// Table on every ingest is wasted work. 5Hz is smooth visually and
@@ -25,10 +29,11 @@ struct FullViewWindow: View {
     init(context: FullViewContext) {
         self.context = context
         _model = State(initialValue: FullViewModel(metric: context.metric))
+        _activeHostId = State(initialValue: context.hostId)
     }
 
     var body: some View {
-        let vm = store.serverVMs.first(where: { $0.id == context.hostId })
+        let vm = store.serverVMs.first(where: { $0.id == activeHostId })
         VStack(spacing: 0) {
             header(vm: vm)
             Divider()
@@ -54,7 +59,7 @@ struct FullViewWindow: View {
             // SQLite hydration until someone actually opens this window.
             // Launch stays cheap even with tens of MB of proc snapshots
             // on disk; we pay the decode once, here, per session.
-            store.ensureProcsHydrated(for: context.hostId)
+            store.ensureProcsHydrated(for: activeHostId)
             refreshCaches(vm: vm)
         }
         .onDisappear { ActivationPolicyCoordinator.shared.release() }
@@ -65,6 +70,22 @@ struct FullViewWindow: View {
         .onChange(of: model.zoomRange) { _, _ in refreshCaches(vm: vm) }
         .onChange(of: model.diskMount) { _, _ in refreshCaches(vm: vm) }
         .onChange(of: model.diskDevice) { _, _ in refreshCaches(vm: vm) }
+        .onChange(of: activeHostId) { _, newId in
+            // Switching hosts: drop stale caches and hydrate the new one's
+            // proc history (same lazy path as onAppear). The cached chart
+            // arrays belong to the old host so clearing them avoids a
+            // 1-frame flash of the previous server's data.
+            cachedMainSamples = []
+            cachedDiskCapacity = []
+            cachedDiskIO = []
+            // Per-mount / per-device selections rarely transfer between
+            // hosts (different mountpoints, different device names), so
+            // reset them to the sensible default.
+            model.diskMount = .max
+            model.diskDevice = .total
+            store.ensureProcsHydrated(for: newId)
+            refreshCaches(vm: store.serverVMs.first(where: { $0.id == newId }))
+        }
     }
 
     /// Pull snapshots from the live series and publish them to the cached
@@ -104,8 +125,7 @@ struct FullViewWindow: View {
     @ViewBuilder
     private func header(vm: ServerViewModel?) -> some View {
         HStack(spacing: 10) {
-            Text(vm?.hostname ?? "Unknown host")
-                .font(.title3).bold()
+            hostPicker(current: vm)
             Text(vm?.dnsName ?? "")
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -114,6 +134,39 @@ struct FullViewWindow: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+    }
+
+    /// Dropdown that swaps the window's active host in place. The label
+    /// mimics the previous bold hostname so the window still reads as
+    /// "I am looking at {host}" at a glance — the chevron hint signals
+    /// that it's clickable.
+    @ViewBuilder
+    private func hostPicker(current: ServerViewModel?) -> some View {
+        Menu {
+            ForEach(store.serverVMs) { other in
+                Button {
+                    if other.id != activeHostId {
+                        activeHostId = other.id
+                    }
+                } label: {
+                    Label(
+                        other.hostname,
+                        systemImage: other.id == activeHostId ? "checkmark" : ""
+                    )
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(current?.hostname ?? "Unknown host")
+                    .font(.title3).bold()
+                Image(systemName: "chevron.down")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Switch server")
     }
 
     @ViewBuilder

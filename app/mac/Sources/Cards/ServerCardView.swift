@@ -7,7 +7,6 @@ struct ServerCardView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(NodeStore.self) private var nodeStore
     @Environment(SamplerUpdateCoordinator.self) private var samplerUpdater
-    @State private var editSheet: ServerEditSheetContext?
     @State private var terminalError: String?
 
     private var node: Node? { nodeStore.node(withId: vm.id) }
@@ -25,14 +24,6 @@ struct ServerCardView: View {
         }
         .opacity(offline ? 0.55 : (suspended ? 0.7 : 1.0))
         .contextMenu { contextMenuContent }
-        .sheet(item: $editSheet) { ctx in
-            ServerEditSheet(context: ctx) { saved in
-                nodeStore.update(saved)
-                editSheet = nil
-            } onCancel: {
-                editSheet = nil
-            }
-        }
         .alert("Couldn't open terminal", isPresented: Binding(
             get: { terminalError != nil },
             set: { if !$0 { terminalError = nil } }
@@ -97,7 +88,7 @@ struct ServerCardView: View {
             Circle()
                 .fill(vm.statusDotColor)
                 .frame(width: 8, height: 8)
-            Text(vm.hostname)
+            Text(node?.displayName ?? vm.hostname)
                 .font(Typography.hostname)
                 .foregroundStyle(.primary)
             if node?.isSnoozed == true {
@@ -152,7 +143,8 @@ struct ServerCardView: View {
             }
             Button {
                 if let n = node {
-                    editSheet = .edit(n)
+                    openWindow(id: "server-edit", value: n.id)
+                    NSApp.activate(ignoringOtherApps: true)
                 }
             } label: {
                 Image(systemName: "slider.horizontal.3")

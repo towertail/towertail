@@ -68,6 +68,7 @@ struct PopoverHeader: View {
     private func warnPill(warn: Int, critical: Int) -> some View {
         let active = filter == .warn
         let hasCritical = critical > 0
+        let hasAny = hasCritical || warn > 0
         let tint = hasCritical ? ThresholdTint.critical.color : ThresholdTint.warn.color
         let label: String = {
             if hasCritical {
@@ -85,7 +86,7 @@ struct PopoverHeader: View {
                     RoundedRectangle(cornerRadius: 6)
                         .fill(active ? tint.opacity(0.22) : .clear)
                 )
-                .foregroundStyle(active ? tint : Color.secondary)
+                .foregroundStyle(hasAny ? tint : Color.secondary)
         }
         .buttonStyle(.plain)
         .help(warnPillHelp(active: active, critical: critical, warn: warn))
@@ -108,6 +109,7 @@ struct PopoverHeader: View {
     private func pill(kind: PopoverFilter, count: Int) -> some View {
         let active = filter == kind
         let tint = pillTint(kind: kind)
+        let tinted = count > 0
         Button {
             filter = active ? .all : kind
         } label: {
@@ -118,7 +120,7 @@ struct PopoverHeader: View {
                     RoundedRectangle(cornerRadius: 6)
                         .fill(active ? tint.opacity(0.22) : .clear)
                 )
-                .foregroundStyle(active ? tint : Color.secondary)
+                .foregroundStyle(tinted ? tint : Color.secondary)
         }
         .buttonStyle(.plain)
         .help(helpText(kind: kind, active: active))

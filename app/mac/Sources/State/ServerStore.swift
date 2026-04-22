@@ -32,6 +32,14 @@ final class ServerStore {
             // CPU/MEM/DISK/NET lines drawn.
             let recent = history.loadRecent(nodeID: vm.id)
             vm.hydrate(from: recent)
+            // Per-mount capacity and per-device I/O fit the same budget
+            // (a few hundred KB at 2h × 10s poll) so we can hydrate them
+            // synchronously too — the DISK tab is otherwise empty on
+            // first open after a restart.
+            let capRows = history.loadRecentDiskCapacity(nodeID: vm.id)
+            vm.hydrateDiskCapacity(from: capRows)
+            let ioRows = history.loadRecentDiskIO(nodeID: vm.id)
+            vm.hydrateDiskIO(from: ioRows)
         }
         serverVMs.append(vm)
         // Proc history is deliberately NOT hydrated here. The popover and
@@ -71,6 +79,16 @@ final class ServerStore {
                 nodeID: id, t: sample.ts, root: ps.root, items: ps.items
             )
         }
+        if let history, let disks = sample.disks, !disks.isEmpty {
+            history.appendDiskCapacity(nodeID: id, t: sample.ts, mounts: disks)
+        }
+        if let history, let io = sample.diskIO {
+            history.appendDiskIO(
+                nodeID: id, t: sample.ts,
+                totalReadBps: io.readBps, totalWriteBps: io.writeBps,
+                devices: io.devices
+            )
+        }
         if let notifier, let node = nodeLookup?(id) {
             notifier.evaluate(vm: vm, node: node)
         }
@@ -95,6 +113,16 @@ final class ServerStore {
                 if let history, let ps = sample.procs {
                     history.appendProcs(
                         nodeID: id, t: sample.ts, root: ps.root, items: ps.items
+                    )
+                }
+                if let history, let disks = sample.disks, !disks.isEmpty {
+                    history.appendDiskCapacity(nodeID: id, t: sample.ts, mounts: disks)
+                }
+                if let history, let io = sample.diskIO {
+                    history.appendDiskIO(
+                        nodeID: id, t: sample.ts,
+                        totalReadBps: io.readBps, totalWriteBps: io.writeBps,
+                        devices: io.devices
                     )
                 }
             }

@@ -75,6 +75,20 @@ struct TowertailApp: App {
         }
         .windowResizability(.contentSize)
         .defaultSize(width: 1080, height: 760)
+
+        // Per-server edit, opened from a card's gear button. A real window
+        // (rather than a SwiftUI .sheet on the card) survives the popover
+        // auto-closing when the sheet takes focus — otherwise Save never
+        // fires because the card unmounts along with the popover.
+        WindowGroup(id: "server-edit", for: UUID.self) { $nodeId in
+            ServerEditWindow(nodeId: nodeId)
+                .environment(env.nodeStore)
+                .environment(env.settings)
+                .environment(env.store)
+                .onAppear { ActivationPolicyCoordinator.shared.acquire() }
+                .onDisappear { ActivationPolicyCoordinator.shared.release() }
+        }
+        .windowResizability(.contentSize)
     }
 }
 
