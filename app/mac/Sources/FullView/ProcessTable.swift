@@ -33,10 +33,6 @@ struct ProcessTable: View {
     @State private var lastRequestedT: Date?
     @State private var pendingTask: Task<Void, Never>?
 
-    /// PID of the row the pointer is currently over — drives the kill-X
-    /// visibility so only the hovered row shows the button, not every
-    /// row in the table.
-    @State private var hoveredPid: Int32?
     /// Row the user has chosen to kill; non-nil presents the confirmation
     /// dialog. Kept as the whole row so the dialog can show the name
     /// alongside the PID.
@@ -64,7 +60,12 @@ struct ProcessTable: View {
             } else {
                 Table(displayed, sortOrder: $sort) {
                     TableColumn("PID", value: \.pid) { r in
-                        pidCell(r)
+                        PIDCell(
+                            pid: r.pid,
+                            name: r.name,
+                            canKill: node != nil,
+                            onKill: { killCandidate = r }
+                        )
                     }
                     .width(min: 72, ideal: 88)
 
@@ -141,8 +142,10 @@ struct ProcessTable: View {
             titleVisibility: .visible,
             presenting: killCandidate
         ) { row in
-            Button("Kill \(row.pid)", role: .destructive) {
+            Button(role: .destructive) {
                 runKill(row: row)
+            } label: {
+                Text(verbatim: "Kill \(row.pid)")
             }
             .disabled(killInFlight || node == nil)
             Button("Cancel", role: .cancel) { }
@@ -161,39 +164,9 @@ struct ProcessTable: View {
         } message: { result in
             switch result {
             case .success(let pid, let name):
-                Text("Sent SIGKILL to \(name) (PID \(pid)).")
+                Text(verbatim: "Sent SIGKILL to \(name) (PID \(pid)).")
             case .failure(let message):
                 Text(message)
-            }
-        }
-    }
-
-    // MARK: - PID cell with hover-revealed kill button
-
-    @ViewBuilder
-    private func pidCell(_ r: ProcRow) -> some View {
-        HStack(spacing: 4) {
-            Text(verbatim: String(r.pid))
-                .monospacedDigit()
-                .textSelection(.enabled)
-            if hoveredPid == r.pid && node != nil {
-                Button {
-                    killCandidate = r
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.red)
-                }
-                .buttonStyle(.plain)
-                .help("Kill PID \(r.pid) (\(r.name))")
-            }
-            Spacer(minLength: 0)
-        }
-        .contentShape(Rectangle())
-        .onHover { hovering in
-            if hovering {
-                hoveredPid = r.pid
-            } else if hoveredPid == r.pid {
-                hoveredPid = nil
             }
         }
     }
@@ -441,6 +414,47 @@ struct ProcRow: Identifiable, Hashable {
         let r = max(self.readBps, 0)
         let w = max(self.writeBps, 0)
         self.ioTotalBps = r + w
+    }
+}
+
+/// PID cell with a hover-revealed kill button. Kept as its own View
+/// (rather than an inline @ViewBuilder that reads the parent's hover
+/// state) so hover toggles only invalidate the hovered cell — not the
+/// entire table. The previous inline implementation changed a shared
+/// `@State hoveredPid` on the parent, which caused the whole Table
+/// body to re-diff on every mouse movement and lagged visibly with
+/// 50+ rows.
+///
+/// The button is always present in the layout; hover only changes its
+/// opacity. Opacity changes don't invalidate layout, so the cell's
+/// width stays stable and SwiftUI can skip most of the per-row work.
+private struct PIDCell: View {
+    let pid: Int32
+    let name: String
+    let canKill: Bool
+    let onKill: () -> Void
+    @State private var hovering: Bool = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(verbatim: String(pid))
+                .monospacedDigit()
+                .textSelection(.enabled)
+            if canKill {
+                Button(action: onKill) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.red)
+                }
+                .buttonStyle(.plain)
+                .help("Kill PID \(pid) (\(name))")
+                .opacity(hovering ? 1 : 0)
+                .allowsHitTesting(hovering)
+                .pointingHandOnHover()
+            }
+            Spacer(minLength: 0)
+        }
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
     }
 }
 
