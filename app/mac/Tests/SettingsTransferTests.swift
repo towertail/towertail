@@ -19,7 +19,8 @@ final class SettingsTransferTests: XCTestCase {
             notifyDebounceSeconds: 60,
             launchAtLogin: false,
             autoUpdateSamplersEnabled: false,
-            defaultTerminalApp: "Terminal"
+            defaultTerminalApp: "Terminal",
+            postWakeGraceSeconds: 15
         )
     }
 

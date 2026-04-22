@@ -19,6 +19,11 @@ final class AppSettings {
     var launchAtLogin: Bool
     var autoUpdateSamplersEnabled: Bool
     var defaultTerminalApp: String
+    /// Seconds after Mac wake / network-return during which collectors
+    /// keep polling but notifications are suppressed. Short window that
+    /// lets DHCP + Tailscale resettle without paging on the first failed
+    /// post-wake dial. 0 disables the grace period entirely.
+    var postWakeGraceSeconds: Int
 
     private let url: URL
 
@@ -40,6 +45,7 @@ final class AppSettings {
         self.launchAtLogin = p.launchAtLogin
         self.autoUpdateSamplersEnabled = p.autoUpdateSamplersEnabled
         self.defaultTerminalApp = p.defaultTerminalApp
+        self.postWakeGraceSeconds = max(0, min(300, p.postWakeGraceSeconds))
     }
 
     static func loadFromDisk() -> AppSettings {
@@ -67,6 +73,7 @@ final class AppSettings {
         self.launchAtLogin = p.launchAtLogin
         self.autoUpdateSamplersEnabled = p.autoUpdateSamplersEnabled
         self.defaultTerminalApp = p.defaultTerminalApp
+        self.postWakeGraceSeconds = max(0, min(300, p.postWakeGraceSeconds))
     }
 
     func pollingInterval(for kind: NodeKind) -> Int {
@@ -94,6 +101,7 @@ final class AppSettings {
         p.launchAtLogin = launchAtLogin
         p.autoUpdateSamplersEnabled = autoUpdateSamplersEnabled
         p.defaultTerminalApp = defaultTerminalApp
+        p.postWakeGraceSeconds = postWakeGraceSeconds
         SettingsPersistence.save(p, to: url)
         logDiff(before: before, after: p)
     }
@@ -151,6 +159,9 @@ final class AppSettings {
         }
         if before.defaultTerminalApp != after.defaultTerminalApp {
             changes["defaultTerminalApp"] = "\(before.defaultTerminalApp)→\(after.defaultTerminalApp)"
+        }
+        if before.postWakeGraceSeconds != after.postWakeGraceSeconds {
+            changes["postWakeGraceSec"] = "\(before.postWakeGraceSeconds)→\(after.postWakeGraceSeconds)"
         }
         if changes.isEmpty { return }
         Logger.shared.info(

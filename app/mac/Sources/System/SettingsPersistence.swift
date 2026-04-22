@@ -13,6 +13,7 @@ struct PersistedSettings: Codable, Equatable {
     var launchAtLogin: Bool
     var autoUpdateSamplersEnabled: Bool
     var defaultTerminalApp: String
+    var postWakeGraceSeconds: Int
 
     static let defaults = PersistedSettings(
         nodes: [Node.localMac()],
@@ -26,7 +27,8 @@ struct PersistedSettings: Codable, Equatable {
         notifyDebounceSeconds: 60,
         launchAtLogin: false,
         autoUpdateSamplersEnabled: false,
-        defaultTerminalApp: "Terminal"
+        defaultTerminalApp: "Terminal",
+        postWakeGraceSeconds: 15
     )
 
     enum CodingKeys: String, CodingKey {
@@ -37,6 +39,7 @@ struct PersistedSettings: Codable, Equatable {
         case launchAtLogin
         case autoUpdateSamplersEnabled
         case defaultTerminalApp
+        case postWakeGraceSeconds
         case pollingIntervalSeconds // legacy single-value field
     }
 
@@ -54,6 +57,8 @@ struct PersistedSettings: Codable, Equatable {
             ?? PersistedSettings.defaults.autoUpdateSamplersEnabled
         self.defaultTerminalApp = try c.decodeIfPresent(String.self, forKey: .defaultTerminalApp)
             ?? PersistedSettings.defaults.defaultTerminalApp
+        self.postWakeGraceSeconds = try c.decodeIfPresent(Int.self, forKey: .postWakeGraceSeconds)
+            ?? PersistedSettings.defaults.postWakeGraceSeconds
 
         if let local = try c.decodeIfPresent(Int.self, forKey: .localPollingIntervalSeconds) {
             self.localPollingIntervalSeconds = local
@@ -85,6 +90,7 @@ struct PersistedSettings: Codable, Equatable {
         try c.encode(launchAtLogin, forKey: .launchAtLogin)
         try c.encode(autoUpdateSamplersEnabled, forKey: .autoUpdateSamplersEnabled)
         try c.encode(defaultTerminalApp, forKey: .defaultTerminalApp)
+        try c.encode(postWakeGraceSeconds, forKey: .postWakeGraceSeconds)
     }
 
     init(
@@ -99,7 +105,8 @@ struct PersistedSettings: Codable, Equatable {
         notifyDebounceSeconds: Int,
         launchAtLogin: Bool,
         autoUpdateSamplersEnabled: Bool,
-        defaultTerminalApp: String
+        defaultTerminalApp: String,
+        postWakeGraceSeconds: Int
     ) {
         self.nodes = nodes
         self.thresholds = thresholds
@@ -113,6 +120,7 @@ struct PersistedSettings: Codable, Equatable {
         self.launchAtLogin = launchAtLogin
         self.autoUpdateSamplersEnabled = autoUpdateSamplersEnabled
         self.defaultTerminalApp = defaultTerminalApp
+        self.postWakeGraceSeconds = postWakeGraceSeconds
     }
 }
 

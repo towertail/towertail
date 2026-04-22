@@ -24,6 +24,13 @@ struct SettingsExport: Codable, Equatable {
         var launchAtLogin: Bool
         var autoUpdateSamplersEnabled: Bool
         var defaultTerminalApp: String
+        var postWakeGraceSeconds: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case localPollingIntervalSeconds, sshPollingIntervalSeconds
+            case cardDensity, launchAtLogin, autoUpdateSamplersEnabled
+            case defaultTerminalApp, postWakeGraceSeconds
+        }
     }
 
     struct NotificationsSection: Codable, Equatable {
@@ -44,7 +51,8 @@ struct SettingsExport: Codable, Equatable {
                 cardDensity: p.cardDensity,
                 launchAtLogin: p.launchAtLogin,
                 autoUpdateSamplersEnabled: p.autoUpdateSamplersEnabled,
-                defaultTerminalApp: p.defaultTerminalApp
+                defaultTerminalApp: p.defaultTerminalApp,
+                postWakeGraceSeconds: p.postWakeGraceSeconds
             ),
             globalThresholds: p.thresholds,
             notifications: NotificationsSection(
@@ -178,6 +186,9 @@ enum SettingsTransfer {
             out.launchAtLogin = imported.general.launchAtLogin
             out.autoUpdateSamplersEnabled = imported.general.autoUpdateSamplersEnabled
             out.defaultTerminalApp = imported.general.defaultTerminalApp
+            if let grace = imported.general.postWakeGraceSeconds {
+                out.postWakeGraceSeconds = grace
+            }
             report.generalApplied = true
         }
 

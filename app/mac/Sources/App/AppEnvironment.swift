@@ -10,6 +10,7 @@ final class AppEnvironment {
     let collector: any Collector
     let notifier: ThresholdNotifier
     let samplerUpdater: SamplerUpdateCoordinator
+    let reachability: SystemReachabilityMonitor
     private var task: Task<Void, Never>?
 
     init() {
@@ -27,13 +28,16 @@ final class AppEnvironment {
         let manifest = SamplerManifestLoader.load()
         let updater = SamplerUpdateCoordinator(manifest: manifest)
         self.samplerUpdater = updater
+        let reachability = SystemReachabilityMonitor(settings: settings)
+        self.reachability = reachability
         self.collector = RealCollector(
             nodeStore: nodeStore,
             settings: settings,
             history: history,
-            samplerUpdater: updater
+            samplerUpdater: updater,
+            reachability: reachability
         )
-        let notifier = ThresholdNotifier(settings: settings)
+        let notifier = ThresholdNotifier(settings: settings, reachability: reachability)
         self.notifier = notifier
         store.notifier = notifier
 
@@ -55,6 +59,7 @@ final class AppEnvironment {
         Logger.shared.info("collector: starting", category: "lifecycle")
         let collector = self.collector
         let store = self.store
+        reachability.start()
         notifier.start()
         task = Task.detached(priority: .utility) {
             await collector.run(sink: store)
@@ -65,5 +70,6 @@ final class AppEnvironment {
         Logger.shared.info("collector: stopping", category: "lifecycle")
         task?.cancel()
         task = nil
+        reachability.stop()
     }
 }

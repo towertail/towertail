@@ -13,9 +13,16 @@ struct SSHSamplerInvoker: SamplerInvoker {
             throw SamplerInvokeError.misconfigured("SSH node missing user or host")
         }
 
+        // ServerAlive* + TCPKeepAlive make ssh detect a dead socket quickly
+        // after Mac wake or Wi‑Fi flap — otherwise a wake-broken connection
+        // can hang until the OS-level TCP retransmit timeout (~minutes)
+        // rather than the 10s ProcessRunner budget.
         let args = [
             "-o", "BatchMode=yes",
             "-o", "ConnectTimeout=5",
+            "-o", "ServerAliveInterval=15",
+            "-o", "ServerAliveCountMax=3",
+            "-o", "TCPKeepAlive=yes",
             "-o", "StrictHostKeyChecking=accept-new",
             "\(user)@\(host)",
             "\(Self.remoteSamplerPath) --once"

@@ -14,6 +14,7 @@ import AppKit
 @MainActor
 final class ThresholdNotifier {
     private let settings: AppSettings
+    private let reachability: SystemReachabilityMonitor?
     private var lastTint: [Key: ThresholdTint] = [:]
     /// Timestamp of the most recent notification for a (host, metric) pair.
     /// Used to suppress repeats while the metric stays above threshold.
@@ -25,8 +26,9 @@ final class ThresholdNotifier {
         let metric: Metric
     }
 
-    init(settings: AppSettings) {
+    init(settings: AppSettings, reachability: SystemReachabilityMonitor? = nil) {
         self.settings = settings
+        self.reachability = reachability
     }
 
     func start() {
@@ -57,6 +59,11 @@ final class ThresholdNotifier {
                 }
             }()
             guard settings.notificationsEnabled, allowed else { continue }
+            // Suppress during sleep / no-internet / post-wake warm-up.
+            // We explicitly don't notify about a threshold crossing when
+            // we're in a state where the UI itself says "paused" — the
+            // signal would be noise, not information.
+            if let r = reachability, !r.availability.notificationsAllowed { continue }
             // Snooze gate. We still update lastTint above so that if the
             // user snoozes at warn and the host later escalates to critical
             // after the snooze expires, we treat that as a real escalation

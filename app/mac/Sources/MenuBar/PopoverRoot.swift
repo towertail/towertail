@@ -13,6 +13,9 @@ private func severityRank(_ s: ServerConnState) -> Int {
     case .offline: return 2
     case .warn: return 1
     case .online: return 0
+    // Suspended ranks with unknown — we have no live data, but it's not
+    // a "something's wrong" state like offline/warn/critical.
+    case .suspended: return -1
     case .unknown: return -1
     }
 }

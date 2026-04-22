@@ -57,6 +57,30 @@ struct GeneralPane: View {
                 }
             }
 
+            Section("Sleep & network") {
+                HStack {
+                    Text("Post-wake grace")
+                        .frame(width: 120, alignment: .leading)
+                    Slider(
+                        value: Binding(
+                            get: { Double(settings.postWakeGraceSeconds) },
+                            set: {
+                                settings.postWakeGraceSeconds = Int($0.rounded())
+                                settings.persist()
+                            }
+                        ),
+                        in: 0...60,
+                        step: 1
+                    )
+                    Text("\(settings.postWakeGraceSeconds)s")
+                        .font(.system(.body, design: .monospaced))
+                        .frame(width: 56, alignment: .trailing)
+                }
+                Text("After Mac wake or the network returning, Towertail resumes polling but waits this long before firing any \"host is down\" notifications. Lets DHCP and Tailscale settle so a single slow reconnect doesn't page you.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Appearance") {
                 Picker("Card density", selection: Binding(
                     get: { settings.cardDensity },

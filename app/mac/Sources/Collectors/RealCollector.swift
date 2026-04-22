@@ -6,18 +6,24 @@ final class RealCollector: Collector {
     let history: HistoryStore?
     let invokerFactory: @Sendable (Node) -> SamplerInvoker
     let samplerUpdater: SamplerUpdateCoordinator?
+    /// Gates polling on Mac sleep / local network state. Optional so tests
+    /// and the Mock collector path don't need to construct one — when nil,
+    /// the pacer polls unconditionally (the old behavior).
+    let reachability: SystemReachabilityMonitor?
 
     init(
         nodeStore: NodeStore,
         settings: AppSettings,
         history: HistoryStore? = nil,
         samplerUpdater: SamplerUpdateCoordinator? = nil,
+        reachability: SystemReachabilityMonitor? = nil,
         invokerFactory: @escaping @Sendable (Node) -> SamplerInvoker = makeInvoker(for:)
     ) {
         self.nodeStore = nodeStore
         self.settings = settings
         self.history = history
         self.samplerUpdater = samplerUpdater
+        self.reachability = reachability
         self.invokerFactory = invokerFactory
     }
 
@@ -46,6 +52,7 @@ final class RealCollector: Collector {
                 let settings = self.settings
                 let history = self.history
                 let updater = self.samplerUpdater
+                let reachability = self.reachability
                 tasks[node.id] = Task.detached(priority: .utility) {
                     await Self.pacer(
                         node: node,
@@ -53,7 +60,8 @@ final class RealCollector: Collector {
                         sink: sink,
                         settings: settings,
                         history: history,
-                        samplerUpdater: updater
+                        samplerUpdater: updater,
+                        reachability: reachability
                     )
                 }
             }
@@ -71,14 +79,44 @@ final class RealCollector: Collector {
         sink: ServerStore,
         settings: AppSettings,
         history: HistoryStore?,
-        samplerUpdater: SamplerUpdateCoordinator?
+        samplerUpdater: SamplerUpdateCoordinator?,
+        reachability: SystemReachabilityMonitor?
     ) async {
         let kind = node.kind
         let invoker = factory(node)
         // Only log online↔offline transitions, not every sample — otherwise
         // the log grows by a line every 2-10 seconds per host.
         var lastWasSuccess: Bool? = nil
+        // Tracks whether this pacer has marked the VM suspended, so the
+        // next resumed tick can clear the badge on a single main-hop.
+        var wasSuspended = false
         while !Task.isCancelled {
+            let gate = await Self.gate(reachability: reachability)
+            if let reason = gate {
+                // Reachability says don't even try — park the VM and sleep
+                // a short slice before re-checking. Don't spawn ssh; don't
+                // burn battery. Sleep is short so we're responsive when
+                // availability returns.
+                if !wasSuspended {
+                    await MainActor.run {
+                        if let vm = sink.serverVMs.first(where: { $0.id == node.id }) {
+                            vm.markSuspended(reason: reason)
+                        }
+                    }
+                    wasSuspended = true
+                    lastWasSuccess = nil
+                }
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                continue
+            }
+            if wasSuspended {
+                await MainActor.run {
+                    if let vm = sink.serverVMs.first(where: { $0.id == node.id }) {
+                        vm.clearSuspended()
+                    }
+                }
+                wasSuspended = false
+            }
             do {
                 let sample = try await invoker.invokeOnce(node: node)
                 await MainActor.run {
@@ -119,6 +157,18 @@ final class RealCollector: Collector {
             try? await Task.sleep(nanoseconds: nanos)
         }
         _ = history // retained; trimming hook belongs here if we add one later
+    }
+
+    /// Asks the reachability monitor (on the main actor, where it lives)
+    /// whether polling is allowed right now, and if not, what reason to
+    /// show on the card. Returning nil means "go ahead and poll".
+    private static func gate(reachability: SystemReachabilityMonitor?) async -> String? {
+        guard let reachability else { return nil }
+        return await MainActor.run {
+            let a = reachability.availability
+            if a.shouldPoll { return nil as String? }
+            return a.suspendedReason
+        }
     }
 
     @MainActor

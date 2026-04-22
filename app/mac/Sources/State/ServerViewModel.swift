@@ -7,9 +7,19 @@ enum ServerConnState: Equatable, Sendable {
     case warn
     case critical
     case offline(reason: String)
+    /// Polling is deliberately paused on the Mac side — we don't know if
+    /// the host is up or down because we haven't tried. Distinct from
+    /// `.offline` so the UI doesn't flag a server as DOWN when really
+    /// our Mac is asleep or the local Wi‑Fi dropped.
+    case suspended(reason: String)
 
     var isOffline: Bool {
         if case .offline = self { return true }
+        return false
+    }
+
+    var isSuspended: Bool {
+        if case .suspended = self { return true }
         return false
     }
 }
@@ -240,6 +250,39 @@ final class ServerViewModel: Identifiable {
         )
     }
 
+    /// Park this VM in a "we can't reach this host because *our* Mac can't
+    /// try right now" state — sleep, no internet, etc. Does not touch
+    /// `lastSeen` so the stopwatch in the header continues from the last
+    /// real sample, which is the truthful thing to show.
+    func markSuspended(reason: String) {
+        let previous = state
+        // Don't overwrite an existing suspended state with a re-entry
+        // (e.g. network flap during sleep); only log real transitions.
+        if case .suspended(let r) = previous, r == reason { return }
+        state = .suspended(reason: reason)
+        if case .suspended = previous { return }
+        Logger.shared.info(
+            "state: \(Self.stateLabel(previous)) → suspended",
+            category: "thresholds",
+            hostID: id, host: hostname,
+            kv: ["reason": reason]
+        )
+    }
+
+    /// Clear a suspended state back to `unknown`. The next successful
+    /// ingest will push it into `online`/`warn`/`critical`; a failure
+    /// will push it into `offline`. Leaves `lastSeen` alone.
+    func clearSuspended() {
+        guard case .suspended = state else { return }
+        let previous = state
+        state = .unknown
+        Logger.shared.info(
+            "state: \(Self.stateLabel(previous)) → unknown",
+            category: "thresholds",
+            hostID: id, host: hostname
+        )
+    }
+
     private static func stateLabel(_ s: ServerConnState) -> String {
         switch s {
         case .unknown: return "unknown"
@@ -247,6 +290,7 @@ final class ServerViewModel: Identifiable {
         case .warn: return "warn"
         case .critical: return "critical"
         case .offline(let reason): return "offline(\(reason))"
+        case .suspended(let reason): return "suspended(\(reason))"
         }
     }
 
@@ -323,6 +367,7 @@ final class ServerViewModel: Identifiable {
     var worstTint: ThresholdTint {
         switch state {
         case .offline: return .stale
+        case .suspended: return .stale
         case .critical: return .critical
         case .warn: return .warn
         case .online: return .nominal

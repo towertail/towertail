@@ -187,6 +187,10 @@ final class ServerStore {
             case .warn: warn += 1; online += 1
             case .critical: critical += 1; online += 1
             case .offline: down += 1
+            // Suspended hosts are deliberately excluded from all four
+            // buckets: we don't know their state, and showing them as
+            // "down" (when really our Mac paused polling) is misleading.
+            case .suspended: break
             case .unknown: break
             }
         }

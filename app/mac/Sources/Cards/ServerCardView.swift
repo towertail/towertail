@@ -14,12 +14,16 @@ struct ServerCardView: View {
 
     var body: some View {
         let offline = vm.state.isOffline
-        CardChrome(tint: vm.worstTint, offline: offline) {
+        let suspended = vm.state.isSuspended
+        // Suspended dims the card (we don't have live data) but visually
+        // reads as "paused" rather than "down" — no red, lower opacity
+        // than offline so the user can tell at a glance which is which.
+        CardChrome(tint: vm.worstTint, offline: offline || suspended) {
             header
             subtitle
             metricGrid
         }
-        .opacity(offline ? 0.55 : 1.0)
+        .opacity(offline ? 0.55 : (suspended ? 0.7 : 1.0))
         .contextMenu { contextMenuContent }
         .sheet(item: $editSheet) { ctx in
             ServerEditSheet(context: ctx) { saved in
@@ -190,6 +194,13 @@ struct ServerCardView: View {
                 Text(reason)
                     .font(Typography.subtitle)
                     .foregroundStyle(ThresholdTint.critical.color)
+            } else if case .suspended(let reason) = vm.state {
+                Text("·")
+                    .font(Typography.subtitle)
+                    .foregroundStyle(.secondary)
+                Text("paused — \(reason)")
+                    .font(Typography.subtitle)
+                    .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
             headerActions
@@ -203,7 +214,7 @@ struct ServerCardView: View {
                     label: "CPU",
                     series: vm.cpu,
                     mode: .percent,
-                    offline: vm.state.isOffline,
+                    offline: vm.state.isOffline || vm.state.isSuspended,
                     warn: vm.thresholds.cpuWarn,
                     critical: vm.thresholds.cpuCritical,
                     hoverValue: hoverValue(for: vm.cpu),
@@ -215,7 +226,7 @@ struct ServerCardView: View {
                     label: "MEM",
                     series: vm.mem,
                     mode: .percent,
-                    offline: vm.state.isOffline,
+                    offline: vm.state.isOffline || vm.state.isSuspended,
                     warn: vm.thresholds.memWarn,
                     critical: vm.thresholds.memCritical,
                     hoverValue: hoverValue(for: vm.mem),
@@ -229,7 +240,7 @@ struct ServerCardView: View {
                     label: "DISK",
                     series: vm.disk,
                     mode: .diskBars,
-                    offline: vm.state.isOffline,
+                    offline: vm.state.isOffline || vm.state.isSuspended,
                     warn: vm.thresholds.diskWarn,
                     critical: vm.thresholds.diskCritical,
                     hoverValue: hoverValue(for: vm.disk),
@@ -241,7 +252,7 @@ struct ServerCardView: View {
                     label: "NET",
                     series: vm.net,
                     mode: .netDualRate,
-                    offline: vm.state.isOffline,
+                    offline: vm.state.isOffline || vm.state.isSuspended,
                     warn: 0.6,
                     critical: 0.9,
                     rxMBps: vm.netRxMBps,

@@ -9,6 +9,9 @@ enum SSHBootstrap {
     static let commonFlags: [String] = [
         "-o", "BatchMode=yes",
         "-o", "ConnectTimeout=5",
+        "-o", "ServerAliveInterval=15",
+        "-o", "ServerAliveCountMax=3",
+        "-o", "TCPKeepAlive=yes",
         "-o", "StrictHostKeyChecking=accept-new",
     ]
 

@@ -393,6 +393,7 @@ private struct ServersTable: View {
         case .warn: return "warn"
         case .critical: return "critical"
         case .offline(let reason): return "offline: \(reason)"
+        case .suspended(let reason): return "paused: \(reason)"
         }
     }
 }
