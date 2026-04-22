@@ -85,9 +85,9 @@ struct MetricCell: View {
             let windowSeconds = TimeInterval(max(1, pollingIntervalSeconds) * sparklineSlots)
             switch mode {
             case .percent:
-                Sparkline(samples: points, tint: seriesTint, warn: warn, windowSeconds: windowSeconds)
+                CanvasSparkline(samples: points, tint: seriesTint, warn: warn, windowSeconds: windowSeconds)
             case .netDualRate:
-                Sparkline(samples: points, tint: ThresholdTint.nominal.color, warn: nil, windowSeconds: windowSeconds, yDomain: nil)
+                CanvasSparkline(samples: points, tint: ThresholdTint.nominal.color, warn: nil, windowSeconds: windowSeconds, yDomain: nil)
             case .diskBars:
                 DiskBars(samples: points, tint: seriesTint, slots: sparklineSlots)
             }
