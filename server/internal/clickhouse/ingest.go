@@ -122,7 +122,19 @@ func (b *batcher) run() {
 
 func (b *batcher) flush(ctx context.Context, samples []SampleRow, disks []DiskRow, ios []DiskIORow, procs []ProcRow) error {
 	if len(samples) > 0 {
-		batch, err := b.client.conn.PrepareBatch(ctx, "INSERT INTO towertail.samples_raw")
+		// Explicit column list skips `ingested_at` (defaulted in the
+		// table DDL) so the row count matches `Append` arity.
+		const insertSamples = `INSERT INTO towertail.samples_raw (
+			ts, org_id, node_id, schema_v,
+			host_name, host_os, host_arch, host_kernel, host_uptime_s, host_sampler, host_machine_id,
+			cpu_pct, cpu_load_1, cpu_load_5, cpu_load_15, cpu_cores,
+			mem_used, mem_total, swap_used, swap_total,
+			disk_read_bps, disk_write_bps, disk_read_cum, disk_write_cum,
+			net_rx_bps, net_tx_bps, net_rx_cum, net_tx_cum,
+			procs_total, procs_visible, procs_root,
+			errors
+		)`
+		batch, err := b.client.conn.PrepareBatch(ctx, insertSamples)
 		if err != nil {
 			return err
 		}

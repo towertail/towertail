@@ -47,26 +47,66 @@ func (c *Client) ApplyMigrations(ctx context.Context) error {
 	return nil
 }
 
-// splitStatements breaks a file into individual statements on the
-// delimiter `;` at the start of a line. Keeps multi-statement DDL
-// (create table + create MV) in one file.
+// splitStatements breaks a file into individual statements at any `;`
+// that lands outside a string/comment. ClickHouse's native-protocol
+// query endpoint rejects multi-statement queries, so we send each one
+// separately. Empty statements are dropped so trailing semicolons at
+// end-of-file are harmless.
 func splitStatements(body string) []string {
+	// State: s=default, "='"=inside single-quoted literal,
+	// "=`"=inside backtick identifier, "=-"=inside line comment,
+	// "=*"=inside block comment.
 	var out []string
-	lines := strings.Split(body, "\n")
 	var cur strings.Builder
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == ";" {
-			out = append(out, cur.String())
-			cur.Reset()
-			continue
+	state := 's'
+	for i := 0; i < len(body); i++ {
+		c := body[i]
+		switch state {
+		case 's':
+			switch {
+			case c == ';':
+				if s := strings.TrimSpace(cur.String()); s != "" {
+					out = append(out, s)
+				}
+				cur.Reset()
+			case c == '\'':
+				cur.WriteByte(c)
+				state = '\''
+			case c == '`':
+				cur.WriteByte(c)
+				state = '`'
+			case c == '-' && i+1 < len(body) && body[i+1] == '-':
+				state = 'l'
+				i++
+			case c == '/' && i+1 < len(body) && body[i+1] == '*':
+				state = 'b'
+				i++
+			default:
+				cur.WriteByte(c)
+			}
+		case '\'':
+			cur.WriteByte(c)
+			if c == '\'' {
+				state = 's'
+			}
+		case '`':
+			cur.WriteByte(c)
+			if c == '`' {
+				state = 's'
+			}
+		case 'l':
+			if c == '\n' {
+				cur.WriteByte(c)
+				state = 's'
+			}
+		case 'b':
+			if c == '*' && i+1 < len(body) && body[i+1] == '/' {
+				state = 's'
+				i++
+			}
 		}
-		cur.WriteString(line)
-		cur.WriteString("\n")
 	}
 	if s := strings.TrimSpace(cur.String()); s != "" {
-		// Allow trailing `;` at the end of the file.
-		s = strings.TrimSuffix(s, ";")
 		out = append(out, s)
 	}
 	return out

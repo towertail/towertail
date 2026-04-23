@@ -40,4 +40,32 @@ final class LocalBackendTests: XCTestCase {
         try await b.removeNode(id: n.id)
         XCTAssertNil(b.nodes.node(withId: n.id))
     }
+
+    func testBulkAddNodes() async throws {
+        let b = LocalBackend()
+        let initial = b.nodes.nodes.count
+        let batch = (0..<5).map { i in
+            Node(displayName: "bulk-\(i)", kind: .ssh, sshUser: "u", sshHost: "h\(i)")
+        }
+        try await b.addNodes(batch)
+        XCTAssertEqual(b.nodes.nodes.count, initial + 5)
+        for n in batch {
+            XCTAssertNotNil(b.nodes.node(withId: n.id))
+            try await b.removeNode(id: n.id)
+        }
+        XCTAssertEqual(b.nodes.nodes.count, initial)
+    }
+
+    func testUpdateServerSettingsPersists() async throws {
+        let b = LocalBackend()
+        let original = b.serverSettings.notifyDebounceSeconds
+        b.serverSettings.notifyDebounceSeconds = original + 7
+        try await b.updateServerSettings(b.serverSettings)
+        // Re-load from disk to confirm persistence path executed.
+        let reloaded = ServerSettings.loadFromDisk()
+        XCTAssertEqual(reloaded.notifyDebounceSeconds, original + 7)
+        // Restore to keep subsequent runs stable.
+        b.serverSettings.notifyDebounceSeconds = original
+        try await b.updateServerSettings(b.serverSettings)
+    }
 }

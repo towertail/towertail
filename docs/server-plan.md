@@ -268,7 +268,7 @@ Retention is a server config knob (`CH_RETENTION_RAW_DAYS` etc.); boot-time `ALT
 
 ## 3. Postgres stub (cloud-managed)
 
-**All cloud-managed tables live in Postgres.** Migrations ship in `server/migrations/postgres/` and run via goose. The self-hosted binary does not dial Postgres unless `cloud_managed: true`.
+**All cloud-managed tables live in Postgres.** Migrations are embedded from `server/internal/postgres/migrations/` and applied by goose. The self-hosted binary does not dial Postgres unless `cloud_managed: true`.
 
 ### 3.1 Schema (stubbed)
 
@@ -879,8 +879,8 @@ Each phase is an independently reviewable, shippable increment. Later phases do 
 
 ### Phase D — ClickHouse integration & ingest (≈ 2 days)
 
-- `internal/ch/client.go` with lazy dial + pool.
-- Embed `migrations/clickhouse/*.sql`; on first successful dial, create schema if tables absent.
+- `internal/clickhouse/client.go` with lazy dial + pool.
+- Embed `internal/clickhouse/migrations/*.sql`; on first successful dial, create schema if tables absent.
 - `POST /v1/ingest/samples` — NDJSON → batcher → CH `samples_raw` / `disks` / `disk_io_devices` / `procs_topn`.
 - Batch flush at 5k/1s/1MiB configurable.
 - Integration tests via `testcontainers-go` booting a throwaway ClickHouse.

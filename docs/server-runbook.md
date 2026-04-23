@@ -137,8 +137,8 @@ is stopped, or use `bbolt` file-level snapshot; there is no online
 backup tool. Losing it loses node/user/settings config but does *not*
 lose metrics.
 
-**Postgres** (cloud only) — goose migrations in
-`server/migrations/postgres`. Standard `pg_dump` for backup.
+**Postgres** (cloud only) — goose migrations embedded from
+`server/internal/postgres/migrations/`. Standard `pg_dump` for backup.
 
 ---
 

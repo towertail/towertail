@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,6 +15,9 @@ type Node struct {
 	Kind              string            `json:"kind"` // "local" | "ssh"
 	SSHUser           *string           `json:"sshUser,omitempty"`
 	SSHHost           *string           `json:"sshHost,omitempty"`
+	// Tags is serialized via MarshalJSON so nil → `[]` (not `null`).
+	// Swift's RemoteNode decodes `tags` as non-optional `[String]` and a
+	// bare `null` breaks the whole node list decode.
 	Tags              []string          `json:"tags"`
 	Enabled           bool              `json:"enabled"`
 	IconOnWarn        bool              `json:"iconOnWarn"`
@@ -23,6 +27,18 @@ type Node struct {
 	CustomThresholds  *MetricThresholds `json:"customThresholds,omitempty"`
 	SnoozedUntil      *time.Time        `json:"snoozedUntil,omitempty"`
 	Favorite          bool              `json:"favorite"`
+}
+
+// MarshalJSON ensures Tags is always an array on the wire — never
+// `null` — so Swift clients with a non-optional `tags: [String]` field
+// decode cleanly.
+func (n Node) MarshalJSON() ([]byte, error) {
+	type alias Node
+	a := alias(n)
+	if a.Tags == nil {
+		a.Tags = []string{}
+	}
+	return json.Marshal(a)
 }
 
 // MetricThresholds mirrors the Swift MetricThresholds struct. Values are

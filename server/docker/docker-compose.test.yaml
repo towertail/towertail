@@ -1,0 +1,68 @@
+# Compose override for integration tests. Brings up ClickHouse + server
+# on fixed loopback ports, with a deterministic bootstrap admin token
+# the test harness can use to auth. No Caddy, no Postgres.
+#
+# Usage:
+#   scripts/tests.sh --docker-up       # boot the stack
+#   scripts/tests.sh --swift-integration
+#   scripts/tests.sh --docker-down
+#
+# Fixed ports (127.0.0.1 only): 18123 CH http, 19000 CH native,
+# 18080 server REST/WS. If these collide with your local env, set
+# TT_TEST_PORT_SERVER / TT_TEST_PORT_CH_HTTP / TT_TEST_PORT_CH_NATIVE.
+#
+# Env-var convention: koanf maps `__` to `.`, so `TT_CLICKHOUSE__ADDR`
+# resolves to `clickhouse.addr`. Single-underscore env vars like
+# `TT_CLICKHOUSE_ADDR` would land on an unused key and silently fall
+# back to defaults — don't use them.
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3-alpine
+    restart: "no"
+    environment:
+      CLICKHOUSE_DB: towertail
+      CLICKHOUSE_USER: towertail
+      CLICKHOUSE_PASSWORD: test
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    ports:
+      - "127.0.0.1:${TT_TEST_PORT_CH_HTTP:-18123}:8123"
+      - "127.0.0.1:${TT_TEST_PORT_CH_NATIVE:-19000}:9000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8123/ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  server:
+    build:
+      context: ../..
+      dockerfile: server/docker/Dockerfile
+    image: towertail/server:test
+    restart: "no"
+    depends_on:
+      clickhouse: { condition: service_healthy }
+    environment:
+      TT_HTTP__ADDR: ":8080"
+      TT_HTTP__CORS_ALLOW_ORIGINS: "http://127.0.0.1,http://localhost"
+      TT_CLICKHOUSE__ADDR: clickhouse:9000
+      TT_CLICKHOUSE__DATABASE: towertail
+      TT_CLICKHOUSE__USER: towertail
+      TT_CLICKHOUSE__PASSWORD: test
+      TT_STORAGE__PATH: /tmp/towertail-data
+      TT_CLOUD__MANAGED: "false"
+      TT_LOG__FORMAT: text
+      TT_LOG__LEVEL: info
+      # Deterministic admin token so the test harness skips login. The
+      # Swift tests read the same literal from TOWERTAIL_ADMIN_TOKEN.
+      TT_AUTH__BOOTSTRAP_TOKEN: "tt-test-admin-token-0000000000000000"
+    ports:
+      - "127.0.0.1:${TT_TEST_PORT_SERVER:-18080}:8080"
+    # tmpfs so distroless nonroot (uid 65532) can write without needing
+    # a named volume with pre-set permissions.
+    tmpfs:
+      - /tmp/towertail-data:uid=65532,gid=65532
+    # No compose healthcheck: distroless/static has no wget/curl. The
+    # Swift integration harness polls /readyz itself before testing.

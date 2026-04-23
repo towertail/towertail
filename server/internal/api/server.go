@@ -62,7 +62,16 @@ func New(d Deps) *Server {
 	e.Use(middleware.RequestID())
 	e.Use(middleware.Recover())
 	e.Use(slogMiddleware(d.Log))
-	e.Use(middleware.Gzip())
+	// Skip gzip on the WebSocket upgrade path: the middleware wraps the
+	// ResponseWriter with a gzip.Writer which writes headers after the
+	// raw-TCP hijack completes, corrupting the client's view of the
+	// stream. Mac clients don't send `Accept-Encoding: gzip` on /v1/stream,
+	// but echo's middleware doesn't check that before wrapping.
+	e.Use(middleware.GzipWithConfig(middleware.GzipConfig{
+		Skipper: func(c echo.Context) bool {
+			return strings.HasPrefix(c.Request().URL.Path, "/v1/stream")
+		},
+	}))
 	origins := d.Config.HTTP.CORSAllowOrigins
 	if len(origins) == 0 {
 		origins = []string{"*"}
