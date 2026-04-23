@@ -5,17 +5,64 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:prefs="using:Towertail.WinUI.Preferences">
 
+    <Window.SystemBackdrop>
+        <MicaBackdrop Kind="Base" />
+    </Window.SystemBackdrop>
+
     <Grid>
-        <NavigationView x:Name="Nav" IsBackButtonVisible="Collapsed" SelectionChanged="OnNavSelectionChanged">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid x:Name="AppTitleBar" Grid.Row="0" Height="40" Background="Transparent">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8"
+                        Margin="16,0,0,0" VerticalAlignment="Center">
+                <FontIcon Glyph="&#xE9D9;" FontFamily="{ThemeResource SymbolThemeFontFamily}"
+                          FontSize="16" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                <TextBlock Text="Towertail" Style="{ThemeResource CaptionTextBlockStyle}"
+                           VerticalAlignment="Center"
+                           Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                <TextBlock Text="—" Style="{ThemeResource CaptionTextBlockStyle}"
+                           VerticalAlignment="Center" Opacity="0.6" />
+                <TextBlock Text="Preferences" Style="{ThemeResource CaptionTextBlockStyle}"
+                           VerticalAlignment="Center" Opacity="0.7" />
+            </StackPanel>
+        </Grid>
+
+        <NavigationView Grid.Row="1" x:Name="Nav"
+                        IsBackButtonVisible="Collapsed"
+                        IsSettingsVisible="False"
+                        IsPaneToggleButtonVisible="False"
+                        OpenPaneLength="200"
+                        PaneDisplayMode="Left"
+                        IsTitleBarAutoPaddingEnabled="False"
+                        SelectionChanged="OnNavSelectionChanged">
             <NavigationView.MenuItems>
-                <NavigationViewItem Content="General"       Tag="general" />
-                <NavigationViewItem Content="Thresholds"    Tag="thresholds" />
-                <NavigationViewItem Content="Notifications" Tag="notifications" />
-                <NavigationViewItem Content="Servers"       Tag="servers" />
-                <NavigationViewItem Content="Logs"          Tag="logs" />
-                <NavigationViewItem Content="About"         Tag="about" />
+                <NavigationViewItem Content="Servers"       Tag="servers">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE772;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Thresholds"    Tag="thresholds">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE9E9;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Notifications" Tag="notifications">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xEA8F;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="General"       Tag="general">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE713;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="Logs"          Tag="logs">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE81C;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="About"         Tag="about">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE946;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
             </NavigationView.MenuItems>
-            <Grid x:Name="Host" Margin="16" />
+            <Grid x:Name="Host" Margin="24,12,24,24" />
         </NavigationView>
     </Grid>
 </Window>

@@ -25,9 +25,9 @@
 
   <ItemGroup>
     <!-- Pinned package set that avoids the CsWinRT 2.1 vs 2.2 clash:
-         WindowsAppSDK 1.6 ships CsWinRT 2.1. H.NotifyIcon.WinUI 2.1.x and
-         LiveChartsCore.SkiaSharpView.WinUI 2.0.0-rc5 were both built against
-         CsWinRT 2.1, so no WinRT.Runtime downgrade error surfaces. -->
+         WindowsAppSDK 1.6 ships CsWinRT 2.1. CommunityToolkit SettingsControls
+         8.2.250402 ships against 2.1. Avoid newer 8.2.251219 + WinUI.TableView
+         versions which bring in CsWinRT 2.2 and require UAP Platform.xml. -->
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250108002" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.22621.3233" />
     <PackageReference Include="H.NotifyIcon.WinUI" Version="2.1.4" />

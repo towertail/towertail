@@ -10,18 +10,22 @@ public sealed partial class NotificationsPane : UserControl
     {
         _env = env;
         InitializeComponent();
-        EnabledCheck.IsChecked = env.ServerSettings.NotificationsEnabled;
-        WarnCheck.IsChecked = env.ServerSettings.NotifyWarn;
-        CriticalCheck.IsChecked = env.ServerSettings.NotifyCritical;
+        EnabledSwitch.IsOn = env.ServerSettings.NotificationsEnabled;
+        WarnSwitch.IsOn = env.ServerSettings.NotifyWarn;
+        CriticalSwitch.IsOn = env.ServerSettings.NotifyCritical;
         DebounceBox.Value = env.ServerSettings.NotifyDebounceSeconds;
     }
 
     private void OnEnabledChanged(object s, Microsoft.UI.Xaml.RoutedEventArgs e)
-    { _env.ServerSettings.NotificationsEnabled = EnabledCheck.IsChecked == true; _env.ServerSettings.Persist(); }
+    { _env.ServerSettings.NotificationsEnabled = EnabledSwitch.IsOn; _env.ServerSettings.Persist(); }
     private void OnWarnChanged(object s, Microsoft.UI.Xaml.RoutedEventArgs e)
-    { _env.ServerSettings.NotifyWarn = WarnCheck.IsChecked == true; _env.ServerSettings.Persist(); }
+    { _env.ServerSettings.NotifyWarn = WarnSwitch.IsOn; _env.ServerSettings.Persist(); }
     private void OnCriticalChanged(object s, Microsoft.UI.Xaml.RoutedEventArgs e)
-    { _env.ServerSettings.NotifyCritical = CriticalCheck.IsChecked == true; _env.ServerSettings.Persist(); }
+    { _env.ServerSettings.NotifyCritical = CriticalSwitch.IsOn; _env.ServerSettings.Persist(); }
     private void OnDebounceChanged(NumberBox s, NumberBoxValueChangedEventArgs e)
-    { _env.ServerSettings.NotifyDebounceSeconds = (int)e.NewValue; _env.ServerSettings.Persist(); }
+    {
+        if (double.IsNaN(e.NewValue)) return;
+        _env.ServerSettings.NotifyDebounceSeconds = (int)e.NewValue;
+        _env.ServerSettings.Persist();
+    }
 }

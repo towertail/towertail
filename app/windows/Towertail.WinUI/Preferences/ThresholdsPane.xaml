@@ -3,28 +3,95 @@
     x:Class="Towertail.WinUI.Preferences.ThresholdsPane"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <StackPanel Spacing="12">
-        <TextBlock Text="Thresholds (0–1 fraction)" FontSize="18" FontWeight="SemiBold" />
-        <Grid ColumnDefinitions="160,120,120" ColumnSpacing="12">
-            <TextBlock Grid.Column="0" Text="" />
-            <TextBlock Grid.Column="1" Text="Warn" FontWeight="SemiBold" />
-            <TextBlock Grid.Column="2" Text="Critical" FontWeight="SemiBold" />
-        </Grid>
-        <Grid ColumnDefinitions="160,120,120" ColumnSpacing="12" RowSpacing="6">
-            <TextBlock Text="CPU" VerticalAlignment="Center" Grid.Column="0" />
-            <NumberBox x:Name="CpuWarnBox" Grid.Column="1" Minimum="0" Maximum="1" SmallChange="0.05" />
-            <NumberBox x:Name="CpuCritBox" Grid.Column="2" Minimum="0" Maximum="1" SmallChange="0.05" />
-        </Grid>
-        <Grid ColumnDefinitions="160,120,120" ColumnSpacing="12" RowSpacing="6">
-            <TextBlock Text="MEM" VerticalAlignment="Center" Grid.Column="0" />
-            <NumberBox x:Name="MemWarnBox" Grid.Column="1" Minimum="0" Maximum="1" SmallChange="0.05" />
-            <NumberBox x:Name="MemCritBox" Grid.Column="2" Minimum="0" Maximum="1" SmallChange="0.05" />
-        </Grid>
-        <Grid ColumnDefinitions="160,120,120" ColumnSpacing="12" RowSpacing="6">
-            <TextBlock Text="DISK" VerticalAlignment="Center" Grid.Column="0" />
-            <NumberBox x:Name="DiskWarnBox" Grid.Column="1" Minimum="0" Maximum="1" SmallChange="0.05" />
-            <NumberBox x:Name="DiskCritBox" Grid.Column="2" Minimum="0" Maximum="1" SmallChange="0.05" />
-        </Grid>
-        <Button x:Name="SaveBtn" Content="Save" Click="OnSaveClick" />
-    </StackPanel>
+
+    <UserControl.Resources>
+        <Style x:Key="SettingsRowGrid" TargetType="Grid">
+            <Setter Property="MinHeight" Value="64" />
+            <Setter Property="Padding" Value="16,12,16,12" />
+        </Style>
+        <Style x:Key="SettingsRowBorder" TargetType="Border">
+            <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+            <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="4" />
+        </Style>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" VerticalScrollMode="Auto">
+        <StackPanel MaxWidth="860" Spacing="4">
+
+            <TextBlock Text="Alert thresholds" Style="{StaticResource SettingsSectionHeaderTextBlockStyle}" Margin="1,0,0,6" />
+            <TextBlock Text="Values are 0–1 fractions (e.g. 0.80 = 80%). Warn triggers a yellow state; Critical triggers red and a notification."
+                       Style="{ThemeResource CaptionTextBlockStyle}"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Margin="1,0,0,12" TextWrapping="Wrap" />
+
+            <Border Style="{StaticResource SettingsRowBorder}">
+                <Grid Style="{StaticResource SettingsRowGrid}" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="16">
+                    <FontIcon Grid.Column="0" Glyph="&#xE950;" FontSize="18" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1" Text="CPU" Style="{ThemeResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <TextBlock Text="Warn" VerticalAlignment="Center"
+                                   Style="{ThemeResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <NumberBox x:Name="CpuWarnBox" Minimum="0" Maximum="1" SmallChange="0.05"
+                                   SpinButtonPlacementMode="Inline" Width="120" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="16,0,0,0">
+                        <TextBlock Text="Critical" VerticalAlignment="Center"
+                                   Style="{ThemeResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <NumberBox x:Name="CpuCritBox" Minimum="0" Maximum="1" SmallChange="0.05"
+                                   SpinButtonPlacementMode="Inline" Width="120" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Border Style="{StaticResource SettingsRowBorder}">
+                <Grid Style="{StaticResource SettingsRowGrid}" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="16">
+                    <FontIcon Grid.Column="0" Glyph="&#xEEA0;" FontSize="18" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1" Text="Memory" Style="{ThemeResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <TextBlock Text="Warn" VerticalAlignment="Center"
+                                   Style="{ThemeResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <NumberBox x:Name="MemWarnBox" Minimum="0" Maximum="1" SmallChange="0.05"
+                                   SpinButtonPlacementMode="Inline" Width="120" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="16,0,0,0">
+                        <TextBlock Text="Critical" VerticalAlignment="Center"
+                                   Style="{ThemeResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <NumberBox x:Name="MemCritBox" Minimum="0" Maximum="1" SmallChange="0.05"
+                                   SpinButtonPlacementMode="Inline" Width="120" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Border Style="{StaticResource SettingsRowBorder}">
+                <Grid Style="{StaticResource SettingsRowGrid}" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="16">
+                    <FontIcon Grid.Column="0" Glyph="&#xEDA2;" FontSize="18" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1" Text="Disk" Style="{ThemeResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <TextBlock Text="Warn" VerticalAlignment="Center"
+                                   Style="{ThemeResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <NumberBox x:Name="DiskWarnBox" Minimum="0" Maximum="1" SmallChange="0.05"
+                                   SpinButtonPlacementMode="Inline" Width="120" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="16,0,0,0">
+                        <TextBlock Text="Critical" VerticalAlignment="Center"
+                                   Style="{ThemeResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <NumberBox x:Name="DiskCritBox" Minimum="0" Maximum="1" SmallChange="0.05"
+                                   SpinButtonPlacementMode="Inline" Width="120" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Button x:Name="SaveBtn" Content="Save" Click="OnSaveClick" Margin="0,12,0,0"
+                    Style="{ThemeResource AccentButtonStyle}" />
+
+        </StackPanel>
+    </ScrollViewer>
 </UserControl>

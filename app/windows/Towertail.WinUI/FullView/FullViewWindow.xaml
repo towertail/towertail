@@ -6,8 +6,49 @@
     xmlns:fv="using:Towertail.WinUI.FullView"
     xmlns:lvc="using:LiveChartsCore.SkiaSharpView.WinUI">
 
+    <Window.SystemBackdrop>
+        <MicaBackdrop Kind="Base" />
+    </Window.SystemBackdrop>
+
     <Grid>
-        <NavigationView x:Name="Nav" IsBackButtonVisible="Collapsed" PaneDisplayMode="Top" SelectionChanged="OnNavSelectionChanged">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid x:Name="AppTitleBar" Grid.Row="0" Height="40" Background="Transparent">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8"
+                        Margin="16,0,0,0" VerticalAlignment="Center">
+                <FontIcon Glyph="&#xE9D9;" FontFamily="{ThemeResource SymbolThemeFontFamily}"
+                          FontSize="16" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                <TextBlock Text="Towertail" Style="{ThemeResource CaptionTextBlockStyle}"
+                           VerticalAlignment="Center"
+                           Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                <TextBlock Text="—" Style="{ThemeResource CaptionTextBlockStyle}"
+                           VerticalAlignment="Center" Opacity="0.6" />
+                <TextBlock x:Name="SubtitleText" Text=""
+                           Style="{ThemeResource CaptionTextBlockStyle}"
+                           VerticalAlignment="Center" Opacity="0.7" />
+            </StackPanel>
+            <Button Grid.Column="1" x:Name="PlayPauseBtn"
+                    Background="Transparent" BorderThickness="0"
+                    Margin="0,0,148,0" Padding="10,4,10,4"
+                    VerticalAlignment="Center"
+                    Click="OnPlayPauseClick"
+                    ToolTipService.ToolTip="Pause updates">
+                <FontIcon x:Name="PlayPauseIcon" Glyph="&#xE769;"
+                          FontFamily="{ThemeResource SymbolThemeFontFamily}" FontSize="14" />
+            </Button>
+        </Grid>
+
+        <NavigationView Grid.Row="1" x:Name="Nav" IsBackButtonVisible="Collapsed"
+                        PaneDisplayMode="Top"
+                        IsSettingsVisible="False"
+                        SelectionChanged="OnNavSelectionChanged">
             <NavigationView.MenuItems>
                 <NavigationViewItem Content="CPU"   Tag="cpu" />
                 <NavigationViewItem Content="MEM"   Tag="mem" />
@@ -15,7 +56,7 @@
                 <NavigationViewItem Content="NET"   Tag="net" />
                 <NavigationViewItem Content="PROCS" Tag="procs" />
             </NavigationView.MenuItems>
-            <Grid x:Name="Host" Margin="12" />
+            <Grid x:Name="Host" Margin="24,12,24,24" />
         </NavigationView>
     </Grid>
 </Window>

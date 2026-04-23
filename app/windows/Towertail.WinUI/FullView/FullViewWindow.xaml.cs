@@ -8,17 +8,22 @@ public sealed partial class FullViewWindow : Window
 {
     private ServerViewModel? _vm;
     private FullViewModel _fvm = new();
+    private bool _paused;
+    private readonly List<MetricChart> _charts = new();
 
     public FullViewWindow()
     {
         InitializeComponent();
         Title = "Towertail — Full View";
+        ExtendsContentIntoTitleBar = true;
+        SetTitleBar(AppTitleBar);
     }
 
     public void Bind(ServerViewModel vm)
     {
         _vm = vm;
         Title = $"Towertail — {vm.Node.DisplayName}";
+        SubtitleText.Text = vm.Node.DisplayName;
         if (Nav.SelectedItem is null) Nav.SelectedItem = Nav.MenuItems[0];
         ShowTab("cpu");
     }
@@ -37,10 +42,19 @@ public sealed partial class FullViewWindow : Window
             ShowTab(tag);
     }
 
+    private void OnPlayPauseClick(object sender, RoutedEventArgs e)
+    {
+        _paused = !_paused;
+        PlayPauseIcon.Glyph = _paused ? "\uE768" : "\uE769"; // Play / Pause
+        ToolTipService.SetToolTip(PlayPauseBtn, _paused ? "Resume updates" : "Pause updates");
+        foreach (var c in _charts) c.SetPaused(_paused);
+    }
+
     private void ShowTab(string tag)
     {
         if (_vm is null) return;
         Host.Children.Clear();
+        _charts.Clear();
         UIElement content = tag switch
         {
             "cpu"   => MakeChart(_vm.CpuSeries, "CPU %"),
@@ -57,17 +71,20 @@ public sealed partial class FullViewWindow : Window
     {
         var chart = new MetricChart();
         chart.Bind(series, label);
+        chart.SetPaused(_paused);
+        _charts.Add(chart);
         return chart;
     }
 
     private UIElement MakeNet()
     {
         if (_vm is null) return new TextBlock();
-        var grid = new Grid();
+        var grid = new Grid { RowSpacing = 12 };
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        var rx = new MetricChart(); rx.Bind(_vm.RxSeries, "RX MB/s");
-        var tx = new MetricChart(); tx.Bind(_vm.TxSeries, "TX MB/s");
+        var rx = new MetricChart(); rx.Bind(_vm.RxSeries, "RX MB/s", isPercent: false); rx.SetPaused(_paused);
+        var tx = new MetricChart(); tx.Bind(_vm.TxSeries, "TX MB/s", isPercent: false); tx.SetPaused(_paused);
+        _charts.Add(rx); _charts.Add(tx);
         Grid.SetRow(rx, 0); Grid.SetRow(tx, 1);
         grid.Children.Add(rx); grid.Children.Add(tx);
         return grid;

@@ -1,9 +1,14 @@
+using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
+using Windows.UI;
 using Towertail.WinUI.Design;
 using Towertail.WinUI.FullView;
+using Towertail.WinUI.Preferences;
 using Towertail.WinUI.State;
+using Towertail.WinUI.SystemServices;
 
 namespace Towertail.WinUI.Cards;
 
@@ -42,6 +47,11 @@ public sealed partial class ServerCardView : UserControl
         MemCell.Series = ViewModel.MemSeries; MemCell.Format = "pct";
         DiskCell.Series = ViewModel.DiskSeries; DiskCell.Format = "pct";
         NetCell.Series = ViewModel.NetSeries; NetCell.Format = "mbps";
+        // Terminal only makes sense for SSH nodes.
+        TerminalBtn.Visibility = ViewModel.Node.Kind == NodeKind.Ssh
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        UpdateFavoriteIcon();
         Update();
         ViewModel.PropertyChanged += (_, _) => Update();
     }
@@ -56,9 +66,53 @@ public sealed partial class ServerCardView : UserControl
         NetCell.Value = (ViewModel.RxMBps ?? 0) + (ViewModel.TxMBps ?? 0);
     }
 
+    private void UpdateFavoriteIcon()
+    {
+        if (ViewModel is null) return;
+        var fav = ViewModel.Node.Favorite;
+        FavoriteIcon.Glyph = fav ? "\uE735" : "\uE734"; // FavoriteStarFill : FavoriteStar
+        FavoriteIcon.Foreground = fav
+            ? new SolidColorBrush(Color.FromArgb(0xFF, 0xF5, 0xC3, 0x00))
+            : (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
+    }
+
     private void OnCardTapped(object sender, TappedRoutedEventArgs e)
     {
         if (ViewModel is null) return;
         FullViewRegistry.Open(ViewModel);
+    }
+
+    // Prevent the parent Border's Tapped (which opens FullView) from firing when an action
+    // button is clicked.
+    private void OnActionTapped(object sender, TappedRoutedEventArgs e) => e.Handled = true;
+
+    private void OnTerminalClick(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel is null) return;
+        TerminalLauncher.OpenSsh(ViewModel.Node);
+    }
+
+    private void OnSettingsClick(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel is null) return;
+        var env = Towertail.WinUI.App.Current.Environment;
+        var win = new ServerEditWindow();
+        win.Bind(ViewModel.Node, node =>
+        {
+            if (node != null) env.Nodes.Update(node);
+        });
+        win.Activate();
+    }
+
+    private void OnFavoriteClick(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel is null) return;
+        var env = Towertail.WinUI.App.Current.Environment;
+        env.Nodes.SetFavorite(ViewModel.Node.Id, !ViewModel.Node.Favorite);
+        // Node is a record, so SetFavorite swapped the reference inside NodeStore.
+        // Refresh our VM's Node pointer and icon.
+        var fresh = env.Nodes.ById(ViewModel.Node.Id);
+        if (fresh != null) ViewModel.UpdateNode(fresh);
+        UpdateFavoriteIcon();
     }
 }
