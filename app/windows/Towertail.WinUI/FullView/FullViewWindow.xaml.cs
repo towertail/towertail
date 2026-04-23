@@ -13,14 +13,14 @@ public sealed partial class FullViewWindow : Window
     {
         InitializeComponent();
         Title = "Towertail — Full View";
-        Nav.SelectedItem = Nav.MenuItems[0];
-        ShowTab("cpu");
     }
 
     public void Bind(ServerViewModel vm)
     {
         _vm = vm;
         Title = $"Towertail — {vm.Node.DisplayName}";
+        if (Nav.SelectedItem is null) Nav.SelectedItem = Nav.MenuItems[0];
+        ShowTab("cpu");
     }
 
     public void SelectTab(string tag)

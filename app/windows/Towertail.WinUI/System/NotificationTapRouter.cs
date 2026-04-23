@@ -23,10 +23,8 @@ public static class NotificationTapRouter
 
         TowertailApp.MainDispatcher?.TryEnqueue(() =>
         {
-            var win = new FullViewWindow();
-            win.Bind(vm);
+            var win = FullViewRegistry.Open(vm);
             win.SelectTab(metric);
-            win.Activate();
         });
     }
 }

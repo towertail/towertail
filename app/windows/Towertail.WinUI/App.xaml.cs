@@ -24,7 +24,16 @@ public partial class App : Application
         InitializeComponent();
         UnhandledException += (_, e) =>
         {
-            System.Diagnostics.Debug.WriteLine($"[App.UnhandledException] {e.Exception}");
+            var msg = $"[App.UnhandledException] {e.Exception}";
+            System.Diagnostics.Debug.WriteLine(msg);
+            try
+            {
+                var path = System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData);
+                var file = System.IO.Path.Combine(path, "Towertail", "fatal.log");
+                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(file)!);
+                System.IO.File.AppendAllText(file, $"{DateTime.UtcNow:o} {msg}\n");
+            }
+            catch { }
             e.Handled = true;
         };
     }
@@ -39,7 +48,12 @@ public partial class App : Application
         if (!keyInstance.IsCurrent)
         {
             // A prior instance already exists; hand off activation and exit.
-            keyInstance.RedirectActivationToAsync(AppInstance.GetCurrent().GetActivatedEventArgs()).AsTask().Wait();
+            // Run the async redirect on the thread pool and block this (non-UI)
+            // launch thread until it completes — sync-over-async is fine here
+            // because we exit immediately after.
+            Task.Run(async () =>
+                await keyInstance.RedirectActivationToAsync(AppInstance.GetCurrent().GetActivatedEventArgs())
+            ).GetAwaiter().GetResult();
             System.Environment.Exit(0);
             return;
         }

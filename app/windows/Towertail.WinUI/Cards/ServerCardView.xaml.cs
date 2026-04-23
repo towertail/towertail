@@ -35,6 +35,13 @@ public sealed partial class ServerCardView : UserControl
         if (ViewModel is null) return;
         NameText.Text = ViewModel.Node.DisplayName;
         HostText.Text = ViewModel.Node.UserAtHost;
+        // Assign series ONCE so SparklineCanvas's CollectionChanged
+        // subscription on series.Points is stable. Rebinding every tick
+        // unsubscribes-and-resubscribes, which races with Append().
+        CpuCell.Series = ViewModel.CpuSeries; CpuCell.Format = "pct";
+        MemCell.Series = ViewModel.MemSeries; MemCell.Format = "pct";
+        DiskCell.Series = ViewModel.DiskSeries; DiskCell.Format = "pct";
+        NetCell.Series = ViewModel.NetSeries; NetCell.Format = "mbps";
         Update();
         ViewModel.PropertyChanged += (_, _) => Update();
     }
@@ -44,27 +51,14 @@ public sealed partial class ServerCardView : UserControl
         if (ViewModel is null) return;
         LastSeenText.Text = StringFormatters.RelativeTime(ViewModel.LastSeen);
         CpuCell.Value = ViewModel.CpuPct;
-        CpuCell.Series = ViewModel.CpuSeries;
-        CpuCell.Format = "pct";
-
         MemCell.Value = ViewModel.MemPct;
-        MemCell.Series = ViewModel.MemSeries;
-        MemCell.Format = "pct";
-
         DiskCell.Value = ViewModel.DiskMaxPct;
-        DiskCell.Series = ViewModel.DiskSeries;
-        DiskCell.Format = "pct";
-
         NetCell.Value = (ViewModel.RxMBps ?? 0) + (ViewModel.TxMBps ?? 0);
-        NetCell.Series = ViewModel.NetSeries;
-        NetCell.Format = "mbps";
     }
 
     private void OnCardTapped(object sender, TappedRoutedEventArgs e)
     {
         if (ViewModel is null) return;
-        var win = new FullViewWindow();
-        win.Bind(ViewModel);
-        win.Activate();
+        FullViewRegistry.Open(ViewModel);
     }
 }

@@ -10,11 +10,18 @@ public sealed partial class PopoverRoot : UserControl
 {
     public ObservableCollection<ServerViewModel> FilteredServers { get; } = new();
 
+    /// <summary>Raised when the header's close button is clicked.</summary>
+    public event EventHandler? CloseRequested;
+
     private AppEnvironment? _env;
     private string _search = "";
     private ServerFilter _filter = ServerFilter.All;
 
-    public PopoverRoot() { InitializeComponent(); }
+    public PopoverRoot()
+    {
+        InitializeComponent();
+        Header.CloseRequested += (_, _) => CloseRequested?.Invoke(this, EventArgs.Empty);
+    }
 
     public void Bind(AppEnvironment env)
     {

@@ -40,8 +40,30 @@ public sealed class AppEnvironment
         var notifier = new ThresholdNotifier(serverSettings, nodes);
         servers.AttachNotifier(notifier);
 
+        // First-run seed: a Local node for "this machine" so the popover is not
+        // empty on fresh installs. Users can rename, disable, or delete it.
+        if (nodes.Nodes.Count == 0)
+            nodes.Add(Node.LocalWindows(System.Environment.MachineName));
+
         var invokerFactory = new SamplerInvokerFactory();
         var collector = new RealCollector(nodes, servers, serverSettings, invokerFactory, logger);
+        // Marshal sample ingestion onto the WinUI dispatcher so observable
+        // collections and PropertyChanged fire on the UI thread. Core doesn't
+        // depend on WinUI, so we inject the dispatcher here.
+        var dispatcher = TowertailApp.MainDispatcher;
+        if (dispatcher != null)
+        {
+            collector.UiMarshaller = action =>
+            {
+                var tcs = new TaskCompletionSource();
+                dispatcher.TryEnqueue(() =>
+                {
+                    try { action(); tcs.SetResult(); }
+                    catch (Exception ex) { tcs.SetException(ex); }
+                });
+                return tcs.Task;
+            };
+        }
         collector.Start();
 
         return new AppEnvironment

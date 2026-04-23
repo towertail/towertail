@@ -32,7 +32,7 @@
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.22621.3233" />
     <PackageReference Include="H.NotifyIcon.WinUI" Version="2.1.4" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
-    <PackageReference Include="LiveChartsCore.SkiaSharpView.WinUI" Version="2.0.0-rc2" />
+    <PackageReference Include="LiveChartsCore.SkiaSharpView.WinUI" Version="2.0.0-rc5" />
     <PackageReference Include="SkiaSharp.Views.WinUI" Version="2.88.9" />
     <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="9.0.0" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.10" />

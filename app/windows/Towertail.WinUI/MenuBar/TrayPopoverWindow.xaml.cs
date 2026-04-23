@@ -3,6 +3,7 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using System.Runtime.InteropServices;
 using Towertail.WinUI.Bootstrap;
+using Towertail.WinUI.FullView;
 using Windows.Graphics;
 using WinRT.Interop;
 
@@ -38,6 +39,7 @@ public sealed partial class TrayPopoverWindow : Window
         }
         _appWindow?.Resize(new SizeInt32(Width, Height));
         Activated += OnActivated;
+        Root.CloseRequested += (_, _) => HidePopover();
         _appWindow?.Hide();
     }
 
@@ -63,6 +65,9 @@ public sealed partial class TrayPopoverWindow : Window
         {
             // Don't hide during UIA inspection — the inspector steals focus.
             if (App.TestPinPopover) return;
+            // Don't hide if we handed focus to a FullView window the user just
+            // opened by tapping a card — they explicitly want to see it.
+            if (FullViewRegistry.IsAnyOpen) return;
             HidePopover();
         }
     }

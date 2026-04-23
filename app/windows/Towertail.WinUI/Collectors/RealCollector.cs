@@ -20,6 +20,14 @@ public sealed class RealCollector : ICollector, IAsyncDisposable
     private readonly object _lock = new();
     private bool _started;
 
+    /// <summary>
+    /// Optional UI-thread marshaller. The WinUI app sets this at bootstrap so
+    /// sample ingestion (which mutates bound ObservableCollections + raises
+    /// PropertyChanged) happens on the dispatcher. When null, Ingest runs on
+    /// the worker thread — fine for tests, unsafe for production.
+    /// </summary>
+    public Func<Action, Task>? UiMarshaller { get; set; }
+
     public RealCollector(
         NodeStore nodes, ServerStore servers, ServerSettings settings,
         ISamplerInvokerFactory factory, Logger logger)
@@ -69,7 +77,7 @@ public sealed class RealCollector : ICollector, IAsyncDisposable
         {
             if (_workers.ContainsKey(id)) return;
             var invoker = _factory.Create(node);
-            var worker = new Worker(id, node, invoker, _servers, _settings, _logger);
+            var worker = new Worker(id, node, invoker, _servers, _settings, _logger, UiMarshaller);
             _workers[id] = worker;
             worker.Start();
         }
@@ -96,16 +104,19 @@ public sealed class RealCollector : ICollector, IAsyncDisposable
         private readonly ServerStore _servers;
         private readonly ServerSettings _settings;
         private readonly Logger _logger;
+        private readonly Func<Action, Task>? _marshal;
         private readonly CancellationTokenSource _cts = new();
         private readonly ManualResetEventSlim _trigger = new(false);
         private Task? _loop;
         private int _failureStreak;
 
         public Worker(Guid id, Node n, ISamplerInvoker invoker,
-            ServerStore servers, ServerSettings settings, Logger logger)
+            ServerStore servers, ServerSettings settings, Logger logger,
+            Func<Action, Task>? marshal)
         {
             _id = id; _node = n; _invoker = invoker;
             _servers = servers; _settings = settings; _logger = logger;
+            _marshal = marshal;
         }
 
         public void Start() { _loop = Task.Run(LoopAsync); }
@@ -122,7 +133,10 @@ public sealed class RealCollector : ICollector, IAsyncDisposable
                     try
                     {
                         var sample = await _invoker.RunOnceAsync(ct).ConfigureAwait(false);
-                        _servers.Ingest(_id, sample);
+                        // ObservableCollections + PropertyChanged consumers are WinUI-
+                        // bound; mutate on the UI dispatcher when one is injected.
+                        if (_marshal is null) _servers.Ingest(_id, sample);
+                        else await _marshal(() => _servers.Ingest(_id, sample)).ConfigureAwait(false);
                         _failureStreak = 0;
                     }
                     catch (OperationCanceledException) { return; }
