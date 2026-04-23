@@ -19,7 +19,7 @@ Top-level folders, one per build target + shared contract + docs:
 towertail/
 ├── app/
 │   ├── mac/       # Phase 1 — SwiftUI macOS menu-bar app (Xcode project, v1 shipping target)
-│   ├── windows/   # Phase 2 — stub; native Windows client, not started
+│   ├── windows/   # Phase 2 — WinUI 3 / .NET 9 port (see docs/windows-app.md); Tier 1+2 tests green
 │   └── (shared/)  # speculative; create only when something is truly shared
 ├── sampler/         # Go collector binary, 5 target triples, bundled into app/mac
 ├── server/        # Phase 3 — stub; Go control-plane service (ingest, store, alert), Dockerised, self-hostable
@@ -38,8 +38,8 @@ The lines between these phases are deliberately sharp — each is a separately s
 
 | Phase | Scope | Components |
 |---|---|---|
-| **Phase 1 — Local Mac client** *(active)* | A single user watches their own fleet from a menu bar, all state local. No server, no account, no cloud. | `app/mac`, `sampler/` |
-| **Phase 2 — Windows client** | Ship the same product on Windows. Still local-only. Shared wire format with the sampler; UI is a from-scratch native build. | + `app/windows`, maybe `app/shared/` for icons/protocol decode if it's a meaningful saving |
+| **Phase 1 — Local Mac client** *(shipping)* | A single user watches their own fleet from a menu bar, all state local. No server, no account, no cloud. | `app/mac`, `sampler/` |
+| **Phase 2 — Windows client** *(active; feature-complete, polish + MSIX pending)* | Same product on Windows. Shared wire format with the sampler and the self-hosted server; UI is a WinUI 3 / .NET 9 / C# 13 build. See [`windows-app.md`](windows-app.md). | + `app/windows` (WinUI app, xUnit Tier 1 + Tier 2 integration tests against the real Go server with `TT_CLICKHOUSE__DISABLED=true` for the no-Docker dev loop) |
 | **Phase 3 — Self-hosted server** | A company runs a Go service in their own network. Samplers ship samples to the server (not to a desktop). Desktop clients become read-only consoles talking to the server. Alert rules live on the server. | + `server/`, `proto/` formalised |
 | **Phase 4 — Managed cloud** | We run the server. Multi-tenant, auth, billing. Same desktop client, a URL+key away from either a customer's self-hosted server or ours. | infrastructure repo (separate), no new top-level folder |
 
