@@ -231,6 +231,11 @@ Not part of this plan, but sketching it so the seam targets the right shape.
 | Kill process | `POST /nodes/{id}/kill-process?pid=…` |
 | Sampler version + update trigger | `GET /nodes/{id}/sampler-version`, `POST /nodes/{id}/update-sampler` |
 | Events (threshold crossings, reachability, version changes) | `WS /stream/events` |
+| Snooze / ack an active alert | `POST /alerts/{id}/snooze`, `POST /alerts/{id}/ack` |
+
+**Escalation and snooze state are per-account (user), not per-client device.** All Mac clients logged into the same account share one view of which alerts are active, snoozed, or acknowledged. The server tracks escalation timers and snooze windows; `WS /stream/events` fans the same event stream out to every client subscribed under one account; snooze/ack mutations broadcast the resulting state change back to all of that account's clients.
+
+This means `RemoteNotificationDispatcher` (Step 5) is purely a renderer of server-pushed events — no local escalation timers, no local snooze tracking. Local mode is unaffected: `ThresholdNotifier` keeps its in-process state.
 
 **Stays on the client in both modes.**
 
