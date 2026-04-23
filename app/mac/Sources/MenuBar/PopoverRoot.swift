@@ -66,7 +66,19 @@ struct PopoverRoot: View {
         let bySeverity: [ServerViewModel]
         switch filter {
         case .all:
+            // Escalate critical, then warn, to the top so problems are seen
+            // first. Swift's sort isn't guaranteed stable, so tie-break on
+            // the original index to preserve registration order within a
+            // severity tier.
             bySeverity = store.serverVMs
+                .enumerated()
+                .sorted { lhs, rhs in
+                    let ra = severityRank(lhs.element.state)
+                    let rb = severityRank(rhs.element.state)
+                    if ra != rb { return ra > rb }
+                    return lhs.offset < rhs.offset
+                }
+                .map(\.element)
         case .online:
             // "Online" means healthy — online-without-warnings. A server in
             // warn is counted as online in the header summary but users
@@ -78,17 +90,23 @@ struct PopoverRoot: View {
             }
         case .warn:
             // Rank critical above warn so the most severe hosts are seen
-            // first when the user clicks the warn pill.
+            // first when the user clicks the warn pill. Tie-break on the
+            // original index so registration order holds within a tier.
             bySeverity = store.serverVMs
-                .filter { vm in
+                .enumerated()
+                .filter { _, vm in
                     switch vm.state {
                     case .warn, .critical: return true
                     default: return false
                     }
                 }
-                .sorted { a, b in
-                    severityRank(a.state) > severityRank(b.state)
+                .sorted { lhs, rhs in
+                    let ra = severityRank(lhs.element.state)
+                    let rb = severityRank(rhs.element.state)
+                    if ra != rb { return ra > rb }
+                    return lhs.offset < rhs.offset
                 }
+                .map(\.element)
         case .down:
             bySeverity = store.serverVMs.filter { vm in
                 if case .offline = vm.state { return true }
