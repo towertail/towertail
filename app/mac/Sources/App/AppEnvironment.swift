@@ -9,11 +9,17 @@ import SwiftUI
 final class AppEnvironment {
     let backend: any Backend
 
-    /// Flipping from .local to .remote here is all that should be
-    /// required to swap implementations — every mutation goes through
-    /// `backend`, and observable state is read via the forwarding
-    /// accessors below.
-    static let defaultMode: BackendMode = .local
+    /// Remote mode is selected by env vars `TOWERTAIL_REMOTE_URL` +
+    /// `TOWERTAIL_REMOTE_TOKEN` at launch. Absent both, we stay in
+    /// .local. A proper mode toggle (Preferences → Account) lands in
+    /// Phase L along with keychain-stored credentials.
+    static var defaultMode: BackendMode {
+        let env = ProcessInfo.processInfo.environment
+        if env["TOWERTAIL_REMOTE_URL"] != nil, env["TOWERTAIL_REMOTE_TOKEN"] != nil {
+            return .remote
+        }
+        return .local
+    }
 
     var store: ServerStore { backend.servers }
     var nodeStore: NodeStore { backend.nodes }
@@ -21,12 +27,25 @@ final class AppEnvironment {
     var serverSettings: ServerSettings { backend.serverSettings }
     var samplerUpdater: SamplerUpdateCoordinator { backend.samplerUpdater }
 
-    init(mode: BackendMode = .local) {
+    init(mode: BackendMode = AppEnvironment.defaultMode) {
         switch mode {
         case .local:
             self.backend = LocalBackend()
         case .remote:
-            self.backend = RemoteBackend()
+            let env = ProcessInfo.processInfo.environment
+            guard
+                let raw = env["TOWERTAIL_REMOTE_URL"],
+                let url = URL(string: raw),
+                let token = env["TOWERTAIL_REMOTE_TOKEN"]
+            else {
+                Logger.shared.warn(
+                    "remote: env missing — falling back to local",
+                    category: "lifecycle"
+                )
+                self.backend = LocalBackend()
+                return
+            }
+            self.backend = RemoteBackend(endpoint: url, token: token)
         }
     }
 

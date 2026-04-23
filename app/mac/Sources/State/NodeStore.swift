@@ -114,6 +114,13 @@ final class NodeStore {
         self.nodes = s.nodes.isEmpty ? [Node.localMac()] : s.nodes
     }
 
+    /// Replaces the entire node list with `newNodes` without touching
+    /// local disk. Remote mode uses this when the server is the source
+    /// of truth — persisting would fight the `node_updated` WS stream.
+    func replaceAll(with newNodes: [Node]) {
+        self.nodes = newNodes
+    }
+
     func node(withId id: UUID) -> Node? {
         nodes.first(where: { $0.id == id })
     }

@@ -1,0 +1,11 @@
+go 1.25.0
+
+// A workspace so edits to sampler/pkg/schema are immediately visible to
+// the server module without a go.mod replace directive or vendored
+// copy. The schema is the wire contract — keeping one source of truth
+// in the sampler module and importing from the server prevents them
+// from drifting apart.
+use (
+	./sampler
+	./server
+)

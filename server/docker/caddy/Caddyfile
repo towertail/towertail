@@ -1,0 +1,16 @@
+{
+    # Auto-HTTPS on (default). Set `auto_https off` in dev.
+    admin off
+}
+
+towertail.local {
+    reverse_proxy server:8080 {
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-For {remote}
+    }
+}
+
+# Fallback that works for localhost dev without a real domain.
+:80, :443 {
+    reverse_proxy server:8080
+}

@@ -1,0 +1,5 @@
+<clickhouse>
+    <users>
+        <default remove="remove"/>
+    </users>
+</clickhouse>

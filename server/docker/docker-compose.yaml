@@ -1,0 +1,88 @@
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    restart: unless-stopped
+    volumes:
+      - ch-data:/var/lib/clickhouse
+      - ./clickhouse/config.d:/etc/clickhouse-server/config.d:ro
+      - ./clickhouse/users.d:/etc/clickhouse-server/users.d:ro
+    environment:
+      CLICKHOUSE_DB: towertail
+      CLICKHOUSE_USER: towertail
+      CLICKHOUSE_PASSWORD_FILE: /run/secrets/ch_password
+    secrets: [ch_password]
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Postgres is only required in cloud-managed mode. `profiles` keeps it
+  # dormant for self-hosted deployments; opt in via
+  # `docker compose --profile cloud up`.
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    profiles: ["cloud"]
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    environment:
+      POSTGRES_DB: towertail
+      POSTGRES_USER: towertail
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
+    secrets: [pg_password]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U towertail"]
+      interval: 10s
+
+  server:
+    build:
+      # Context is the repo root so the Dockerfile sees both server/
+      # and sampler/ modules plus go.work — the server imports
+      # sampler/pkg/schema via the workspace.
+      context: ../..
+      dockerfile: server/docker/Dockerfile
+    image: ghcr.io/towertail/server:latest
+    restart: unless-stopped
+    depends_on:
+      clickhouse: { condition: service_healthy }
+    environment:
+      TT_HTTP_ADDR: ":8080"
+      TT_CLICKHOUSE_ADDR: clickhouse:9000
+      TT_CLICKHOUSE_DATABASE: towertail
+      TT_CLICKHOUSE_USER: towertail
+      TT_CLICKHOUSE_PASSWORD_FILE: /run/secrets/ch_password
+      TT_STORAGE_PATH: /var/lib/towertail
+      TT_CLOUD_MANAGED: "false"
+      TT_LOG_FORMAT: json
+      TT_LOG_LEVEL: info
+    volumes:
+      - server-data:/var/lib/towertail
+    secrets: [ch_password]
+    ports: ["127.0.0.1:8080:8080"]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [server]
+
+volumes:
+  ch-data: {}
+  pg-data: {}
+  server-data: {}
+  caddy-data: {}
+  caddy-config: {}
+
+secrets:
+  ch_password:
+    file: ./secrets/ch_password
+  pg_password:
+    file: ./secrets/pg_password
