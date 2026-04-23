@@ -12,16 +12,16 @@ Source of truth for product decisions: [`docs/PLAN.md`](docs/PLAN.md). Sampler w
 
 ```
 app/mac/        SwiftUI menu-bar app (v1 shipping target)
-app/windows/    stub (Phase 2)
+app/windows/    WinUI 3 / .NET 9 client (Phase 2, in progress)
 sampler/        Go collector binary, 5 target triples
 server/         stub (Phase 3)
 proto/          stub (Phase 3)
-scripts/        build.sh / build.app.sh / build.sampler.sh
+scripts/        build.sh / build.app.sh / build.sampler.sh / build.windows.ps1 / winvm-*.sh
 docs/           PLAN.md, sampler.md, research-*.md, design.pen, screenshots/
 dist/samplers/  build output: <triple>/towertail-sampler + manifest.json
 ```
 
-Only `app/mac/` and `sampler/` have real code today. Don't touch the stub folders unless the user explicitly asks — they exist so future folder moves don't break doc links or imports.
+`app/mac/`, `app/windows/`, and `sampler/` have real code. Don't touch the stub folders unless the user explicitly asks — they exist so future folder moves don't break doc links or imports.
 
 ## Mac app — `app/mac/`
 
@@ -54,6 +54,59 @@ Key contracts:
 
 Tests live in `app/mac/Tests/` (XCTest). Focus is on state/decoding/invoker logic, not UI.
 
+## Windows app — `app/windows/`
+
+WinUI 3 + .NET 9 + Windows App SDK 1.6, **parity target** with the Mac client. Three csprojs:
+
+- `Towertail.WinUI` — the app. `net9.0-windows10.0.19041.0`, `WindowsPackageType=None`, self-contained SDK runtime. Entry point is `App.xaml.cs` / `OnLaunched`. No main window — tray-only (`TrayIconHost` + `TrayPopoverWindow`).
+- `Towertail.Core` — source-only assembly that `<Compile Include>`s the testable subset of `State/`, `Backend/`, `Collectors/`, plus a hand-picked portable subset of `System/`. Uses `net9.0-windows` so `Microsoft.Win32.Registry` and the Tailscale named pipe work. **Don't** reference WinUI/XAML types in files that live in these folders, or Core will stop compiling.
+- `Towertail.Tests` / `Towertail.UITests` — xUnit v3. Tests reference `Towertail.Core` only, not the WinUI project (keeps XAML compiler out of the test path).
+
+Directory layout in `Towertail.WinUI/` mirrors the Mac `Sources/` tree (App, MenuBar, Cards, FullView, Collectors, State, Preferences, System, Design). Sampler binaries are copied into `Assets\samplers\<triple>\` by the `CopySamplers` MSBuild target from `dist/samplers/`.
+
+Key architectural contracts:
+
+- **UI-thread marshalling:** `RealCollector.Worker` runs on a background thread but ingests samples into ObservableCollections (`MetricSeries.Points`) and `[ObservableProperty]` setters that are bound to WinUI. `RealCollector.UiMarshaller` is an injectable `Func<Action, Task>` set in `AppEnvironment.Bootstrap` from the captured `DispatcherQueue`. Tests leave it null; in production it must be set or you'll get silent `COMException` / frozen UI.
+- **Single-instance:** `AppInstance.FindOrRegisterForKey("towertail-app")` in `OnLaunched`. **Never** call `.Wait()` on `RedirectActivationToAsync` — it deadlocks the dispatcher. `OnLaunched` is `async void` on purpose.
+- **Local node seed:** `AppEnvironment.Bootstrap` auto-adds `Node.LocalWindows(MachineName)` if `NodeStore` is empty. Without this, a fresh install shows an empty popover and looks frozen.
+- **FullViewWindow retention:** `FullViewRegistry.Open(vm)` keeps strong refs; don't `new FullViewWindow()` directly or WinUI will GC it before it paints. Also makes the popover not auto-hide while a FullView is open.
+
+## Windows dev workflow (SSH from Mac → winvm)
+
+Developing WinUI on a Mac sucks — build, run, and debug must happen on Windows. Workflow: edit on Mac, sync+build+run on the VM over SSH. All wrapped in `scripts/winvm-*.sh`.
+
+**One-time setup on the VM (`winvm`):**
+
+```bash
+scripts/winvm-run.sh doctor   # sets core.autocrlf=false + git config core.eol=lf
+```
+
+Without `core.autocrlf=false`, every synced file looks modified in `git status` on the VM because git wants CRLF in the working tree vs. the LF we push. The VM is a **build mirror, not a dev workspace** — never commit from it.
+
+**Day-to-day:**
+
+```bash
+scripts/winvm-run.sh build      # sync + dotnet build (x64 Debug), ~20s
+scripts/winvm-run.sh run        # sync + build + launch Towertail.exe on the VM tray
+scripts/winvm-run.sh test       # sync + scripts/test.ps1 --unit (~1s tests)
+scripts/winvm-run.sh tail-log   # tail %LOCALAPPDATA%\Towertail\logs\towertail-YYYY-MM-DD.log
+scripts/winvm-run.sh kill       # Stop-Process Towertail
+scripts/winvm-run.sh shell      # interactive pwsh, cd'd to the remote repo root
+scripts/winvm-run.sh publish    # Release x64 publish to dist/app/windows-x64/
+```
+
+Sync uses a tar pipe (no rsync needed on the VM side — winvm has `tar` via Git Bash). `COPYFILE_DISABLE=1` + `--no-mac-metadata` strips macOS AppleDouble `._*` forks that would otherwise pollute the tree. Excludes `.git/`, `bin/`, `obj/`, `dist/`, `app/mac/`. Typical sync is ~3s.
+
+**Gotchas & lessons learned:**
+
+- **Use `pwsh`, not `powershell`.** `scripts/test.ps1` and `build.windows.ps1` use UTF-8 content that the legacy Windows PowerShell 5.1 parser rejects. `winvm-run.sh` always shells out via `pwsh` (PowerShell 7).
+- **Don't `dotnet run` on an ARM64 VM.** It picks the host arch; the `WindowsAppSDKSelfContained=true` target refuses to build for ARM64 without explicit `-p:Platform=ARM64`. `winvm-run.sh run` instead builds `-p:Platform=x64` then `Start-Process`es the resulting exe — x64 works fine under Windows-on-ARM via emulation.
+- **Samplers copy into the bundle via the `CopySamplers` MSBuild target.** If you skip `scripts/build.sampler.sh`, `Assets\samplers\<triple>\` is empty and `LocalSamplerInvoker` fails every poll. The Windows-side `build.windows.ps1` calls `bash scripts/build.sampler.sh` before building; `winvm-run.sh build` currently assumes the VM already has a recent `dist/samplers/` — run `build.windows.ps1` once after pulling fresh sampler changes to refresh.
+- **Kill existing Towertail before relaunch.** `winvm-run.sh run` does this automatically (`Get-Process Towertail | Stop-Process`). If you skip it, the single-instance guard redirects activation to the stale build.
+- **Logs live at `%LOCALAPPDATA%\Towertail\logs\towertail-YYYYMMDD.log`** (not `%APPDATA%`). Settings + SQLite history live at `%APPDATA%\Towertail\`.
+- **VS Code Remote-SSH** is an option if you want full IntelliSense + the `dotnet` debugger on the VM — connect with `code --remote ssh-remote+winvm /c/Users/fritz/Projects/towertail`. Keep the `winvm-*.sh` workflow for the Mac-side edit loop though; Remote-SSH is heavier and editing the same repo from two places invites merge pain.
+- **`git status` on the VM should show only files you actually changed.** If it reports every file as modified, the `doctor` step was skipped — rerun it.
+
 ## Sampler — `sampler/`
 
 Go 1.24, module `github.com/towertail/sampler`, single binary (`cmd/sampler`). Uses `gopsutil/v4`. Static builds (`CGO_ENABLED=0`), size-stripped (`-s -w`), version injected via `-ldflags`.
@@ -65,7 +118,7 @@ internal/schema/     JSON types matching docs/sampler.md §4
 internal/version/    Version + SHA vars set by build ldflags
 ```
 
-Five target triples ship in the app bundle: `linux-amd64`, `linux-arm64`, `linux-armv7`, `darwin-arm64`, `darwin-amd64`. The build writes `dist/samplers/manifest.json` with sha256s; the app uses it to decide whether to re-upload.
+Seven target triples ship across both clients: `linux-amd64`, `linux-arm64`, `linux-armv7`, `darwin-arm64`, `darwin-amd64`, `windows-amd64`, `windows-arm64`. The build writes `dist/samplers/manifest.json` with sha256s; the app uses it to decide whether to re-upload.
 
 Invocation modes (see `docs/sampler.md` §3 for full flag list):
 - `--once` — one JSON object on stdout, exit
@@ -92,6 +145,7 @@ Tests:
 ```bash
 xcodebuild -project app/mac/Towertail.xcodeproj -scheme Towertail test
 cd sampler && go test ./...
+scripts/winvm-run.sh test              # Windows unit tests over SSH
 ```
 
 `build.app.sh` auto-runs `xcodegen generate` before `xcodebuild`, so you don't need to remember — but if you're building through Xcode directly, regenerate manually after `project.yml` edits.
