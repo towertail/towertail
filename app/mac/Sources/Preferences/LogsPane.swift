@@ -174,7 +174,7 @@ struct LogsPane: View {
     }
 
     private var rows: [LogRow] {
-        let needle = search.trimmingCharacters(in: .whitespaces).lowercased()
+        let needle = search.normalizedForSearch()
         let base = logger.ring.compactMap { entry -> LogRow? in
             if entry.level < minLevel { return nil }
             switch hostFilter {

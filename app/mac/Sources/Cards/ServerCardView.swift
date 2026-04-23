@@ -11,7 +11,19 @@ struct ServerCardView: View {
     @Environment(\.backend) private var backend
     @State private var terminalError: String?
 
-    private var node: Node? { nodeStore.node(withId: vm.id) }
+    /// Per-render bundle of node metadata + backend mutations. Re-derived
+    /// each body invocation so changes to NodeStore (favorite toggled
+    /// elsewhere, snooze cleared) flow through naturally.
+    private var model: ServerCardModel {
+        ServerCardModel(
+            nodeID: vm.id,
+            nodeStore: nodeStore,
+            samplerUpdater: samplerUpdater,
+            backend: backend
+        )
+    }
+
+    private var node: Node? { model.node }
 
     var body: some View {
         let offline = vm.state.isOffline
@@ -46,13 +58,9 @@ struct ServerCardView: View {
             Button("1 day") { snooze(.minutes(24 * 60)) }
             Button("1 week") { snooze(.minutes(7 * 24 * 60)) }
         }
-        if node?.isSnoozed == true {
+        if model.isSnoozed {
             Divider()
-            Button("Clear snooze") {
-                let b = backend
-                let id = vm.id
-                Task { try? await b?.setNodeSnooze(id: id, until: nil) }
-            }
+            Button("Clear snooze") { model.snooze(id: vm.id, until: nil) }
         }
     }
 
@@ -79,9 +87,7 @@ struct ServerCardView: View {
             let todayAt9 = cal.date(from: comps) ?? now
             until = cal.date(byAdding: .day, value: 1, to: todayAt9) ?? now.addingTimeInterval(24 * 3600)
         }
-        let b = backend
-        let id = vm.id
-        Task { try? await b?.setNodeSnooze(id: id, until: until) }
+        model.snooze(id: vm.id, until: until)
     }
 
     private func openFullView(metric: Metric) {
@@ -97,13 +103,13 @@ struct ServerCardView: View {
             Text(node?.displayName ?? vm.hostname)
                 .font(Typography.hostname)
                 .foregroundStyle(.primary)
-            if node?.isSnoozed == true {
+            if model.isSnoozed {
                 Image(systemName: "bell.slash.fill")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .help(snoozeTooltip)
             }
-            if samplerUpdater.isUpdating(id: vm.id) {
+            if model.isUpdatingSampler {
                 HStack(spacing: 4) {
                     ProgressView()
                         .controlSize(.mini)
@@ -163,18 +169,15 @@ struct ServerCardView: View {
             .disabled(node == nil)
             Button {
                 if let n = node {
-                    let b = backend
-                    let id = n.id
-                    let fav = !n.favorite
-                    Task { try? await b?.setNodeFavorite(id: id, favorite: fav) }
+                    model.toggleFavorite(id: n.id, currentlyFavorite: n.favorite)
                 }
             } label: {
-                Image(systemName: (node?.favorite ?? false) ? "star.fill" : "star")
+                Image(systemName: model.isFavorite ? "star.fill" : "star")
                     .font(.caption)
-                    .foregroundStyle((node?.favorite ?? false) ? Color.yellow : .secondary)
+                    .foregroundStyle(model.isFavorite ? Color.yellow : .secondary)
             }
             .buttonStyle(.plain)
-            .help((node?.favorite ?? false) ? "Unpin favorite" : "Pin as favorite")
+            .help(model.isFavorite ? "Unpin favorite" : "Pin as favorite")
             .pointingHandOnHover()
             .disabled(node == nil)
         }

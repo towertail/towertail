@@ -87,58 +87,23 @@ final class ServerSettings {
         p.autoUpdateSamplersEnabled = autoUpdateSamplersEnabled
         p.postWakeGraceSeconds = postWakeGraceSeconds
         SettingsPersistence.save(p, to: url)
-        logDiff(before: before, after: p)
+        logSettingsDiff(before: before, after: p, fields: Self.diffFields)
     }
 
-    private func logDiff(before: PersistedSettings, after: PersistedSettings) {
-        var changes: [String: String] = [:]
-        if before.thresholds.cpuWarn != after.thresholds.cpuWarn {
-            changes["cpuWarn"] = "\(before.thresholds.cpuWarn)→\(after.thresholds.cpuWarn)"
-        }
-        if before.thresholds.cpuCritical != after.thresholds.cpuCritical {
-            changes["cpuCritical"] = "\(before.thresholds.cpuCritical)→\(after.thresholds.cpuCritical)"
-        }
-        if before.thresholds.memWarn != after.thresholds.memWarn {
-            changes["memWarn"] = "\(before.thresholds.memWarn)→\(after.thresholds.memWarn)"
-        }
-        if before.thresholds.memCritical != after.thresholds.memCritical {
-            changes["memCritical"] = "\(before.thresholds.memCritical)→\(after.thresholds.memCritical)"
-        }
-        if before.thresholds.diskWarn != after.thresholds.diskWarn {
-            changes["diskWarn"] = "\(before.thresholds.diskWarn)→\(after.thresholds.diskWarn)"
-        }
-        if before.thresholds.diskCritical != after.thresholds.diskCritical {
-            changes["diskCritical"] = "\(before.thresholds.diskCritical)→\(after.thresholds.diskCritical)"
-        }
-        if before.localPollingIntervalSeconds != after.localPollingIntervalSeconds {
-            changes["localPollSec"] = "\(before.localPollingIntervalSeconds)→\(after.localPollingIntervalSeconds)"
-        }
-        if before.sshPollingIntervalSeconds != after.sshPollingIntervalSeconds {
-            changes["sshPollSec"] = "\(before.sshPollingIntervalSeconds)→\(after.sshPollingIntervalSeconds)"
-        }
-        if before.notificationsEnabled != after.notificationsEnabled {
-            changes["notificationsEnabled"] = "\(before.notificationsEnabled)→\(after.notificationsEnabled)"
-        }
-        if before.notifyWarn != after.notifyWarn {
-            changes["notifyWarn"] = "\(before.notifyWarn)→\(after.notifyWarn)"
-        }
-        if before.notifyCritical != after.notifyCritical {
-            changes["notifyCritical"] = "\(before.notifyCritical)→\(after.notifyCritical)"
-        }
-        if before.notifyDebounceSeconds != after.notifyDebounceSeconds {
-            changes["notifyDebounceSec"] = "\(before.notifyDebounceSeconds)→\(after.notifyDebounceSeconds)"
-        }
-        if before.autoUpdateSamplersEnabled != after.autoUpdateSamplersEnabled {
-            changes["autoUpdateSamplers"] = "\(before.autoUpdateSamplersEnabled)→\(after.autoUpdateSamplersEnabled)"
-        }
-        if before.postWakeGraceSeconds != after.postWakeGraceSeconds {
-            changes["postWakeGraceSec"] = "\(before.postWakeGraceSeconds)→\(after.postWakeGraceSeconds)"
-        }
-        if changes.isEmpty { return }
-        Logger.shared.info(
-            "settings: changed",
-            category: "settings",
-            kv: changes
-        )
-    }
+    private static let diffFields: [SettingsField<PersistedSettings>] = [
+        SettingsField("cpuWarn") { "\($0.thresholds.cpuWarn)" },
+        SettingsField("cpuCritical") { "\($0.thresholds.cpuCritical)" },
+        SettingsField("memWarn") { "\($0.thresholds.memWarn)" },
+        SettingsField("memCritical") { "\($0.thresholds.memCritical)" },
+        SettingsField("diskWarn") { "\($0.thresholds.diskWarn)" },
+        SettingsField("diskCritical") { "\($0.thresholds.diskCritical)" },
+        SettingsField("localPollSec") { "\($0.localPollingIntervalSeconds)" },
+        SettingsField("sshPollSec") { "\($0.sshPollingIntervalSeconds)" },
+        SettingsField("notificationsEnabled") { "\($0.notificationsEnabled)" },
+        SettingsField("notifyWarn") { "\($0.notifyWarn)" },
+        SettingsField("notifyCritical") { "\($0.notifyCritical)" },
+        SettingsField("notifyDebounceSec") { "\($0.notifyDebounceSeconds)" },
+        SettingsField("autoUpdateSamplers") { "\($0.autoUpdateSamplersEnabled)" },
+        SettingsField("postWakeGraceSec") { "\($0.postWakeGraceSeconds)" },
+    ]
 }

@@ -44,25 +44,12 @@ final class ClientSettings {
         p.launchAtLogin = launchAtLogin
         p.defaultTerminalApp = defaultTerminalApp
         SettingsPersistence.save(p, to: url)
-        logDiff(before: before, after: p)
+        logSettingsDiff(before: before, after: p, fields: Self.diffFields)
     }
 
-    private func logDiff(before: PersistedSettings, after: PersistedSettings) {
-        var changes: [String: String] = [:]
-        if before.cardDensity != after.cardDensity {
-            changes["cardDensity"] = "\(before.cardDensity)→\(after.cardDensity)"
-        }
-        if before.launchAtLogin != after.launchAtLogin {
-            changes["launchAtLogin"] = "\(before.launchAtLogin)→\(after.launchAtLogin)"
-        }
-        if before.defaultTerminalApp != after.defaultTerminalApp {
-            changes["defaultTerminalApp"] = "\(before.defaultTerminalApp)→\(after.defaultTerminalApp)"
-        }
-        if changes.isEmpty { return }
-        Logger.shared.info(
-            "settings: changed",
-            category: "settings",
-            kv: changes
-        )
-    }
+    private static let diffFields: [SettingsField<PersistedSettings>] = [
+        SettingsField("cardDensity") { $0.cardDensity },
+        SettingsField("launchAtLogin") { "\($0.launchAtLogin)" },
+        SettingsField("defaultTerminalApp") { $0.defaultTerminalApp },
+    ]
 }

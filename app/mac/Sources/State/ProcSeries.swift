@@ -18,83 +18,39 @@ struct ProcSeries: Sendable {
 
     let retention: TimeInterval
 
-    struct Snapshot: Sendable {
+    struct Snapshot: Sendable, TimeStamped {
         let t: Date
         let items: [ProcSample]
     }
 
-    private var buffer: ContiguousArray<Snapshot>
+    private var buffer: TimeSeriesBuffer<Snapshot>
 
     init(retention: TimeInterval = ProcSeries.defaultRetention) {
         self.retention = retention
-        buffer = ContiguousArray<Snapshot>()
-        buffer.reserveCapacity(256)
+        self.buffer = TimeSeriesBuffer(
+            trim: .timeWindow(retention, hardCap: Self.hardSlotCap),
+            reserveCapacity: 256
+        )
     }
 
-    var latest: Snapshot? { buffer.last }
+    var latest: Snapshot? { buffer.latest }
     var count: Int { buffer.count }
     var isEmpty: Bool { buffer.isEmpty }
 
     mutating func append(_ s: Snapshot) {
         buffer.append(s)
-        // Trim snapshots older than the retention window, measured
-        // relative to the newest snapshot (not wall-clock Date()): when
-        // the user pauses polling on a host, we want the existing window
-        // preserved rather than walked forward by real time.
-        let cutoff = s.t.addingTimeInterval(-retention)
-        var drop = 0
-        while drop < buffer.count && buffer[drop].t < cutoff {
-            drop += 1
-        }
-        if drop > 0 {
-            buffer.removeFirst(drop)
-        }
-        // Safety: cap absolute count so a misconfigured sub-second poller
-        // can't grow the buffer unboundedly.
-        if buffer.count > Self.hardSlotCap {
-            buffer.removeFirst(buffer.count - Self.hardSlotCap)
-        }
     }
 
-    /// Replace the whole buffer with `snapshots` (oldest first), then
-    /// apply retention + cap once. Hydration on launch uses this instead
-    /// of calling `append` in a loop — a 3,600-row replay was O(n²) under
-    /// the per-append trim (~13M compares) and fired one @Observable
-    /// invalidation per snapshot. Both showed up as a long launch stall
-    /// and a beach-ball on first menu-bar open.
+    /// Replace the whole buffer with `snapshots` (oldest first). Hydration
+    /// on launch uses this instead of calling `append` in a loop — a
+    /// 3,600-row replay was O(n²) under the per-append trim and fired one
+    /// @Observable invalidation per snapshot.
     mutating func replace(with snapshots: [Snapshot]) {
-        var buf = ContiguousArray<Snapshot>()
-        buf.reserveCapacity(min(snapshots.count, Self.hardSlotCap))
-        buf.append(contentsOf: snapshots)
-        if let newest = buf.last?.t {
-            let cutoff = newest.addingTimeInterval(-retention)
-            var drop = 0
-            while drop < buf.count && buf[drop].t < cutoff {
-                drop += 1
-            }
-            if drop > 0 {
-                buf.removeFirst(drop)
-            }
-        }
-        if buf.count > Self.hardSlotCap {
-            buf.removeFirst(buf.count - Self.hardSlotCap)
-        }
-        buffer = buf
+        buffer.replace(with: snapshots)
     }
 
-    /// Binary-search for the snapshot nearest the given timestamp.
     func nearest(to date: Date) -> Snapshot? {
-        guard !buffer.isEmpty else { return nil }
-        var lo = 0
-        var hi = buffer.count - 1
-        while lo < hi {
-            let mid = (lo + hi) / 2
-            if buffer[mid].t < date { lo = mid + 1 } else { hi = mid }
-        }
-        if lo == 0 { return buffer[0] }
-        let a = buffer[lo - 1]
-        let b = buffer[lo]
-        return abs(a.t.timeIntervalSince(date)) <= abs(b.t.timeIntervalSince(date)) ? a : b
+        buffer.nearest(to: date)
     }
 
     /// Returns the snapshot immediately preceding `snap` in the buffer,
@@ -103,9 +59,7 @@ struct ProcSeries: Sendable {
     func previous(before snap: Snapshot) -> Snapshot? {
         // Match by timestamp — snapshots are appended strictly monotonic
         // so equality of `t` uniquely identifies the index.
-        guard let idx = buffer.firstIndex(where: { $0.t == snap.t }), idx > 0 else {
-            return nil
-        }
-        return buffer[idx - 1]
+        guard let idx = buffer.index(matching: snap.t), idx > 0 else { return nil }
+        return buffer.element(at: idx - 1)
     }
 }
