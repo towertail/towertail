@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "nodes": [
+    {
+      "id": "1e9e5d70-9aa3-4c8f-9ff4-7b7b9c5d8e2a",
+      "displayName": "mbp.local",
+      "kind": "local",
+      "tags": ["personal"],
+      "enabled": true,
+      "iconOnWarn": true,
+      "iconOnCritical": true,
+      "notifyOnWarn": true,
+      "notifyOnCritical": true,
+      "favorite": true
+    }
+  ],
+  "thresholds": {
+    "cpuWarn": 0.75, "cpuCritical": 0.9,
+    "memWarn": 0.75, "memCritical": 0.9,
+    "diskWarn": 0.85, "diskCritical": 0.95
+  },
+  "localPollingIntervalSeconds": 2,
+  "sshPollingIntervalSeconds": 10,
+  "cardDensity": "a",
+  "notificationsEnabled": false,
+  "notifyWarn": true,
+  "notifyCritical": true,
+  "notifyDebounceSeconds": 60,
+  "autoUpdateSamplersEnabled": false,
+  "postWakeGraceSeconds": 15,
+  "launchAtLogin": true,
+  "defaultTerminalApp": "iTerm"
+}

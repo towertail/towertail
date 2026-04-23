@@ -1,0 +1,7 @@
+{
+  "Self": { "ID": "self", "HostName": "mbp", "DNSName": "mbp.tail1234.ts.net", "Online": true, "Tags": [] },
+  "Peer": {
+    "peer1": { "ID": "peer1", "HostName": "db-primary", "DNSName": "db-primary.tail1234.ts.net", "Online": true, "Tags": ["prod"] },
+    "peer2": { "ID": "peer2", "HostName": "web-edge",   "DNSName": "web-edge.tail1234.ts.net",   "Online": false, "Tags": [] }
+  }
+}

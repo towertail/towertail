@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="Towertail.WinUI.Preferences.PreferencesWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:prefs="using:Towertail.WinUI.Preferences">
+
+    <Grid>
+        <NavigationView x:Name="Nav" IsBackButtonVisible="Collapsed" SelectionChanged="OnNavSelectionChanged">
+            <NavigationView.MenuItems>
+                <NavigationViewItem Content="General"       Tag="general" />
+                <NavigationViewItem Content="Thresholds"    Tag="thresholds" />
+                <NavigationViewItem Content="Notifications" Tag="notifications" />
+                <NavigationViewItem Content="Servers"       Tag="servers" />
+                <NavigationViewItem Content="Logs"          Tag="logs" />
+                <NavigationViewItem Content="About"         Tag="about" />
+            </NavigationView.MenuItems>
+            <Grid x:Name="Host" Margin="16" />
+        </NavigationView>
+    </Grid>
+</Window>

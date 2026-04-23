@@ -1,2 +1,94 @@
+# Build output
 dist/
+
+# OS
 .DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------------------
+# .NET / Visual Studio / Rider (app/windows)
+# ---------------------------------------------------------------------------
+# Build output
+**/bin/
+**/obj/
+**/publish/
+**/*.user
+**/*.suo
+**/*.userprefs
+
+# IDE / cache
+.vs/
+.idea/
+**/*.csproj.FileListAbsolute.txt
+**/*.csproj.CoreCompileInputs.cache
+**/project.assets.json
+**/project.nuget.cache
+
+# NuGet local caches (global cache lives outside repo, but just in case)
+**/packages/
+!**/packages.config
+
+# WinUI / MSBuild intermediates
+**/Generated Files/
+**/x64/
+**/ARM64/
+**/AppPackages/
+**/BundleArtifacts/
+**/Debug/
+**/Release/
+
+# Keep the project files themselves even when their containing folder shares
+# a name with a build artifact (e.g. a "Debug" config symbol). Explicit
+# re-inclusions for things we want tracked:
+!**/obj/project.nuget.cache.keep
+
+# Sampler binaries are copied into the app bundle at build time by the
+# CopySamplers MSBuild target — the source of truth is dist/samplers/.
+app/windows/Towertail.WinUI/Assets/samplers/
+
+# ---------------------------------------------------------------------------
+# Swift / Xcode (app/mac)
+# ---------------------------------------------------------------------------
+# XcodeGen regenerates the project from project.yml; the generated project
+# can stay tracked (existing repo behavior), but user-local state must not.
+**/*.xcodeproj/xcuserdata/
+**/*.xcworkspace/xcuserdata/
+**/*.xcuserstate
+**/DerivedData/
+**/.swiftpm/
+
+# ---------------------------------------------------------------------------
+# Go (sampler, server)
+# ---------------------------------------------------------------------------
+# Compiled binaries (the intended output path is dist/, already ignored).
+# Guard against stray local builds dropping into the module roots.
+sampler/sampler
+sampler/*.exe
+server/server
+server/*.exe
+
+# Go test coverage
+*.out
+coverage.*
+
+# ---------------------------------------------------------------------------
+# Logs / local state
+# ---------------------------------------------------------------------------
+*.log
+logs/
+
+# Local env overrides
+.env
+.env.local
+
+# ---------------------------------------------------------------------------
+# Editor / tooling
+# ---------------------------------------------------------------------------
+.vscode/*
+!.vscode/settings.json.example
+*.swp
+*~
+
+# Claude Code agent state (local only)
+.claude/

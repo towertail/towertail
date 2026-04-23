@@ -67,9 +67,19 @@ cadences; threshold defaults; the <goos>-<goarch> triple convention.
 │ HTTP           │ HttpClient + NamedPipeClientStream                  │ BCL        │ Tailscale on Windows exposes LocalAPI over named pipe                  │
 │ (Tailscale)    │                                                     │            │ \\.\pipe\ProtectedPrefix\Administrators\Tailscale\tailscaled           │
 ├────────────────┼─────────────────────────────────────────────────────┼────────────┼────────────────────────────────────────────────────────────────────────┤
-│ Tests          │ xUnit + FluentAssertions                            │ 2.9+ / 7+  │ Closest to XCTest ergonomics                                           │
+│ Tests          │ xUnit v3 + AwesomeAssertions + NSubstitute          │ 3.x / 8.x  │ xUnit v3 is async-first; AwesomeAssertions is the Apache-2.0 drop-in   │
+│                │                                                     │ / 5.x      │ replacement for FluentAssertions (v8 relicensed to paid Xceed in Jan   │
+│                │                                                     │            │ 2025); NSubstitute is the clean post-SponsorLink mock library          │
 ├────────────────┼─────────────────────────────────────────────────────┼────────────┼────────────────────────────────────────────────────────────────────────┤
-│ UI tests       │ WinAppDriver (+ Appium)                             │ 1.2+       │ Optional; smoke tests only                                             │
+│ In-process     │ System.Net.HttpListener + custom WS upgrade         │ BCL        │ Mirrors Mac's LocalTestServer.swift — real HTTP/WS over 127.0.0.1:0    │
+│ test server    │                                                     │            │ for RemoteBackend unit tests, no Docker                                │
+├────────────────┼─────────────────────────────────────────────────────┼────────────┼────────────────────────────────────────────────────────────────────────┤
+│ E2E stack      │ docker-compose (server/docker/docker-compose.test   │ —          │ Boots real towertail-server + ClickHouse; shared with Mac integration  │
+│                │ .yaml, shared with Mac)                             │            │ tests via fixed loopback ports (18080 server, 18123/19000 CH)          │
+├────────────────┼─────────────────────────────────────────────────────┼────────────┼────────────────────────────────────────────────────────────────────────┤
+│ UI tests       │ FlaUI (UIA3, in-process)                            │ 5.0+       │ WinAppDriver is effectively abandoned (last release 2020); Appium      │
+│                │                                                     │            │ Windows Driver is maintained but heavier. FlaUI has no external server │
+│                │                                                     │            │ and handles WinUI 3 out of the box — optional smoke tests only         │
 ├────────────────┼─────────────────────────────────────────────────────┼────────────┼────────────────────────────────────────────────────────────────────────┤
 │ Project gen    │ Plain .sln + .csproj (no XcodeGen equivalent        │ —          │ —                                                                      │
 │                │ needed)                                             │            │                                                                        │
@@ -95,6 +105,8 @@ app/windows/
 │   │   └── AppEnvironment.cs              # DI facade over Backend
 │   ├── Backend/
 │   │   ├── IBackend.cs, LocalBackend.cs, RemoteBackend.cs
+│   │   ├── RemoteClient.cs                 # REST + WebSocket client
+│   │   └── RemoteSettings.cs               # wire DTOs (RemoteNode, RemoteServerSettings, RemoteClientSettings)
 │   ├── MenuBar/                           # "tray" surface
 │   │   ├── TrayIconHost.xaml/.cs          # H.NotifyIcon TaskbarIcon
 │   │   ├── TrayPopoverWindow.xaml/.cs     # borderless, topmost, blur-closes
@@ -172,17 +184,38 @@ app/windows/
 │       ├── ColorConverters.cs
 │       ├── StringFormatters.cs
 │       └── Theme.xaml
-├── Towertail.Tests/                       # xUnit
+├── Towertail.Tests/                       # xUnit v3 (unit + in-process integration)
+│   ├── Towertail.Tests.csproj             # refs Towertail.WinUI, xUnit, AwesomeAssertions, NSubstitute
 │   ├── SamplerInvokerTests.cs
-│   ├── SampleDecodingTests.cs
+│   ├── SampleDecodingTests.cs             # golden sample-v1.json → Sample round-trip
 │   ├── MetricSeriesTests.cs
 │   ├── ProcSeriesTests.cs
-│   ├── HistoryStoreTests.cs
+│   ├── HistoryStoreTests.cs               # temp-file SQLite per test, IAsyncLifetime
 │   ├── NodeStoreTests.cs
 │   ├── ServerViewModelTests.cs
-│   ├── SettingsTransferTests.cs           # cross-OS round-trip
-│   └── LocalBackendTests.cs
-├── Towertail.UITests/                     # WinAppDriver smoke
+│   ├── SettingsTransferTests.cs           # cross-OS round-trip (loads TestData/settings.mac.json)
+│   ├── LocalBackendTests.cs               # real concrete stores, CRUD, no network
+│   ├── RemoteClientTests.cs               # REST + WS via LocalTestHttpServer
+│   ├── RemoteBackendTests.cs              # initial load, stream ingest, lifecycle
+│   ├── ThresholdNotifierTests.cs          # per-(host,metric) FSM + debounce
+│   ├── TailscaleLocalApiTests.cs          # named-pipe parsing w/ fake pipe
+│   ├── ProcessRunnerTests.cs              # IProcessRunner fake + arg-shape assertions
+│   ├── Helpers/
+│   │   ├── LocalTestHttpServer.cs         # mirror of Mac's LocalTestServer.swift
+│   │   ├── TestFlags.cs                   # DispatcherQueueShim, SqliteTempFile, WaitFor
+│   │   └── GoldenFixtures.cs              # loads TestData/ JSON
+│   ├── Integration/                       # requires docker-compose.test.yaml up
+│   │   ├── IntegrationConfig.cs           # reads %TEMP%\towertail-integration-test.env
+│   │   ├── RemoteBackendIntegrationTests.cs   # real server + ClickHouse + real sampler
+│   │   └── SamplerPushIntegrationTests.cs
+│   └── TestData/
+│       ├── settings.mac.json              # golden Mac settings for round-trip
+│       ├── sample-v1.json                 # golden sampler JSON (shared with Go/Swift)
+│       └── tailscale-status.json          # golden LocalAPI peer list
+├── Towertail.UITests/                     # FlaUI smoke (optional, nightly CI)
+│   ├── Towertail.UITests.csproj
+│   ├── TrayLaunchSmokeTests.cs            # app starts → tray icon → popover opens
+│   └── FullViewSmokeTests.cs              # open full view, switch tabs, close
 └── README.md
 
 ---
@@ -333,24 +366,48 @@ Phase A — Scaffold + Windows Sampler + Local Invoker (days 1–4)
 
 Goal. Prove the Windows app can launch a bundled sampler and decode a Sample.
 - Create solution, csproj, minimal App.xaml blank window.
+- Create Towertail.Tests project (xUnit v3 + AwesomeAssertions + NSubstitute). CI runs `dotnet test` on every push.
 - Add windows-amd64 + windows-arm64 to scripts/build.sampler.sh; rebuild manifest.
 - Implement Sample.cs (System.Text.Json source-gen) to exactly match docs/sampler.md §4.
 - Implement LocalSamplerInvoker.cs — probe Assets/samplers/windows-<arch>/towertail-sampler.exe.
-- Unit tests: SampleDecodingTests (golden JSON round-trip, fractional-second ISO8601), LocalSamplerInvokerTests.
-- Exit: dotnet test green; manual: launch app, click a button, see decoded Sample printed to debug output.
+- Implement IProcessRunner seam (ProcessRunner.cs) so invokers are testable without spawning real binaries.
+- Commit TestData/sample-v1.json shared with sampler/testdata and Mac's test suite — prevents schema drift.
+- Tests: SampleDecodingTests (golden sample-v1.json round-trip, fractional-second ISO8601, v=1 enforcement, unknown-field tolerance), SamplerInvokerTests (IProcessRunner fake, arg-shape assertions for --once / --interval / --self-check), LocalSamplerInvokerTests (triple resolution on x64 + ARM64).
+- Exit: `scripts/test.ps1 --unit` green on Windows dev box and on windows-latest CI runner. Manual: launch app, click a button, see decoded Sample printed to debug output.
 
-Phase B — SQLite HistoryStore + Settings + Cross-OS Transfer (days 5–9)
+Phase B — SQLite HistoryStore + Settings + LocalBackend + Cross-OS Transfer (days 5–10)
 
-Goal. Persistence parity with Mac; cross-OS settings round-trip works.
-- HistoryStore.cs — 4 tables matching Mac schema; writer queue on dedicated TaskScheduler (single-thread); 2h + hard-cap trim on each insert.
-- SettingsPersistence.cs — Codable-equivalent records; supports both legacy flat and new platform.<os> envelope.
-- SettingsTransfer.cs — SettingsExport encode/decode; merge/overwrite engine.
-- Mac-side change: update SettingsPersistence.swift + SettingsTransfer.swift to emit/accept the new platform envelope while reading legacy flat files. Ship as
-Mac app v1.1.
-- Tests: golden settings.mac.json → load on Windows → save → byte-compare non-platform keys.
-- Exit: Copy a Mac settings.json into %APPDATA%\Towertail\, start the app, see all nodes listed; save; verify Mac can read the file back with nodes intact.
+Goal. Local-only persistence parity with Mac; cross-OS settings round-trip works; LocalBackend fully exercised without network.
+- HistoryStore.cs — 4 tables matching Mac schema; writer queue on dedicated single-thread TaskScheduler (no DispatcherQueue dep); 2h + hard-cap trim on each insert. Temp-file DB path (not `:memory:`) so connection pooling works.
+- NodeStore.cs, ServerStore.cs, MetricSeries.cs, DiskSeries.cs, ProcSeries.cs — plain observable state, no UI dep.
+- SettingsPersistence.cs — records with System.Text.Json source-gen; reads legacy flat Mac files AND new platform.<os> envelope; always saves normalized.
+- SettingsTransfer.cs — SettingsExport encode/decode; merge/overwrite engine; handles foreign `platform.*` blocks by preserving them.
+- IBackend.cs + LocalBackend.cs — identical surface to Mac's Backend protocol.
+- Mac-side change: update SettingsPersistence.swift + SettingsTransfer.swift to emit/accept the new platform envelope while reading legacy flat files. Ship as Mac app v1.1. Extend app/mac/Tests/SettingsTransferTests.swift with the same golden fixture.
+- Tests:
+  - HistoryStoreTests (insert 10k samples, verify 2h trim, verify concurrent writer doesn't crash).
+  - MetricSeriesTests + ProcSeriesTests (decimation + decay math; ported verbatim from Swift).
+  - NodeStoreTests (CRUD, favorite/snooze, persists across reload).
+  - SettingsTransferTests (cross-OS): loads TestData/settings.mac.json → Windows loader → saver → byte-compare all non-`platform` keys + preservation of `platform.darwin`.
+  - LocalBackendTests (mirrors Mac's LocalBackendTests.swift): instantiate, node CRUD round-trip, bulk add, updateServerSettings persists to disk and round-trips.
+- Exit: `scripts/test.ps1 --unit` green. Manual: copy a Mac settings.json into %APPDATA%\Towertail\, start the app, verify nodes list; save; verify Mac can read back with nodes intact.
 
-Phase C — Tray Icon + Popover Window + Static Cards (days 10–14)
+Phase B2 — RemoteBackend + RemoteClient + Server Integration (days 11–16)
+
+Goal. RemoteBackend parity with Mac, tested against both an in-process HTTP+WS fake AND the real `towertail-server` via docker-compose.
+- RemoteClient.cs — REST client (GET/POST/PUT/DELETE /v1/nodes, PUT /v1/settings) + URLSession-equivalent WebSocket task. Bearer token on every request. Mirror `RemoteClient.RemoteError` shape.
+- RemoteBackend.cs — wires REST initial-load + WS fan-out into ServerStore, identical ingest path to LocalBackend.
+- RemoteSettings.cs — RemoteNode / RemoteServerSettings / RemoteClientSettings wire DTOs (snake_case via JsonPropertyName).
+- Helpers/LocalTestHttpServer.cs — port of Mac's LocalTestServer.swift: real HTTP/1.1 + WebSocket-upgrade server on 127.0.0.1:0, handlers keyed by "METHOD PATH" with prefix match, request capture, `sendToAllWebSockets` for scripted frames. Uses System.Net.HttpListener + a 50-line RFC 6455 upgrade (or `WebSocketHandler` from `System.Net.WebSockets`).
+- Tests — in-process (no Docker, runs in `--unit`):
+  - RemoteClientTests: list/create/update/delete nodes, settings PUT/GET round-trip, 4xx → RemoteError.http surfacing, wrong-token → 401, bearer-header assertion.
+  - RemoteBackendTests: initial load populates NodeStore; WS frame with `{type:"sample", nodeId, sample:…}` lands in ServerViewModel (lastSeen populated, samplerVersion surfaces); stop() tears down WS cleanly; reconnect on WS close.
+- Tests — integration (`--remote-integration`, requires docker-compose.test.yaml up):
+  - IntegrationConfig.cs reads `%TEMP%\towertail-integration-test.env` (parity with Mac's `/tmp/towertail-integration-test.env`). Skips with xUnit `Skip` when `TOWERTAIL_INTEGRATION != "1"`.
+  - RemoteBackendIntegrationTests.cs: waits on `/readyz`; lists nodes with admin token; round-trips `/v1/settings`; enrolls sampler via `POST /v1/sampler/enroll`; spawns the real `towertail-sampler.exe` in push mode and asserts a sample frame arrives on the WS for the enrolled node within 30s (mirrors Mac's RemoteBackendIntegrationTests.swift).
+- Exit: `scripts/test.ps1 --unit` green (no Docker needed). `scripts/test.ps1 --remote-integration` green against the shared `server/docker/docker-compose.test.yaml` stack. Manual: point the Windows app at `http://127.0.0.1:18080` with the test bootstrap token; see nodes streaming live.
+
+Phase C — Tray Icon + Popover Window + Static Cards (days 17–21)
 
 Goal. The "living in tray with a popover" experience.
 - TrayIconHost using H.NotifyIcon.WinUI TaskbarIcon. Dynamic 16×16 PNG rendered from tint state.
@@ -362,7 +419,7 @@ ObservableCollection<ServerCardViewModel> of 10 dummy hosts.
 - Exit: Run app → taskbar icon appears → click → popover opens under icon → shows 10 dummy cards → click elsewhere → popover hides. No memory leak after 100
 open/close cycles.
 
-Phase D — Live Metrics + Sparklines (days 15–20)
+Phase D — Live Metrics + Sparklines (days 22–27)
 
 Goal. Real live data end-to-end.
 - ServerViewModel — CPU% from cumulative ms delta; net Mbps from cumulative byte delta; per-mount disk %; per-device disk I/O.
@@ -374,7 +431,7 @@ grace window suppresses notifications for postWakeGraceSeconds.
 - DiskBars — stacked per-mount bars.
 - Exit: Add a localhost node → see live CPU/MEM/DISK/NET sparklines updating every 2s. CPU < 1% idle, memory < 80 MB with 10 hosts.
 
-Phase E — Full Detail Window (days 21–28)
+Phase E — Full Detail Window (days 28–34)
 
 Goal. Full-view parity: charts, zoom, hover, process table.
 - FullViewWindow — separate Window per host (multi-instance). Tabs: CPU / MEM / DISK / NET / PROCS.
@@ -386,7 +443,7 @@ cross-hair via PointerMoved. Drag-to-zoom via SectionsPaint.
 - FullViewModel — zoom stack, pause mode, hover timestamp.
 - Exit: Open full view, switch tabs, drag-select to zoom, hover to see process table at that timestamp.
 
-Phase F — Preferences + Toast Notifications (days 29–34)
+Phase F — Preferences + Toast Notifications (days 35–40)
 
 Goal. Full preferences window and threshold alerts.
 - PreferencesWindow with NavigationView: General, Thresholds, Notifications, Servers, Logs, About.
@@ -398,7 +455,7 @@ Goal. Full preferences window and threshold alerts.
 - Per-metric icon/notify toggles per node; global notifications enable.
 - Exit: Trigger a CPU spike on a test host → toast appears → click → full-view opens on CPU tab.
 
-Phase G — Integrations (days 35–40)
+Phase G — Integrations (days 41–46)
 
 Goal. Tailscale bulk import, terminal launcher, launch-at-startup, sampler auto-update.
 - TailscaleLocalApi — connect to named pipe \\.\pipe\ProtectedPrefix\Administrators\Tailscale\tailscaled, GET /localapi/v0/status, parse peers. Fallback: read
@@ -411,17 +468,20 @@ user@host (WT supports direct command forwarding) or equivalent.
 - Exit: Bulk-add 5 nodes from Tailscale; right-click card → Open Terminal launches Windows Terminal into SSH session; enable launch-at-startup; restart
 Windows; app tray appears.
 
-Phase H — Tests, Packaging, Polish (days 41–47)
+Phase H — UI Smoke + Packaging + Polish (days 47–53)
 
 Goal. Shippable 0.1.
-- Port all 9 Mac test files to xUnit equivalents.
-- WinAppDriver smoke test: launch → open popover → open full view → exit.
+- Confirm every Mac test file has a Windows equivalent (see §10 coverage matrix). Any gaps are blocking.
+- FlaUI smoke suite (Towertail.UITests/) — optional but recommended:
+  - TrayLaunchSmokeTests: launch unpackaged build → wait for tray icon (UIA query on notification area) → invoke via keyboard/UIA → assert popover window appears → close.
+  - FullViewSmokeTests: open popover → click a card → FullViewWindow appears → switch all 5 tabs → close.
+  - Uses a `--test-pin-popover` command-line flag baked into Debug builds so the borderless popover doesn't dismiss during UIA inspection.
 - MSIX packaging: signing with self-signed cert for dev; document Store submission path.
-- Portable ZIP build artifact.
+- Portable ZIP build artifact (unpackaged; easier for dev + CI).
 - Installer icons, tile assets, file associations (optional: .towertail-export for settings files).
 - Performance sweep: confirm < 3s cold start, < 80 MB with 10 hosts × 7 days.
 - Accessibility pass: tab order, screen-reader labels on cards.
-- Exit: Unsigned MSIX installs on a clean Windows 11 VM; user flow runs end-to-end; all tests green on CI matrix.
+- Exit: Unsigned MSIX installs on a clean Windows 11 VM; `scripts/test.ps1 --all` green on Windows dev box; CI matrix (unit + remote-integration) green on windows-latest. FlaUI smoke green on the dev box (CI runs nightly only, see §10).
 
 ---
 8. Lazy Loading & Efficiency Strategy
@@ -494,19 +554,126 @@ Paint cost ~100 µs per 60×20 sparkline.
 ---
 10. Verification / Test Plan
 
-Automated
+Strategy. A 3-tier pyramid, mirroring the Mac side (scripts/tests.sh, app/mac/Tests/) and sharing the same Docker stack (server/docker/docker-compose.test.yaml) so the clients cannot drift from the server contract.
 
-- Unit (xUnit): SampleDecodingTests, MetricSeriesTests, ProcSeriesTests, HistoryStoreTests, NodeStoreTests, ServerViewModelTests, SettingsTransferTests,
-SamplerInvokerTests, LocalBackendTests. Run on every PR.
-- Cross-OS settings round-trip test: loads a golden settings.mac.json committed to Towertail.Tests/TestData/, asserts preservation of non-platform fields and
-platform.darwin.
-- Sampler schema contract test: Go test + C# test both decode the same committed golden sample-v1.json — prevents drift.
-- CI matrix: macOS for Mac tests, Windows-latest for Windows tests, Linux for sampler tests (all triples).
+┌─────┬───────────────────────────┬────────────────────────────────────┬────────────────────────────┬─────────────────────────────────────┐
+│ Tier│          Runs              │           What it covers           │         Deps on host       │       CI invocation                  │
+├─────┼───────────────────────────┼────────────────────────────────────┼────────────────────────────┼─────────────────────────────────────┤
+│ 1   │ every PR, < 60s           │ pure unit + LocalBackend + in-     │ .NET 9 SDK only            │ scripts/test.ps1 --unit             │
+│     │                           │ process RemoteClient/RemoteBackend │                            │                                     │
+│     │                           │ against LocalTestHttpServer        │                            │                                     │
+├─────┼───────────────────────────┼────────────────────────────────────┼────────────────────────────┼─────────────────────────────────────┤
+│ 2   │ every PR, < 4min          │ RemoteBackend against REAL server  │ Docker Desktop + Windows   │ scripts/test.ps1 --remote-integration│
+│     │                           │ + ClickHouse + real sampler.exe    │ App Runtime                │ (wraps compose up/down)             │
+│     │                           │ push mode over WS                  │                            │                                     │
+├─────┼───────────────────────────┼────────────────────────────────────┼────────────────────────────┼─────────────────────────────────────┤
+│ 3   │ nightly / pre-release     │ FlaUI smoke: tray launch, popover, │ interactive Win11 session  │ scripts/test.ps1 --flaui            │
+│     │                           │ full view tab switching            │ (self-hosted runner)       │                                     │
+└─────┴───────────────────────────┴────────────────────────────────────┴────────────────────────────┴─────────────────────────────────────┘
 
-Manual end-to-end (run at end of each phase)
+Tier 1 — unit + in-process (no Docker, runs on every commit)
 
+Each listed test class is required before the phase that introduces it can be marked complete.
+
+LocalBackend coverage (mirrors app/mac/Tests/LocalBackendTests.swift):
+- `LocalBackend_Instantiates_WiresObservableStores` — assert b.Servers, b.Nodes, b.ClientSettings, b.ServerSettings are distinct concrete objects loaded from disk.
+- `LocalBackend_NodeCRUD_RoundTrips` — AddNode, UpdateNode, SetNodeEnabled, SetNodeFavorite, SetNodeSnooze, RemoveNode. Uses a scoped %APPDATA% override so tests don't stomp on the dev install.
+- `LocalBackend_BulkAddNodes` — 5 nodes added atomically; all removed cleanly.
+- `LocalBackend_UpdateServerSettings_Persists` — mutate → UpdateServerSettingsAsync → re-load from disk → assert value round-trips.
+
+RemoteBackend + RemoteClient coverage (mirrors app/mac/Tests/RemoteBackendTests.swift, uses LocalTestHttpServer):
+- `RemoteClient_ListNodes_ReturnsSeededFleet`
+- `RemoteClient_SendsBearerTokenHeader` — assert exact Authorization header shape on every request.
+- `RemoteClient_CreateNode_RoundTrips` — handler echoes request body, verify decode.
+- `RemoteClient_PutSettings_EncodesAndDecodes` — catches silent snake_case drift.
+- `RemoteClient_DeleteNode_HitsCorrectPath` — prefix-match handler asserts UUID in path.
+- `RemoteClient_4xx_SurfacesAsHttpError` — code + body available on thrown `RemoteException`.
+- `RemoteClient_WrongToken_Rejected` — LocalTestHttpServer's bearer check returns 401.
+- `RemoteBackend_InitialLoad_PopulatesNodes` — GET /v1/nodes + GET /v1/settings → NodeStore populated.
+- `RemoteBackend_WebSocketFrame_DeliversSampleToServerViewModel` — send `{type:"sample",nodeId,sample:…}` frame → assert vm.LastSeen populated, samplerVersion surfaced.
+- `RemoteBackend_StopTearsDownWebSocket` — no leaked tasks after Stop().
+- `RemoteBackend_WebSocketClose_Reconnects` — server closes, client re-hits /v1/stream within backoff window.
+
+Other Tier 1:
+- `SampleDecodingTests` — golden TestData/sample-v1.json round-trip + fractional-second ISO8601 + v=1 enforcement + unknown-field tolerance.
+- `SettingsTransferTests` (cross-OS contract) — TestData/settings.mac.json → Windows loader → saver; byte-compare all non-`platform` keys; `platform.darwin` preserved verbatim; `platform.windows` injected with defaults on first save.
+- `HistoryStoreTests` — 4-table insert + 2h trim, concurrent writer, temp-file DB (not `:memory:` — pooling breaks that).
+- `MetricSeriesTests`, `ProcSeriesTests` — decimation + decay; ported from Swift.
+- `NodeStoreTests` — CRUD + persist across reload.
+- `ServerViewModelTests` — CPU% from cumulative-ms delta, net Mbps from byte delta, disk %.
+- `SamplerInvokerTests` (IProcessRunner fake) + `LocalSamplerInvokerTests` (triple resolution).
+- `ThresholdNotifierTests` — per-(host,metric) FSM; 60s debounce; snooze gates.
+- `TailscaleLocalApiTests` — named-pipe fake via `NamedPipeServerStream`; parse TestData/tailscale-status.json.
+- `ProcessRunnerTests` — assert the exact argv shape passed to ssh.exe / scp.exe.
+
+Tier 2 — real server integration (Docker required, runs every PR on windows-latest with `services: docker`)
+
+- `IntegrationConfig.cs` reads %TEMP%\towertail-integration-test.env, parity with Mac's /tmp flag file. Tests are `Skip`'d when `TOWERTAIL_INTEGRATION != "1"` so the unit-only `dotnet test` path remains green.
+- `RemoteBackendIntegrationTests` (mirrors app/mac/Tests/Integration/RemoteBackendIntegrationTests.swift):
+  - `AdminToken_CanListNodes` — smoke.
+  - `Settings_RoundTripThroughRealServer` — mutate notifyDebounceSeconds → PUT → GET → assert persistence through the real Go server, through ClickHouse-less config path.
+  - `SamplerPush_DeliversSampleOverWebSocket` — `POST /v1/sampler/enroll` → spawn the real `dist/samplers/windows-<arch>/towertail-sampler.exe` in push mode → open WS on `/v1/stream` → assert a `type:"sample"` frame arrives for our enrolled node within 30s.
+- Same fixed loopback ports as Mac (18080 server, 18123/19000 CH), controlled by `TT_TEST_PORT_SERVER` / `TT_TEST_PORT_CH_HTTP` / `TT_TEST_PORT_CH_NATIVE`.
+- Admin token is the literal string `tt-test-admin-token-0000000000000000` set via `TT_AUTH__BOOTSTRAP_TOKEN` (parity with Mac).
+
+Tier 3 — UI smoke (FlaUI, nightly or pre-release)
+
+- Hosted `windows-latest` runners are too flaky for UI automation (session 0 behavior + slow VM). Run FlaUI on a self-hosted runner or locally on the dev box; CI-gate with a `[Trait("Category","FlaUI")]` filter.
+- `TrayLaunchSmokeTests`: launch unpackaged build → wait for tray icon via UIA query → click via UIA invoke → assert TrayPopoverWindow present → close.
+- `FullViewSmokeTests`: from popover → click first card → FullViewWindow appears → switch all 5 tabs (CPU/MEM/DISK/NET/PROCS) → close without crash.
+- Debug builds expose `--test-pin-popover` so UIA inspection doesn't dismiss the borderless topmost popover on focus loss (documented known UIA pain point).
+
+Contract tests (cross-language)
+
+- Sampler schema contract: one golden `testdata/sample-v1.json` (committed to the repo root or `sampler/testdata/`) is decoded by:
+  - Go: `sampler/internal/schema/schema_test.go`
+  - Swift: `app/mac/Tests/SampleDecodingTests.swift`
+  - C#: `Towertail.Tests/SampleDecodingTests.cs`
+  Any schema change requires bumping `v` AND updating all three decoders in the same PR. This is enforced by CI: all three jobs must pass.
+- Wire contract for server REST/WS shares `server/internal/wire/*.go` types; Mac's Backend/RemoteClient.swift and Windows's Backend/RemoteClient.cs each duplicate those types as DTOs. `SettingsTransferTests` + `RemoteClient_PutSettings_EncodesAndDecodes` catch drift on the two most-trafficked payloads.
+
+CI matrix (GitHub Actions)
+
+```yaml
+jobs:
+  sampler-tests:        # ubuntu-latest; scripts/tests.sh --sampler
+  mac-unit:             # macos-14;     scripts/tests.sh --swift-unit
+  mac-integration:      # macos-14;     scripts/tests.sh --all (brings Docker up/down)
+  windows-unit:         # windows-latest; scripts/test.ps1 --unit
+  windows-integration:  # windows-latest; scripts/test.ps1 --remote-integration
+  windows-flaui:        # self-hosted Windows; scripts/test.ps1 --flaui  (nightly cron)
+```
+
+- `windows-latest` has Docker Desktop available via `docker/setup-docker-action@v4`. Windows App Runtime must be installed in-step (`Add-AppxPackage WindowsAppRuntimeInstall-x64.msix`) OR the project publishes self-contained (`<WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>`). We use self-contained for CI — simpler.
+- Tier 2 uses Linux containers; they run on windows-latest via WSL 2 backend (pre-installed). Fixed loopback ports avoid runner-to-runner contamination.
+
+scripts/test.ps1 — Windows test runner
+
+PowerShell 7 script mirroring the UX of scripts/tests.sh. Lives at the repo root, runs under `pwsh` or `powershell` (prefer pwsh for `&&`).
+
+Flags (composable; default: `--unit`):
+- `--unit` — `dotnet test app/windows/Towertail.sln --filter "Category!=FlaUI&Category!=Integration"`. Tier 1 only.
+- `--remote-integration` — writes `$env:TEMP\towertail-integration-test.env` with `TOWERTAIL_INTEGRATION=1`, endpoint, and admin token. Brings up docker-compose.test.yaml via `docker compose -f server/docker/docker-compose.test.yaml -p towertail-win-test up -d --wait`. Runs `dotnet test --filter Category=Integration`. Tears down on exit.
+- `--flaui` — runs `dotnet test Towertail.UITests --filter Category=FlaUI`. Requires interactive session.
+- `--go-unit` / `--go-integration` / `--sampler` — delegates to the existing Go test paths (cd into server/ or sampler/ and run `go test`). Kept for parity with tests.sh so a Windows dev can validate the server before hitting the Tier 2 path.
+- `--docker-up` / `--docker-down` / `--docker-logs` — same semantics as tests.sh.
+- `--all` — --unit + --remote-integration + --go-unit + --go-integration + --sampler; manages docker up/down.
+- `--keep-docker` — don't tear down after --all.
+- `--verbose` / `-v` — `Set-PSDebug -Trace 1`.
+- `--help` / `-h` — prints usage.
+
+Implementation notes:
+- Uses `$PSScriptRoot/..` to locate repo root; mirrors tests.sh's `cd "$(dirname "$0")/.."`.
+- Exit code = sum of failures across selected suites; prints summary at end.
+- Probes `docker compose version` up-front and fails fast with install guidance if absent.
+- Passes `TT_TEST_PORT_*` env vars through verbatim so the port-override convention works on both OSes.
+- On CI, set `$env:TOWERTAIL_REPO_ROOT` so RemoteBackendIntegrationTests can locate `dist/samplers/windows-<arch>/towertail-sampler.exe` regardless of xUnit's CWD.
+
+Manual end-to-end (run at end of each phase — both LocalBackend and RemoteBackend code paths)
+
+LocalBackend mode:
 1. Fresh install → tray icon appears
-2. Add local node → sparklines populate within 4 s
+2. Add localhost node → sparklines populate within 4 s (local polling cadence 2s)
 3. Add SSH node (Tailscale peer) → bootstrap deploys sampler → metrics flow within 15 s
 4. Full view: open, switch 5 tabs, zoom, pause, hover at past timestamp → PROCS table shows that moment's processes
 5. Trigger threshold: toast fires, click → full view opens on correct host+metric
@@ -515,27 +682,49 @@ Manual end-to-end (run at end of each phase)
 8. Sleep Windows for 1 min, wake → collector resumes after postWakeGraceSeconds
 9. Enable launch-at-startup, restart → tray icon appears automatically
 
+RemoteBackend mode (backend = real `towertail-server` via docker-compose.test.yaml):
+10. Configure Windows app to point at `http://127.0.0.1:18080` with the bootstrap admin token.
+11. From a second machine (or WSL), enroll a sampler + run it in push mode → node appears in the Windows UI within 10s.
+12. Kill the server container → Windows UI surfaces connection-lost state; restart → reconnects and resumes without reload.
+13. Use a second Mac client pointed at the same server simultaneously; add a node on the Mac → the Windows UI shows the same node within one WS heartbeat.
+
 ---
 11. Critical Files to Create/Modify
 
-New (Windows app) — ~65 files in app/windows/Towertail.WinUI/
+New (Windows app) — ~70 files in app/windows/Towertail.WinUI/ + ~20 in Towertail.Tests/ + ~2 in Towertail.UITests/
 
 Listed exhaustively in §3.
 
 Modified (existing repo) — cross-cutting
 
+Sampler:
 - sampler/internal/collect/disk.go — verify Windows drive enumeration; filter pseudo drives
 - sampler/internal/collect/proc.go — populate read_bytes/write_bytes on Windows
+- sampler/testdata/sample-v1.json — NEW canonical golden fixture shared across Go/Swift/C# decoders
+
+Build/CI scripts:
 - scripts/build.sampler.sh — add windows-amd64, windows-arm64 targets with .exe extension
 - scripts/build.sh — OS detection, delegate to build.windows.ps1 on Windows
 - scripts/build.windows.ps1 — NEW
+- scripts/test.ps1 — NEW Windows test runner (see §10 for spec)
+- scripts/tests.sh — add `--cross-platform` note and ensure `--go-unit`/`--go-integration`/`--sampler` paths are invokable from a Windows Git Bash shell too (they are, modulo path separators — verify)
+- .github/workflows/ci.yaml — add windows-unit, windows-integration jobs; add windows-flaui cron job targeting self-hosted runner
 - dist/samplers/manifest.json — (auto-regenerated) two new entries
-- docs/sampler.md — Windows notes; update §4 note on per-process I/O
+
+Docs:
+- docs/sampler.md — Windows notes; update §4 note on per-process I/O (Linux + Windows, not Linux-only)
 - docs/PLAN.md — tick Phase 2 status; link to this plan
+
+Mac (required for cross-OS round-trip):
 - app/mac/Sources/System/SettingsPersistence.swift — emit platform.darwin envelope; read legacy flat form
 - app/mac/Sources/System/SettingsTransfer.swift — include sourcePlatform; handle foreign platform.* blocks
-- app/mac/Tests/SettingsTransferTests.swift — add cross-OS fixtures
-- app/windows/README.md — replace stub with real setup instructions
+- app/mac/Tests/SettingsTransferTests.swift — add cross-OS fixtures (shared TestData/settings.mac.json with Windows)
+
+Server (minor — already supports what clients need):
+- server/docker/docker-compose.test.yaml — no changes expected; the Windows tests reuse this file verbatim. If CI needs a different project name (`-p towertail-win-test` vs `-p towertail-test`), that's configured in test.ps1, not the compose file.
+
+Windows app stubs:
+- app/windows/README.md — replace stub with real setup instructions (.NET 9 SDK install, `scripts/test.ps1 --unit` quickstart, docker requirements for Tier 2)
 
 ---
 12. Known Risks & Deferred Decisions

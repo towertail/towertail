@@ -44,6 +44,12 @@ type HTTPConfig struct {
 }
 
 type ClickHouseConfig struct {
+	// Disabled skips ClickHouse entirely: no client, no migrations, no batcher.
+	// Ingest, history, and readyz respond as if CH is absent; the WS hub still
+	// fans incoming samples to subscribers. Intended for local dev boxes
+	// without Docker (`TT_CLICKHOUSE__DISABLED=true`) where you want the real
+	// server + real sampler code path minus persistence. Not for production.
+	Disabled         bool          `koanf:"disabled"`
 	Addr             string        `koanf:"addr"`
 	Database         string        `koanf:"database"`
 	User             string        `koanf:"user"`

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="Towertail.WinUI.Preferences.BulkImport.TailscalePickerPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid RowDefinitions="Auto,*" Margin="12" RowSpacing="6">
+        <TextBlock Grid.Row="0" Text="Tailscale peers" FontSize="16" FontWeight="SemiBold" />
+        <ListView Grid.Row="1" x:Name="Peers" SelectionMode="Multiple">
+            <ListView.ItemTemplate>
+                <DataTemplate>
+                    <TextBlock Text="{Binding HostName}" />
+                </DataTemplate>
+            </ListView.ItemTemplate>
+        </ListView>
+    </Grid>
+</Page>

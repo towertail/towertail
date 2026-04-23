@@ -1,0 +1,27 @@
+using Microsoft.UI.Xaml.Controls;
+using Towertail.WinUI.Bootstrap;
+
+namespace Towertail.WinUI.Preferences;
+
+public sealed partial class NotificationsPane : UserControl
+{
+    private readonly AppEnvironment _env;
+    public NotificationsPane(AppEnvironment env)
+    {
+        _env = env;
+        InitializeComponent();
+        EnabledCheck.IsChecked = env.ServerSettings.NotificationsEnabled;
+        WarnCheck.IsChecked = env.ServerSettings.NotifyWarn;
+        CriticalCheck.IsChecked = env.ServerSettings.NotifyCritical;
+        DebounceBox.Value = env.ServerSettings.NotifyDebounceSeconds;
+    }
+
+    private void OnEnabledChanged(object s, Microsoft.UI.Xaml.RoutedEventArgs e)
+    { _env.ServerSettings.NotificationsEnabled = EnabledCheck.IsChecked == true; _env.ServerSettings.Persist(); }
+    private void OnWarnChanged(object s, Microsoft.UI.Xaml.RoutedEventArgs e)
+    { _env.ServerSettings.NotifyWarn = WarnCheck.IsChecked == true; _env.ServerSettings.Persist(); }
+    private void OnCriticalChanged(object s, Microsoft.UI.Xaml.RoutedEventArgs e)
+    { _env.ServerSettings.NotifyCritical = CriticalCheck.IsChecked == true; _env.ServerSettings.Persist(); }
+    private void OnDebounceChanged(NumberBox s, NumberBoxValueChangedEventArgs e)
+    { _env.ServerSettings.NotifyDebounceSeconds = (int)e.NewValue; _env.ServerSettings.Persist(); }
+}

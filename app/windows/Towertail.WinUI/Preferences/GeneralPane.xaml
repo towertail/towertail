@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Towertail.WinUI.Preferences.GeneralPane"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <StackPanel Spacing="12">
+        <TextBlock Text="General" FontSize="18" FontWeight="SemiBold" />
+        <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Text="Local poll (s):" VerticalAlignment="Center" Width="180" />
+            <NumberBox x:Name="LocalPollBox" Minimum="1" Maximum="300" SpinButtonPlacementMode="Inline" ValueChanged="OnLocalPollChanged" />
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Text="SSH poll (s):" VerticalAlignment="Center" Width="180" />
+            <NumberBox x:Name="SshPollBox" Minimum="1" Maximum="300" SpinButtonPlacementMode="Inline" ValueChanged="OnSshPollChanged" />
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Text="Post-wake grace (s):" VerticalAlignment="Center" Width="180" />
+            <NumberBox x:Name="GraceBox" Minimum="0" Maximum="300" SpinButtonPlacementMode="Inline" ValueChanged="OnGraceChanged" />
+        </StackPanel>
+        <CheckBox x:Name="LaunchAtStartupCheck" Content="Launch at Windows startup" Checked="OnLaunchChanged" Unchecked="OnLaunchChanged" />
+        <CheckBox x:Name="AutoUpdateCheck" Content="Auto-update remote samplers" Checked="OnAutoUpdateChanged" Unchecked="OnAutoUpdateChanged" />
+    </StackPanel>
+</UserControl>

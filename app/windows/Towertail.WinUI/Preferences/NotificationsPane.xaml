@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Towertail.WinUI.Preferences.NotificationsPane"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <StackPanel Spacing="12">
+        <TextBlock Text="Notifications" FontSize="18" FontWeight="SemiBold" />
+        <CheckBox x:Name="EnabledCheck" Content="Enable notifications" Checked="OnEnabledChanged" Unchecked="OnEnabledChanged" />
+        <CheckBox x:Name="WarnCheck" Content="Notify on Warn" Checked="OnWarnChanged" Unchecked="OnWarnChanged" />
+        <CheckBox x:Name="CriticalCheck" Content="Notify on Critical" Checked="OnCriticalChanged" Unchecked="OnCriticalChanged" />
+        <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Text="Debounce (s):" VerticalAlignment="Center" Width="180" />
+            <NumberBox x:Name="DebounceBox" Minimum="0" Maximum="3600" SpinButtonPlacementMode="Inline" ValueChanged="OnDebounceChanged" />
+        </StackPanel>
+    </StackPanel>
+</UserControl>

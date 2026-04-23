@@ -1,0 +1,88 @@
+name: CI
+
+# on:
+#   push:
+#     branches: [main]
+#   pull_request:
+#     branches: [main]
+
+jobs:
+  sampler-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - run: bash scripts/tests.sh --sampler
+
+  mac-unit:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - run: bash scripts/tests.sh --swift-unit
+
+  mac-integration:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - run: bash scripts/tests.sh --all
+        env:
+          DOCKER_BUILDKIT: '1'
+
+  windows-unit:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: Build sampler binaries
+        run: bash scripts/build.sampler.sh windows-amd64
+      - name: Tier 1 unit tests
+        run: pwsh scripts/test.ps1 --unit
+        shell: pwsh
+
+  windows-integration:
+    runs-on: windows-latest
+    needs: windows-unit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: Build sampler binaries
+        run: bash scripts/build.sampler.sh windows-amd64
+      - name: Tier 2 integration (local go server, no Docker)
+        run: pwsh scripts/test.ps1 --remote-integration
+        shell: pwsh
+        env:
+          # Force the no-Docker child-process path on the hosted runner.
+          # The test.ps1 script writes TOWERTAIL_LOCAL_SERVER=1 into the
+          # flag file when docker-compose is absent.
+          TOWERTAIL_REPO_ROOT: ${{ github.workspace }}
+
+  windows-flaui:
+    # UIA3 needs an interactive desktop. GitHub-hosted windows-latest runs
+    # headless, so this job targets self-hosted runners and runs nightly.
+    if: github.event_name == 'schedule'
+    runs-on: [self-hosted, windows, desktop]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - run: pwsh scripts/test.ps1 --flaui
+        shell: pwsh

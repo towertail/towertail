@@ -28,12 +28,16 @@ func (s *Server) handleIngest(c echo.Context) error {
 	if t.NodeID == nil {
 		return echo.NewHTTPError(http.StatusForbidden, "token missing node binding")
 	}
-	// Lazy-require clickhouse on first ingest.
-	if err := s.runtime.Require(c.Request().Context(), "clickhouse"); err != nil {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "clickhouse not ready")
-	}
-	if !s.ch.Ready() {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, "clickhouse warming up")
+	// Lazy-require clickhouse on first ingest. Skipped when CH is disabled
+	// (dev mode): samples fan out to the WS hub and through the alerter,
+	// but nothing is persisted.
+	if s.ch != nil {
+		if err := s.runtime.Require(c.Request().Context(), "clickhouse"); err != nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "clickhouse not ready")
+		}
+		if !s.ch.Ready() {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "clickhouse warming up")
+		}
 	}
 
 	req := c.Request()
@@ -71,9 +75,11 @@ func (s *Server) handleIngest(c echo.Context) error {
 		if s.hub != nil {
 			s.hub.PublishSample(t.OrgID, *t.NodeID, append([]byte(nil), line...))
 		}
-		if !s.ch.Batcher().Enqueue(bundle) {
-			rejected++
-			continue
+		if s.ch != nil {
+			if !s.ch.Batcher().Enqueue(bundle) {
+				rejected++
+				continue
+			}
 		}
 		s.evalAlerter(c.Request().Context(), t.OrgID, *t.NodeID, bundle)
 		accepted++

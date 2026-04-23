@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="Towertail.WinUI.Preferences.ServerEditWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid RowDefinitions="*,Auto" Margin="16">
+        <StackPanel Grid.Row="0" Spacing="10">
+            <TextBlock Text="Server" FontSize="18" FontWeight="SemiBold" />
+            <TextBox x:Name="DisplayNameBox" Header="Display Name" />
+            <ComboBox x:Name="KindBox" Header="Kind">
+                <ComboBoxItem Content="local" />
+                <ComboBoxItem Content="ssh" />
+            </ComboBox>
+            <TextBox x:Name="UserBox" Header="SSH user" />
+            <TextBox x:Name="HostBox" Header="SSH host" />
+            <CheckBox x:Name="EnabledCheck" Content="Enabled" />
+            <CheckBox x:Name="FavoriteCheck" Content="Favorite" />
+        </StackPanel>
+        <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="6" Margin="0,12,0,0">
+            <Button x:Name="CancelBtn" Content="Cancel" Click="OnCancel" />
+            <Button x:Name="OkBtn" Content="OK" Click="OnOk" />
+        </StackPanel>
+    </Grid>
+</Window>

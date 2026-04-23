@@ -45,6 +45,9 @@ func (s *Server) handleHistory(c echo.Context) error {
 		}
 	}
 
+	if s.ch == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "clickhouse disabled — no history available")
+	}
 	if err := s.runtime.Require(c.Request().Context(), "clickhouse"); err != nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "clickhouse not ready")
 	}

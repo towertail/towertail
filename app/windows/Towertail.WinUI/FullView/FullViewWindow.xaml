@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="Towertail.WinUI.FullView.FullViewWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:fv="using:Towertail.WinUI.FullView"
+    xmlns:lvc="using:LiveChartsCore.SkiaSharpView.WinUI">
+
+    <Grid>
+        <NavigationView x:Name="Nav" IsBackButtonVisible="Collapsed" PaneDisplayMode="Top" SelectionChanged="OnNavSelectionChanged">
+            <NavigationView.MenuItems>
+                <NavigationViewItem Content="CPU"   Tag="cpu" />
+                <NavigationViewItem Content="MEM"   Tag="mem" />
+                <NavigationViewItem Content="DISK"  Tag="disk" />
+                <NavigationViewItem Content="NET"   Tag="net" />
+                <NavigationViewItem Content="PROCS" Tag="procs" />
+            </NavigationView.MenuItems>
+            <Grid x:Name="Host" Margin="12" />
+        </NavigationView>
+    </Grid>
+</Window>

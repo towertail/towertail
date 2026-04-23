@@ -11,11 +11,21 @@ struct SettingsExport: Codable, Equatable {
     var version: Int
     var exportedAt: Date
     var appVersion: String?
+    /// OS id of the app that wrote this file — "darwin", "windows", or "linux".
+    /// The importer renders a banner when `sourcePlatform` differs from the
+    /// running OS so the user notices cross-OS imports before merging.
+    var sourcePlatform: String?
 
     var general: GeneralSection
     var globalThresholds: PersistedThresholds
     var notifications: NotificationsSection
     var nodes: [Node]
+    /// Foreign `platform.<os>` blocks carried verbatim from the source file.
+    /// A Mac export includes its own `platform.darwin` implicitly via `general`,
+    /// plus any `platform.windows` / `platform.linux` blocks already on disk —
+    /// so a user who exports from Mac, imports on Windows, then exports again
+    /// never loses their original Windows prefs.
+    var platformBlocks: [String: JSONValue]?
 
     struct GeneralSection: Codable, Equatable {
         var localPollingIntervalSeconds: Int
@@ -45,6 +55,7 @@ struct SettingsExport: Codable, Equatable {
             version: currentVersion,
             exportedAt: Date(),
             appVersion: appVersion,
+            sourcePlatform: "darwin",
             general: GeneralSection(
                 localPollingIntervalSeconds: p.localPollingIntervalSeconds,
                 sshPollingIntervalSeconds: p.sshPollingIntervalSeconds,
@@ -61,7 +72,8 @@ struct SettingsExport: Codable, Equatable {
                 notifyCritical: p.notifyCritical,
                 notifyDebounceSeconds: p.notifyDebounceSeconds
             ),
-            nodes: p.nodes
+            nodes: p.nodes,
+            platformBlocks: p.platformBlocks.foreign.isEmpty ? nil : p.platformBlocks.foreign
         )
     }
 }
@@ -203,6 +215,18 @@ enum SettingsTransfer {
             out.notifyCritical = imported.notifications.notifyCritical
             out.notifyDebounceSeconds = imported.notifications.notifyDebounceSeconds
             report.notificationsApplied = true
+        }
+
+        // Always merge foreign platform blocks — if the imported file was
+        // written by the Windows client, its `platform.windows` block is the
+        // newer source of truth and replaces whatever we had on disk. Blocks
+        // for platforms not present in the import are preserved as-is.
+        if let incoming = imported.platformBlocks {
+            var merged = out.platformBlocks.foreign
+            for (key, value) in incoming {
+                merged[key] = value
+            }
+            out.platformBlocks = PlatformBlocks(foreign: merged)
         }
 
         if selection.servers {

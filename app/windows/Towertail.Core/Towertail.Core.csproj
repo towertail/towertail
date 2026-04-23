@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Towertail.WinUI</RootNamespace>
+    <!-- No UI toolkit — we just want WinRT (Windows.* namespaces) available
+         to code that talks to the Tailscale named pipe + Registry. -->
+    <UseWindowsForms>false</UseWindowsForms>
+    <UseWPF>false</UseWPF>
+    <!-- Allow referencing Microsoft.Win32.Registry on a plain net9.0-windows. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>Towertail.Core</AssemblyName>
+  </PropertyGroup>
+
+  <!-- Source-only Core: include the testable business-logic .cs files in-place
+       from the Towertail.WinUI folder, so we don't have to physically move
+       files. The Towertail.WinUI.csproj uses <Compile Remove> on the same set
+       and takes a ProjectReference on Towertail.Core. -->
+  <ItemGroup>
+    <Compile Include="..\Towertail.WinUI\State\**\*.cs" LinkBase="State" />
+    <Compile Include="..\Towertail.WinUI\Backend\**\*.cs" LinkBase="Backend" />
+    <Compile Include="..\Towertail.WinUI\Collectors\**\*.cs" LinkBase="Collectors" />
+    <!-- Portable subset of the System/ folder. WinUI-bound files (AppNotifier,
+         NotificationTapRouter, ActivationPolicyCoordinator, SystemReachability
+         Monitor) stay in the WinUI project. -->
+    <Compile Include="..\Towertail.WinUI\System\SettingsPersistence.cs" LinkBase="System" />
+    <Compile Include="..\Towertail.WinUI\System\SettingsTransfer.cs" LinkBase="System" />
+    <Compile Include="..\Towertail.WinUI\System\TailscaleLocalApi.cs" LinkBase="System" />
+    <Compile Include="..\Towertail.WinUI\System\ThresholdNotifier.cs" LinkBase="System" />
+    <Compile Include="..\Towertail.WinUI\System\Logger.cs" LinkBase="System" />
+    <Compile Include="..\Towertail.WinUI\System\LaunchAtLogin.cs" LinkBase="System" />
+    <Compile Include="..\Towertail.WinUI\System\TerminalLauncher.cs" LinkBase="System" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
+    <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="9.0.0" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.10" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" />
+    <PackageReference Include="Serilog" Version="4.2.0" />
+    <PackageReference Include="Serilog.Extensions.Logging" Version="9.0.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
+  </ItemGroup>
+
+</Project>

@@ -14,6 +14,11 @@ struct PersistedSettings: Codable, Equatable {
     var autoUpdateSamplersEnabled: Bool
     var defaultTerminalApp: String
     var postWakeGraceSeconds: Int
+    /// Platform-specific blocks preserved verbatim from the on-disk file so a
+    /// cross-OS round trip never loses the other OS's settings. `platform.darwin`
+    /// is our own; `platform.windows` / `platform.linux` come from the Windows
+    /// (or future Linux) client and are written back untouched on save.
+    var platformBlocks: PlatformBlocks
 
     static let defaults = PersistedSettings(
         nodes: [Node.localMac()],
@@ -28,7 +33,8 @@ struct PersistedSettings: Codable, Equatable {
         launchAtLogin: false,
         autoUpdateSamplersEnabled: false,
         defaultTerminalApp: "Terminal",
-        postWakeGraceSeconds: 15
+        postWakeGraceSeconds: 15,
+        platformBlocks: .init(foreign: [:])
     )
 
     enum CodingKeys: String, CodingKey {
@@ -41,6 +47,8 @@ struct PersistedSettings: Codable, Equatable {
         case defaultTerminalApp
         case postWakeGraceSeconds
         case pollingIntervalSeconds // legacy single-value field
+        case platform              // new envelope { darwin: {...}, windows: {...} }
+        case schemaVersion
     }
 
     init(from decoder: Decoder) throws {
@@ -52,11 +60,8 @@ struct PersistedSettings: Codable, Equatable {
         self.notifyWarn = try c.decode(Bool.self, forKey: .notifyWarn)
         self.notifyCritical = try c.decode(Bool.self, forKey: .notifyCritical)
         self.notifyDebounceSeconds = try c.decode(Int.self, forKey: .notifyDebounceSeconds)
-        self.launchAtLogin = try c.decode(Bool.self, forKey: .launchAtLogin)
         self.autoUpdateSamplersEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoUpdateSamplersEnabled)
             ?? PersistedSettings.defaults.autoUpdateSamplersEnabled
-        self.defaultTerminalApp = try c.decodeIfPresent(String.self, forKey: .defaultTerminalApp)
-            ?? PersistedSettings.defaults.defaultTerminalApp
         self.postWakeGraceSeconds = try c.decodeIfPresent(Int.self, forKey: .postWakeGraceSeconds)
             ?? PersistedSettings.defaults.postWakeGraceSeconds
 
@@ -74,10 +79,38 @@ struct PersistedSettings: Codable, Equatable {
         } else {
             self.sshPollingIntervalSeconds = PersistedSettings.defaults.sshPollingIntervalSeconds
         }
+
+        // Platform envelope ------------------------------------------------
+        // New shape: top-level "platform" object keyed by OS ("darwin" /
+        // "windows" / "linux"), each carrying that OS's private settings.
+        // Legacy shape: launchAtLogin/defaultTerminalApp at the root (pre-Windows
+        // port). Read either; preserve unknown OS keys verbatim on save.
+        var platform = PlatformBlocks(foreign: [:])
+
+        let envelope = try c.decodeIfPresent([String: DarwinOrForeignBlock].self, forKey: .platform)
+
+        if let envelope, let darwin = envelope["darwin"]?.asDarwin() {
+            self.launchAtLogin = darwin.launchAtLogin ?? PersistedSettings.defaults.launchAtLogin
+            self.defaultTerminalApp = darwin.defaultTerminalApp ?? PersistedSettings.defaults.defaultTerminalApp
+        } else {
+            // Legacy flat form — migrate into the envelope on next save.
+            self.launchAtLogin = try c.decodeIfPresent(Bool.self, forKey: .launchAtLogin)
+                ?? PersistedSettings.defaults.launchAtLogin
+            self.defaultTerminalApp = try c.decodeIfPresent(String.self, forKey: .defaultTerminalApp)
+                ?? PersistedSettings.defaults.defaultTerminalApp
+        }
+
+        if let envelope {
+            for (key, block) in envelope where key != "darwin" {
+                platform.foreign[key] = block.raw
+            }
+        }
+        self.platformBlocks = platform
     }
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(1, forKey: .schemaVersion)
         try c.encode(nodes, forKey: .nodes)
         try c.encode(thresholds, forKey: .thresholds)
         try c.encode(localPollingIntervalSeconds, forKey: .localPollingIntervalSeconds)
@@ -87,10 +120,23 @@ struct PersistedSettings: Codable, Equatable {
         try c.encode(notifyWarn, forKey: .notifyWarn)
         try c.encode(notifyCritical, forKey: .notifyCritical)
         try c.encode(notifyDebounceSeconds, forKey: .notifyDebounceSeconds)
-        try c.encode(launchAtLogin, forKey: .launchAtLogin)
         try c.encode(autoUpdateSamplersEnabled, forKey: .autoUpdateSamplersEnabled)
-        try c.encode(defaultTerminalApp, forKey: .defaultTerminalApp)
         try c.encode(postWakeGraceSeconds, forKey: .postWakeGraceSeconds)
+        // Legacy flat fields are still emitted so older Mac binaries keep
+        // working if the user downgrades. They duplicate platform.darwin; the
+        // loader prefers platform.darwin when both are present.
+        try c.encode(launchAtLogin, forKey: .launchAtLogin)
+        try c.encode(defaultTerminalApp, forKey: .defaultTerminalApp)
+
+        // Normalized platform envelope.
+        var envelope: [String: DarwinOrForeignBlock] = [:]
+        envelope["darwin"] = .darwin(
+            DarwinSettingsBlock(launchAtLogin: launchAtLogin, defaultTerminalApp: defaultTerminalApp)
+        )
+        for (key, raw) in platformBlocks.foreign {
+            envelope[key] = .foreign(raw)
+        }
+        try c.encode(envelope, forKey: .platform)
     }
 
     init(
@@ -106,7 +152,8 @@ struct PersistedSettings: Codable, Equatable {
         launchAtLogin: Bool,
         autoUpdateSamplersEnabled: Bool,
         defaultTerminalApp: String,
-        postWakeGraceSeconds: Int
+        postWakeGraceSeconds: Int,
+        platformBlocks: PlatformBlocks = .init(foreign: [:])
     ) {
         self.nodes = nodes
         self.thresholds = thresholds
@@ -121,6 +168,101 @@ struct PersistedSettings: Codable, Equatable {
         self.autoUpdateSamplersEnabled = autoUpdateSamplersEnabled
         self.defaultTerminalApp = defaultTerminalApp
         self.postWakeGraceSeconds = postWakeGraceSeconds
+        self.platformBlocks = platformBlocks
+    }
+}
+
+/// Holds platform-specific settings blocks that are NOT native to this OS.
+/// On macOS we round-trip `platform.windows` / `platform.linux` verbatim so a
+/// user who edits the file from the Windows client doesn't lose their Windows
+/// prefs the next time the Mac client saves.
+struct PlatformBlocks: Equatable {
+    /// Keyed by OS id ("windows", "linux"). darwin is kept in top-level fields.
+    var foreign: [String: JSONValue]
+}
+
+struct DarwinSettingsBlock: Codable, Equatable {
+    var launchAtLogin: Bool?
+    var defaultTerminalApp: String?
+}
+
+/// Sum type for a single entry in the `platform` envelope. On decode we either
+/// recognize the block as ours (`darwin`) or keep the raw JSON around so the
+/// encoder can emit it back unmodified.
+enum DarwinOrForeignBlock: Codable, Equatable {
+    case darwin(DarwinSettingsBlock)
+    case foreign(JSONValue)
+
+    init(from decoder: Decoder) throws {
+        let raw = try JSONValue(from: decoder)
+        self = .foreign(raw)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        switch self {
+        case .darwin(let block): try block.encode(to: encoder)
+        case .foreign(let raw):  try raw.encode(to: encoder)
+        }
+    }
+
+    var raw: JSONValue {
+        switch self {
+        case .darwin(let b):
+            let dict: [String: JSONValue] = [
+                "launchAtLogin": b.launchAtLogin.map { .bool($0) } ?? .null,
+                "defaultTerminalApp": b.defaultTerminalApp.map { .string($0) } ?? .null,
+            ]
+            return .object(dict)
+        case .foreign(let raw): return raw
+        }
+    }
+
+    func asDarwin() -> DarwinSettingsBlock? {
+        switch self {
+        case .darwin(let b): return b
+        case .foreign(let raw):
+            guard case .object(let obj) = raw else { return nil }
+            var launch: Bool? = nil
+            var term: String? = nil
+            if case .bool(let v) = obj["launchAtLogin"] { launch = v }
+            if case .string(let v) = obj["defaultTerminalApp"] { term = v }
+            return DarwinSettingsBlock(launchAtLogin: launch, defaultTerminalApp: term)
+        }
+    }
+}
+
+/// Minimal JSON value type for preserving foreign platform blocks across
+/// load/save without a full-fat JSONSerialization round-trip. Equatable so
+/// tests can diff the envelope.
+indirect enum JSONValue: Codable, Equatable {
+    case null
+    case bool(Bool)
+    case number(Double)
+    case string(String)
+    case array([JSONValue])
+    case object([String: JSONValue])
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if c.decodeNil() { self = .null; return }
+        if let b = try? c.decode(Bool.self)   { self = .bool(b);   return }
+        if let n = try? c.decode(Double.self) { self = .number(n); return }
+        if let s = try? c.decode(String.self) { self = .string(s); return }
+        if let a = try? c.decode([JSONValue].self) { self = .array(a); return }
+        if let o = try? c.decode([String: JSONValue].self) { self = .object(o); return }
+        throw DecodingError.dataCorruptedError(in: c, debugDescription: "JSONValue")
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        switch self {
+        case .null: try c.encodeNil()
+        case .bool(let b): try c.encode(b)
+        case .number(let n): try c.encode(n)
+        case .string(let s): try c.encode(s)
+        case .array(let a): try c.encode(a)
+        case .object(let o): try c.encode(o)
+        }
     }
 }
 

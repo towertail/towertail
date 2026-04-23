@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Towertail.WinUI.Cards.MetricCell"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:cards="using:Towertail.WinUI.Cards">
+
+    <Grid RowDefinitions="Auto,Auto,Auto" RowSpacing="2">
+        <TextBlock Grid.Row="0" x:Name="LabelText" FontSize="10" Opacity="0.7" />
+        <TextBlock Grid.Row="1" x:Name="ValueText" FontSize="16" FontWeight="SemiBold" />
+        <cards:SparklineCanvas Grid.Row="2" x:Name="Sparkline" Height="20" />
+    </Grid>
+</UserControl>

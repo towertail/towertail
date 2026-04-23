@@ -1,0 +1,69 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>Towertail.WinUI</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x86;x64;ARM64</Platforms>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <UseWinUI>true</UseWinUI>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <WindowsPackageType>None</WindowsPackageType>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <WindowsSdkPackageVersion>10.0.19041.48</WindowsSdkPackageVersion>
+    <WindowsAppSdkBuildLabel>stable</WindowsAppSdkBuildLabel>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>Towertail</AssemblyName>
+    <GenerateAppxPackageOnBuild>false</GenerateAppxPackageOnBuild>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Pinned package set that avoids the CsWinRT 2.1 vs 2.2 clash:
+         WindowsAppSDK 1.6 ships CsWinRT 2.1. H.NotifyIcon.WinUI 2.1.x and
+         LiveChartsCore.SkiaSharpView.WinUI 2.0.0-rc5 were both built against
+         CsWinRT 2.1, so no WinRT.Runtime downgrade error surfaces. -->
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250108002" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.22621.3233" />
+    <PackageReference Include="H.NotifyIcon.WinUI" Version="2.1.4" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
+    <PackageReference Include="LiveChartsCore.SkiaSharpView.WinUI" Version="2.0.0-rc2" />
+    <PackageReference Include="SkiaSharp.Views.WinUI" Version="2.88.9" />
+    <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="9.0.0" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.10" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.0" />
+    <PackageReference Include="Serilog" Version="4.2.0" />
+    <PackageReference Include="Serilog.Extensions.Logging" Version="9.0.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Manifest Include="$(ApplicationManifest)" />
+  </ItemGroup>
+
+  <!-- Copy sampler binaries from dist/samplers into the bundle at build time.
+       Mirrors the preBuildScript in the Mac project.yml. -->
+  <Target Name="CopySamplers" BeforeTargets="BeforeBuild">
+    <ItemGroup>
+      <SamplerFiles Include="..\..\..\dist\samplers\**\*" />
+    </ItemGroup>
+    <Copy
+      SourceFiles="@(SamplerFiles)"
+      DestinationFiles="Assets\samplers\%(RecursiveDir)%(Filename)%(Extension)"
+      SkipUnchangedFiles="true"
+      Condition="Exists('..\..\..\dist\samplers')" />
+  </Target>
+
+  <ItemGroup>
+    <Content Include="Assets\samplers\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="Towertail.WinUI.Preferences.BulkImport.ReviewGridPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid RowDefinitions="Auto,*" Margin="12" RowSpacing="6">
+        <TextBlock Grid.Row="0" Text="Review servers to add" FontSize="16" FontWeight="SemiBold" />
+        <ListView Grid.Row="1" x:Name="Items">
+            <ListView.ItemTemplate>
+                <DataTemplate>
+                    <Grid ColumnDefinitions="200,200,120" ColumnSpacing="6">
+                        <TextBlock Grid.Column="0" Text="{Binding DisplayName}" />
+                        <TextBlock Grid.Column="1" Text="{Binding UserAtHost}" />
+                        <TextBlock Grid.Column="2" Text="{Binding Kind}" />
+                    </Grid>
+                </DataTemplate>
+            </ListView.ItemTemplate>
+        </ListView>
+    </Grid>
+</Page>

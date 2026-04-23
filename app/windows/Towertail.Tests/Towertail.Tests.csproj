@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Towertail.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" Version="1.0.0" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.0.0" />
+    <PackageReference Include="AwesomeAssertions" Version="8.2.0" />
+    <PackageReference Include="NSubstitute" Version="5.3.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="coverlet.collector" Version="6.0.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Tests depend only on the business-logic Core assembly — not the full
+         WinUI app, which pulls in the Windows App SDK and XAML compiler. -->
+    <ProjectReference Include="..\Towertail.Core\Towertail.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="TestData\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

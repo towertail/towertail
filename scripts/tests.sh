@@ -3,6 +3,15 @@
 # Go server (unit + ClickHouse integration), Go sampler, and the Docker
 # test stack used by end-to-end tests.
 #
+# Cross-platform note:
+#   This script is the macOS / Linux side. The Windows client has its own
+#   PowerShell runner at scripts/test.ps1 with symmetric flags (--unit,
+#   --remote-integration, --flaui, --go-unit, --go-integration, --sampler).
+#   Both drive the same server/docker/docker-compose.test.yaml stack and
+#   share the TOWERTAIL_INTEGRATION flag-file contract so CI matrices stay
+#   in lockstep. --go-unit / --go-integration / --sampler work from a
+#   Windows Git Bash shell too if you need to run them there.
+#
 # Usage:
 #   scripts/tests.sh [flags]
 #

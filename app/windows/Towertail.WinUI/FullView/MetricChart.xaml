@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Towertail.WinUI.FullView.MetricChart"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:lvc="using:LiveChartsCore.SkiaSharpView.WinUI">
+
+    <Grid RowDefinitions="Auto,*" RowSpacing="6">
+        <TextBlock Grid.Row="0" x:Name="TitleText" FontSize="13" FontWeight="SemiBold" />
+        <lvc:CartesianChart Grid.Row="1" x:Name="Chart" />
+    </Grid>
+</UserControl>

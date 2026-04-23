@@ -134,6 +134,64 @@ final class SettingsTransferTests: XCTestCase {
         XCTAssertEqual(report.serversRemoved, 1)
     }
 
+    // --- Cross-OS round-trip -----------------------------------------------
+    //
+    // The Windows client writes a `platform.windows` block into settings.json.
+    // An export from Mac must carry that block through unchanged so a user
+    // who round-trips Mac → Windows → Mac (or vice-versa) never loses their
+    // Windows-only settings.
+
+    func testExportCarriesSourcePlatform() {
+        let ex = makeExport(nodes: [])
+        XCTAssertEqual(ex.sourcePlatform, "darwin")
+    }
+
+    func testExportCarriesForeignPlatformBlocks() throws {
+        var b = base()
+        b.platformBlocks.foreign["windows"] = .object([
+            "launchAtStartup": .bool(true),
+            "defaultTerminalApp": .string("WindowsTerminal"),
+        ])
+        let ex = SettingsExport.from(b)
+        XCTAssertEqual(ex.platformBlocks?["windows"], .object([
+            "launchAtStartup": .bool(true),
+            "defaultTerminalApp": .string("WindowsTerminal"),
+        ]))
+        // Round-trip through JSON to catch silent drop of the new field.
+        let data = try SettingsTransfer.encode(ex)
+        let back = try SettingsTransfer.decode(data)
+        XCTAssertEqual(back.platformBlocks?["windows"], ex.platformBlocks?["windows"])
+        XCTAssertEqual(back.sourcePlatform, "darwin")
+    }
+
+    func testImportPreservesExistingForeignBlocksWhenImportHasNone() {
+        var existing = base()
+        existing.platformBlocks.foreign["windows"] = .object([
+            "launchAtStartup": .bool(true)
+        ])
+        var ex = makeExport(nodes: [])
+        ex.platformBlocks = nil
+        let (merged, _) = SettingsTransfer.apply(ex, to: existing, selection: .allDefaults)
+        XCTAssertEqual(merged.platformBlocks.foreign["windows"], .object([
+            "launchAtStartup": .bool(true)
+        ]))
+    }
+
+    func testImportMergesForeignBlocksFromExport() {
+        var existing = base()
+        existing.platformBlocks.foreign["linux"] = .object(["x": .bool(false)])
+        var ex = makeExport(nodes: [])
+        ex.platformBlocks = [
+            "windows": .object(["launchAtStartup": .bool(true)])
+        ]
+        let (merged, _) = SettingsTransfer.apply(ex, to: existing, selection: .allDefaults)
+        // Windows block from import applied; Linux block from existing preserved.
+        XCTAssertEqual(merged.platformBlocks.foreign["windows"], .object([
+            "launchAtStartup": .bool(true)
+        ]))
+        XCTAssertEqual(merged.platformBlocks.foreign["linux"], .object(["x": .bool(false)]))
+    }
+
     func testImportServerThresholdsOnlyAppliesOverrides() {
         let existingID = UUID()
         let existing = Node(id: existingID, displayName: "db", kind: .ssh, sshUser: "ops", sshHost: "db")

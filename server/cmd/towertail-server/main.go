@@ -133,7 +133,12 @@ func runServe(ctx context.Context, c *cli.Command) error {
 		}
 	}
 
-	ch := clickhouse.New(cfg.ClickHouse, log)
+	var ch *clickhouse.Client
+	if !cfg.ClickHouse.Disabled {
+		ch = clickhouse.New(cfg.ClickHouse, log)
+	} else {
+		log.Warn("clickhouse disabled via config — ingest not persisted, history unavailable")
+	}
 	pg := postgres.New(cfg.Postgres, log)
 	h := hub.New(log)
 
@@ -144,7 +149,9 @@ func runServe(ctx context.Context, c *cli.Command) error {
 	alerterEngine := alerter.New(log, nil, h, chStoreShim{ch: ch}, settings)
 	ctrl := control.New(st)
 
-	rt.Register(ch)
+	if ch != nil {
+		rt.Register(ch)
+	}
 	if cfg.Cloud.Managed {
 		rt.Register(pg)
 	}
@@ -162,12 +169,16 @@ func runServe(ctx context.Context, c *cli.Command) error {
 	})
 
 	// Trigger lazy start of ClickHouse on boot so migrations apply and
-	// /readyz flips to 200 without waiting for the first ingest.
-	go func() {
-		if err := rt.Require(context.Background(), "clickhouse"); err != nil {
-			log.Error("clickhouse eager start failed", "err", err)
-		}
-	}()
+	// /readyz flips to 200 without waiting for the first ingest. Skipped
+	// when CH is disabled — /readyz then reports ready unconditionally
+	// (see handleReadyz).
+	if ch != nil {
+		go func() {
+			if err := rt.Require(context.Background(), "clickhouse"); err != nil {
+				log.Error("clickhouse eager start failed", "err", err)
+			}
+		}()
+	}
 	if cfg.Cloud.Managed {
 		go func() {
 			if err := rt.Require(context.Background(), "postgres"); err != nil {

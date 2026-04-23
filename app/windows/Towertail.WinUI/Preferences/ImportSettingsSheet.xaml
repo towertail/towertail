@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="Towertail.WinUI.Preferences.ImportSettingsSheet"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <StackPanel Margin="16" Spacing="12">
+        <TextBlock Text="Import settings" FontSize="18" FontWeight="SemiBold" />
+        <InfoBar x:Name="PlatformWarning" IsOpen="False" Severity="Warning" Message="Imported file was exported from a different OS." />
+        <CheckBox x:Name="ImportGeneralCheck"        Content="General (polling, density, grace)" IsChecked="True" />
+        <CheckBox x:Name="ImportThresholdsCheck"     Content="Global thresholds" IsChecked="True" />
+        <CheckBox x:Name="ImportNotificationsCheck"  Content="Notifications" IsChecked="True" />
+        <CheckBox x:Name="ImportNodesCheck"          Content="Servers" IsChecked="True" />
+        <CheckBox x:Name="OverwriteNodesCheck"       Content="Overwrite existing servers (else merge)" IsChecked="False" />
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="6">
+            <Button x:Name="CancelBtn" Content="Cancel" Click="OnCancel" />
+            <Button x:Name="ApplyBtn" Content="Apply" Click="OnApply" />
+        </StackPanel>
+    </StackPanel>
+</Window>
