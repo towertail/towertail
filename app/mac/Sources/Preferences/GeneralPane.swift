@@ -3,7 +3,8 @@ import AppKit
 import UniformTypeIdentifiers
 
 struct GeneralPane: View {
-    @Environment(AppSettings.self) private var settings
+    @Environment(ClientSettings.self) private var clientSettings
+    @Environment(ServerSettings.self) private var serverSettings
     @Environment(NodeStore.self) private var nodeStore
     @State private var launchAtLoginError: String?
     @State private var importStaged: SettingsExport?
@@ -16,7 +17,8 @@ struct GeneralPane: View {
     }
 
     var body: some View {
-        @Bindable var settings = settings
+        @Bindable var clientSettings = clientSettings
+        @Bindable var serverSettings = serverSettings
         Form {
             Section("Polling") {
                 HStack {
@@ -24,16 +26,16 @@ struct GeneralPane: View {
                         .frame(width: 60, alignment: .leading)
                     Slider(
                         value: Binding(
-                            get: { Double(settings.localPollingIntervalSeconds) },
+                            get: { Double(serverSettings.localPollingIntervalSeconds) },
                             set: {
-                                settings.localPollingIntervalSeconds = Int($0.rounded())
-                                settings.persist()
+                                serverSettings.localPollingIntervalSeconds = Int($0.rounded())
+                                serverSettings.persist()
                             }
                         ),
                         in: 1...60,
                         step: 1
                     )
-                    Text("\(settings.localPollingIntervalSeconds)s")
+                    Text("\(serverSettings.localPollingIntervalSeconds)s")
                         .font(.system(.body, design: .monospaced))
                         .frame(width: 56, alignment: .trailing)
                 }
@@ -42,16 +44,16 @@ struct GeneralPane: View {
                         .frame(width: 60, alignment: .leading)
                     Slider(
                         value: Binding(
-                            get: { Double(settings.sshPollingIntervalSeconds) },
+                            get: { Double(serverSettings.sshPollingIntervalSeconds) },
                             set: {
-                                settings.sshPollingIntervalSeconds = Int($0.rounded())
-                                settings.persist()
+                                serverSettings.sshPollingIntervalSeconds = Int($0.rounded())
+                                serverSettings.persist()
                             }
                         ),
                         in: 1...300,
                         step: 1
                     )
-                    Text("\(settings.sshPollingIntervalSeconds)s")
+                    Text("\(serverSettings.sshPollingIntervalSeconds)s")
                         .font(.system(.body, design: .monospaced))
                         .frame(width: 56, alignment: .trailing)
                 }
@@ -63,16 +65,16 @@ struct GeneralPane: View {
                         .frame(width: 120, alignment: .leading)
                     Slider(
                         value: Binding(
-                            get: { Double(settings.postWakeGraceSeconds) },
+                            get: { Double(serverSettings.postWakeGraceSeconds) },
                             set: {
-                                settings.postWakeGraceSeconds = Int($0.rounded())
-                                settings.persist()
+                                serverSettings.postWakeGraceSeconds = Int($0.rounded())
+                                serverSettings.persist()
                             }
                         ),
                         in: 0...60,
                         step: 1
                     )
-                    Text("\(settings.postWakeGraceSeconds)s")
+                    Text("\(serverSettings.postWakeGraceSeconds)s")
                         .font(.system(.body, design: .monospaced))
                         .frame(width: 56, alignment: .trailing)
                 }
@@ -83,8 +85,8 @@ struct GeneralPane: View {
 
             Section("Appearance") {
                 Picker("Card density", selection: Binding(
-                    get: { settings.cardDensity },
-                    set: { settings.cardDensity = $0; settings.persist() }
+                    get: { clientSettings.cardDensity },
+                    set: { clientSettings.cardDensity = $0; clientSettings.persist() }
                 )) {
                     Text("Dense").tag(CardDensity.a)
                     Text("Relaxed").tag(CardDensity.b)
@@ -94,8 +96,8 @@ struct GeneralPane: View {
 
             Section("Terminal") {
                 Picker("Default terminal", selection: Binding(
-                    get: { settings.defaultTerminalApp },
-                    set: { settings.defaultTerminalApp = $0; settings.persist() }
+                    get: { clientSettings.defaultTerminalApp },
+                    set: { clientSettings.defaultTerminalApp = $0; clientSettings.persist() }
                 )) {
                     ForEach(TerminalLauncher.supportedApps, id: \.self) { app in
                         Text(app).tag(app)
@@ -108,16 +110,16 @@ struct GeneralPane: View {
 
             Section("Startup") {
                 Toggle("Launch at login", isOn: Binding(
-                    get: { settings.launchAtLogin },
+                    get: { clientSettings.launchAtLogin },
                     set: { newValue in
                         let ok = LaunchAtLogin.shared.setEnabled(newValue)
                         if ok {
-                            settings.launchAtLogin = newValue
+                            clientSettings.launchAtLogin = newValue
                             launchAtLoginError = nil
                         } else {
                             launchAtLoginError = LaunchAtLogin.shared.lastError
                         }
-                        settings.persist()
+                        clientSettings.persist()
                     }
                 ))
                 if let err = launchAtLoginError {
@@ -217,7 +219,8 @@ struct GeneralPane: View {
         let base = SettingsPersistence.load(from: url)
         let (merged, report) = SettingsTransfer.apply(export, to: base, selection: selection)
         _ = SettingsPersistence.save(merged, to: url)
-        settings.reloadFromDisk()
+        clientSettings.reloadFromDisk()
+        serverSettings.reloadFromDisk()
         nodeStore.replaceAllFromDisk()
         transferStatus = TransferStatus(ok: true, message: "Imported: \(report.summary)")
         Logger.shared.info(

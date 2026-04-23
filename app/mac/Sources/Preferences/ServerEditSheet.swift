@@ -5,7 +5,7 @@ struct ServerEditSheet: View {
     let onSave: (Node) -> Void
     let onCancel: () -> Void
 
-    @Environment(AppSettings.self) private var appSettings
+    @Environment(ServerSettings.self) private var serverSettings
 
     @State private var displayName: String
     @State private var kind: NodeKind
@@ -126,9 +126,9 @@ struct ServerEditSheet: View {
             // the user is actually getting, so toggling the checkbox doesn't
             // jump to 75/90 defaults unrelated to their setup.
             if case .new = context {
-                thresholds = appSettings.thresholds
+                thresholds = serverSettings.thresholds
             } else if case .edit(let node) = context, node.customThresholds == nil {
-                thresholds = appSettings.thresholds
+                thresholds = serverSettings.thresholds
             }
         }
     }

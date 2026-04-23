@@ -2,7 +2,7 @@ import Foundation
 
 final class RealCollector: Collector {
     let nodeStore: NodeStore
-    let settings: AppSettings
+    let settings: ServerSettings
     let history: HistoryStore?
     let invokerFactory: @Sendable (Node) -> SamplerInvoker
     let samplerUpdater: SamplerUpdateCoordinator?
@@ -13,7 +13,7 @@ final class RealCollector: Collector {
 
     init(
         nodeStore: NodeStore,
-        settings: AppSettings,
+        settings: ServerSettings,
         history: HistoryStore? = nil,
         samplerUpdater: SamplerUpdateCoordinator? = nil,
         reachability: SystemReachabilityMonitor? = nil,
@@ -77,7 +77,7 @@ final class RealCollector: Collector {
         node: Node,
         factory: @Sendable (Node) -> SamplerInvoker,
         sink: ServerStore,
-        settings: AppSettings,
+        settings: ServerSettings,
         history: HistoryStore?,
         samplerUpdater: SamplerUpdateCoordinator?,
         reachability: SystemReachabilityMonitor?
@@ -172,7 +172,7 @@ final class RealCollector: Collector {
     }
 
     @MainActor
-    private static func syncViewModels(for nodes: [Node], store: ServerStore, settings: AppSettings) {
+    private static func syncViewModels(for nodes: [Node], store: ServerStore, settings: ServerSettings) {
         let existing = Set(store.serverVMs.map(\.id))
         let byID: [UUID: Node] = Dictionary(uniqueKeysWithValues: nodes.map { ($0.id, $0) })
         for node in nodes where !existing.contains(node.id) {

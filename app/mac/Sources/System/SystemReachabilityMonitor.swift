@@ -55,7 +55,7 @@ final class SystemReachabilityMonitor {
     /// network transitions.
     private(set) var availability: CollectorAvailability = .available
 
-    private let settings: AppSettings
+    private let settings: ServerSettings
     private let pathMonitor: NWPathMonitor
     private let pathQueue: DispatchQueue
     private var observers: [NSObjectProtocol] = []
@@ -66,7 +66,7 @@ final class SystemReachabilityMonitor {
     private var isAsleep = false
     private var started = false
 
-    init(settings: AppSettings) {
+    init(settings: ServerSettings) {
         self.settings = settings
         self.pathMonitor = NWPathMonitor()
         self.pathQueue = DispatchQueue(label: "towertail.reachability", qos: .utility)

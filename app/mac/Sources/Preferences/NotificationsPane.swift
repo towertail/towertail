@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct NotificationsPane: View {
-    @Environment(AppSettings.self) private var settings
+    @Environment(ServerSettings.self) private var settings
 
     var body: some View {
         @Bindable var settings = settings

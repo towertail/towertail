@@ -9,6 +9,8 @@ struct DeployProgress: View {
     @Binding var keepFailedAsDisabled: Bool
     let nodeStore: NodeStore
 
+    @Environment(\.backend) private var backend
+
     @State private var running: Bool = false
     @State private var started: Bool = false
     @State private var committedIDs: Set<UUID> = []
@@ -201,30 +203,33 @@ struct DeployProgress: View {
         }
     }
 
-    /// Append the row's node to NodeStore exactly once, even if the user
-    /// hits Retry several times or we end up re-queuing.
+    /// Append the row's node via the backend exactly once, even if the
+    /// user hits Retry several times or we end up re-queuing.
     @MainActor
     private func commit(id: UUID, enabled: Bool) {
         guard !committedIDs.contains(id),
               let row = rows.first(where: { $0.id == id }) else { return }
         let node = enabled ? row.toNode() : row.toDisabledNode()
-        nodeStore.add(node)
+        let b = backend
+        Task { try? await b?.addNode(node) }
         committedIDs.insert(id)
     }
 
     /// After deploy finishes, write out any failed rows as disabled nodes
-    /// if the user opted in. We keep the sheet behavior idempotent: if
-    /// the user retries a failed row and it succeeds later, that same id
-    /// won't be re-added because of `committedIDs`.
+    /// if the user opted in. Bulk paths use `addNodes` so NodeStore
+    /// persists once and the UI doesn't flash through intermediate states.
     @MainActor
     private func commitFailedAsDisabled() {
         guard keepFailedAsDisabled else { return }
+        var pending: [Node] = []
         for row in rows {
             guard queue.contains(row.id), isFailed(row), !committedIDs.contains(row.id) else { continue }
-            let node = row.toDisabledNode()
-            nodeStore.add(node)
+            pending.append(row.toDisabledNode())
             committedIDs.insert(row.id)
         }
+        guard !pending.isEmpty else { return }
+        let b = backend
+        Task { try? await b?.addNodes(pending) }
     }
 
     // MARK: - Status helpers

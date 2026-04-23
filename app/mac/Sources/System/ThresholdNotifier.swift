@@ -13,7 +13,7 @@ import AppKit
 /// registered by the App layer.
 @MainActor
 final class ThresholdNotifier {
-    private let settings: AppSettings
+    private let settings: ServerSettings
     private let reachability: SystemReachabilityMonitor?
     private var lastTint: [Key: ThresholdTint] = [:]
     /// Timestamp of the most recent notification for a (host, metric) pair.
@@ -26,7 +26,7 @@ final class ThresholdNotifier {
         let metric: Metric
     }
 
-    init(settings: AppSettings, reachability: SystemReachabilityMonitor? = nil) {
+    init(settings: ServerSettings, reachability: SystemReachabilityMonitor? = nil) {
         self.settings = settings
         self.reachability = reachability
     }

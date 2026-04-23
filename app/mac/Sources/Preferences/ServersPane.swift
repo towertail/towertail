@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ServersPane: View {
     @Environment(NodeStore.self) private var nodeStore
+    @Environment(\.backend) private var backend
 
     @State private var selection: Set<Node.ID> = []
     @State private var sheet: ServerEditSheetContext?
@@ -55,8 +56,12 @@ struct ServersPane: View {
                 .help("Import servers from Tailscale, a CSV file, or a pasted host list.")
 
                 Button {
-                    for id in selection {
-                        nodeStore.remove(id: id)
+                    let ids = selection
+                    let b = backend
+                    Task {
+                        for id in ids {
+                            try? await b?.removeNode(id: id)
+                        }
                     }
                     selection = []
                 } label: {
@@ -109,9 +114,9 @@ struct ServersPane: View {
 
             Divider()
 
-            // Scoped to its own view so its AppSettings observation
+            // Scoped to its own view so its ServerSettings observation
             // subgraph doesn't share a parent with the Table above. Placing
-            // a Toggle that reads AppSettings in the same body as a Table
+            // a Toggle that reads ServerSettings in the same body as a Table
             // triggers an AGGraphGetAttributeSubgraph precondition crash
             // when the preferences window tabs switch (macOS 15 /
             // SwiftUI 6 bug).
@@ -123,9 +128,12 @@ struct ServersPane: View {
         }
         .sheet(item: $sheet) { ctx in
             ServerEditSheet(context: ctx) { saved in
-                switch ctx {
-                case .new: nodeStore.add(saved)
-                case .edit: nodeStore.update(saved)
+                let b = backend
+                Task {
+                    switch ctx {
+                    case .new: try? await b?.addNode(saved)
+                    case .edit: try? await b?.updateNode(saved)
+                    }
                 }
                 sheet = nil
             } onCancel: {
@@ -302,13 +310,14 @@ enum ServerEditSheetContext: Identifiable {
 
 /// The Servers table is extracted into its own view so its observation
 /// subgraph only depends on NodeStore + ServerStore. Keeping the Toggle
-/// that reads AppSettings (`AutoUpdateToggleRow`) in the same parent
+/// that reads ServerSettings (`AutoUpdateToggleRow`) in the same parent
 /// body as the Table used to trigger `AGGraphGetAttributeSubgraph`
 /// precondition crashes on tab switch (macOS 15 / SwiftUI 6).
 private struct ServersTable: View {
     @Environment(NodeStore.self) private var nodeStore
     @Environment(ServerStore.self) private var serverStore
     @Environment(SamplerUpdateCoordinator.self) private var samplerUpdater
+    @Environment(\.backend) private var backend
     @Binding var selection: Set<Node.ID>
 
     var body: some View {
@@ -339,7 +348,10 @@ private struct ServersTable: View {
             TableColumn("Enabled") { n in
                 Toggle("", isOn: Binding(
                     get: { n.enabled },
-                    set: { nodeStore.setEnabled(id: n.id, enabled: $0) }
+                    set: { newValue in
+                        let b = backend
+                        Task { try? await b?.setNodeEnabled(id: n.id, enabled: newValue) }
+                    }
                 ))
                 .labelsHidden()
             }
@@ -400,12 +412,12 @@ private struct ServersTable: View {
 
 /// Separate view on purpose — see the call site in ServersPane.
 private struct AutoUpdateToggleRow: View {
-    @Environment(AppSettings.self) private var appSettings
+    @Environment(ServerSettings.self) private var serverSettings
 
     var body: some View {
         Toggle("Auto-update remote samplers", isOn: Binding(
-            get: { appSettings.autoUpdateSamplersEnabled },
-            set: { appSettings.autoUpdateSamplersEnabled = $0; appSettings.persist() }
+            get: { serverSettings.autoUpdateSamplersEnabled },
+            set: { serverSettings.autoUpdateSamplersEnabled = $0; serverSettings.persist() }
         ))
         .help("When enabled, Towertail silently pushes the bundled sampler binary to any SSH host running an older build. Off by default — turn on only after verifying Test works for your hosts.")
     }

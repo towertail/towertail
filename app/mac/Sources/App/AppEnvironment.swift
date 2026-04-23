@@ -1,75 +1,35 @@
 import Foundation
 import SwiftUI
 
+/// Thin shell around a `Backend` implementation. Exposes accessors so
+/// existing `@Environment(...)` injection sites don't have to go through
+/// `env.backend.servers` at every callsite. The backend owns all
+/// construction and lifecycle.
 @MainActor
 final class AppEnvironment {
-    let store: ServerStore
-    let settings: AppSettings
-    let nodeStore: NodeStore
-    let history: HistoryStore
-    let collector: any Collector
-    let notifier: ThresholdNotifier
-    let samplerUpdater: SamplerUpdateCoordinator
-    let reachability: SystemReachabilityMonitor
-    private var task: Task<Void, Never>?
+    let backend: any Backend
 
-    init() {
-        let settings = AppSettings.loadFromDisk()
-        let nodeStore = NodeStore.loadFromDisk()
-        let history = HistoryStore(url: HistoryStore.defaultURL())
-        self.settings = settings
-        self.nodeStore = nodeStore
-        self.history = history
-        let store = ServerStore(
-            history: history,
-            nodeLookup: { [weak nodeStore] id in nodeStore?.node(withId: id) }
-        )
-        self.store = store
-        let manifest = SamplerManifestLoader.load()
-        let updater = SamplerUpdateCoordinator(manifest: manifest)
-        self.samplerUpdater = updater
-        let reachability = SystemReachabilityMonitor(settings: settings)
-        self.reachability = reachability
-        self.collector = RealCollector(
-            nodeStore: nodeStore,
-            settings: settings,
-            history: history,
-            samplerUpdater: updater,
-            reachability: reachability
-        )
-        let notifier = ThresholdNotifier(settings: settings, reachability: reachability)
-        self.notifier = notifier
-        store.notifier = notifier
+    /// Flipping from .local to .remote here is all that should be
+    /// required to swap implementations — every mutation goes through
+    /// `backend`, and observable state is read via the forwarding
+    /// accessors below.
+    static let defaultMode: BackendMode = .local
 
-        // Lifecycle breadcrumb — first thing that lands in today's log.
-        let expected = manifest?.expectedSamplerField ?? "(none)"
-        Logger.shared.info(
-            "app: launch",
-            category: "lifecycle",
-            kv: [
-                "nodes": String(nodeStore.nodes.count),
-                "bundled_sampler": expected,
-                "auto_update": String(settings.autoUpdateSamplersEnabled),
-            ]
-        )
-    }
+    var store: ServerStore { backend.servers }
+    var nodeStore: NodeStore { backend.nodes }
+    var clientSettings: ClientSettings { backend.clientSettings }
+    var serverSettings: ServerSettings { backend.serverSettings }
+    var samplerUpdater: SamplerUpdateCoordinator { backend.samplerUpdater }
 
-    func start() {
-        guard task == nil else { return }
-        Logger.shared.info("collector: starting", category: "lifecycle")
-        let collector = self.collector
-        let store = self.store
-        reachability.start()
-        notifier.start()
-        task = Task.detached(priority: .utility) {
-            await collector.run(sink: store)
+    init(mode: BackendMode = .local) {
+        switch mode {
+        case .local:
+            self.backend = LocalBackend()
+        case .remote:
+            self.backend = RemoteBackend()
         }
     }
 
-    func stop() {
-        Logger.shared.info("collector: stopping", category: "lifecycle")
-        task?.cancel()
-        task = nil
-        reachability.stop()
-    }
+    func start() { backend.start() }
+    func stop()  { backend.stop() }
 }

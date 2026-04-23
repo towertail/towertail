@@ -4,9 +4,11 @@ struct ServerCardView: View {
     @Bindable var vm: ServerViewModel
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismiss) private var dismiss
-    @Environment(AppSettings.self) private var settings
+    @Environment(ClientSettings.self) private var clientSettings
+    @Environment(ServerSettings.self) private var serverSettings
     @Environment(NodeStore.self) private var nodeStore
     @Environment(SamplerUpdateCoordinator.self) private var samplerUpdater
+    @Environment(\.backend) private var backend
     @State private var terminalError: String?
 
     private var node: Node? { nodeStore.node(withId: vm.id) }
@@ -47,7 +49,9 @@ struct ServerCardView: View {
         if node?.isSnoozed == true {
             Divider()
             Button("Clear snooze") {
-                nodeStore.setSnooze(id: vm.id, until: nil)
+                let b = backend
+                let id = vm.id
+                Task { try? await b?.setNodeSnooze(id: id, until: nil) }
             }
         }
     }
@@ -75,7 +79,9 @@ struct ServerCardView: View {
             let todayAt9 = cal.date(from: comps) ?? now
             until = cal.date(byAdding: .day, value: 1, to: todayAt9) ?? now.addingTimeInterval(24 * 3600)
         }
-        nodeStore.setSnooze(id: vm.id, until: until)
+        let b = backend
+        let id = vm.id
+        Task { try? await b?.setNodeSnooze(id: id, until: until) }
     }
 
     private func openFullView(metric: Metric) {
@@ -138,7 +144,7 @@ struct ServerCardView: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Open SSH session in \(settings.defaultTerminalApp)")
+                .help("Open SSH session in \(clientSettings.defaultTerminalApp)")
                 .pointingHandOnHover()
             }
             Button {
@@ -157,7 +163,10 @@ struct ServerCardView: View {
             .disabled(node == nil)
             Button {
                 if let n = node {
-                    nodeStore.setFavorite(id: n.id, favorite: !n.favorite)
+                    let b = backend
+                    let id = n.id
+                    let fav = !n.favorite
+                    Task { try? await b?.setNodeFavorite(id: id, favorite: fav) }
                 }
             } label: {
                 Image(systemName: (node?.favorite ?? false) ? "star.fill" : "star")
@@ -172,7 +181,7 @@ struct ServerCardView: View {
     }
 
     private func openSSHTerminal(for n: Node) {
-        let result = TerminalLauncher.openSSH(for: n, app: settings.defaultTerminalApp)
+        let result = TerminalLauncher.openSSH(for: n, app: clientSettings.defaultTerminalApp)
         if case .failure(let err) = result {
             terminalError = err.localizedDescription
         } else {
@@ -223,7 +232,7 @@ struct ServerCardView: View {
                     warn: vm.thresholds.cpuWarn,
                     critical: vm.thresholds.cpuCritical,
                     hoverValue: hoverValue(for: vm.cpu),
-                    pollingIntervalSeconds: settings.pollingInterval(for: vm.kind)
+                    pollingIntervalSeconds: serverSettings.pollingInterval(for: vm.kind)
                 )
                 .onTapGesture { openFullView(metric: .cpu) }
                 .pointingHandOnHover()
@@ -235,7 +244,7 @@ struct ServerCardView: View {
                     warn: vm.thresholds.memWarn,
                     critical: vm.thresholds.memCritical,
                     hoverValue: hoverValue(for: vm.mem),
-                    pollingIntervalSeconds: settings.pollingInterval(for: vm.kind)
+                    pollingIntervalSeconds: serverSettings.pollingInterval(for: vm.kind)
                 )
                 .onTapGesture { openFullView(metric: .mem) }
                 .pointingHandOnHover()
@@ -249,7 +258,7 @@ struct ServerCardView: View {
                     warn: vm.thresholds.diskWarn,
                     critical: vm.thresholds.diskCritical,
                     hoverValue: hoverValue(for: vm.disk),
-                    pollingIntervalSeconds: settings.pollingInterval(for: vm.kind)
+                    pollingIntervalSeconds: serverSettings.pollingInterval(for: vm.kind)
                 )
                 .onTapGesture { openFullView(metric: .disk) }
                 .pointingHandOnHover()
@@ -262,7 +271,7 @@ struct ServerCardView: View {
                     critical: 0.9,
                     rxMBps: vm.netRxMBps,
                     txMBps: vm.netTxMBps,
-                    pollingIntervalSeconds: settings.pollingInterval(for: vm.kind)
+                    pollingIntervalSeconds: serverSettings.pollingInterval(for: vm.kind)
                 )
                 .onTapGesture { openFullView(metric: .net) }
                 .pointingHandOnHover()

@@ -3,7 +3,7 @@ import SwiftUI
 struct FullViewWindow: View {
     let context: FullViewContext
     @Environment(ServerStore.self) private var store
-    @Environment(AppSettings.self) private var settings
+    @Environment(ServerSettings.self) private var settings
     @Environment(NodeStore.self) private var nodeStore
     @State private var model: FullViewModel
     /// Active host id. Seeded from `context` but mutable so the header's

@@ -1,14 +1,13 @@
 import Foundation
 import SwiftUI
 
-enum CardDensity: String, CaseIterable, Sendable {
-    case a, b
-}
-
+/// Settings that the Towertail server owns in Remote mode — thresholds,
+/// polling intervals, notification policy, sampler auto-update, post-wake
+/// grace. In Local mode they live here on disk (same JSON file as
+/// `ClientSettings`) and are mutated by the Preferences panes as before.
 @Observable
 @MainActor
-final class AppSettings {
-    var cardDensity: CardDensity
+final class ServerSettings {
     var thresholds: MetricThresholds
     var localPollingIntervalSeconds: Int
     var sshPollingIntervalSeconds: Int
@@ -16,9 +15,7 @@ final class AppSettings {
     var notifyWarn: Bool
     var notifyCritical: Bool
     var notifyDebounceSeconds: Int
-    var launchAtLogin: Bool
     var autoUpdateSamplersEnabled: Bool
-    var defaultTerminalApp: String
     /// Seconds after Mac wake / network-return during which collectors
     /// keep polling but notifications are suppressed. Short window that
     /// lets DHCP + Tailscale resettle without paging on the first failed
@@ -30,7 +27,6 @@ final class AppSettings {
     init(url: URL = SettingsPersistence.defaultURL()) {
         self.url = url
         let p = SettingsPersistence.load(from: url)
-        self.cardDensity = CardDensity(rawValue: p.cardDensity) ?? .a
         self.thresholds = MetricThresholds(
             cpuWarn: p.thresholds.cpuWarn, cpuCritical: p.thresholds.cpuCritical,
             memWarn: p.thresholds.memWarn, memCritical: p.thresholds.memCritical,
@@ -42,23 +38,16 @@ final class AppSettings {
         self.notifyWarn = p.notifyWarn
         self.notifyCritical = p.notifyCritical
         self.notifyDebounceSeconds = p.notifyDebounceSeconds
-        self.launchAtLogin = p.launchAtLogin
         self.autoUpdateSamplersEnabled = p.autoUpdateSamplersEnabled
-        self.defaultTerminalApp = p.defaultTerminalApp
         self.postWakeGraceSeconds = max(0, min(300, p.postWakeGraceSeconds))
     }
 
-    static func loadFromDisk() -> AppSettings {
-        AppSettings()
+    static func loadFromDisk() -> ServerSettings {
+        ServerSettings()
     }
 
-    /// Repopulates every field from disk. Used by settings-import after
-    /// the merged PersistedSettings has been written — cheaper and less
-    /// error-prone than copying each property by hand from a
-    /// PersistedSettings instance that the caller already has.
     func reloadFromDisk() {
         let p = SettingsPersistence.load(from: url)
-        self.cardDensity = CardDensity(rawValue: p.cardDensity) ?? .a
         self.thresholds = MetricThresholds(
             cpuWarn: p.thresholds.cpuWarn, cpuCritical: p.thresholds.cpuCritical,
             memWarn: p.thresholds.memWarn, memCritical: p.thresholds.memCritical,
@@ -70,9 +59,7 @@ final class AppSettings {
         self.notifyWarn = p.notifyWarn
         self.notifyCritical = p.notifyCritical
         self.notifyDebounceSeconds = p.notifyDebounceSeconds
-        self.launchAtLogin = p.launchAtLogin
         self.autoUpdateSamplersEnabled = p.autoUpdateSamplersEnabled
-        self.defaultTerminalApp = p.defaultTerminalApp
         self.postWakeGraceSeconds = max(0, min(300, p.postWakeGraceSeconds))
     }
 
@@ -86,7 +73,6 @@ final class AppSettings {
     func persist() {
         let before = SettingsPersistence.load(from: url)
         var p = before
-        p.cardDensity = cardDensity.rawValue
         p.thresholds = PersistedThresholds(
             cpuWarn: thresholds.cpuWarn, cpuCritical: thresholds.cpuCritical,
             memWarn: thresholds.memWarn, memCritical: thresholds.memCritical,
@@ -98,23 +84,14 @@ final class AppSettings {
         p.notifyWarn = notifyWarn
         p.notifyCritical = notifyCritical
         p.notifyDebounceSeconds = notifyDebounceSeconds
-        p.launchAtLogin = launchAtLogin
         p.autoUpdateSamplersEnabled = autoUpdateSamplersEnabled
-        p.defaultTerminalApp = defaultTerminalApp
         p.postWakeGraceSeconds = postWakeGraceSeconds
         SettingsPersistence.save(p, to: url)
         logDiff(before: before, after: p)
     }
 
-    /// Emit one "settings: changed" log line with only the fields that
-    /// differ. Keeps noisy persist-on-slider-drag events from flooding
-    /// the log file while still leaving a clear audit trail of what the
-    /// user changed and when.
     private func logDiff(before: PersistedSettings, after: PersistedSettings) {
         var changes: [String: String] = [:]
-        if before.cardDensity != after.cardDensity {
-            changes["cardDensity"] = "\(before.cardDensity)→\(after.cardDensity)"
-        }
         if before.thresholds.cpuWarn != after.thresholds.cpuWarn {
             changes["cpuWarn"] = "\(before.thresholds.cpuWarn)→\(after.thresholds.cpuWarn)"
         }
@@ -151,14 +128,8 @@ final class AppSettings {
         if before.notifyDebounceSeconds != after.notifyDebounceSeconds {
             changes["notifyDebounceSec"] = "\(before.notifyDebounceSeconds)→\(after.notifyDebounceSeconds)"
         }
-        if before.launchAtLogin != after.launchAtLogin {
-            changes["launchAtLogin"] = "\(before.launchAtLogin)→\(after.launchAtLogin)"
-        }
         if before.autoUpdateSamplersEnabled != after.autoUpdateSamplersEnabled {
             changes["autoUpdateSamplers"] = "\(before.autoUpdateSamplersEnabled)→\(after.autoUpdateSamplersEnabled)"
-        }
-        if before.defaultTerminalApp != after.defaultTerminalApp {
-            changes["defaultTerminalApp"] = "\(before.defaultTerminalApp)→\(after.defaultTerminalApp)"
         }
         if before.postWakeGraceSeconds != after.postWakeGraceSeconds {
             changes["postWakeGraceSec"] = "\(before.postWakeGraceSeconds)→\(after.postWakeGraceSeconds)"

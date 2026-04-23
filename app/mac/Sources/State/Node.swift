@@ -21,7 +21,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
     var notifyOnWarn: Bool
     var notifyOnCritical: Bool
     // Per-node threshold override. When nil the server uses the global
-    // thresholds from AppSettings. Kept as a single optional (not a set of
+    // thresholds from ServerSettings. Kept as a single optional (not a set of
     // booleans + doubles) so "disabled" and "never set" look the same on
     // disk — reverting to global is just clearing the field.
     var customThresholds: MetricThresholds?

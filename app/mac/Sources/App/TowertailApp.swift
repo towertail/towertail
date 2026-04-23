@@ -17,9 +17,11 @@ struct TowertailApp: App {
         MenuBarExtra {
             PopoverRoot()
                 .environment(env.store)
-                .environment(env.settings)
+                .environment(env.clientSettings)
+                .environment(env.serverSettings)
                 .environment(env.nodeStore)
                 .environment(env.samplerUpdater)
+                .environment(\.backend, env.backend)
         } label: {
             // The menu-bar label is instantiated eagerly at launch (unlike
             // the popover content). Piggyback the tap-routing installer
@@ -44,9 +46,11 @@ struct TowertailApp: App {
         Settings {
             PreferencesWindow()
                 .environment(env.store)
-                .environment(env.settings)
+                .environment(env.clientSettings)
+                .environment(env.serverSettings)
                 .environment(env.nodeStore)
                 .environment(env.samplerUpdater)
+                .environment(\.backend, env.backend)
                 // Injected so the Servers pane's Version column can show
                 // "updating…" while a push is in flight. Safe now that
                 // PreferencesWindow only instantiates the active tab's
@@ -67,7 +71,8 @@ struct TowertailApp: App {
                 if let ctx {
                     FullViewWindow(context: ctx)
                         .environment(env.store)
-                        .environment(env.settings)
+                        .environment(env.clientSettings)
+                        .environment(env.serverSettings)
                         .environment(env.nodeStore)
                 } else {
                     ContentUnavailableView("No host", systemImage: "server.rack")
@@ -84,8 +89,10 @@ struct TowertailApp: App {
         WindowGroup(id: "server-edit", for: UUID.self) { $nodeId in
             ServerEditWindow(nodeId: nodeId)
                 .environment(env.nodeStore)
-                .environment(env.settings)
+                .environment(env.clientSettings)
+                .environment(env.serverSettings)
                 .environment(env.store)
+                .environment(\.backend, env.backend)
                 .onAppear { ActivationPolicyCoordinator.shared.acquire() }
                 .onDisappear { ActivationPolicyCoordinator.shared.release() }
         }

@@ -9,13 +9,15 @@ struct ServerEditWindow: View {
     let nodeId: UUID?
 
     @Environment(NodeStore.self) private var nodeStore
+    @Environment(\.backend) private var backend
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         Group {
             if let nodeId, let node = nodeStore.node(withId: nodeId) {
                 ServerEditSheet(context: .edit(node)) { saved in
-                    nodeStore.update(saved)
+                    let b = backend
+                    Task { try? await b?.updateNode(saved) }
                     dismiss()
                 } onCancel: {
                     dismiss()
