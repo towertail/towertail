@@ -128,6 +128,7 @@ One JSON object per sample. Newline-delimited in streaming mode. Fields are stab
 
 - **`ts`**: RFC 3339 with millisecond precision, always UTC (`Z`). The host sets this; the Mac app trusts it for in-sample delta math but uses its own `Date()` for store keys (hosts can drift).
 - **`cpu.pct`**: aggregate across cores, 0–100 (not 0–1). Computed as a ~200ms delta inside the sampler so one-shot mode doesn't need prior state.
+- **`cpu.load_1` / `load_5` / `load_15`**: UNIX load average. **Always `0` on Windows** — Windows has no native load-average metric (no `/proc/loadavg` equivalent, no `sysctl vm.loadavg`). The Mac/Windows clients render "—" when all three are zero AND the host is `os=windows`.
 - **`mem.used`**: `total - available` on Linux, `app + wired + compressed` on Darwin. Excludes cached/inactive so the percentage matches what a human would call "memory in use."
 - **`disks`**: one object per mount after filtering `tmpfs`, `devfs`, `devtmpfs`, `overlay`, `map auto_home`, `squashfs`, `autofs`. If `--no-disk` is set, omit the array entirely (not `[]`).
 - **`disk_io`**: system-wide aggregate disk I/O summed across physical block devices (partitions are rolled up into their parent device to avoid double-counting). `read_cum` / `write_cum` are lifetime byte counters (same contract as `net.rx_cum` / `tx_cum`); the Mac app recomputes deltas across polls. `read_bps` / `write_bps` are from a short in-sampler delta window so one-shot mode produces a usable rate without prior state. Omitted when `--no-disk` is set.
@@ -136,7 +137,7 @@ One JSON object per sample. Newline-delimited in streaming mode. Fields are stab
 - **`errors`**: non-fatal collector errors (e.g., "netstat returned -1 for iface veth0"). The Mac app logs these but still ingests the rest of the sample.
 - **`machine_id`**: optional, read-only. `/etc/machine-id` on Linux, `IOPlatformUUID` on Darwin. Omitted when unavailable (containers without `machine-id`, hardened kernels, etc.). The app uses it as a secondary key to detect hostname renames or collisions — the primary key is still the user-configured SSH target.
 - **`procs`**: optional per-process table. Omitted when `--no-proc` is set. `root=true` means the sampler ran with euid 0, so the list is comprehensive across users (Linux: full `/proc` visibility; macOS: `kinfo_proc` with other-user fields filled). `root=false` + macOS means the list only contains the SSH user's own processes. `top_n` echoes the requested cap; `total` is the full process count on the host; `visible` is how many the sampler could inspect (lower than `total` when some entries were gated). `items` is the union of top-N by `cpu_pct` and top-N by `rss`, deduped by pid, ordered CPU-desc. `cpu_pct` is computed from a ~200ms self-sampling delta (same window as aggregate CPU) so it matches `top(1)`'s aggregate-across-cores convention (0..100×cores). `rss` is resident set size in bytes. Per-proc `user`, `cmd`, `threads`, `state`, `ppid`, `start_ts` are best-effort and omitted when the kernel denies access.
-- **`procs.items[].read_bytes` / `write_bytes`**: lifetime cumulative per-process disk I/O in bytes. Only present when the sampler can read the counters: **Linux** reads `/proc/<pid>/io`, which is mode 0400 and requires either owning the process or `CAP_SYS_PTRACE` (grant once via `sudo setcap cap_sys_ptrace+ep ~/.towertail/towertail-sampler`); rows without the capability will simply omit both fields. **macOS** does not surface per-process I/O via any API gopsutil supports today, so both fields are always omitted there. The Mac app distinguishes `null` (no visibility) from `0` (truly no I/O since start).
+- **`procs.items[].read_bytes` / `write_bytes`**: lifetime cumulative per-process disk I/O in bytes. Only present when the sampler can read the counters. **Linux** reads `/proc/<pid>/io`, which is mode 0400 and requires either owning the process or `CAP_SYS_PTRACE` (grant once via `sudo setcap cap_sys_ptrace+ep ~/.towertail/towertail-sampler`); rows without the capability omit both fields. **Windows** uses `GetProcessIoCounters`, which the owning user can call by default — per-proc I/O is populated for the sampler's own user out of the box, and for all users when the sampler runs elevated. **macOS** does not surface per-process I/O via any API gopsutil supports today, so both fields are always omitted there. Clients distinguish `null` (no visibility) from `0` (truly no I/O since start).
 
 Omitted fields for v1: per-CPU breakdown, temperature, GPU, sensors, per-process network bytes (not exposed by Linux or macOS kernels without root + eBPF / private frameworks). Per-process disk I/O **is** included but may be `null` per-row on Linux without `CAP_SYS_PTRACE` and is always `null` on macOS.
 
@@ -153,10 +154,19 @@ Built from one Go source tree. `go build` for each target. All binaries are pure
 | `linux-armv7` | linux / arm (GOARM=7) | Raspberry Pi 3, older ARM SBCs |
 | `darwin-arm64` | darwin / arm64 | Apple silicon Macs as remote hosts |
 | `darwin-amd64` | darwin / amd64 | Intel Macs as remote hosts |
+| `windows-amd64` | windows / amd64 | Windows 10 1809+ / Windows Server 2019+. Binary name has `.exe` extension. |
+| `windows-arm64` | windows / arm64 | Windows 11 on ARM (Surface Pro X, Copilot+ PCs). `.exe` extension. |
 
-**Five builds.** Embedded into the Mac app bundle at `Towertail.app/Contents/Resources/samplers/<triple>/towertail-sampler`. Total bundle bloat ≈ 30MB at `-ldflags="-s -w"`; acceptable.
+**Seven builds.** Embedded into the Mac/Windows app bundle at `Towertail.app/Contents/Resources/samplers/<triple>/towertail-sampler[.exe]`. Total bundle bloat ≈ 42MB at `-ldflags="-s -w"`; acceptable.
 
-FreeBSD / OpenBSD support is post-v1 — add `freebsd-amd64` when requested. `windows-amd64` is not a goal (Towertail targets Unix hosts).
+**Windows notes.**
+- Binary name is `towertail-sampler.exe`.
+- Default deploy path on a remote Windows host is `%USERPROFILE%\.towertail\towertail-sampler.exe`.
+- Bootstrap detection runs `ssh host "uname -sm || ver"`; Unix hosts return `uname`, Windows falls through to `ver` (e.g. `Microsoft Windows [Version 10.0.22000.1]`). The client parses both to pick a triple.
+- `scp` to Windows uses forward slashes (OpenSSH on Windows accepts them) and targets the `%USERPROFILE%/.towertail/` path.
+- `cpu.load_1/5/15` are always zero (no load-average concept on Windows — see §4).
+
+FreeBSD / OpenBSD support is post-v1 — add `freebsd-amd64` when requested.
 
 ---
 
@@ -220,6 +230,8 @@ Running as the SSH-authenticated **non-root** user:
 - **macOS**: per-process CPU/mem/cmdline across **other users** requires root (or a signed entitlement + taskgated trust). The sampler auto-detects this via `geteuid() == 0` and sets `procs.root` accordingly so the Mac app can display visibility honestly instead of a misleadingly short list.
 
 **If the user later wants root-gated metrics** (per-proc I/O, cross-user visibility on macOS), the path is `sudo setcap cap_sys_ptrace,cap_dac_read_search+ep ~/.towertail/towertail-sampler` on Linux, or invoking the sampler under `sudo` via SSH. The sampler checks euid at startup and widens the `procs` payload automatically.
+
+**Windows permissions.** `IsRoot()` on Windows maps to an **elevated token** (same thing as a process launched from an "Administrator: PowerShell" session). Non-elevated users already see per-process `read_bytes`/`write_bytes` for their own processes via `GetProcessIoCounters`; running elevated extends that to all users' processes and unlocks kernel-protected entries (PID 0, PID 4 System). Aggregate CPU/mem/disk/net need no elevation. The sampler detects elevation via `OpenProcessToken` + `TokenElevation` and surfaces it as `procs.root=true`.
 
 ---
 

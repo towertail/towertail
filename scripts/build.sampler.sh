@@ -35,6 +35,8 @@ TARGETS=(
   "linux-armv7    linux   arm     7"
   "darwin-arm64   darwin  arm64"
   "darwin-amd64   darwin  amd64"
+  "windows-amd64  windows amd64"
+  "windows-arm64  windows arm64"
 )
 
 SINGLE="${1:-}"
@@ -42,7 +44,11 @@ SINGLE="${1:-}"
 build_one() {
   local triple="$1" goos="$2" goarch="$3" goarm="${4:-}"
   local dest_dir="$OUT_DIR/$triple"
-  local dest="$dest_dir/towertail-sampler"
+  local ext=""
+  if [[ "$goos" == "windows" ]]; then
+    ext=".exe"
+  fi
+  local dest="$dest_dir/towertail-sampler${ext}"
   mkdir -p "$dest_dir"
 
   echo "→ $triple  (GOOS=$goos GOARCH=$goarch${goarm:+ GOARM=$goarm})"
@@ -50,6 +56,11 @@ build_one() {
     cd "$SAMPLER_DIR"
     env -i \
       PATH="$PATH" HOME="$HOME" \
+      ${TEMP:+TEMP="$TEMP"} ${TMP:+TMP="$TMP"} \
+      ${LOCALAPPDATA:+LOCALAPPDATA="$LOCALAPPDATA"} \
+      ${USERPROFILE:+USERPROFILE="$USERPROFILE"} \
+      ${GOCACHE:+GOCACHE="$GOCACHE"} ${GOMODCACHE:+GOMODCACHE="$GOMODCACHE"} \
+      ${GOPATH:+GOPATH="$GOPATH"} \
       CGO_ENABLED=0 \
       GOOS="$goos" GOARCH="$goarch" ${goarm:+GOARM="$goarm"} \
       go build -trimpath \
@@ -104,6 +115,9 @@ MANIFEST="$OUT_DIR/manifest.json"
   first=1
   for triple in "${BUILT[@]}"; do
     bin="$OUT_DIR/$triple/towertail-sampler"
+    if [[ "$triple" == windows-* ]]; then
+      bin="${bin}.exe"
+    fi
     hash="$(sha256_of "$bin")"
     if [[ $first -eq 0 ]]; then printf ',\n'; fi
     printf '    "%s": "%s"' "$triple" "$hash"
