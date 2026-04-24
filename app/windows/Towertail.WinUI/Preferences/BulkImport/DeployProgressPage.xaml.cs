@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml.Controls;
 using Towertail.WinUI.Bootstrap;
+using Towertail.WinUI.State;
 
 namespace Towertail.WinUI.Preferences.BulkImport;
 
@@ -13,8 +14,12 @@ public sealed partial class DeployProgressPage : Page
 
     private async Task RunAsync(BulkImportState state, AppEnvironment env)
     {
-        await Task.Run(() => env.Nodes.AddMany(state.Candidates));
-        StatusText.Text = $"Added {state.Candidates.Count} server(s).";
+        var selected = state.Candidates
+            .Where(r => r.Included && !r.IsDuplicate && r.IsValid())
+            .Select(r => r.ToNode())
+            .ToList();
+        await Task.Run(() => env.Nodes.AddMany(selected));
+        StatusText.Text = $"Added {selected.Count} server(s).";
         Bar.IsIndeterminate = false;
         Bar.Value = 100;
     }

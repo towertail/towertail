@@ -33,6 +33,7 @@
     <Compile Include="..\Towertail.WinUI\System\Logger.cs" LinkBase="System" />
     <Compile Include="..\Towertail.WinUI\System\LaunchAtLogin.cs" LinkBase="System" />
     <Compile Include="..\Towertail.WinUI\System\TerminalLauncher.cs" LinkBase="System" />
+    <Compile Include="..\Towertail.WinUI\System\CsvParser.cs" LinkBase="System" />
   </ItemGroup>
 
   <ItemGroup>

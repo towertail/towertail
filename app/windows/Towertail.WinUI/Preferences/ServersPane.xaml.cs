@@ -14,6 +14,13 @@ public sealed partial class ServersPane : UserControl
         _env = env;
         InitializeComponent();
         Items.ItemsSource = env.Nodes.Nodes;
+        AutoUpdateCheck.IsChecked = env.ServerSettings.AutoUpdateSamplersEnabled;
+    }
+
+    private void OnAutoUpdateChanged(object sender, RoutedEventArgs e)
+    {
+        _env.ServerSettings.AutoUpdateSamplersEnabled = AutoUpdateCheck.IsChecked == true;
+        _env.ServerSettings.Persist();
     }
 
     private void OnAddClick(object sender, RoutedEventArgs e)

@@ -14,7 +14,6 @@ public sealed partial class GeneralPane : UserControl
         SshPollBox.Value = env.ServerSettings.SshPollingIntervalSeconds;
         GraceBox.Value = env.ServerSettings.PostWakeGraceSeconds;
         LaunchAtStartupSwitch.IsOn = env.ClientSettings.LaunchAtStartup;
-        AutoUpdateSwitch.IsOn = env.ServerSettings.AutoUpdateSamplersEnabled;
     }
 
     private void OnLocalPollChanged(NumberBox s, NumberBoxValueChangedEventArgs e)
@@ -43,11 +42,5 @@ public sealed partial class GeneralPane : UserControl
         _env.ClientSettings.LaunchAtStartup = LaunchAtStartupSwitch.IsOn;
         _env.ClientSettings.Persist();
         Towertail.WinUI.SystemServices.LaunchAtLogin.Apply(_env.ClientSettings.LaunchAtStartup);
-    }
-
-    private void OnAutoUpdateChanged(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
-    {
-        _env.ServerSettings.AutoUpdateSamplersEnabled = AutoUpdateSwitch.IsOn;
-        _env.ServerSettings.Persist();
     }
 }

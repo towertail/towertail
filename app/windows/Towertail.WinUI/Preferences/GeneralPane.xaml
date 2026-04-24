@@ -79,21 +79,6 @@
                 </Grid>
             </Border>
 
-            <TextBlock Text="Samplers" Style="{StaticResource SettingsSectionHeaderTextBlockStyle}" />
-
-            <Border Style="{StaticResource SettingsRowBorder}">
-                <Grid Style="{StaticResource SettingsRowGrid}" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="16">
-                    <FontIcon Grid.Column="0" Glyph="&#xE895;" FontSize="18" VerticalAlignment="Center" />
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                        <TextBlock Text="Auto-update remote samplers" Style="{ThemeResource BodyStrongTextBlockStyle}" />
-                        <TextBlock Text="Upload newer sampler binaries when a remote is out of date."
-                                   Style="{ThemeResource CaptionTextBlockStyle}"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    </StackPanel>
-                    <ToggleSwitch Grid.Column="2" x:Name="AutoUpdateSwitch" Toggled="OnAutoUpdateChanged" />
-                </Grid>
-            </Border>
-
         </StackPanel>
     </ScrollViewer>
 </UserControl>

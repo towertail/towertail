@@ -13,17 +13,20 @@ public sealed partial class ThresholdsPane : UserControl
         _env = env;
         InitializeComponent();
         var t = env.ServerSettings.Thresholds;
-        CpuWarnBox.Value = t.CpuWarn;   CpuCritBox.Value = t.CpuCritical;
-        MemWarnBox.Value = t.MemWarn;   MemCritBox.Value = t.MemCritical;
-        DiskWarnBox.Value = t.DiskWarn; DiskCritBox.Value = t.DiskCritical;
+        CpuWarnBox.Value  = ToPct(t.CpuWarn);     CpuCritBox.Value  = ToPct(t.CpuCritical);
+        MemWarnBox.Value  = ToPct(t.MemWarn);     MemCritBox.Value  = ToPct(t.MemCritical);
+        DiskWarnBox.Value = ToPct(t.DiskWarn);    DiskCritBox.Value = ToPct(t.DiskCritical);
     }
 
     private void OnSaveClick(object sender, RoutedEventArgs e)
     {
         _env.ServerSettings.Thresholds = new MetricThresholds(
-            CpuWarnBox.Value, CpuCritBox.Value,
-            MemWarnBox.Value, MemCritBox.Value,
-            DiskWarnBox.Value, DiskCritBox.Value);
+            FromPct(CpuWarnBox.Value),  FromPct(CpuCritBox.Value),
+            FromPct(MemWarnBox.Value),  FromPct(MemCritBox.Value),
+            FromPct(DiskWarnBox.Value), FromPct(DiskCritBox.Value));
         _env.ServerSettings.Persist();
     }
+
+    private static double ToPct(double fraction) => Math.Round(fraction * 100.0);
+    private static double FromPct(double percent) => Math.Clamp(percent / 100.0, 0.0, 1.0);
 }

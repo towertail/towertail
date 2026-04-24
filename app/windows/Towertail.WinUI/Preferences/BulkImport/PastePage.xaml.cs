@@ -17,10 +17,20 @@ public sealed partial class PastePage : Page
             var line = raw.Trim();
             if (string.IsNullOrEmpty(line)) continue;
             var at = line.IndexOf('@');
-            if (at <= 0) continue;
+            if (at <= 0)
+            {
+                _state.Candidates.Add(new ImportRow
+                {
+                    DisplayName = line,
+                    Kind = NodeKind.Ssh,
+                    SshUser = Environment.UserName,
+                    SshHost = line,
+                });
+                continue;
+            }
             var user = line[..at];
             var host = line[(at + 1)..];
-            _state.Candidates.Add(new Node
+            _state.Candidates.Add(new ImportRow
             {
                 DisplayName = host,
                 Kind = NodeKind.Ssh,
@@ -28,5 +38,6 @@ public sealed partial class PastePage : Page
                 SshHost = host,
             });
         }
+        _state.NotifyCandidatesChanged();
     }
 }
