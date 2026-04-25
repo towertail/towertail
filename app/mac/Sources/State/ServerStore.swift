@@ -186,8 +186,16 @@ final class ServerStore {
             case .warn:
                 if iconWarn { hasWarn = true }
             case .offline:
-                // Offline counts for the "all offline → critical" escalation
-                // only when that node would be allowed to show critical.
+                // A host that has previously connected but is now offline
+                // is treated as critical immediately — losing contact
+                // with a known-good box is a real incident, not an
+                // ambiguous "we never reached it" state. Hosts that have
+                // never connected since being added stay just plain
+                // offline (they're more likely a misconfiguration the
+                // user is still working through).
+                if iconCritical && vm.everConnected {
+                    return .critical
+                }
                 if iconCritical {
                     hasOfflineContributing = true
                     anyContributes = true

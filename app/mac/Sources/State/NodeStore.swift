@@ -92,6 +92,33 @@ final class NodeStore {
         }
     }
 
+    /// Stamps the last-successful-connect timestamp on a node and persists.
+    /// The pacer calls this only on its first successful sample per
+    /// instance — subsequent successes don't re-write so we don't churn
+    /// the JSON file every poll. The supervisor's snapshot diff also
+    /// won't trip on a no-op stamp (skipping when the field is already
+    /// non-nil keeps the supervisor from respawning the pacer).
+    func markConnected(id: UUID, at: Date = Date()) {
+        if let i = nodes.firstIndex(where: { $0.id == id }) {
+            // First-ever connect: stamp + persist (and live with the
+            // supervisor respawn — it's a one-time event per node, not a
+            // per-poll churn).
+            if nodes[i].lastSuccessfulConnect == nil {
+                nodes[i].lastSuccessfulConnect = at
+                persist()
+                Logger.shared.info(
+                    "server: first connect", category: "servers",
+                    hostID: id, host: nodes[i].displayName
+                )
+            }
+            // For warm hosts we deliberately skip updating the field on
+            // every success. The "ever connected" signal is binary; the
+            // exact timestamp isn't load-bearing for the menu-bar
+            // escalation. Persisting on every poll would churn disk and
+            // re-trigger pacer respawns through the snapshot diff.
+        }
+    }
+
     func setFavorite(id: UUID, favorite: Bool) {
         if let i = nodes.firstIndex(where: { $0.id == id }) {
             nodes[i].favorite = favorite

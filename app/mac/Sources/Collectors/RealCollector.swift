@@ -76,6 +76,7 @@ final class RealCollector: Collector {
                 let history = self.history
                 let updater = self.samplerUpdater
                 let reachability = self.reachability
+                let nodeStore = self.nodeStore
                 let task = Task.detached(priority: .utility) {
                     await Self.pacer(
                         node: node,
@@ -84,7 +85,8 @@ final class RealCollector: Collector {
                         settings: settings,
                         history: history,
                         samplerUpdater: updater,
-                        reachability: reachability
+                        reachability: reachability,
+                        nodeStore: nodeStore
                     )
                 }
                 entries[node.id] = Entry(task: task, node: node)
@@ -104,7 +106,8 @@ final class RealCollector: Collector {
         settings: ServerSettings,
         history: HistoryStore?,
         samplerUpdater: SamplerUpdateCoordinator?,
-        reachability: SystemReachabilityMonitor?
+        reachability: SystemReachabilityMonitor?,
+        nodeStore: NodeStore
     ) async {
         let kind = node.kind
         let invoker = factory(node)
@@ -128,7 +131,10 @@ final class RealCollector: Collector {
         //
         // Counter resets to 0 on any successful sample.
         var transientFailures = 0
-        var everConnected = false
+        // Seed from disk so a host that connected on a previous launch
+        // gets the indefinite-retry treatment immediately at startup,
+        // even if it never recovers in this session.
+        var everConnected = node.lastSuccessfulConnect != nil
         let maxColdAttempts = 3
         let coldBaseSec: Double = 2          // 2, 4, 8 → halts after ~14s
         let warmBaseSec: Double = 10         // 10, 20, 40, 80, … capped
@@ -162,9 +168,19 @@ final class RealCollector: Collector {
             do {
                 let sample = try await invoker.invokeOnce(node: node)
                 transientFailures = 0
+                let firstSuccess = !everConnected
                 everConnected = true
                 await MainActor.run {
                     sink.ingest(sample, for: node.id)
+                    if let vm = sink.serverVMs.first(where: { $0.id == node.id }) {
+                        vm.everConnected = true
+                    }
+                    if firstSuccess {
+                        // Persist the warm flag exactly once — subsequent
+                        // successes keep `everConnected` true in memory
+                        // without churning settings.json.
+                        nodeStore.markConnected(id: node.id, at: sample.ts)
+                    }
                     let enabled = settings.autoUpdateSamplersEnabled
                     samplerUpdater?.maybeUpdate(
                         node: node,
@@ -290,6 +306,11 @@ final class RealCollector: Collector {
                 kind: node.kind,
                 thresholds: node.customThresholds ?? settings.thresholds
             )
+            // Local nodes are always considered "warm" — the sampler is
+            // a bundled binary on the same machine, so an offline reading
+            // is genuinely a problem worth escalating, not a fresh
+            // never-tried install.
+            vm.everConnected = node.lastSuccessfulConnect != nil || node.kind == .local
             store.register(vm)
         }
         // On every sync, push the currently-effective thresholds per VM —
@@ -301,6 +322,13 @@ final class RealCollector: Collector {
                 vm.thresholds = custom
             } else {
                 vm.thresholds = settings.thresholds
+            }
+            // Refresh the warm flag from the persisted node — handles the
+            // case where the node was added in this session and just got
+            // its first stamp (the pacer also flips the in-memory flag,
+            // so this is mostly the relaunch path).
+            if let node = byID[vm.id], node.lastSuccessfulConnect != nil {
+                vm.everConnected = true
             }
         }
     }

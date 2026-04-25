@@ -50,6 +50,12 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
     var snoozedUntil: Date?
     /// User-pinned favorite. Favorites sort to the top of the popover list.
     var favorite: Bool
+    /// Timestamp of the most recent successful sample. Persisted so a host
+    /// that worked yesterday but is unreachable today still escalates the
+    /// menu-bar icon to red on relaunch — without this, every restart
+    /// would reset the "ever connected" memory and treat known-good hosts
+    /// like brand-new ones.
+    var lastSuccessfulConnect: Date?
 
     init(
         id: UUID = UUID(),
@@ -68,7 +74,8 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         notifyOnCritical: Bool = true,
         customThresholds: MetricThresholds? = nil,
         snoozedUntil: Date? = nil,
-        favorite: Bool = false
+        favorite: Bool = false,
+        lastSuccessfulConnect: Date? = nil
     ) {
         self.id = id
         self.displayName = displayName
@@ -87,6 +94,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         self.customThresholds = customThresholds
         self.snoozedUntil = snoozedUntil
         self.favorite = favorite
+        self.lastSuccessfulConnect = lastSuccessfulConnect
     }
 
     enum CodingKeys: String, CodingKey {
@@ -95,6 +103,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         case tags, enabled
         case iconOnWarn, iconOnCritical, notifyOnWarn, notifyOnCritical
         case customThresholds, snoozedUntil, favorite
+        case lastSuccessfulConnect
         // Legacy single-toggle flag from the first pass. If present it
         // seeds both iconOnWarn and iconOnCritical so users who already
         // disabled menu-bar icon for a noisy host keep that behavior after
@@ -121,6 +130,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         try c.encodeIfPresent(customThresholds, forKey: .customThresholds)
         try c.encodeIfPresent(snoozedUntil, forKey: .snoozedUntil)
         try c.encode(favorite, forKey: .favorite)
+        try c.encodeIfPresent(lastSuccessfulConnect, forKey: .lastSuccessfulConnect)
     }
 
     init(from decoder: Decoder) throws {
@@ -149,6 +159,34 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         self.customThresholds = try c.decodeIfPresent(MetricThresholds.self, forKey: .customThresholds)
         self.snoozedUntil = try c.decodeIfPresent(Date.self, forKey: .snoozedUntil)
         self.favorite = try c.decodeIfPresent(Bool.self, forKey: .favorite) ?? false
+        self.lastSuccessfulConnect = try c.decodeIfPresent(Date.self, forKey: .lastSuccessfulConnect)
+    }
+
+    /// Equality deliberately ignores `lastSuccessfulConnect`. The collector
+    /// supervisor uses `currentNode != entry.node` to decide whether to
+    /// respawn a pacer (e.g. after the user changes the auth method);
+    /// stamping `lastSuccessfulConnect` on every fresh install would
+    /// otherwise cancel and restart the pacer the moment it succeeded
+    /// for the first time. Field is also one we never want a user-driven
+    /// "Reset" UI to surface as a diff — it's an internal liveness flag.
+    static func == (lhs: Node, rhs: Node) -> Bool {
+        lhs.id == rhs.id
+            && lhs.displayName == rhs.displayName
+            && lhs.kind == rhs.kind
+            && lhs.sshUser == rhs.sshUser
+            && lhs.sshHost == rhs.sshHost
+            && lhs.sshPort == rhs.sshPort
+            && lhs.authMethod == rhs.authMethod
+            && lhs.knownHostFingerprint == rhs.knownHostFingerprint
+            && lhs.tags == rhs.tags
+            && lhs.enabled == rhs.enabled
+            && lhs.iconOnWarn == rhs.iconOnWarn
+            && lhs.iconOnCritical == rhs.iconOnCritical
+            && lhs.notifyOnWarn == rhs.notifyOnWarn
+            && lhs.notifyOnCritical == rhs.notifyOnCritical
+            && lhs.customThresholds == rhs.customThresholds
+            && lhs.snoozedUntil == rhs.snoozedUntil
+            && lhs.favorite == rhs.favorite
     }
 
     /// True only when snoozedUntil is set and still in the future.

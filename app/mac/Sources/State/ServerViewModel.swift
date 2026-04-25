@@ -34,6 +34,13 @@ final class ServerViewModel: Identifiable {
     var kind: NodeKind
     var state: ServerConnState
     var lastSeen: Date?
+    /// True after the first successful sample has ever been ingested for
+    /// this host. Drives the menu-bar escalation: a known-good host that
+    /// is now offline is "critical" (red icon), whereas a brand-new host
+    /// that has never connected stays just plain offline. Seeded from
+    /// `Node.lastSuccessfulConnect` on startup so a relaunch keeps the
+    /// memory.
+    var everConnected: Bool = false
 
     var cpu: MetricSeries
     var mem: MetricSeries
@@ -380,7 +387,13 @@ final class ServerViewModel: Identifiable {
 
     var worstTint: ThresholdTint {
         switch state {
-        case .offline: return .stale
+        case .offline:
+            // A previously-good host that's now offline is a real
+            // incident — surface it red on the card too, matching the
+            // menu-bar escalation. Brand-new hosts that have never
+            // connected stay neutral to avoid screaming about a setup
+            // the user is still working on.
+            return everConnected ? .critical : .stale
         case .suspended: return .stale
         case .critical: return .critical
         case .warn: return .warn
