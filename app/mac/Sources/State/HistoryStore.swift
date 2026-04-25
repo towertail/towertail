@@ -30,16 +30,27 @@ final class HistoryStore: @unchecked Sendable {
     /// Lazily-initialized JSON codec for proc item lists. Decoder uses
     /// fractional-seconds ISO-8601 so round-trip with sampler-produced
     /// start_ts works; encoder mirrors that format.
+    ///
+    /// Formatters are cached at type level — `ISO8601DateFormatter` allocs
+    /// pull in ICU's SimpleDateFormat, which showed up on the energy hot
+    /// path when constructed per encode/decode call.
+    private static let fractionalFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let plainFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
     private static let procDecoder: JSONDecoder = {
         let d = JSONDecoder()
         d.dateDecodingStrategy = .custom { decoder in
             let c = try decoder.singleValueContainer()
             let s = try c.decode(String.self)
-            let fmt = ISO8601DateFormatter()
-            fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            if let parsed = fmt.date(from: s) { return parsed }
-            fmt.formatOptions = [.withInternetDateTime]
-            if let parsed = fmt.date(from: s) { return parsed }
+            if let parsed = fractionalFormatter.date(from: s) { return parsed }
+            if let parsed = plainFormatter.date(from: s) { return parsed }
             throw DecodingError.dataCorruptedError(in: c, debugDescription: "invalid ts: \(s)")
         }
         return d
@@ -47,10 +58,8 @@ final class HistoryStore: @unchecked Sendable {
     private static let procEncoder: JSONEncoder = {
         let e = JSONEncoder()
         e.dateEncodingStrategy = .custom { date, encoder in
-            let fmt = ISO8601DateFormatter()
-            fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
             var c = encoder.singleValueContainer()
-            try c.encode(fmt.string(from: date))
+            try c.encode(fractionalFormatter.string(from: date))
         }
         return e
     }()
@@ -251,13 +260,13 @@ final class HistoryStore: @unchecked Sendable {
     func appendProcs(nodeID: UUID, t: Date, root: Bool, items: [ProcSample]) {
         let id = nodeID.uuidString
         let ts = t.timeIntervalSince1970
-        // Encode on the caller's thread so we don't capture `[ProcSample]`
-        // (not Sendable) into a @Sendable DispatchQueue closure. Failures
-        // here mean we drop this one snapshot silently — better than
-        // crashing the collector.
-        guard let payload = try? Self.procEncoder.encode(items) else { return }
+        // ProcSample is Sendable, so encoding moves to the writer queue.
+        // Encoding on the main actor was the dominant CPU cost for live
+        // polling — `JSONEncoder.encode([ProcSample])` per sample, per
+        // host, on every tick.
         queue.async { [weak self] in
             guard let self, let stmt = self.insertProcsStmt else { return }
+            guard let payload = try? Self.procEncoder.encode(items) else { return }
             sqlite3_reset(stmt)
             sqlite3_clear_bindings(stmt)
             _ = id.withCString { cstr in

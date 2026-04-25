@@ -1,10 +1,28 @@
 import SwiftUI
 
+/// Composite key that lets `.task(id:)` restart on either host swap or
+/// active-state change.
+private struct TaskKey: Hashable {
+    let host: UUID
+    let active: Bool
+}
+
 struct FullViewWindow: View {
     let context: FullViewContext
     @Environment(ServerStore.self) private var store
     @Environment(ServerSettings.self) private var settings
     @Environment(NodeStore.self) private var nodeStore
+    /// SwiftUI's WindowGroup retains scene state after the user closes the
+    /// window (ordered-out, not destroyed) so a re-open is fast. AppKit
+    /// still includes the offscreen NSWindow in its layout cycle, which
+    /// means our Charts keep diffing against fresh snapshots and burning
+    /// CPU even when nothing is visible.
+    ///
+    /// `scenePhase` flips to `.background` when the window is ordered out
+    /// (closed but retained). That is the most reliable signal — focus-only
+    /// indicators like `controlActiveState` stay `.inactive` for an open
+    /// window in the background too, which would over-pause us.
+    @Environment(\.scenePhase) private var scenePhase
     @State private var model: FullViewModel
     /// Active host id. Seeded from `context` but mutable so the header's
     /// host picker can swap the view between servers without re-opening
@@ -23,9 +41,6 @@ struct FullViewWindow: View {
     @State private var cachedMainSamples: [MetricPoint] = []
     @State private var cachedDiskCapacity: [MetricPoint] = []
     @State private var cachedDiskIO: [MetricPoint] = []
-    /// Timer publisher driving the cache refresh. `.autoconnect` subscribes
-    /// the moment the view mounts and releases on teardown.
-    private let renderTimer = Timer.publish(every: FullViewWindow.renderInterval, tolerance: 0.05, on: .main, in: .common).autoconnect()
 
     init(context: FullViewContext) {
         self.context = context
@@ -34,6 +49,23 @@ struct FullViewWindow: View {
     }
 
     var body: some View {
+        // Short-circuit before reading anything off `store` when the window
+        // is closed-but-retained. Reading `store.serverVMs` (and downstream
+        // `vm.cpu.latest` etc.) registers @Observable tracking, which means
+        // every poll re-invokes this body, re-evaluates the chart content
+        // closure, and keeps SwiftUI's display cycle running — burning CPU
+        // even though the window is offscreen. The placeholder reads no
+        // observable state, so no invalidations are scheduled until the
+        // user reopens the window and scenePhase flips back to .active.
+        if scenePhase == .background {
+            Color.clear.frame(minWidth: 860, minHeight: 520)
+        } else {
+            activeBody
+        }
+    }
+
+    @ViewBuilder
+    private var activeBody: some View {
         let vm = store.serverVMs.first(where: { $0.id == activeHostId })
         VStack(spacing: 0) {
             header(vm: vm)
@@ -64,8 +96,25 @@ struct FullViewWindow: View {
             refreshCaches(vm: vm)
         }
         .onDisappear { ActivationPolicyCoordinator.shared.release() }
-        .onReceive(renderTimer) { _ in
-            refreshCaches(vm: vm)
+        // Drives the 5Hz cache refresh while the window is on-screen.
+        // `.task` is bound to the view's lifetime, so closing the window
+        // cancels the loop. The previous Timer.publish().autoconnect()
+        // path leaked: the publisher was held by a let-property created
+        // every time SwiftUI re-instantiated the View struct, so abandoned
+        // copies kept firing forever and burning CPU long after close.
+        //
+        // Gated on `scenePhase` so a window the user has closed (which
+        // WindowGroup keeps alive offscreen) doesn't keep churning SwiftUI
+        // Charts every 200ms — that was the post-close energy spike. When
+        // the window is reactivated the task restarts via `.task(id:)`.
+        .task(id: TaskKey(host: activeHostId, active: scenePhase == .active)) {
+            guard scenePhase == .active else { return }
+            let nanos = UInt64(Self.renderInterval * 1_000_000_000)
+            while !Task.isCancelled {
+                let current = store.serverVMs.first(where: { $0.id == activeHostId })
+                refreshCaches(vm: current)
+                try? await Task.sleep(nanoseconds: nanos)
+            }
         }
         .onChange(of: model.metric) { _, _ in refreshCaches(vm: vm) }
         .onChange(of: model.zoomRange) { _, _ in refreshCaches(vm: vm) }

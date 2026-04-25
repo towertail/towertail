@@ -259,18 +259,35 @@ struct ProcSample: Codable, Sendable, Identifiable {
 }
 
 enum SampleCodec {
-    static func decoder() -> JSONDecoder {
+    // ISO8601DateFormatter is expensive to allocate (pulls in ICU's
+    // SimpleDateFormat). Reuse two instances — one with fractional seconds,
+    // one without — instead of constructing them inside the decode closure
+    // for every Date field of every sample.
+    private static let fractionalFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let plainFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
+    /// JSONDecoder is thread-safe once configured (Foundation guarantees
+    /// concurrent calls to `decode` are safe). Hand the same instance back
+    /// to every caller instead of building one per poll.
+    private static let sharedDecoder: JSONDecoder = {
         let d = JSONDecoder()
         d.dateDecodingStrategy = .custom { decoder in
             let c = try decoder.singleValueContainer()
             let s = try c.decode(String.self)
-            let fmt = ISO8601DateFormatter()
-            fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            if let parsed = fmt.date(from: s) { return parsed }
-            fmt.formatOptions = [.withInternetDateTime]
-            if let parsed = fmt.date(from: s) { return parsed }
+            if let parsed = fractionalFormatter.date(from: s) { return parsed }
+            if let parsed = plainFormatter.date(from: s) { return parsed }
             throw DecodingError.dataCorruptedError(in: c, debugDescription: "invalid ts: \(s)")
         }
         return d
-    }
+    }()
+
+    static func decoder() -> JSONDecoder { sharedDecoder }
 }

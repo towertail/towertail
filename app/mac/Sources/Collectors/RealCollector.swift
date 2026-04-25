@@ -31,8 +31,17 @@ final class RealCollector: Collector {
         // Supervisor loop: reconciles the set of per-node polling tasks with
         // the current node list. Each node has its own pacer driven by
         // settings.pollingInterval(for:) so kinds can tick at different rates.
-        var tasks: [UUID: Task<Void, Never>] = [:]
-        defer { tasks.values.forEach { $0.cancel() } }
+        //
+        // We keep the captured Node alongside the task so we can detect
+        // config edits and respawn. We also keep entries for pacers that
+        // exited (after a fatal error); they sit parked until the user
+        // edits the node, at which point the diff trips a respawn.
+        struct Entry {
+            var task: Task<Void, Never>
+            var node: Node
+        }
+        var entries: [UUID: Entry] = [:]
+        defer { entries.values.forEach { $0.task.cancel() } }
 
         while !Task.isCancelled {
             let snapshot = await MainActor.run { nodeStore.nodes }
@@ -40,20 +49,34 @@ final class RealCollector: Collector {
                 Self.syncViewModels(for: snapshot, store: sink, settings: settings)
             }
             let enabledIDs = Set(snapshot.filter(\.enabled).map(\.id))
+            let byID: [UUID: Node] = Dictionary(uniqueKeysWithValues: snapshot.map { ($0.id, $0) })
 
-            // Cancel tasks for removed/disabled nodes.
-            for (id, task) in tasks where !enabledIDs.contains(id) {
-                task.cancel()
-                tasks[id] = nil
+            // Drop tasks for removed/disabled nodes.
+            for (id, entry) in entries where !enabledIDs.contains(id) {
+                entry.task.cancel()
+                entries[id] = nil
             }
-            // Spawn per-node pacers for newly enabled nodes.
-            for node in snapshot where node.enabled && tasks[node.id] == nil {
+            // Drop tasks whose node config changed; the spawn loop below
+            // will start a fresh pacer with the new value. This is the
+            // retry trigger after a permanent error: editing the node
+            // (e.g. switching auth method) clears the halted entry.
+            for (id, entry) in entries {
+                if let current = byID[id], current != entry.node {
+                    entry.task.cancel()
+                    entries[id] = nil
+                }
+            }
+            // Spawn per-node pacers for nodes without a live entry. An
+            // exited (halted-on-error) entry blocks respawn until its node
+            // config changes — otherwise we'd hammer a host that just
+            // refused our credentials every 2 seconds.
+            for node in snapshot where node.enabled && entries[node.id] == nil {
                 let factory = self.invokerFactory
                 let settings = self.settings
                 let history = self.history
                 let updater = self.samplerUpdater
                 let reachability = self.reachability
-                tasks[node.id] = Task.detached(priority: .utility) {
+                let task = Task.detached(priority: .utility) {
                     await Self.pacer(
                         node: node,
                         factory: factory,
@@ -64,6 +87,7 @@ final class RealCollector: Collector {
                         reachability: reachability
                     )
                 }
+                entries[node.id] = Entry(task: task, node: node)
             }
 
             // Re-check node list periodically (pick up adds/removes/kind changes).
@@ -84,9 +108,6 @@ final class RealCollector: Collector {
     ) async {
         let kind = node.kind
         let invoker = factory(node)
-        // Only log online↔offline transitions, not every sample — otherwise
-        // the log grows by a line every 2-10 seconds per host.
-        var lastWasSuccess: Bool? = nil
         // Tracks whether this pacer has marked the VM suspended, so the
         // next resumed tick can clear the badge on a single main-hop.
         var wasSuspended = false
@@ -104,7 +125,6 @@ final class RealCollector: Collector {
                         }
                     }
                     wasSuspended = true
-                    lastWasSuccess = nil
                 }
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 continue
@@ -127,30 +147,26 @@ final class RealCollector: Collector {
                         reportedSampler: sample.host.sampler,
                         enabled: enabled
                     )
-                    if lastWasSuccess == false {
-                        Logger.shared.info(
-                            "sample: recovered",
-                            category: "sample",
-                            hostID: node.id, host: node.displayName,
-                            kv: ["kind": kind.rawValue]
-                        )
-                    }
                 }
-                lastWasSuccess = true
             } catch {
                 let reason = shortReason(for: error)
                 await MainActor.run {
                     sink.markOffline(id: node.id, reason: reason, at: Date())
-                    if lastWasSuccess != false {
-                        Logger.shared.warn(
-                            "sample: failed",
-                            category: "sample",
-                            hostID: node.id, host: node.displayName,
-                            kv: ["kind": kind.rawValue, "reason": reason]
-                        )
-                    }
+                    Logger.shared.warn(
+                        "sample: halting on error",
+                        category: "sample",
+                        hostID: node.id, host: node.displayName,
+                        kv: ["kind": kind.rawValue, "reason": reason]
+                    )
                 }
-                lastWasSuccess = false
+                // Stop polling. Citadel leaks the underlying TCP socket
+                // when SSH auth fails — its connect chain awaits
+                // `.authenticated` on the channel pipeline but never
+                // closes the channel on failure — so retrying every
+                // pollingInterval just stacks ESTABLISHED sockets. The
+                // supervisor respawns this pacer once the user edits the
+                // node (NodeStore.update → snapshot diff).
+                return
             }
             let intervalSec = await MainActor.run { settings.pollingInterval(for: kind) }
             let nanos = UInt64(max(1, intervalSec)) * 1_000_000_000

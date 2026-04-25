@@ -45,23 +45,34 @@ struct SSHSamplerInvoker: SamplerInvoker {
                 { (fp: String) in cb(nodeId, fp) }
             }
         )
-        defer { Task { try? await client.close() } }
 
+        // Structured close on the way out. The previous fire-and-forget
+        // `Task { try? await client.close() }` could be dropped on the
+        // floor when the parent pacer was canceled, leaving the SSH
+        // channel ESTABLISHED and the FD leaking. Detach so cancellation
+        // of the parent doesn't propagate, but still await so we don't
+        // return until the channel is torn down.
+        let result: Result<Sample, Error>
         do {
             let output = try await client.executeCommand("\(Self.remoteSamplerPath) --once")
             let data = Data(buffer: output)
             guard !data.isEmpty else {
                 throw SamplerInvokeError.emptyOutput
             }
-            return try SampleCodec.decoder().decode(Sample.self, from: data)
+            result = .success(try SampleCodec.decoder().decode(Sample.self, from: data))
         } catch let err as SamplerInvokeError {
-            throw err
+            result = .failure(err)
         } catch let err as DecodingError {
-            throw SamplerInvokeError.decodeFailed(underlying: err)
+            result = .failure(SamplerInvokeError.decodeFailed(underlying: err))
         } catch {
-            throw SamplerInvokeError.sshFailed(
+            result = .failure(SamplerInvokeError.sshFailed(
                 stderr: error.localizedDescription, exitCode: -1
-            )
+            ))
+        }
+        await Task.detached { try? await client.close() }.value
+        switch result {
+        case .success(let s): return s
+        case .failure(let e): throw e
         }
     }
 }

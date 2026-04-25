@@ -10,6 +10,16 @@ enum PopoverFilter: Hashable {
 struct PopoverRoot: View {
     @Environment(ServerStore.self) private var store
     @Environment(NodeStore.self) private var nodeStore
+    /// `MenuBarExtra(style: .window)` keeps its popover content view tree
+    /// alive even after the user dismisses the popover (window ordered
+    /// out, not destroyed) so the next click feels instant. The downside:
+    /// every ServerCardView's 1Hz `TimelineView` keeps firing and every
+    /// CanvasSparkline keeps redrawing on each ingest, even with the
+    /// popover hidden. We short-circuit on `scenePhase == .background` to
+    /// stop reading any @Observable state, which is what schedules those
+    /// updates. Reopening the popover restores `.active` and the body
+    /// re-runs normally.
+    @Environment(\.scenePhase) private var scenePhase
     @State private var filter: PopoverFilter = .all
     /// Live text from the search field. Changes drive a debounce task that
     /// copies into `debouncedQuery` — typing doesn't rebuild the card list
@@ -25,6 +35,17 @@ struct PopoverRoot: View {
     private static let searchDebounce: Duration = .milliseconds(400)
 
     var body: some View {
+        if scenePhase == .background {
+            // Same fixed size as the active body so AppKit's window
+            // measurement doesn't churn when the popover reopens.
+            Color.clear.frame(width: 360, height: 620)
+        } else {
+            activeBody
+        }
+    }
+
+    @ViewBuilder
+    private var activeBody: some View {
         VStack(spacing: 0) {
             PopoverHeader(filter: $filter, searchText: $searchText)
             Divider().opacity(0.3)

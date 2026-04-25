@@ -193,12 +193,20 @@ enum SSHConnectionFactory {
         var lastError: Error?
         for method in methods {
             do {
+                // Inject a tiny channel handler that, once the TCP socket
+                // is up, tightens keepalive on the underlying file
+                // descriptor. macOS defaults are very long (~2hr idle),
+                // which would let a half-open flow keep a remote sshd +
+                // sampler alive indefinitely if our laptop sleeps or NAT
+                // drops the flow. ~30s idle / 10s probe / 4 probes is
+                // noticed-dead within ~70s.
                 let client = try await SSHClient.connect(
                     host: host,
                     port: port,
                     authenticationMethod: method,
                     hostKeyValidator: .custom(validator),
-                    reconnect: .never
+                    reconnect: .never,
+                    channelHandlers: [TCPKeepaliveHandler()]
                 )
                 return client
             } catch {
@@ -222,6 +230,27 @@ enum SSHConnectionFactory {
                 "(3) re-enable legacy RSA on the server (PubkeyAcceptedAlgorithms +ssh-rsa).")
         }
         throw lastError ?? NoCredential(reason: "SSH authentication failed")
+    }
+
+    /// Tightens TCP keepalive on the underlying socket once the channel
+    /// is active. Sendable because it carries no state — each connect
+    /// gets its own instance via the `channelHandlers` array.
+    final class TCPKeepaliveHandler: ChannelInboundHandler, Sendable {
+        typealias InboundIn = Any
+        typealias InboundOut = Any
+
+        func channelActive(context: ChannelHandlerContext) {
+            let channel = context.channel
+            // Errors on these are best-effort — if the kernel doesn't
+            // accept the option (older macOS, sandbox restriction), we
+            // still get the OS default keepalive behavior, which is just
+            // less aggressive than what we asked for.
+            _ = channel.setOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_KEEPALIVE), value: 1)
+            _ = channel.setOption(ChannelOptions.socket(SocketOptionLevel(IPPROTO_TCP), TCP_KEEPALIVE), value: 30)
+            _ = channel.setOption(ChannelOptions.socket(SocketOptionLevel(IPPROTO_TCP), TCP_KEEPINTVL), value: 10)
+            _ = channel.setOption(ChannelOptions.socket(SocketOptionLevel(IPPROTO_TCP), TCP_KEEPCNT), value: 4)
+            context.fireChannelActive()
+        }
     }
 
     private static func isAllAuthFailed(_ error: Error) -> Bool {
