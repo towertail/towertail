@@ -66,6 +66,11 @@ public sealed record SettingsImportOptions(
 
 public static class SettingsTransfer
 {
+    // NOTE: this envelope deliberately excludes credentials.json (DPAPI-protected
+    // SSH passwords). Machine-bound ciphertext can't be decrypted on a different
+    // PC, and passwords are a per-user secret — the import UX surfaces this as
+    // "passwords don't transfer across machines."
+
     public static string Encode(SettingsExport export)
         => JsonSerializer.Serialize(export, SettingsExport.JsonOptions);
 

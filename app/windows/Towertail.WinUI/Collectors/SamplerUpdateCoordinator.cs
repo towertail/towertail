@@ -9,15 +9,19 @@ namespace Towertail.WinUI.Collectors;
 /// </summary>
 public sealed class SamplerUpdateCoordinator
 {
-    private readonly IProcessRunner _runner;
     private readonly SamplerManifest? _manifest;
+    private readonly HostKeyPrompt? _hostKeyPrompt;
+    private readonly Action<Guid, string>? _onTrust;
     private readonly HashSet<Guid> _completed = new();
     private readonly object _lock = new();
 
-    public SamplerUpdateCoordinator(IProcessRunner runner)
+    public SamplerUpdateCoordinator(
+        HostKeyPrompt? hostKeyPrompt = null,
+        Action<Guid, string>? onTrust = null)
     {
-        _runner = runner;
         _manifest = SamplerManifest.LoadFromBundle();
+        _hostKeyPrompt = hostKeyPrompt;
+        _onTrust = onTrust;
     }
 
     public async Task<bool> EnsureDeployedAsync(Node node, CancellationToken ct = default)
@@ -26,20 +30,22 @@ public sealed class SamplerUpdateCoordinator
 
         lock (_lock) if (_completed.Contains(node.Id)) return true;
 
-        var bootstrap = new SshBootstrap(_runner, node);
+        var bootstrap = new SshBootstrap(node, _hostKeyPrompt, _onTrust);
         var triple = await bootstrap.DetectAsync(ct).ConfigureAwait(false);
         if (triple.Os == SshBootstrap.RemoteOs.Unknown) return false;
 
-        var invoker = new SshSamplerInvoker(_runner, node,
+        var invoker = new SshSamplerInvoker(
+            node,
             remotePath: triple.IsWindows
                 ? "%USERPROFILE%/.towertail/towertail-sampler.exe"
-                : "~/.towertail/towertail-sampler");
+                : "~/.towertail/towertail-sampler",
+            hostKeyPrompt: _hostKeyPrompt,
+            onTrust: _onTrust);
 
         string remoteVersion = "";
         try { remoteVersion = await invoker.VersionAsync(ct).ConfigureAwait(false); }
         catch { /* missing binary, treat as stale */ }
 
-        var expected = _manifest?.ExpectedSha(triple.Triple);
         var localVersion = _manifest?.Version ?? "0.0.0-dev";
 
         if (string.IsNullOrEmpty(remoteVersion) || !remoteVersion.Contains(localVersion))

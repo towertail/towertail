@@ -65,6 +65,7 @@ final class SamplerUpdateCoordinator {
         guard let user = node.sshUser, !user.isEmpty,
               let host = node.sshHost, !host.isEmpty
         else { return }
+        _ = (user, host)
 
         updatingNodeIDs.insert(node.id)
         lastAttempt[node.id] = Date()
@@ -72,6 +73,7 @@ final class SamplerUpdateCoordinator {
         let nodeHostname = node.displayName
         let fromVersion = reportedSampler
         let expected = manifest.expectedSamplerField
+        let nodeCopy = node
         Logger.shared.info(
             "auto-update: push starting", hostID: nodeID, host: nodeHostname,
             kv: ["from": fromVersion, "to": expected]
@@ -81,16 +83,8 @@ final class SamplerUpdateCoordinator {
             var triple: String?
             var failure: Error?
             do {
-                let t = try await SSHBootstrap.detectTriple(user: user, host: host)
+                let t = try await SSHBootstrap.pushUpdate(node: nodeCopy)
                 triple = t
-                guard let binary = SSHBootstrap.bundledBinary(forTriple: t) else {
-                    throw SamplerInvokeError.misconfigured(
-                        "no bundled sampler for remote triple \(t)"
-                    )
-                }
-                _ = try await SSHBootstrap.copyBinary(
-                    localBinary: binary, user: user, host: host
-                )
             } catch {
                 failure = error
             }

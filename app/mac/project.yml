@@ -7,6 +7,11 @@ options:
   generateEmptyDirectories: true
   xcodeVersion: "15.0"
 
+packages:
+  Citadel:
+    url: https://github.com/orlandos-nl/Citadel
+    from: 0.7.0
+
 settings:
   base:
     SWIFT_VERSION: "5.9"
@@ -18,9 +23,6 @@ settings:
     ENABLE_HARDENED_RUNTIME: YES
     ENABLE_USER_SCRIPT_SANDBOXING: NO
     SWIFT_STRICT_CONCURRENCY: complete
-    SYMROOT: $(SRCROOT)/build
-    OBJROOT: $(SRCROOT)/build/Intermediates
-    CONFIGURATION_BUILD_DIR: $(SRCROOT)/build/$(CONFIGURATION)
 
 targets:
   Towertail:
@@ -31,6 +33,8 @@ targets:
       - path: Sources
         excludes:
           - "**/*.md"
+    dependencies:
+      - package: Citadel
     resources:
       - Sources/Design/Assets.xcassets
     preBuildScripts:

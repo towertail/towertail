@@ -11,6 +11,10 @@ struct ServerEditSheet: View {
     @State private var kind: NodeKind
     @State private var sshUser: String
     @State private var sshHost: String
+    @State private var sshPortText: String
+    @State private var authMethod: AuthMethod
+    @State private var password: String
+    @State private var knownHostFingerprint: String?
     @State private var tagsString: String
     @State private var enabled: Bool
     @State private var iconOnWarn: Bool
@@ -20,6 +24,11 @@ struct ServerEditSheet: View {
     @State private var useCustomThresholds: Bool
     @State private var thresholds: MetricThresholds
     @State private var existingId: UUID?
+    /// Snapshot of the on-disk authMethod when the sheet opens. Used to
+    /// decide whether to delete the Keychain entry on save when the user
+    /// flips from password → key.
+    @State private var originalAuthMethod: AuthMethod
+    @State private var showKeyHelp: Bool = false
 
     init(
         context: ServerEditSheetContext,
@@ -36,6 +45,10 @@ struct ServerEditSheet: View {
             _kind = State(initialValue: .ssh)
             _sshUser = State(initialValue: NSUserName())
             _sshHost = State(initialValue: "")
+            _sshPortText = State(initialValue: "")
+            _authMethod = State(initialValue: .key)
+            _password = State(initialValue: "")
+            _knownHostFingerprint = State(initialValue: nil)
             _tagsString = State(initialValue: "")
             _enabled = State(initialValue: true)
             _iconOnWarn = State(initialValue: true)
@@ -43,15 +56,20 @@ struct ServerEditSheet: View {
             _notifyOnWarn = State(initialValue: true)
             _notifyOnCritical = State(initialValue: true)
             _useCustomThresholds = State(initialValue: false)
-            // Seed with defaults; when the sheet appears the disabled sliders
-            // will be replaced with the current global values via .onAppear.
             _thresholds = State(initialValue: .defaults)
             _existingId = State(initialValue: nil)
+            _originalAuthMethod = State(initialValue: .key)
         case .edit(let node):
             _displayName = State(initialValue: node.displayName)
             _kind = State(initialValue: node.kind)
             _sshUser = State(initialValue: node.sshUser ?? "")
             _sshHost = State(initialValue: node.sshHost ?? "")
+            _sshPortText = State(initialValue: node.sshPort.map(String.init) ?? "")
+            _authMethod = State(initialValue: node.authMethod)
+            // Seed from Keychain on appear (below) so the field shows the
+            // existing password and save-with-unchanged doesn't wipe it.
+            _password = State(initialValue: "")
+            _knownHostFingerprint = State(initialValue: node.knownHostFingerprint)
             _tagsString = State(initialValue: node.tags.joined(separator: ", "))
             _enabled = State(initialValue: node.enabled)
             _iconOnWarn = State(initialValue: node.iconOnWarn)
@@ -61,6 +79,7 @@ struct ServerEditSheet: View {
             _useCustomThresholds = State(initialValue: node.customThresholds != nil)
             _thresholds = State(initialValue: node.customThresholds ?? .defaults)
             _existingId = State(initialValue: node.id)
+            _originalAuthMethod = State(initialValue: node.authMethod)
         }
     }
 
@@ -78,6 +97,37 @@ struct ServerEditSheet: View {
                 if kind == .ssh {
                     TextField("SSH user", text: $sshUser)
                     TextField("SSH host", text: $sshHost)
+                    TextField("Port", text: $sshPortText, prompt: Text("22"))
+
+                    Picker("Login method", selection: $authMethod) {
+                        Text("SSH Key").tag(AuthMethod.key)
+                        Text("Password").tag(AuthMethod.password)
+                    }
+
+                    if authMethod == .password {
+                        SecureField("Password", text: $password)
+                            .help("Stored in macOS Keychain, not in settings.json.")
+                    }
+
+                    Button("Need help setting up SSH keys?") {
+                        showKeyHelp = true
+                    }
+                    .buttonStyle(.link)
+
+                    if knownHostFingerprint != nil {
+                        HStack {
+                            Text("Host key")
+                                .foregroundStyle(.secondary)
+                            Text(knownHostFingerprint ?? "")
+                                .font(.system(.caption, design: .monospaced))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer()
+                            Button("Forget") { knownHostFingerprint = nil }
+                                .controlSize(.small)
+                                .help("Clears the pinned fingerprint. The next connect will prompt again.")
+                        }
+                    }
                 }
                 TextField("Tags (comma-separated)", text: $tagsString)
                 Toggle("Enabled", isOn: $enabled)
@@ -120,15 +170,20 @@ struct ServerEditSheet: View {
         }
         .padding(20)
         .frame(width: 520)
+        .sheet(isPresented: $showKeyHelp) {
+            SshKeySetupSheet(user: sshUser, host: sshHost) { showKeyHelp = false }
+        }
         .onAppear {
-            // For a new node (or an existing one with no override yet) the
-            // disabled-but-visible sliders should reflect the global values
-            // the user is actually getting, so toggling the checkbox doesn't
-            // jump to 75/90 defaults unrelated to their setup.
             if case .new = context {
                 thresholds = serverSettings.thresholds
             } else if case .edit(let node) = context, node.customThresholds == nil {
                 thresholds = serverSettings.thresholds
+            }
+            // Seed password from Keychain so the field isn't blank on edit.
+            if case .edit(let node) = context,
+               node.authMethod == .password,
+               password.isEmpty {
+                password = (try? KeychainStore.getPassword(for: node.id)) ?? ""
             }
         }
     }
@@ -176,8 +231,13 @@ struct ServerEditSheet: View {
     private var isValid: Bool {
         guard !displayName.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
         if kind == .ssh {
-            return !sshUser.trimmingCharacters(in: .whitespaces).isEmpty
-                && !sshHost.trimmingCharacters(in: .whitespaces).isEmpty
+            if sshUser.trimmingCharacters(in: .whitespaces).isEmpty
+                || sshHost.trimmingCharacters(in: .whitespaces).isEmpty { return false }
+            // If a port was supplied, it must be a valid 1-65535 number.
+            let trimmed = sshPortText.trimmingCharacters(in: .whitespaces)
+            if !trimmed.isEmpty {
+                guard let p = Int(trimmed), (1...65535).contains(p) else { return false }
+            }
         }
         return true
     }
@@ -187,12 +247,18 @@ struct ServerEditSheet: View {
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
+        let trimmedPort = sshPortText.trimmingCharacters(in: .whitespaces)
+        let port: Int? = trimmedPort.isEmpty ? nil : Int(trimmedPort)
+        let nodeId = existingId ?? UUID()
         let node = Node(
-            id: existingId ?? UUID(),
+            id: nodeId,
             displayName: displayName.trimmingCharacters(in: .whitespaces),
             kind: kind,
             sshUser: kind == .ssh ? sshUser.trimmingCharacters(in: .whitespaces) : nil,
             sshHost: kind == .ssh ? sshHost.trimmingCharacters(in: .whitespaces) : nil,
+            sshPort: kind == .ssh ? port : nil,
+            authMethod: kind == .ssh ? authMethod : .key,
+            knownHostFingerprint: kind == .ssh ? knownHostFingerprint : nil,
             tags: tags,
             enabled: enabled,
             iconOnWarn: iconOnWarn,
@@ -201,6 +267,15 @@ struct ServerEditSheet: View {
             notifyOnCritical: notifyOnCritical,
             customThresholds: useCustomThresholds ? thresholds : nil
         )
+
+        // Keychain handling: write on password auth, clear when the user
+        // flips password → key (or away from SSH entirely).
+        if kind == .ssh && authMethod == .password && !password.isEmpty {
+            try? KeychainStore.setPassword(password, for: nodeId)
+        } else if originalAuthMethod == .password && (authMethod != .password || kind != .ssh) {
+            try? KeychainStore.deletePassword(for: nodeId)
+        }
+
         onSave(node)
     }
 }

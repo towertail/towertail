@@ -43,7 +43,17 @@ enum SamplerInvokeError: LocalizedError {
 
 @Sendable
 func makeInvoker(for node: Node) -> SamplerInvoker {
-    node.kind == .local ? LocalSamplerInvoker() : SSHSamplerInvoker()
+    switch node.kind {
+    case .local:
+        return LocalSamplerInvoker()
+    case .ssh:
+        return SSHSamplerInvoker(
+            hostKeyPrompt: HostKeyTrustPrompter.sharedPromptAdapter,
+            onTrust: { id, fp in
+                Task { @MainActor in HostKeyTrustPersister.persist(nodeId: id, fingerprint: fp) }
+            }
+        )
+    }
 }
 
 enum ProcessRunner {

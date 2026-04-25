@@ -29,6 +29,7 @@ final class LocalBackend: Backend {
         self.serverSettings = serverSettings
         self.nodes = nodeStore
         self.history = history
+        HostKeyTrustPersister.bind(store: nodeStore)
 
         let servers = ServerStore(
             history: history,

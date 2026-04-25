@@ -7,18 +7,24 @@
 
     <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="8">
         <!-- Top controls -->
-        <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,*,Auto" ColumnSpacing="8">
+        <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,*,Auto,Auto" ColumnSpacing="8">
             <Button Grid.Column="0" x:Name="ToggleAllBtn" Content="Select all" Click="OnToggleAll" />
             <AppBarSeparator Grid.Column="1" />
             <TextBlock Grid.Column="2" Text="Default SSH user:" VerticalAlignment="Center"
                        Style="{ThemeResource BodyTextBlockStyle}" />
-            <TextBox Grid.Column="3" x:Name="BulkUserBox" Width="160" PlaceholderText="username" />
-            <ComboBox Grid.Column="4" x:Name="ApplyScopeBox" Width="140" SelectedIndex="0">
+            <TextBox Grid.Column="3" x:Name="BulkUserBox" Width="140" PlaceholderText="username" />
+            <ComboBox Grid.Column="4" x:Name="ApplyScopeBox" Width="130" SelectedIndex="0">
                 <ComboBoxItem Content="blanks only" />
                 <ComboBoxItem Content="all rows" />
             </ComboBox>
-            <Button Grid.Column="5" x:Name="ApplyBtn" Content="Apply to all" Click="OnApplyBulk" />
-            <Button Grid.Column="7" x:Name="TestAllBtn" Content="Test all selected" Click="OnTestAll" />
+            <Button Grid.Column="5" x:Name="ApplyBtn" Content="Apply user" Click="OnApplyBulk" />
+            <AppBarSeparator Grid.Column="6" />
+            <ComboBox Grid.Column="7" x:Name="BulkAuthBox" Width="130" SelectedIndex="0">
+                <ComboBoxItem Content="Key" />
+                <ComboBoxItem Content="Password" />
+            </ComboBox>
+            <Button Grid.Column="9" x:Name="ApplyAuthBtn" Content="Apply login" Click="OnApplyAuth" />
+            <Button Grid.Column="10" x:Name="TestAllBtn" Content="Test all selected" Click="OnTestAll" />
         </Grid>
 
         <!-- Column header -->
@@ -30,12 +36,14 @@
             <Grid Padding="8,6,8,6" ColumnSpacing="8">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="32" />
+                    <ColumnDefinition Width="140" />
                     <ColumnDefinition Width="160" />
-                    <ColumnDefinition Width="180" />
+                    <ColumnDefinition Width="100" />
+                    <ColumnDefinition Width="80" />
+                    <ColumnDefinition Width="100" />
                     <ColumnDefinition Width="120" />
-                    <ColumnDefinition Width="90" />
-                    <ColumnDefinition Width="*" MinWidth="120" />
-                    <ColumnDefinition Width="180" />
+                    <ColumnDefinition Width="*" MinWidth="100" />
+                    <ColumnDefinition Width="160" />
                     <ColumnDefinition Width="72" />
                 </Grid.ColumnDefinitions>
                 <TextBlock Grid.Column="1" Text="Name" Style="{ThemeResource CaptionTextBlockStyle}"
@@ -46,9 +54,13 @@
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 <TextBlock Grid.Column="4" Text="Kind" Style="{ThemeResource CaptionTextBlockStyle}"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                <TextBlock Grid.Column="5" Text="Tags" Style="{ThemeResource CaptionTextBlockStyle}"
+                <TextBlock Grid.Column="5" Text="Login" Style="{ThemeResource CaptionTextBlockStyle}"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                <TextBlock Grid.Column="6" Text="Status" Style="{ThemeResource CaptionTextBlockStyle}"
+                <TextBlock Grid.Column="6" Text="Password" Style="{ThemeResource CaptionTextBlockStyle}"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBlock Grid.Column="7" Text="Tags" Style="{ThemeResource CaptionTextBlockStyle}"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBlock Grid.Column="8" Text="Status" Style="{ThemeResource CaptionTextBlockStyle}"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
             </Grid>
         </Border>
@@ -67,12 +79,14 @@
                                   Opacity="{x:Bind Opacity, Mode=OneWay}">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="32" />
+                                    <ColumnDefinition Width="140" />
                                     <ColumnDefinition Width="160" />
-                                    <ColumnDefinition Width="180" />
+                                    <ColumnDefinition Width="100" />
+                                    <ColumnDefinition Width="80" />
+                                    <ColumnDefinition Width="100" />
                                     <ColumnDefinition Width="120" />
-                                    <ColumnDefinition Width="90" />
-                                    <ColumnDefinition Width="*" MinWidth="120" />
-                                    <ColumnDefinition Width="180" />
+                                    <ColumnDefinition Width="*" MinWidth="100" />
+                                    <ColumnDefinition Width="160" />
                                     <ColumnDefinition Width="72" />
                                 </Grid.ColumnDefinitions>
 
@@ -95,17 +109,33 @@
                                     <ComboBoxItem Content="Local" />
                                 </ComboBox>
 
-                                <TextBox Grid.Column="5" Text="{x:Bind TagsText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                <ComboBox Grid.Column="5" SelectedIndex="{x:Bind AuthMethodIndex, Mode=TwoWay}"
+                                          HorizontalAlignment="Stretch"
+                                          IsEnabled="{x:Bind IsSsh, Mode=OneWay}">
+                                    <ComboBoxItem Content="Key" />
+                                    <ComboBoxItem Content="Password" />
+                                </ComboBox>
+
+                                <PasswordBox Grid.Column="6" Password="{x:Bind Password, Mode=OneTime}"
+                                             IsEnabled="{x:Bind IsPasswordAuth, Mode=OneWay}"
+                                             PlaceholderText="—"
+                                             Tag="{x:Bind}"
+                                             PasswordChanged="OnPasswordChanged" />
+
+                                <TextBox Grid.Column="7" Text="{x:Bind TagsText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                          PlaceholderText="tag1, tag2" />
 
-                                <TextBlock Grid.Column="6" Text="{x:Bind StatusLabel, Mode=OneWay}"
+                                <TextBlock Grid.Column="8" Text="{x:Bind StatusLabel, Mode=OneWay}"
                                            VerticalAlignment="Center"
                                            TextTrimming="CharacterEllipsis"
                                            Style="{ThemeResource CaptionTextBlockStyle}" />
 
-                                <StackPanel Grid.Column="7" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                                <StackPanel Grid.Column="9" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
                                     <Button Click="OnTestRow" Tag="{x:Bind}" ToolTipService.ToolTip="Test">
                                         <FontIcon Glyph="&#xE945;" FontSize="14" />
+                                    </Button>
+                                    <Button Click="OnKeyHelp" Tag="{x:Bind}" ToolTipService.ToolTip="SSH key setup help">
+                                        <FontIcon Glyph="&#xE897;" FontSize="14" />
                                     </Button>
                                     <Button Click="OnRemoveRow" Tag="{x:Bind}" ToolTipService.ToolTip="Remove">
                                         <FontIcon Glyph="&#xE711;" FontSize="14" />

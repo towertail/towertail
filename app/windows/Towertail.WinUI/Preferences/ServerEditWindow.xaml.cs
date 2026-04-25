@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Towertail.WinUI.Bootstrap;
 using Towertail.WinUI.State;
+using Towertail.WinUI.SystemServices;
 using Windows.Graphics;
 using WinRT.Interop;
 
@@ -14,6 +15,8 @@ public sealed partial class ServerEditWindow : Window
     private Node? _existing;
     private Action<Node?>? _onDone;
     private readonly AppEnvironment _env;
+    private AuthMethod _originalAuthMethod = AuthMethod.Key;
+    private string? _knownHostFingerprint;
 
     private Slider[] _thresholdSliders = Array.Empty<Slider>();
 
@@ -22,7 +25,7 @@ public sealed partial class ServerEditWindow : Window
         _env = Towertail.WinUI.App.Current.Environment;
         InitializeComponent();
         Title = "Server";
-        ResizeInitial(560, 720);
+        ResizeInitial(560, 760);
         _thresholdSliders = new[]
         {
             CpuWarnSlider, CpuCriticalSlider,
@@ -60,6 +63,23 @@ public sealed partial class ServerEditWindow : Window
         KindBox.SelectedIndex = n?.Kind == NodeKind.Ssh ? 1 : 0;
         UserBox.Text = n?.SshUser ?? Environment.UserName;
         HostBox.Text = n?.SshHost ?? "";
+        // NumberBox accepts NaN as "empty"; we render placeholder 22 then.
+        PortBox.Value = n?.SshPort is int p ? p : double.NaN;
+        AuthMethodBox.SelectedIndex = (n?.AuthMethod ?? AuthMethod.Key) == AuthMethod.Password ? 1 : 0;
+        _originalAuthMethod = n?.AuthMethod ?? AuthMethod.Key;
+        _knownHostFingerprint = n?.KnownHostFingerprint;
+
+        // Seed password from DPAPI so the field isn't blank on edit. Only
+        // done for password auth; for key auth the field stays hidden.
+        if (n is not null && n.AuthMethod == AuthMethod.Password)
+        {
+            var pw = DpapiStore.GetPassword(n.Id);
+            if (!string.IsNullOrEmpty(pw)) PasswordBoxField.Password = pw;
+        }
+
+        UpdatePasswordVisibility();
+        UpdateHostKeyPanel();
+
         TagsBox.Text = n is { Tags.Count: > 0 } ? string.Join(", ", n.Tags) : "";
         EnabledCheck.IsChecked = n?.Enabled ?? true;
         IconWarnCheck.IsChecked = n?.IconOnWarn ?? true;
@@ -107,6 +127,43 @@ public sealed partial class ServerEditWindow : Window
     private void UpdateSshGroupVisibility()
         => SshGroup.Visibility = KindBox.SelectedIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
 
+    private void OnAuthMethodChanged(object sender, SelectionChangedEventArgs e)
+        => UpdatePasswordVisibility();
+
+    private void UpdatePasswordVisibility()
+    {
+        PasswordBoxField.Visibility =
+            AuthMethodBox.SelectedIndex == 1 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void UpdateHostKeyPanel()
+    {
+        if (string.IsNullOrEmpty(_knownHostFingerprint))
+        {
+            HostKeyPanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+        HostKeyPanel.Visibility = Visibility.Visible;
+        HostKeyText.Text = _knownHostFingerprint;
+    }
+
+    private void OnForgetHostKey(object sender, RoutedEventArgs e)
+    {
+        _knownHostFingerprint = null;
+        UpdateHostKeyPanel();
+    }
+
+    private async void OnKeyHelp(object sender, RoutedEventArgs e)
+    {
+        if (Content is FrameworkElement fe)
+        {
+            await SshKeySetupDialog.ShowAsync(
+                fe.XamlRoot,
+                user: UserBox.Text.Trim(),
+                host: HostBox.Text.Trim());
+        }
+    }
+
     private void OnCustomToggled(object sender, RoutedEventArgs e)
         => SetThresholdsEnabled(CustomThresholdsCheck.IsChecked == true);
 
@@ -131,13 +188,28 @@ public sealed partial class ServerEditWindow : Window
                 Math.Min(dW, dC), Math.Max(dW, dC));
         }
 
+        int? port = null;
+        if (kind == NodeKind.Ssh && !double.IsNaN(PortBox.Value))
+        {
+            var p = (int)Math.Round(PortBox.Value);
+            if (p is >= 1 and <= 65535) port = p;
+        }
+
+        var authMethod = kind == NodeKind.Ssh
+            ? (AuthMethodBox.SelectedIndex == 1 ? AuthMethod.Password : AuthMethod.Key)
+            : AuthMethod.Key;
+
+        var nodeId = _existing?.Id ?? Guid.NewGuid();
         var node = new Node
         {
-            Id = _existing?.Id ?? Guid.NewGuid(),
+            Id = nodeId,
             DisplayName = DisplayNameBox.Text.Trim(),
             Kind = kind,
             SshUser = kind == NodeKind.Ssh ? UserBox.Text.Trim() : null,
             SshHost = kind == NodeKind.Ssh ? HostBox.Text.Trim() : null,
+            SshPort = port,
+            AuthMethod = authMethod,
+            KnownHostFingerprint = kind == NodeKind.Ssh ? _knownHostFingerprint : null,
             Tags = tags,
             Enabled = EnabledCheck.IsChecked == true,
             IconOnWarn = IconWarnCheck.IsChecked == true,
@@ -148,6 +220,19 @@ public sealed partial class ServerEditWindow : Window
             Favorite = _existing?.Favorite ?? false,
             SnoozedUntil = _existing?.SnoozedUntil,
         };
+
+        // DPAPI handling: store on password auth, delete on password → key (or away from SSH).
+        if (kind == NodeKind.Ssh && authMethod == AuthMethod.Password &&
+            !string.IsNullOrEmpty(PasswordBoxField.Password))
+        {
+            DpapiStore.SetPassword(nodeId, PasswordBoxField.Password);
+        }
+        else if (_originalAuthMethod == AuthMethod.Password &&
+                 (authMethod != AuthMethod.Password || kind != NodeKind.Ssh))
+        {
+            DpapiStore.DeletePassword(nodeId);
+        }
+
         _onDone?.Invoke(node);
         Close();
     }

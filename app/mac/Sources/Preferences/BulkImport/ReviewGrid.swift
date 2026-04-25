@@ -9,7 +9,10 @@ struct ReviewGrid: View {
 
     @State private var bulkUser: String = NSUserName()
     @State private var applyScope: ApplyScope = .emptyOnly
+    @State private var bulkAuthMethod: AuthMethod = .key
     @State private var testingAll: Bool = false
+    @State private var showKeyHelp: Bool = false
+    @State private var keyHelpContext: (user: String, host: String) = ("", "")
 
     enum ApplyScope: String, CaseIterable, Identifiable {
         case emptyOnly
@@ -32,6 +35,11 @@ struct ReviewGrid: View {
             footer
         }
         .padding(20)
+        .sheet(isPresented: $showKeyHelp) {
+            SshKeySetupSheet(user: keyHelpContext.user, host: keyHelpContext.host) {
+                showKeyHelp = false
+            }
+        }
     }
 
     // MARK: - Top controls
@@ -58,7 +66,19 @@ struct ReviewGrid: View {
             }
             .labelsHidden()
             .frame(width: 130)
-            Button("Apply to all") { applyBulkUser() }
+            Button("Apply user") { applyBulkUser() }
+
+            Divider().frame(height: 18)
+
+            Picker("", selection: $bulkAuthMethod) {
+                Text("Key").tag(AuthMethod.key)
+                Text("Password").tag(AuthMethod.password)
+            }
+            .labelsHidden()
+            .frame(width: 130)
+            Button("Apply login") {
+                for i in rows.indices { rows[i].authMethod = bulkAuthMethod }
+            }
 
             Spacer()
 
@@ -112,13 +132,15 @@ struct ReviewGrid: View {
     private var headerRow: some View {
         HStack(spacing: 8) {
             Text("").frame(width: 24) // checkbox column
-            Text("Name").frame(width: 140, alignment: .leading)
-            Text("Host / IP").frame(width: 160, alignment: .leading)
-            Text("SSH user").frame(width: 110, alignment: .leading)
+            Text("Name").frame(width: 130, alignment: .leading)
+            Text("Host / IP").frame(width: 150, alignment: .leading)
+            Text("SSH user").frame(width: 100, alignment: .leading)
             Text("Kind").frame(width: 70, alignment: .leading)
+            Text("Login").frame(width: 90, alignment: .leading)
+            Text("Password").frame(width: 120, alignment: .leading)
             Text("Tags").frame(maxWidth: .infinity, alignment: .leading)
-            Text("Status").frame(width: 160, alignment: .leading)
-            Text("").frame(width: 60) // test + remove
+            Text("Status").frame(width: 150, alignment: .leading)
+            Text("").frame(width: 84) // test + help + remove
         }
         .font(.caption).bold()
         .foregroundStyle(.secondary)
@@ -135,16 +157,16 @@ struct ReviewGrid: View {
                 .frame(width: 24)
 
             TextField("", text: rowBinding.displayName)
-                .frame(width: 140)
+                .frame(width: 130)
                 .textFieldStyle(.roundedBorder)
 
             TextField("", text: rowBinding.sshHost)
-                .frame(width: 160)
+                .frame(width: 150)
                 .font(.system(.body, design: .monospaced))
                 .textFieldStyle(.roundedBorder)
 
             TextField("", text: rowBinding.sshUser)
-                .frame(width: 110)
+                .frame(width: 100)
                 .font(.system(.body, design: .monospaced))
                 .textFieldStyle(.roundedBorder)
                 .disabled(row.kind == .local)
@@ -155,6 +177,19 @@ struct ReviewGrid: View {
             }
             .labelsHidden()
             .frame(width: 70)
+
+            Picker("", selection: rowBinding.authMethod) {
+                Text("Key").tag(AuthMethod.key)
+                Text("Password").tag(AuthMethod.password)
+            }
+            .labelsHidden()
+            .frame(width: 90)
+            .disabled(row.kind == .local)
+
+            SecureField("", text: rowBinding.password)
+                .frame(width: 120)
+                .textFieldStyle(.roundedBorder)
+                .disabled(row.kind == .local || row.authMethod != .password)
 
             TextField("", text: Binding(
                 get: { rowBinding.wrappedValue.tags.joined(separator: ", ") },
@@ -169,7 +204,7 @@ struct ReviewGrid: View {
             .textFieldStyle(.roundedBorder)
 
             statusCell(row)
-                .frame(width: 160, alignment: .leading)
+                .frame(width: 150, alignment: .leading)
 
             HStack(spacing: 4) {
                 Button {
@@ -182,6 +217,16 @@ struct ReviewGrid: View {
                 .disabled(row.kind == .local
                           || !row.isValid
                           || isTestingRow(row))
+                .help("Test")
+
+                Button {
+                    keyHelpContext = (row.sshUser, row.sshHost)
+                    showKeyHelp = true
+                } label: {
+                    Image(systemName: "questionmark.circle")
+                }
+                .buttonStyle(.borderless)
+                .help("SSH key setup help")
 
                 Button {
                     let id = row.id
@@ -190,8 +235,9 @@ struct ReviewGrid: View {
                     Image(systemName: "xmark")
                 }
                 .buttonStyle(.borderless)
+                .help("Remove")
             }
-            .frame(width: 60)
+            .frame(width: 84)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -288,7 +334,18 @@ struct ReviewGrid: View {
     private func testRow(id: UUID) async {
         guard let idx = rows.firstIndex(where: { $0.id == id }) else { return }
         rows[idx].status = .testing
-        let node = rows[idx].toNode()
+        let row = rows[idx]
+        let node = row.toNode()
+
+        // For password rows, stash the typed password in Keychain first so
+        // SSHConnectionFactory's default passwordProvider finds it. Cleaned
+        // up on failure so rows the user removes don't leave orphans.
+        var stashedPassword = false
+        if row.authMethod == .password && !row.password.isEmpty {
+            try? KeychainStore.setPassword(row.password, for: row.id)
+            stashedPassword = true
+        }
+
         do {
             let report = try await SSHBootstrap.bootstrapAndVerify(node: node)
             if let idx2 = rows.firstIndex(where: { $0.id == id }) {
@@ -299,6 +356,7 @@ struct ReviewGrid: View {
             if let idx2 = rows.firstIndex(where: { $0.id == id }) {
                 rows[idx2].status = .failed(msg)
             }
+            if stashedPassword { try? KeychainStore.deletePassword(for: row.id) }
         }
     }
 

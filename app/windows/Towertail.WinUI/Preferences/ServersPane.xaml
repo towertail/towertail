@@ -47,6 +47,8 @@
                         <ColumnDefinition Width="2*" MinWidth="120" />
                         <ColumnDefinition Width="Auto" MinWidth="60" />
                         <ColumnDefinition Width="3*" MinWidth="140" />
+                        <ColumnDefinition Width="Auto" MinWidth="72" />
+                        <ColumnDefinition Width="Auto" MinWidth="120" />
                         <ColumnDefinition Width="Auto" MinWidth="70" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="Name"
@@ -58,7 +60,13 @@
                     <TextBlock Grid.Column="2" Text="Host"
                                Style="{ThemeResource CaptionTextBlockStyle}"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <TextBlock Grid.Column="3" Text="Enabled" TextWrapping="NoWrap"
+                    <TextBlock Grid.Column="3" Text="Status" TextWrapping="NoWrap"
+                               Style="{ThemeResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Grid.Column="4" Text="Version" TextWrapping="NoWrap"
+                               Style="{ThemeResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Grid.Column="5" Text="Enabled" TextWrapping="NoWrap"
                                Style="{ThemeResource CaptionTextBlockStyle}"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 </Grid>
@@ -81,13 +89,15 @@
                                     <ColumnDefinition Width="2*" MinWidth="120" />
                                     <ColumnDefinition Width="Auto" MinWidth="60" />
                                     <ColumnDefinition Width="3*" MinWidth="140" />
+                                    <ColumnDefinition Width="Auto" MinWidth="72" />
+                                    <ColumnDefinition Width="Auto" MinWidth="120" />
                                     <ColumnDefinition Width="Auto" MinWidth="70" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0" Text="{Binding DisplayName}"
                                            Style="{ThemeResource BodyStrongTextBlockStyle}"
                                            TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
                                            VerticalAlignment="Center" />
-                                <TextBlock Grid.Column="1" Text="{Binding Kind}" TextWrapping="NoWrap"
+                                <TextBlock Grid.Column="1" Text="{Binding KindLabel}" TextWrapping="NoWrap"
                                            Style="{ThemeResource BodyTextBlockStyle}"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                            VerticalAlignment="Center" />
@@ -97,7 +107,21 @@
                                            FontFamily="{StaticResource MonoFont}"
                                            TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
                                            VerticalAlignment="Center" />
-                                <TextBlock Grid.Column="3" Text="{Binding Enabled}" TextWrapping="NoWrap"
+                                <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6"
+                                            VerticalAlignment="Center">
+                                    <Ellipse Width="8" Height="8"
+                                             Fill="{Binding StatusBrush}" />
+                                    <TextBlock Text="{Binding StatusText}"
+                                               Style="{ThemeResource BodyTextBlockStyle}"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+                                <TextBlock Grid.Column="4" Text="{Binding VersionText}" TextWrapping="NoWrap"
+                                           Style="{ThemeResource BodyTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           FontFamily="{StaticResource MonoFont}"
+                                           TextTrimming="CharacterEllipsis"
+                                           VerticalAlignment="Center" />
+                                <TextBlock Grid.Column="5" Text="{Binding EnabledText}" TextWrapping="NoWrap"
                                            Style="{ThemeResource BodyTextBlockStyle}"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                            VerticalAlignment="Center" />

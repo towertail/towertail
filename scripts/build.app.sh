@@ -34,13 +34,15 @@ echo "→ regenerating Xcode project"
 (cd "$APP_DIR" && xcodegen generate)
 
 echo "→ building Towertail ($CONFIG)"
+DERIVED="$APP_DIR/build"
 xcodebuild \
   -project "$APP_DIR/Towertail.xcodeproj" \
   -scheme Towertail \
   -configuration "$CONFIG" \
+  -derivedDataPath "$DERIVED" \
   build
 
-APP_PATH="$APP_DIR/build/$CONFIG/Towertail.app"
+APP_PATH="$DERIVED/Build/Products/$CONFIG/Towertail.app"
 echo "built: $APP_PATH"
 
 if [[ "$OPEN_FLAG" == "--open" ]]; then

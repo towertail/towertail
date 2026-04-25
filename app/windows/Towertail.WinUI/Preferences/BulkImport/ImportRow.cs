@@ -72,6 +72,30 @@ public sealed class ImportRow : INotifyPropertyChanged
 
     public bool IsSsh => _kind == NodeKind.Ssh;
 
+    private AuthMethod _authMethod = AuthMethod.Key;
+    public AuthMethod AuthMethod
+    {
+        get => _authMethod;
+        set { if (_authMethod != value) { _authMethod = value; Notify(); Notify(nameof(AuthMethodIndex)); Notify(nameof(IsPasswordAuth)); } }
+    }
+
+    /// <summary>Index for the ComboBox binding (0=Key, 1=Password).</summary>
+    public int AuthMethodIndex
+    {
+        get => _authMethod == AuthMethod.Password ? 1 : 0;
+        set => AuthMethod = value == 1 ? AuthMethod.Password : AuthMethod.Key;
+    }
+
+    public bool IsPasswordAuth => _authMethod == AuthMethod.Password;
+
+    /// <summary>Plaintext in-memory only; written to DPAPI at deploy time.</summary>
+    private string _password = "";
+    public string Password
+    {
+        get => _password;
+        set { if (_password != value) { _password = value; Notify(); } }
+    }
+
     private string _tagsText = "";
     public string TagsText
     {
@@ -94,6 +118,9 @@ public sealed class ImportRow : INotifyPropertyChanged
     }
 
     public bool IsDuplicate { get; set; }
+
+    /// <summary>Captured during Test so the post-deploy connect skips TOFU.</summary>
+    public string? KnownHostFingerprint { get; set; }
 
     public double Opacity => _included ? 1.0 : 0.55;
 
@@ -133,6 +160,8 @@ public sealed class ImportRow : INotifyPropertyChanged
         Kind = _kind,
         SshUser = _kind == NodeKind.Ssh ? _sshUser.Trim() : null,
         SshHost = _kind == NodeKind.Ssh ? _sshHost.Trim() : null,
+        AuthMethod = _kind == NodeKind.Ssh ? _authMethod : AuthMethod.Key,
+        KnownHostFingerprint = _kind == NodeKind.Ssh ? KnownHostFingerprint : null,
         Tags = _tagsText
             .Split(',', StringSplitOptions.RemoveEmptyEntries)
             .Select(s => s.Trim())

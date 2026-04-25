@@ -39,15 +39,23 @@ public interface ISamplerInvokerFactory
 public sealed class SamplerInvokerFactory : ISamplerInvokerFactory
 {
     private readonly IProcessRunner _runner;
-    public SamplerInvokerFactory(IProcessRunner? runner = null)
+    private readonly HostKeyPrompt? _hostKeyPrompt;
+    private readonly Action<Guid, string>? _onTrust;
+
+    public SamplerInvokerFactory(
+        IProcessRunner? runner = null,
+        HostKeyPrompt? hostKeyPrompt = null,
+        Action<Guid, string>? onTrust = null)
     {
         _runner = runner ?? new DefaultProcessRunner();
+        _hostKeyPrompt = hostKeyPrompt;
+        _onTrust = onTrust;
     }
 
     public ISamplerInvoker Create(Node node) => node.Kind switch
     {
         NodeKind.Local => new LocalSamplerInvoker(_runner),
-        NodeKind.Ssh => new SshSamplerInvoker(_runner, node),
+        NodeKind.Ssh => new SshSamplerInvoker(node, hostKeyPrompt: _hostKeyPrompt, onTrust: _onTrust),
         _ => throw new NotSupportedException($"unknown node kind {node.Kind}"),
     };
 }

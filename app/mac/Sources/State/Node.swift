@@ -5,12 +5,30 @@ enum NodeKind: String, Codable, Sendable, CaseIterable {
     case ssh
 }
 
+/// How we authenticate to an SSH host. "Key" covers both on-disk private
+/// keys in ~/.ssh and ssh-agent / Pageant; "Password" pulls the plaintext
+/// from Keychain (Mac) or DPAPI (Windows) at connect time.
+enum AuthMethod: String, Codable, Sendable, CaseIterable {
+    case key
+    case password
+}
+
 struct Node: Codable, Identifiable, Equatable, Sendable {
     var id: UUID
     var displayName: String
     var kind: NodeKind
     var sshUser: String?
     var sshHost: String?
+    /// SSH port; nil → default 22. Stored as optional so existing records
+    /// round-trip unchanged without stamping an implicit 22 everywhere.
+    var sshPort: Int?
+    /// How to authenticate. Defaults to .key for back-compat — existing
+    /// records with no field on disk keep their current (key-only) behavior.
+    var authMethod: AuthMethod
+    /// SHA256-base64 fingerprint of the remote host key we trust for this
+    /// node. nil → no key pinned yet; first connect prompts the user.
+    /// Mismatch at connect time refuses rather than silently accepting.
+    var knownHostFingerprint: String?
     var tags: [String]
     var enabled: Bool
     // Per-level menu-bar contribution: lets the user say "yellow when vm
@@ -39,6 +57,9 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         kind: NodeKind,
         sshUser: String? = nil,
         sshHost: String? = nil,
+        sshPort: Int? = nil,
+        authMethod: AuthMethod = .key,
+        knownHostFingerprint: String? = nil,
         tags: [String] = [],
         enabled: Bool = true,
         iconOnWarn: Bool = true,
@@ -54,6 +75,9 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         self.kind = kind
         self.sshUser = sshUser
         self.sshHost = sshHost
+        self.sshPort = sshPort
+        self.authMethod = authMethod
+        self.knownHostFingerprint = knownHostFingerprint
         self.tags = tags
         self.enabled = enabled
         self.iconOnWarn = iconOnWarn
@@ -66,7 +90,9 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, displayName, kind, sshUser, sshHost, tags, enabled
+        case id, displayName, kind, sshUser, sshHost, sshPort, authMethod
+        case knownHostFingerprint
+        case tags, enabled
         case iconOnWarn, iconOnCritical, notifyOnWarn, notifyOnCritical
         case customThresholds, snoozedUntil, favorite
         // Legacy single-toggle flag from the first pass. If present it
@@ -83,6 +109,9 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         try c.encode(kind, forKey: .kind)
         try c.encodeIfPresent(sshUser, forKey: .sshUser)
         try c.encodeIfPresent(sshHost, forKey: .sshHost)
+        try c.encodeIfPresent(sshPort, forKey: .sshPort)
+        try c.encode(authMethod, forKey: .authMethod)
+        try c.encodeIfPresent(knownHostFingerprint, forKey: .knownHostFingerprint)
         try c.encode(tags, forKey: .tags)
         try c.encode(enabled, forKey: .enabled)
         try c.encode(iconOnWarn, forKey: .iconOnWarn)
@@ -101,6 +130,11 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         self.kind = try c.decode(NodeKind.self, forKey: .kind)
         self.sshUser = try c.decodeIfPresent(String.self, forKey: .sshUser)
         self.sshHost = try c.decodeIfPresent(String.self, forKey: .sshHost)
+        self.sshPort = try c.decodeIfPresent(Int.self, forKey: .sshPort)
+        // Default .key so old records (no authMethod on disk) keep their
+        // existing key-only behavior and nobody suddenly gets prompted.
+        self.authMethod = try c.decodeIfPresent(AuthMethod.self, forKey: .authMethod) ?? .key
+        self.knownHostFingerprint = try c.decodeIfPresent(String.self, forKey: .knownHostFingerprint)
         self.tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
         self.enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
 
@@ -122,6 +156,9 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         guard let until = snoozedUntil else { return false }
         return until > Date()
     }
+
+    /// Effective port (sshPort ?? 22). Used by the SSH factory and for UI.
+    var effectiveSshPort: Int { sshPort ?? 22 }
 
     static func localMac(displayName: String = "This Mac") -> Node {
         Node(displayName: displayName, kind: .local)

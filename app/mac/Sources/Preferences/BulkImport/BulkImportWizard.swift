@@ -31,6 +31,9 @@ struct ImportRow: Identifiable, Equatable {
     var sshHost: String
     var sshUser: String
     var kind: NodeKind
+    var authMethod: AuthMethod
+    /// Plaintext in-memory only; written to Keychain on deploy. Never touches disk.
+    var password: String
     var tags: [String]
     var included: Bool
     var status: Status
@@ -45,6 +48,8 @@ struct ImportRow: Identifiable, Equatable {
         sshHost: String,
         sshUser: String = "",
         kind: NodeKind = .ssh,
+        authMethod: AuthMethod = .key,
+        password: String = "",
         tags: [String] = [],
         included: Bool = true,
         status: Status = .pending,
@@ -55,6 +60,8 @@ struct ImportRow: Identifiable, Equatable {
         self.sshHost = sshHost
         self.sshUser = sshUser
         self.kind = kind
+        self.authMethod = authMethod
+        self.password = password
         self.tags = tags
         self.included = included
         self.status = status
@@ -83,6 +90,7 @@ struct ImportRow: Identifiable, Equatable {
             kind: kind,
             sshUser: kind == .ssh ? sshUser.trimmingCharacters(in: .whitespaces) : nil,
             sshHost: kind == .ssh ? sshHost.trimmingCharacters(in: .whitespaces) : nil,
+            authMethod: kind == .ssh ? authMethod : .key,
             tags: tags,
             enabled: true
         )

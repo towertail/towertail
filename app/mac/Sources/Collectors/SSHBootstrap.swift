@@ -1,34 +1,21 @@
 import Foundation
+import NIO
+import Citadel
 
+/// Bootstrap the remote sampler over Citadel SSH/SFTP. No shell-out — uname
+/// via `executeCommand`, upload via `openSFTP`, chmod via SFTP attributes,
+/// then `--self-check` via `executeCommand`.
 enum SSHBootstrap {
-    static let sshExecutable = URL(fileURLWithPath: "/usr/bin/ssh")
-    static let scpExecutable = URL(fileURLWithPath: "/usr/bin/scp")
-    static let remoteSamplerDir = "~/.towertail"
-    static let remoteSamplerPath = "~/.towertail/towertail-sampler"
-
-    static let commonFlags: [String] = [
-        "-o", "BatchMode=yes",
-        "-o", "ConnectTimeout=5",
-        "-o", "ServerAliveInterval=15",
-        "-o", "ServerAliveCountMax=3",
-        "-o", "TCPKeepAlive=yes",
-        "-o", "StrictHostKeyChecking=accept-new",
-    ]
+    static let remoteSamplerDir = ".towertail"
+    static let remoteSamplerName = "towertail-sampler"
 
     /// Probes `uname -sm` on the remote and maps it to a bundled triple.
-    /// Returns nil if the OS/arch combo has no bundled binary.
-    static func detectTriple(user: String, host: String) async throws -> String {
-        let args = commonFlags + ["\(user)@\(host)", "uname -sm"]
-        let r = try await ProcessRunner.run(executable: sshExecutable, arguments: args)
-        if r.exitCode != 0 {
-            let err = String(data: r.stderr, encoding: .utf8) ?? ""
-            throw SamplerInvokeError.sshFailed(stderr: err, exitCode: r.exitCode)
-        }
-        let out = String(data: r.stdout, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let parts = out.split(separator: " ").map(String.init)
+    static func detectTriple(client: SSHClient) async throws -> String {
+        let out = try await client.executeCommand("uname -sm")
+        let raw = String(buffer: out).trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = raw.split(separator: " ").map(String.init)
         guard parts.count == 2 else {
-            throw SamplerInvokeError.misconfigured("unexpected uname output: \(out)")
+            throw SamplerInvokeError.misconfigured("unexpected uname output: \(raw)")
         }
         let os = parts[0].lowercased()
         let arch = parts[1].lowercased()
@@ -45,6 +32,17 @@ enum SSHBootstrap {
         default: throw SamplerInvokeError.misconfigured("unsupported remote arch: \(arch)")
         }
         return "\(goos)-\(goarch)"
+    }
+
+    /// Resolves `$HOME` on the remote — SFTP paths don't expand `~`, so we
+    /// need an absolute path before opening the sampler file.
+    static func resolveHome(client: SSHClient) async throws -> String {
+        let out = try await client.executeCommand("echo $HOME")
+        let home = String(buffer: out).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !home.isEmpty else {
+            throw SamplerInvokeError.misconfigured("remote $HOME is empty")
+        }
+        return home
     }
 
     /// Locates the bundled sampler binary for `triple` inside Towertail.app/Contents/Resources/samplers/.
@@ -80,68 +78,49 @@ enum SSHBootstrap {
         return nil
     }
 
-    /// Ensures the remote `~/.towertail/` directory exists and copies the local
-    /// binary into it, marking it executable. Returns the remote path.
-    ///
-    /// Timeouts are generous (30s each stage, 60s for the scp itself) to
-    /// tolerate marginal hosts — slow SSH negotiation, small uplink, or
-    /// busy kernels — without silently dropping the push.
+    /// Ensures `<home>/.towertail/` exists, uploads the binary, chmod's it
+    /// 0755. Returns the absolute remote path.
     static func copyBinary(
-        localBinary: URL,
-        user: String,
-        host: String,
-        timeout: TimeInterval = 60
+        client: SSHClient,
+        localBinary: URL
     ) async throws -> String {
-        // mkdir -p ~/.towertail
-        let mkdirArgs = commonFlags + ["\(user)@\(host)", "mkdir -p \(remoteSamplerDir)"]
-        let mk = try await ProcessRunner.run(
-            executable: sshExecutable, arguments: mkdirArgs, timeout: 30
-        )
-        if mk.exitCode != 0 {
-            let err = String(data: mk.stderr, encoding: .utf8) ?? ""
-            throw SamplerInvokeError.sshFailed(stderr: err, exitCode: mk.exitCode)
-        }
+        let home = try await resolveHome(client: client)
+        let remoteDir = "\(home)/\(remoteSamplerDir)"
+        let remotePath = "\(remoteDir)/\(remoteSamplerName)"
 
-        // scp localBinary user@host:~/.towertail/towertail-sampler
-        let scpArgs = commonFlags + [
-            localBinary.path,
-            "\(user)@\(host):\(remoteSamplerPath)",
-        ]
-        let scp = try await ProcessRunner.run(
-            executable: scpExecutable,
-            arguments: scpArgs,
-            timeout: timeout
-        )
-        if scp.exitCode != 0 {
-            let err = String(data: scp.stderr, encoding: .utf8) ?? ""
-            throw SamplerInvokeError.sshFailed(stderr: err, exitCode: scp.exitCode)
-        }
+        // mkdir (via exec; SFTP createDirectory errors if it exists).
+        _ = try? await client.executeCommand("mkdir -p \(remoteDir)")
 
-        // chmod +x ~/.towertail/towertail-sampler
-        let chmodArgs = commonFlags + ["\(user)@\(host)", "chmod +x \(remoteSamplerPath)"]
-        let ch = try await ProcessRunner.run(
-            executable: sshExecutable, arguments: chmodArgs, timeout: 30
-        )
-        if ch.exitCode != 0 {
-            let err = String(data: ch.stderr, encoding: .utf8) ?? ""
-            throw SamplerInvokeError.sshFailed(stderr: err, exitCode: ch.exitCode)
+        let sftp = try await client.openSFTP()
+        defer { Task { try? await sftp.close() } }
+
+        let data = try Data(contentsOf: localBinary)
+        var attrs = SFTPFileAttributes()
+        attrs.permissions = 0o755
+        try await sftp.withFile(
+            filePath: remotePath,
+            flags: [.write, .create, .truncate],
+            attributes: attrs
+        ) { file in
+            var buffer = ByteBufferAllocator().buffer(capacity: data.count)
+            buffer.writeBytes(data)
+            try await file.write(buffer)
         }
-        return remoteSamplerPath
+        // Some servers ignore the attribute on create — belt-and-suspenders
+        // chmod via exec so the binary is guaranteed executable.
+        _ = try? await client.executeCommand("chmod +x \(remotePath)")
+        return remotePath
     }
 
-    /// Runs `~/.towertail/towertail-sampler --once` over ssh and decodes the sample.
-    static func runOnce(user: String, host: String) async throws -> Sample {
-        let args = commonFlags + ["\(user)@\(host)", "\(remoteSamplerPath) --once"]
-        let r = try await ProcessRunner.run(executable: sshExecutable, arguments: args)
-        if r.exitCode != 0 {
-            let err = String(data: r.stderr, encoding: .utf8) ?? ""
-            throw SamplerInvokeError.sshFailed(stderr: err, exitCode: r.exitCode)
-        }
-        guard !r.stdout.isEmpty else {
+    /// Runs the remote sampler with `--once` and decodes the sample.
+    static func runOnce(client: SSHClient) async throws -> Sample {
+        let out = try await client.executeCommand("~/\(remoteSamplerDir)/\(remoteSamplerName) --once")
+        let data = Data(buffer: out)
+        guard !data.isEmpty else {
             throw SamplerInvokeError.emptyOutput
         }
         do {
-            return try SampleCodec.decoder().decode(Sample.self, from: r.stdout)
+            return try SampleCodec.decoder().decode(Sample.self, from: data)
         } catch {
             throw SamplerInvokeError.decodeFailed(underlying: error)
         }
@@ -156,22 +135,62 @@ struct SSHTestReport: Sendable {
 }
 
 extension SSHBootstrap {
-    /// End-to-end bootstrap: detect triple → scp the matching bundled binary → run --once.
-    static func bootstrapAndVerify(node: Node) async throws -> SSHTestReport {
+    /// End-to-end bootstrap: connect → detect triple → upload → run --once.
+    static func bootstrapAndVerify(
+        node: Node,
+        hostKeyPrompt: HostKeyPrompt? = nil,
+        onTrust: (@Sendable (UUID, String) -> Void)? = nil
+    ) async throws -> SSHTestReport {
         guard node.kind == .ssh,
               let user = node.sshUser, !user.isEmpty,
               let host = node.sshHost, !host.isEmpty
         else {
             throw SamplerInvokeError.misconfigured("SSH node missing user or host")
         }
-        let triple = try await detectTriple(user: user, host: host)
+        _ = (user, host)
+
+        let nodeId = node.id
+        let client = try await SSHConnectionFactory.connect(
+            node: node,
+            hostKeyPrompt: hostKeyPrompt,
+            onTrust: onTrust.map { cb in { fp in cb(nodeId, fp) } }
+        )
+        defer { Task { try? await client.close() } }
+
+        let triple = try await detectTriple(client: client)
         guard let binary = bundledBinary(forTriple: triple) else {
             throw SamplerInvokeError.misconfigured(
                 "no bundled sampler for remote triple \(triple) — expected at samplers/\(triple)/towertail-sampler"
             )
         }
-        let remotePath = try await copyBinary(localBinary: binary, user: user, host: host)
-        let sample = try await runOnce(user: user, host: host)
+        let remotePath = try await copyBinary(client: client, localBinary: binary)
+        let sample = try await runOnce(client: client)
         return SSHTestReport(triple: triple, remotePath: remotePath, sample: sample)
+    }
+
+    /// Update-only variant used by `SamplerUpdateCoordinator`. Connects,
+    /// detects triple, uploads. Skips run-once.
+    static func pushUpdate(
+        node: Node,
+        hostKeyPrompt: HostKeyPrompt? = nil,
+        onTrust: (@Sendable (UUID, String) -> Void)? = nil
+    ) async throws -> String {
+        guard node.kind == .ssh else {
+            throw SamplerInvokeError.misconfigured("non-ssh node")
+        }
+        let nodeId = node.id
+        let client = try await SSHConnectionFactory.connect(
+            node: node,
+            hostKeyPrompt: hostKeyPrompt,
+            onTrust: onTrust.map { cb in { fp in cb(nodeId, fp) } }
+        )
+        defer { Task { try? await client.close() } }
+
+        let triple = try await detectTriple(client: client)
+        guard let binary = bundledBinary(forTriple: triple) else {
+            throw SamplerInvokeError.misconfigured("no bundled sampler for triple \(triple)")
+        }
+        _ = try await copyBinary(client: client, localBinary: binary)
+        return triple
     }
 }

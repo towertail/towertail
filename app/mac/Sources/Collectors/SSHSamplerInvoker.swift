@@ -1,8 +1,29 @@
 import Foundation
+import NIO
+import Citadel
 
+/// Invokes `towertail-sampler --once` on a remote host over SSH via Citadel.
+/// No shell-out — connect, exec, collect stdout, decode.
 struct SSHSamplerInvoker: SamplerInvoker {
-    static let sshExecutable = URL(fileURLWithPath: "/usr/bin/ssh")
     static let remoteSamplerPath = "~/.towertail/towertail-sampler"
+
+    /// Optional host-key prompt. When nil (the default for unit tests) and
+    /// the Node has no pinned fingerprint, the connect refuses rather than
+    /// trusting anything. The production wiring injects a prompt that pops
+    /// a sheet on first connect.
+    let hostKeyPrompt: HostKeyPrompt?
+
+    /// Called when the user accepts a new host key. Wired to write the
+    /// fingerprint back onto the Node so later connects use the pinned path.
+    let onTrust: (@Sendable (UUID, String) -> Void)?
+
+    init(
+        hostKeyPrompt: HostKeyPrompt? = nil,
+        onTrust: (@Sendable (UUID, String) -> Void)? = nil
+    ) {
+        self.hostKeyPrompt = hostKeyPrompt
+        self.onTrust = onTrust
+    }
 
     func invokeOnce(node: Node) async throws -> Sample {
         guard node.kind == .ssh else {
@@ -12,37 +33,35 @@ struct SSHSamplerInvoker: SamplerInvoker {
               let host = node.sshHost, !host.isEmpty else {
             throw SamplerInvokeError.misconfigured("SSH node missing user or host")
         }
+        _ = user
+        _ = host
 
-        // ServerAlive* + TCPKeepAlive make ssh detect a dead socket quickly
-        // after Mac wake or Wi‑Fi flap — otherwise a wake-broken connection
-        // can hang until the OS-level TCP retransmit timeout (~minutes)
-        // rather than the 10s ProcessRunner budget.
-        let args = [
-            "-o", "BatchMode=yes",
-            "-o", "ConnectTimeout=5",
-            "-o", "ServerAliveInterval=15",
-            "-o", "ServerAliveCountMax=3",
-            "-o", "TCPKeepAlive=yes",
-            "-o", "StrictHostKeyChecking=accept-new",
-            "\(user)@\(host)",
-            "\(Self.remoteSamplerPath) --once"
-        ]
-
-        let result = try await ProcessRunner.run(
-            executable: Self.sshExecutable,
-            arguments: args
+        let nodeId = node.id
+        let onTrust = self.onTrust
+        let client = try await SSHConnectionFactory.connect(
+            node: node,
+            hostKeyPrompt: hostKeyPrompt,
+            onTrust: onTrust.map { cb in
+                { (fp: String) in cb(nodeId, fp) }
+            }
         )
-        if result.exitCode != 0 {
-            let err = String(data: result.stderr, encoding: .utf8) ?? ""
-            throw SamplerInvokeError.sshFailed(stderr: err, exitCode: result.exitCode)
-        }
-        guard !result.stdout.isEmpty else {
-            throw SamplerInvokeError.emptyOutput
-        }
+        defer { Task { try? await client.close() } }
+
         do {
-            return try SampleCodec.decoder().decode(Sample.self, from: result.stdout)
+            let output = try await client.executeCommand("\(Self.remoteSamplerPath) --once")
+            let data = Data(buffer: output)
+            guard !data.isEmpty else {
+                throw SamplerInvokeError.emptyOutput
+            }
+            return try SampleCodec.decoder().decode(Sample.self, from: data)
+        } catch let err as SamplerInvokeError {
+            throw err
+        } catch let err as DecodingError {
+            throw SamplerInvokeError.decodeFailed(underlying: err)
         } catch {
-            throw SamplerInvokeError.decodeFailed(underlying: error)
+            throw SamplerInvokeError.sshFailed(
+                stderr: error.localizedDescription, exitCode: -1
+            )
         }
     }
 }

@@ -15,6 +15,26 @@
                 <StackPanel x:Name="SshGroup" Spacing="10">
                     <TextBox x:Name="UserBox" Header="SSH user" />
                     <TextBox x:Name="HostBox" Header="SSH host" />
+                    <NumberBox x:Name="PortBox" Header="Port" PlaceholderText="22"
+                               Minimum="1" Maximum="65535" SpinButtonPlacementMode="Inline" />
+                    <ComboBox x:Name="AuthMethodBox" Header="Login method" HorizontalAlignment="Stretch"
+                              SelectionChanged="OnAuthMethodChanged">
+                        <ComboBoxItem Content="SSH Key" />
+                        <ComboBoxItem Content="Password" />
+                    </ComboBox>
+                    <PasswordBox x:Name="PasswordBoxField" Header="Password"
+                                 Visibility="Collapsed" />
+                    <HyperlinkButton x:Name="KeyHelpLink" Content="Need help setting up SSH keys?"
+                                     Click="OnKeyHelp" />
+                    <StackPanel x:Name="HostKeyPanel" Orientation="Horizontal" Spacing="8" Visibility="Collapsed">
+                        <TextBlock Text="Host key" VerticalAlignment="Center" Opacity="0.7" />
+                        <TextBlock x:Name="HostKeyText" VerticalAlignment="Center"
+                                   FontFamily="Consolas" TextTrimming="CharacterEllipsis"
+                                   MaxWidth="280" />
+                        <Button x:Name="ForgetHostKeyBtn" Content="Forget"
+                                Click="OnForgetHostKey"
+                                ToolTipService.ToolTip="Clears the pinned fingerprint. The next connect will prompt again." />
+                    </StackPanel>
                 </StackPanel>
                 <TextBox x:Name="TagsBox" Header="Tags (comma-separated)" PlaceholderText="prod, web, eu" />
                 <CheckBox x:Name="EnabledCheck" Content="Enabled" />

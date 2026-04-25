@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Controls;
 using Towertail.WinUI.Bootstrap;
 using Towertail.WinUI.Collectors;
 using Towertail.WinUI.State;
+using Towertail.WinUI.SystemServices;
 
 namespace Towertail.WinUI.Preferences.BulkImport;
 
@@ -81,6 +82,30 @@ public sealed partial class ReviewGridPage : Page
         }
     }
 
+    private void OnApplyAuth(object sender, RoutedEventArgs e)
+    {
+        var authMethod = BulkAuthBox.SelectedIndex == 1 ? AuthMethod.Password : AuthMethod.Key;
+        foreach (var r in _rows) r.AuthMethod = authMethod;
+    }
+
+    private void OnPasswordChanged(object sender, RoutedEventArgs e)
+    {
+        // PasswordBox.Password isn't a DependencyProperty, so x:Bind TwoWay
+        // silently no-ops. Push the current value into the row manually.
+        if (sender is PasswordBox pb && pb.Tag is ImportRow row)
+        {
+            row.Password = pb.Password;
+        }
+    }
+
+    private async void OnKeyHelp(object sender, RoutedEventArgs e)
+    {
+        var (user, host) = (sender is FrameworkElement fe && fe.Tag is ImportRow row)
+            ? (row.SshUser, row.SshHost) : ("", "");
+        await Preferences.SshKeySetupDialog.ShowAsync(
+            this.XamlRoot, user: user, host: host);
+    }
+
     private void OnRemoveRow(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement fe && fe.Tag is ImportRow row)
@@ -126,62 +151,80 @@ public sealed partial class ReviewGridPage : Page
         row.Status = ImportRow.RowStatus.Testing;
         row.StatusDetail = "";
 
-        var runner = new DefaultProcessRunner();
         var node = row.ToNode();
+
+        // For password rows, stash the typed password in DPAPI before the test
+        // connect — SshConnectionFactory pulls the password from DPAPI and the
+        // row hasn't been deployed yet. Cleaned up on failure.
+        var stashedPassword = false;
+        if (row.AuthMethod == AuthMethod.Password && !string.IsNullOrEmpty(row.Password))
+        {
+            DpapiStore.SetPassword(row.Id, row.Password);
+            stashedPassword = true;
+        }
 
         try
         {
-            // Probe ssh directly first so we can surface the real stderr / exit code
-            // rather than a generic "A task was canceled" if the bootstrap times out.
-            var sshExe = SshSamplerInvoker.DefaultSshPath();
-            var probeArgs = new List<string>
-            {
-                "-o", "BatchMode=yes",
-                "-o", "ConnectTimeout=10",
-                node.UserAtHost!,
-                "uname -sm || ver",
-            };
-            var probe = await runner.RunAsync(
-                new ProcessRequest(sshExe, probeArgs, Timeout: TimeSpan.FromSeconds(20)))
-                .ConfigureAwait(true);
-            if (!probe.Ok)
-            {
-                var err = probe.StdErr.Trim();
-                if (string.IsNullOrEmpty(err)) err = $"ssh exited {probe.ExitCode}";
-                row.StatusDetail = FirstLine(err, 120);
-                row.Status = ImportRow.RowStatus.Failed;
-                return;
-            }
-            var triple = SshBootstrap.ParseUnameOrVer((probe.StdOut + "\n" + probe.StdErr).Trim());
+            // Bulk-import flow auto-trusts host keys — the user already
+            // declared intent to add these hosts, so asking them to confirm
+            // each fingerprint mid-wizard is noise. Capture the accepted
+            // fingerprint onto the row so the post-deploy collector connect
+            // sees a pinned key and doesn't re-prompt.
+            HostKeyPrompt autoTrust = (_, _) => Task.FromResult(true);
+            string? acceptedFingerprint = null;
+            Action<Guid, string> capture = (_, fp) => acceptedFingerprint = fp;
+            var bootstrap = new SshBootstrap(
+                node,
+                hostKeyPrompt: autoTrust,
+                onTrust: capture);
+            var triple = await bootstrap.DetectAsync().ConfigureAwait(true);
             if (triple.Os == SshBootstrap.RemoteOs.Unknown)
             {
-                row.StatusDetail = $"unknown OS: {FirstLine(probe.StdOut + probe.StdErr, 60)}";
+                row.StatusDetail = $"unknown OS ({triple.Triple})";
                 row.Status = ImportRow.RowStatus.Failed;
                 return;
             }
-
-            var bootstrap = new SshBootstrap(runner, node);
             var deployed = await bootstrap.DeployAsync(triple).ConfigureAwait(true);
             if (!deployed)
             {
-                row.StatusDetail = "deploy failed (scp)";
+                row.StatusDetail = "deploy failed (sftp)";
                 row.Status = ImportRow.RowStatus.Failed;
                 return;
             }
             var verified = await bootstrap.VerifyAsync(triple).ConfigureAwait(true);
             row.StatusDetail = verified ? $"reachable ({triple.Triple})" : "self-check failed";
             row.Status = verified ? ImportRow.RowStatus.Ok : ImportRow.RowStatus.Failed;
+            if (verified && acceptedFingerprint is not null)
+            {
+                row.KnownHostFingerprint = acceptedFingerprint;
+            }
         }
         catch (OperationCanceledException)
         {
             row.StatusDetail = "timed out (ssh unreachable?)";
             row.Status = ImportRow.RowStatus.Failed;
+            if (stashedPassword) DpapiStore.DeletePassword(row.Id);
         }
         catch (Exception ex)
         {
-            row.StatusDetail = FirstLine(ex.Message, 120);
+            // SSH.NET often wraps the real cause — show both top-level and
+            // inner-most so the user can see e.g. "algo mismatch" or
+            // "Permission denied (password)".
+            row.StatusDetail = FirstLine(FlattenMessage(ex), 200);
             row.Status = ImportRow.RowStatus.Failed;
+            _env.Logger.Error($"bulk-import test failed for {row.SshHost}", ex);
+            if (stashedPassword) DpapiStore.DeletePassword(row.Id);
         }
+    }
+
+    private static string FlattenMessage(Exception ex)
+    {
+        var msgs = new List<string>();
+        for (var e = ex; e != null; e = e.InnerException)
+        {
+            msgs.Add($"{e.GetType().Name}: {e.Message}");
+        }
+        return string.Join(" → ", msgs);
     }
 
     private static string FirstLine(string s, int max)
@@ -189,4 +232,5 @@ public sealed partial class ReviewGridPage : Page
         var line = s.Split('\n').FirstOrDefault(l => !string.IsNullOrWhiteSpace(l))?.Trim() ?? "";
         return line.Length > max ? line[..max] + "…" : line;
     }
+
 }

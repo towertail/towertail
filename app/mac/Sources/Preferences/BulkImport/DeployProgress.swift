@@ -175,7 +175,8 @@ struct DeployProgress: View {
     private func deployOne(id: UUID) async {
         guard let idx = rows.firstIndex(where: { $0.id == id }) else { return }
         rows[idx].status = .deploying("connecting…")
-        let node = rows[idx].toNode()
+        let row = rows[idx]
+        let node = row.toNode()
 
         // Fast-path for local nodes: no bootstrap, just commit.
         if node.kind == .local {
@@ -184,6 +185,12 @@ struct DeployProgress: View {
                 rows[i].status = .ok("local")
             }
             return
+        }
+
+        // Write password to Keychain so the bootstrap's SSH factory picks it
+        // up. Safe to overwrite an existing entry here — nodeId is stable.
+        if row.authMethod == .password && !row.password.isEmpty {
+            try? KeychainStore.setPassword(row.password, for: node.id)
         }
 
         do {

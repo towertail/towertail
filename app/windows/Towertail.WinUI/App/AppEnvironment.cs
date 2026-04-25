@@ -22,6 +22,10 @@ public sealed class AppEnvironment
     public required RealCollector Collector { get; init; }
     public required Logger Logger { get; init; }
 
+    /// <summary>Optional TOFU prompter shared by collector + bulk-import Test path.</summary>
+    public HostKeyPrompt? HostKeyPrompt { get; init; }
+    public Action<Guid, string>? OnHostKeyTrust { get; init; }
+
     public static AppEnvironment Bootstrap()
     {
         TowertailApp.MainDispatcher = DispatcherQueue.GetForCurrentThread();
@@ -45,7 +49,19 @@ public sealed class AppEnvironment
         if (nodes.Nodes.Count == 0)
             nodes.Add(Node.LocalWindows(System.Environment.MachineName));
 
-        var invokerFactory = new SamplerInvokerFactory();
+        // TOFU host-key wiring: the prompter shows a ContentDialog on the UI
+        // dispatcher; the persister stamps the accepted fingerprint onto the
+        // matching Node. Both are optional — nulls mean "refuse unknown keys".
+        HostKeyPrompt? hostKeyPrompt = null;
+        Action<Guid, string>? onTrust = null;
+        if (TowertailApp.MainDispatcher is { } d)
+        {
+            hostKeyPrompt = new HostKeyTrustPrompter(d).Adapter;
+            HostKeyTrustPersister.Bind(nodes);
+            onTrust = HostKeyTrustPersister.Persist;
+        }
+
+        var invokerFactory = new SamplerInvokerFactory(hostKeyPrompt: hostKeyPrompt, onTrust: onTrust);
         var collector = new RealCollector(nodes, servers, serverSettings, invokerFactory, logger);
         // Marshal sample ingestion onto the WinUI dispatcher so observable
         // collections and PropertyChanged fire on the UI thread. Core doesn't
@@ -77,6 +93,8 @@ public sealed class AppEnvironment
             Notifier = notifier,
             Collector = collector,
             Logger = logger,
+            HostKeyPrompt = hostKeyPrompt,
+            OnHostKeyTrust = onTrust,
         };
     }
 }

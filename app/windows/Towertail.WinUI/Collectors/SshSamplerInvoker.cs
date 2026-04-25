@@ -1,95 +1,85 @@
+using Renci.SshNet;
 using Towertail.WinUI.State;
 
 namespace Towertail.WinUI.Collectors;
 
 /// <summary>
-/// Runs a remote <c>towertail-sampler</c> over Windows OpenSSH. Uses <c>ssh.exe</c> from
-/// <c>%SystemRoot%\System32\OpenSSH</c> (available out of the box since Windows 10 1809) —
-/// which honors <c>~/.ssh/config</c>, ssh-agent, and known_hosts exactly like the Mac client.
+/// Runs a remote <c>towertail-sampler</c> over SSH via SSH.NET. Replaces the
+/// earlier <c>ssh.exe</c> shell-out so password auth + host-key pinning work
+/// natively on Windows without OpenSSH client assumptions.
 /// </summary>
 public sealed class SshSamplerInvoker : ISamplerInvoker
 {
-    private readonly IProcessRunner _runner;
     private readonly Node _node;
-    private readonly string _sshExe;
     private readonly string _remotePath;
+    private readonly HostKeyPrompt? _hostKeyPrompt;
+    private readonly Action<Guid, string>? _onTrust;
 
-    public SshSamplerInvoker(IProcessRunner runner, Node node, string? sshExe = null, string? remotePath = null)
+    public SshSamplerInvoker(
+        Node node,
+        string? remotePath = null,
+        HostKeyPrompt? hostKeyPrompt = null,
+        Action<Guid, string>? onTrust = null)
     {
-        _runner = runner;
         _node = node;
-        _sshExe = sshExe ?? DefaultSshPath();
-        // Default remote install path. Unix hosts: ~/.towertail/towertail-sampler.
-        // Windows hosts: bootstrap rewrites this to the %USERPROFILE% variant before first use.
         _remotePath = remotePath ?? "~/.towertail/towertail-sampler";
+        _hostKeyPrompt = hostKeyPrompt;
+        _onTrust = onTrust;
     }
 
-    public async Task<Sample> RunOnceAsync(CancellationToken ct = default)
-    {
-        var result = await _runner.RunAsync(
-            BuildSshRequest($"{_remotePath} --once", TimeSpan.FromSeconds(15)),
-            ct).ConfigureAwait(false);
-        if (!result.Ok)
-            throw new InvalidOperationException($"ssh exit {result.ExitCode}: {result.StdErr.Trim()}");
-        return SampleCodec.Decode(result.StdOut);
-    }
+    public Task<Sample> RunOnceAsync(CancellationToken ct = default)
+        => RunOnThreadPool(() =>
+        {
+            using var client = Connect();
+            var output = client.RunCommand($"{_remotePath} --once");
+            if (output.ExitStatus != 0)
+                throw new InvalidOperationException($"sampler exit {output.ExitStatus}: {output.Error.Trim()}");
+            return SampleCodec.Decode(output.Result);
+        }, ct);
 
     public async IAsyncEnumerable<Sample> StreamAsync(
         TimeSpan interval,
         [global::System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
+        // SSH.NET's ShellStream lets us keep one session open; simpler here is
+        // to poll --once on the outer cadence the caller already drives. The
+        // worker loop in RealCollector already paces per-node, so a streaming
+        // --interval subprocess isn't worth the extra plumbing.
         var seconds = Math.Max(1, (int)interval.TotalSeconds);
-        await using var proc = await _runner.StartStreamingAsync(
-            BuildSshRequest($"{_remotePath} --interval {seconds}s"),
-            ct).ConfigureAwait(false);
         while (!ct.IsCancellationRequested)
         {
-            var line = await proc.StdOut.ReadLineAsync(ct).ConfigureAwait(false);
-            if (line is null) yield break;
-            if (string.IsNullOrWhiteSpace(line)) continue;
             Sample? sample = null;
-            try { sample = SampleCodec.Decode(line); }
-            catch { }
+            try { sample = await RunOnceAsync(ct).ConfigureAwait(false); }
+            catch { /* transport error — outer loop will back off */ }
             if (sample != null) yield return sample;
+            try { await Task.Delay(TimeSpan.FromSeconds(seconds), ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { yield break; }
         }
     }
 
-    public async Task<string> VersionAsync(CancellationToken ct = default)
-    {
-        var result = await _runner.RunAsync(
-            BuildSshRequest($"{_remotePath} --version", TimeSpan.FromSeconds(5)),
-            ct).ConfigureAwait(false);
-        return result.StdOut.Trim();
-    }
-
-    public async Task<bool> SelfCheckAsync(CancellationToken ct = default)
-    {
-        var result = await _runner.RunAsync(
-            BuildSshRequest($"{_remotePath} --self-check", TimeSpan.FromSeconds(10)),
-            ct).ConfigureAwait(false);
-        return result.Ok && result.StdOut.Trim() == "ok";
-    }
-
-    private ProcessRequest BuildSshRequest(string remoteCommand, TimeSpan? timeout = null)
-    {
-        var target = _node.UserAtHost;
-        var args = new List<string>
+    public Task<string> VersionAsync(CancellationToken ct = default)
+        => RunOnThreadPool(() =>
         {
-            "-o", "ControlMaster=auto",
-            "-o", "ControlPersist=60",
-            "-o", "ControlPath=~/.ssh/towertail-%r@%h:%p",
-            "-o", "BatchMode=yes",
-            "-o", "ConnectTimeout=10",
-            target,
-            remoteCommand,
-        };
-        return new ProcessRequest(_sshExe, args, Timeout: timeout);
-    }
+            using var client = Connect();
+            var output = client.RunCommand($"{_remotePath} --version");
+            return output.Result.Trim();
+        }, ct);
 
-    internal static string DefaultSshPath()
-    {
-        var sys = Environment.GetFolderPath(Environment.SpecialFolder.System);
-        var baked = Path.Combine(sys, "OpenSSH", "ssh.exe");
-        return File.Exists(baked) ? baked : "ssh.exe";
-    }
+    public Task<bool> SelfCheckAsync(CancellationToken ct = default)
+        => RunOnThreadPool(() =>
+        {
+            using var client = Connect();
+            var output = client.RunCommand($"{_remotePath} --self-check");
+            return output.ExitStatus == 0 && output.Result.Trim() == "ok";
+        }, ct);
+
+    private SshClient Connect() => SshConnectionFactory.Connect(
+        _node,
+        hostKeyPrompt: _hostKeyPrompt,
+        onTrust: _onTrust is null ? null : fp => _onTrust(_node.Id, fp));
+
+    // SSH.NET is synchronous-first. Wrap each op in Task.Run so callers on the
+    // UI thread don't block the dispatcher for the duration of a connect.
+    private static Task<T> RunOnThreadPool<T>(Func<T> f, CancellationToken ct)
+        => Task.Run(f, ct);
 }

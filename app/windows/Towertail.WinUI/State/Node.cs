@@ -11,6 +11,18 @@ public enum NodeKind
 }
 
 /// <summary>
+/// How we authenticate to an SSH host. "Key" covers both on-disk private keys
+/// and Pageant/agent; "Password" pulls the plaintext from DPAPI at connect time.
+/// Values on the wire match the Mac side (<c>"key"</c> / <c>"password"</c>).
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter<AuthMethod>))]
+public enum AuthMethod
+{
+    [JsonStringEnumMemberName("key")] Key,
+    [JsonStringEnumMemberName("password")] Password,
+}
+
+/// <summary>
 /// A monitored server. Identity is a UUID so node IDs round-trip cleanly between Mac and Windows.
 /// JSON encoding is compatible with Mac's Node.swift — camelCase keys, platform-neutral UUIDs.
 /// </summary>
@@ -21,6 +33,15 @@ public sealed record Node
     public NodeKind Kind { get; init; } = NodeKind.Local;
     public string? SshUser { get; init; }
     public string? SshHost { get; init; }
+    /// <summary>SSH port; null → default 22. Optional so existing records round-trip unchanged.</summary>
+    public int? SshPort { get; init; }
+    /// <summary>Defaults to Key for back-compat — records missing the field on disk keep key-only behavior.</summary>
+    public AuthMethod AuthMethod { get; init; } = AuthMethod.Key;
+    /// <summary>
+    /// SHA256-base64 fingerprint of the remote host key we trust for this node.
+    /// null → no key pinned yet; first connect prompts the user. Mismatch refuses.
+    /// </summary>
+    public string? KnownHostFingerprint { get; init; }
     public IReadOnlyList<string> Tags { get; init; } = Array.Empty<string>();
     public bool Enabled { get; init; } = true;
     public bool IconOnWarn { get; init; } = true;
@@ -33,6 +54,10 @@ public sealed record Node
 
     [JsonIgnore]
     public bool IsSnoozed => SnoozedUntil is { } u && u > DateTime.UtcNow;
+
+    /// <summary>Effective port (SshPort ?? 22). Used by the SSH factory and UI.</summary>
+    [JsonIgnore]
+    public int EffectiveSshPort => SshPort ?? 22;
 
     [JsonIgnore]
     public string UserAtHost => Kind switch
