@@ -27,30 +27,16 @@ final class HistoryStore: @unchecked Sendable {
     private var pruneDiskCapStmt: OpaquePointer?
     private var insertDiskIOStmt: OpaquePointer?
     private var pruneDiskIOStmt: OpaquePointer?
-    /// Lazily-initialized JSON codec for proc item lists. Decoder uses
-    /// fractional-seconds ISO-8601 so round-trip with sampler-produced
-    /// start_ts works; encoder mirrors that format.
-    ///
-    /// Formatters are cached at type level — `ISO8601DateFormatter` allocs
-    /// pull in ICU's SimpleDateFormat, which showed up on the energy hot
-    /// path when constructed per encode/decode call.
-    private static let fractionalFormatter: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
-    private static let plainFormatter: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime]
-        return f
-    }()
+    /// JSON codec for proc item lists. Round-trips RFC3339-UTC strings via
+    /// the same hand parser/formatter we use for live samples — avoids
+    /// `ISO8601DateFormatter`/ICU on every encode and decode, which showed
+    /// up as a meaningful slice of the per-poll worker thread.
     private static let procDecoder: JSONDecoder = {
         let d = JSONDecoder()
         d.dateDecodingStrategy = .custom { decoder in
             let c = try decoder.singleValueContainer()
             let s = try c.decode(String.self)
-            if let parsed = fractionalFormatter.date(from: s) { return parsed }
-            if let parsed = plainFormatter.date(from: s) { return parsed }
+            if let parsed = SampleCodec.parseRFC3339UTC(s) { return parsed }
             throw DecodingError.dataCorruptedError(in: c, debugDescription: "invalid ts: \(s)")
         }
         return d
@@ -59,7 +45,7 @@ final class HistoryStore: @unchecked Sendable {
         let e = JSONEncoder()
         e.dateEncodingStrategy = .custom { date, encoder in
             var c = encoder.singleValueContainer()
-            try c.encode(fractionalFormatter.string(from: date))
+            try c.encode(SampleCodec.formatRFC3339UTC(date))
         }
         return e
     }()
