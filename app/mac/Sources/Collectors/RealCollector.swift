@@ -111,6 +111,28 @@ final class RealCollector: Collector {
         // Tracks whether this pacer has marked the VM suspended, so the
         // next resumed tick can clear the badge on a single main-hop.
         var wasSuspended = false
+        // Retry policy depends on whether we've ever talked to this host.
+        //
+        //   Never connected → likely a real misconfig the user needs to
+        //     fix (wrong port, firewall, sampler not installed). Try
+        //     `maxColdAttempts` times with short exponential backoff,
+        //     then halt — the supervisor respawns when the node is
+        //     edited (NodeStore.update → snapshot diff).
+        //
+        //   Connected at least once → host is real and was reachable.
+        //     Treat outages as transient (laptop sleep, Tailscale flap,
+        //     server reboot, NAT eviction) and retry indefinitely with
+        //     exponential backoff capped at `maxBackoffSec`. So a host
+        //     that comes back hours later still recovers automatically
+        //     without user intervention.
+        //
+        // Counter resets to 0 on any successful sample.
+        var transientFailures = 0
+        var everConnected = false
+        let maxColdAttempts = 3
+        let coldBaseSec: Double = 2          // 2, 4, 8 → halts after ~14s
+        let warmBaseSec: Double = 10         // 10, 20, 40, 80, … capped
+        let maxBackoffSec: Double = 30 * 60  // 30 min ceiling once warm
         while !Task.isCancelled {
             let gate = await Self.gate(reachability: reachability)
             if let reason = gate {
@@ -139,6 +161,8 @@ final class RealCollector: Collector {
             }
             do {
                 let sample = try await invoker.invokeOnce(node: node)
+                transientFailures = 0
+                everConnected = true
                 await MainActor.run {
                     sink.ingest(sample, for: node.id)
                     let enabled = settings.autoUpdateSamplersEnabled
@@ -150,29 +174,95 @@ final class RealCollector: Collector {
                 }
             } catch {
                 let reason = shortReason(for: error)
+                let permanent = isPermanentError(error)
+                let attempt = permanent ? 0 : transientFailures + 1
+                // Cold-start exhaustion only applies to hosts we've never
+                // talked to. Once warm, we keep retrying with longer and
+                // longer backoff until the user disables the node.
+                let exhausted = !permanent && !everConnected && attempt >= maxColdAttempts
+
+                let backoffSec: Double = {
+                    if permanent || exhausted { return 0 }
+                    if everConnected {
+                        // Warm: 10s, 20s, 40s, 80s, … capped at 30 min.
+                        let raw = warmBaseSec * pow(2.0, Double(attempt - 1))
+                        return min(maxBackoffSec, raw)
+                    } else {
+                        // Cold: 2s, 4s, 8s — short retries before halting.
+                        return coldBaseSec * pow(2.0, Double(attempt - 1))
+                    }
+                }()
+
                 await MainActor.run {
                     sink.markOffline(id: node.id, reason: reason, at: Date())
+                    let msg: String
+                    if permanent {
+                        msg = "sample: halting on permanent error"
+                    } else if exhausted {
+                        msg = "sample: halting after \(maxColdAttempts) cold-start retries"
+                    } else if everConnected {
+                        msg = "sample: transient error, retrying in \(Int(backoffSec))s (warm)"
+                    } else {
+                        msg = "sample: transient error, retrying in \(Int(backoffSec))s (\(attempt)/\(maxColdAttempts))"
+                    }
                     Logger.shared.warn(
-                        "sample: halting on error",
+                        msg,
                         category: "sample",
                         hostID: node.id, host: node.displayName,
-                        kv: ["kind": kind.rawValue, "reason": reason]
+                        kv: [
+                            "kind": kind.rawValue,
+                            "reason": reason,
+                            "transient_failures": String(attempt),
+                            "ever_connected": String(everConnected),
+                        ]
                     )
                 }
-                // Stop polling. Citadel leaks the underlying TCP socket
-                // when SSH auth fails — its connect chain awaits
-                // `.authenticated` on the channel pipeline but never
-                // closes the channel on failure — so retrying every
-                // pollingInterval just stacks ESTABLISHED sockets. The
-                // supervisor respawns this pacer once the user edits the
-                // node (NodeStore.update → snapshot diff).
-                return
+                if permanent || exhausted {
+                    // Permanent: auth / host-key / misconfig — retry
+                    // doesn't help and Citadel leaks the underlying TCP
+                    // socket when its connect chain fails before
+                    // `.authenticated`.
+                    // Exhausted: a never-reached host has missed
+                    // `maxColdAttempts` connects in a row, almost certainly
+                    // a config problem. Stop hammering; the supervisor
+                    // respawns once the user edits the node.
+                    return
+                }
+                transientFailures = attempt
+                try? await Task.sleep(nanoseconds: UInt64(backoffSec * 1_000_000_000))
+                continue
             }
             let intervalSec = await MainActor.run { settings.pollingInterval(for: kind) }
             let nanos = UInt64(max(1, intervalSec)) * 1_000_000_000
             try? await Task.sleep(nanoseconds: nanos)
         }
         _ = history // retained; trimming hook belongs here if we add one later
+    }
+
+    /// Errors that won't change on retry. Auth failures, host-key
+    /// mismatches, and node-misconfiguration are user-fixes; everything
+    /// else (network blips, channel resets, sampler crashes, decode
+    /// errors from a partial transfer) is treated as transient and
+    /// retried with backoff.
+    private static func isPermanentError(_ error: Error) -> Bool {
+        // Our own taxonomy: only `misconfigured` is permanent. The other
+        // SamplerInvokeError cases (sshFailed, timeout, emptyOutput,
+        // decodeFailed) all happen on transient remote/network conditions
+        // — a server that briefly returns nothing or exits non-zero will
+        // usually recover on its own.
+        if let e = error as? SamplerInvokeError {
+            if case .misconfigured = e { return true }
+            return false
+        }
+        // SSHConnectionFactory's auth/host-key wrappers are surfaces for
+        // user-correctable problems. Don't burn battery hammering a host
+        // that just refused our credentials.
+        if error is SSHConnectionFactory.HostKeyMismatch { return true }
+        if error is SSHConnectionFactory.HostKeyRejected { return true }
+        if error is SSHConnectionFactory.NoCredential { return true }
+        // Anything else (NIOCore.ChannelError, Citadel.TTYSTDError,
+        // POSIXError, etc.) is treated as transient.
+        return false
     }
 
     /// Asks the reachability monitor (on the main actor, where it lives)
