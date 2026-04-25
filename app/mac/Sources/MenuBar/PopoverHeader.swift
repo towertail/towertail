@@ -4,6 +4,10 @@ import AppKit
 struct PopoverHeader: View {
     @Environment(ServerStore.self) private var store
     @Environment(\.dismiss) private var dismiss
+    /// Used to grab focus when the popover reopens. `MenuBarExtra` keeps
+    /// the view tree alive across dismissals, so `.onAppear` only fires
+    /// once — we have to react to the scene-phase transition instead.
+    @Environment(\.scenePhase) private var scenePhase
     @Binding var filter: PopoverFilter
     /// Live, un-debounced query text. The popover owns the debounced copy
     /// used for filtering — the header just drives the text field.
@@ -60,6 +64,18 @@ struct PopoverHeader: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(Color.black.opacity(0.001))
+        .onChange(of: scenePhase) { _, phase in
+            // Popover just became visible — autofocus the filter so the
+            // user can type to narrow the list without having to click
+            // first. Skip when the popover is going away or staying away.
+            guard phase == .active else { return }
+            searchFocused = true
+        }
+        .onAppear {
+            // First open after launch: scenePhase may already be .active
+            // by the time the body mounts, so onChange wouldn't fire.
+            searchFocused = true
+        }
     }
 
     private var searchField: some View {
