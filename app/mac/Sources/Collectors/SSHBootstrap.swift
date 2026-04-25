@@ -11,7 +11,14 @@ enum SSHBootstrap {
 
     /// Probes `uname -sm` on the remote and maps it to a bundled triple.
     static func detectTriple(client: SSHClient) async throws -> String {
-        let out = try await client.executeCommand("uname -sm")
+        let out: ByteBuffer
+        do {
+            out = try await client.executeCommand("uname -sm")
+        } catch {
+            throw SamplerInvokeError.sshFailed(
+                stderr: SSHErrorRenderer.describe(error), exitCode: -1
+            )
+        }
         let raw = String(buffer: out).trimmingCharacters(in: .whitespacesAndNewlines)
         let parts = raw.split(separator: " ").map(String.init)
         guard parts.count == 2 else {
@@ -37,7 +44,14 @@ enum SSHBootstrap {
     /// Resolves `$HOME` on the remote — SFTP paths don't expand `~`, so we
     /// need an absolute path before opening the sampler file.
     static func resolveHome(client: SSHClient) async throws -> String {
-        let out = try await client.executeCommand("echo $HOME")
+        let out: ByteBuffer
+        do {
+            out = try await client.executeCommand("echo $HOME")
+        } catch {
+            throw SamplerInvokeError.sshFailed(
+                stderr: SSHErrorRenderer.describe(error), exitCode: -1
+            )
+        }
         let home = String(buffer: out).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !home.isEmpty else {
             throw SamplerInvokeError.misconfigured("remote $HOME is empty")
@@ -114,7 +128,14 @@ enum SSHBootstrap {
 
     /// Runs the remote sampler with `--once` and decodes the sample.
     static func runOnce(client: SSHClient) async throws -> Sample {
-        let out = try await client.executeCommand("~/\(remoteSamplerDir)/\(remoteSamplerName) --once")
+        let out: ByteBuffer
+        do {
+            out = try await client.executeCommand("~/\(remoteSamplerDir)/\(remoteSamplerName) --once")
+        } catch {
+            throw SamplerInvokeError.sshFailed(
+                stderr: SSHErrorRenderer.describe(error), exitCode: -1
+            )
+        }
         let data = Data(buffer: out)
         guard !data.isEmpty else {
             throw SamplerInvokeError.emptyOutput
@@ -132,6 +153,30 @@ struct SSHTestReport: Sendable {
     let triple: String
     let remotePath: String
     let sample: Sample
+}
+
+/// Best-effort conversion of a Citadel/NIO error into a useful one-line
+/// message. `TTYSTDError` in particular wraps the actual stderr from the
+/// remote command in a `ByteBuffer` — without unwrapping that, callers
+/// only ever see "Citadel.TTYSTDError error 1." which tells the user
+/// nothing. Returns nil when the error has no extractable detail; callers
+/// fall back to `error.localizedDescription`.
+enum SSHErrorRenderer {
+    static func describe(_ error: Error) -> String {
+        if let stderr = stderr(from: error) { return stderr }
+        return error.localizedDescription
+    }
+
+    /// Extracts the stderr text from a Citadel `TTYSTDError`, or nil if
+    /// the error is something else.
+    static func stderr(from error: Error) -> String? {
+        guard let tty = error as? TTYSTDError else { return nil }
+        var buf = tty.message
+        let bytes = buf.readBytes(length: buf.readableBytes) ?? []
+        let raw = String(decoding: bytes, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return raw.isEmpty ? nil : raw
+    }
 }
 
 extension SSHBootstrap {

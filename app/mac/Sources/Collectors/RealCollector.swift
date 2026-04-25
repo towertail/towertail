@@ -386,5 +386,5 @@ private func shortReason(for error: Error) -> String {
         case .misconfigured(let reason): return reason
         }
     }
-    return error.localizedDescription
+    return SSHErrorRenderer.describe(error)
 }

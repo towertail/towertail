@@ -66,7 +66,7 @@ struct SSHSamplerInvoker: SamplerInvoker {
             result = .failure(SamplerInvokeError.decodeFailed(underlying: err))
         } catch {
             result = .failure(SamplerInvokeError.sshFailed(
-                stderr: error.localizedDescription, exitCode: -1
+                stderr: SSHErrorRenderer.describe(error), exitCode: -1
             ))
         }
         await Task.detached { try? await client.close() }.value
