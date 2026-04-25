@@ -10,6 +10,13 @@ final class RealCollector: Collector {
     /// and the Mock collector path don't need to construct one — when nil,
     /// the pacer polls unconditionally (the old behavior).
     let reachability: SystemReachabilityMonitor?
+    /// Node ids the supervisor should drop and re-spawn on its next tick.
+    /// Written from the main actor (Preferences UI after a successful
+    /// Test) and drained inside the supervisor loop. Wrapped in a lock
+    /// because the supervisor runs on a detached utility task — without
+    /// this, Swift concurrency rejects the cross-isolation read.
+    private let respawnLock = NSLock()
+    private var pendingRespawns: Set<UUID> = []
 
     init(
         nodeStore: NodeStore,
@@ -25,6 +32,22 @@ final class RealCollector: Collector {
         self.samplerUpdater = samplerUpdater
         self.reachability = reachability
         self.invokerFactory = invokerFactory
+    }
+
+    func respawnPacer(id: UUID) {
+        respawnLock.lock()
+        pendingRespawns.insert(id)
+        respawnLock.unlock()
+    }
+
+    /// Drains and clears the queue. Returns the ids that were pending
+    /// when the call ran. Called only from the supervisor loop.
+    private func takePendingRespawns() -> Set<UUID> {
+        respawnLock.lock()
+        let ids = pendingRespawns
+        pendingRespawns.removeAll(keepingCapacity: true)
+        respawnLock.unlock()
+        return ids
     }
 
     func run(sink: ServerStore) async {
@@ -62,6 +85,17 @@ final class RealCollector: Collector {
             // (e.g. switching auth method) clears the halted entry.
             for (id, entry) in entries {
                 if let current = byID[id], current != entry.node {
+                    entry.task.cancel()
+                    entries[id] = nil
+                }
+            }
+            // Drain any explicit respawn requests (e.g. Preferences →
+            // Test succeeded on a host whose pacer halted on a permanent
+            // error). Cancel the parked task so the spawn loop below
+            // starts a fresh pacer with the current node config.
+            let respawns = takePendingRespawns()
+            for id in respawns {
+                if let entry = entries[id] {
                     entry.task.cancel()
                     entries[id] = nil
                 }

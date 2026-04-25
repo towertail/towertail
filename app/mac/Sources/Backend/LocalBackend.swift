@@ -116,6 +116,10 @@ final class LocalBackend: Backend {
         nodes.setFavorite(id: id, favorite: favorite)
     }
 
+    func respawnPacer(id: UUID) async {
+        collector.respawnPacer(id: id)
+    }
+
     func updateServerSettings(_ settings: ServerSettings) async throws {
         // ServerSettings is already the canonical @Observable — Local
         // callers mutate it directly and call persist(). This method

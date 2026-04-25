@@ -173,6 +173,13 @@ final class RemoteBackend: Backend {
         try await updateNode(n)
     }
 
+    func respawnPacer(id: UUID) async {
+        // Remote mode: the server owns the polling loop; the client has
+        // no in-process collector to poke. Phase-3 server should expose
+        // an equivalent endpoint so the Test button has the same effect
+        // there. Until then this is a no-op.
+    }
+
     func updateServerSettings(_ settings: ServerSettings) async throws {
         let rs = RemoteServerSettings(
             thresholds: settings.thresholds,

@@ -67,6 +67,14 @@ protocol Backend: AnyObject {
     // mode. ClientSettings are always local — mutate them directly on
     // the @Observable.
     func updateServerSettings(_ settings: ServerSettings) async throws
+
+    /// Asks the collector to drop any cached pacer state for `id` and
+    /// start fresh on its next tick. Used by the Preferences "Test"
+    /// button: after a successful test on a host whose pacer halted on
+    /// a permanent error, the user expects polling to resume without
+    /// having to disable+re-enable the node. Remote mode forwards this
+    /// to the server; Local mode pokes the in-process collector.
+    func respawnPacer(id: UUID) async
 }
 
 /// SwiftUI environment key for the active backend. Views that mutate

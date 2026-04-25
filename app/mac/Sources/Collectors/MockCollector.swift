@@ -4,6 +4,10 @@ struct MockCollector: Collector {
     static let tickInterval: TimeInterval = 15
     static let backfillSamples: Int = 480
 
+    func respawnPacer(id: UUID) {
+        // No-op: the mock collector has no per-node pacers to respawn.
+    }
+
     func run(sink: ServerStore) async {
         let hosts = await Self.defaultHosts()
 

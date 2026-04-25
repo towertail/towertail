@@ -179,27 +179,44 @@ struct ServersPane: View {
 
     private func runTest(node: Node) {
         testResult = TestResult(ok: true, message: "Testing \(node.displayName)…")
+        let backend = self.backend
+        let nodeStore = self.nodeStore
         Task {
             do {
+                let sampleHost: HostInfo
+                let cpuPct: Double
+                let cores: Int
+                let okMessage: String
                 if node.kind == .ssh {
                     let report = try await SSHBootstrap.bootstrapAndVerify(node: node)
                     let s = report.sample
-                    await MainActor.run {
-                        testResult = TestResult(
-                            ok: true,
-                            message: "OK (\(report.triple)): \(s.host.name) · cpu \(Int(round(s.cpu.pct)))% · cores \(s.cpu.cores)"
-                        )
-                    }
+                    sampleHost = s.host
+                    cpuPct = s.cpu.pct
+                    cores = s.cpu.cores
+                    okMessage = "OK (\(report.triple)): \(s.host.name) · cpu \(Int(round(cpuPct)))% · cores \(cores)"
                 } else {
                     let invoker = makeInvoker(for: node)
                     let sample = try await invoker.invokeOnce(node: node)
-                    await MainActor.run {
-                        testResult = TestResult(
-                            ok: true,
-                            message: "OK: \(sample.host.name) · cpu \(Int(round(sample.cpu.pct)))% · cores \(sample.cpu.cores)"
-                        )
-                    }
+                    sampleHost = sample.host
+                    cpuPct = sample.cpu.pct
+                    cores = sample.cpu.cores
+                    okMessage = "OK: \(sampleHost.name) · cpu \(Int(round(cpuPct)))% · cores \(cores)"
                 }
+                await MainActor.run {
+                    testResult = TestResult(ok: true, message: okMessage)
+                    // Mark the node as having connected so the warm-state
+                    // flag is set even if the supervisor's pacer was the
+                    // one that observed the failure path. No-op on
+                    // already-warm nodes.
+                    nodeStore.markConnected(id: node.id)
+                }
+                // Kick the supervisor so a pacer that halted on a
+                // permanent error (e.g. "all SSH keys rejected" before
+                // the user copied the key over) drops its parked entry
+                // and respawns. Without this, polling stays halted even
+                // though Test just succeeded — the user has to disable
+                // and re-enable the node to get back to live.
+                await backend?.respawnPacer(id: node.id)
             } catch {
                 let msg = (error as? SamplerInvokeError)?.errorDescription ?? error.localizedDescription
                 await MainActor.run {
@@ -223,9 +240,12 @@ struct ServersPane: View {
         }
         bulkRunning = true
         testResult = TestResult(ok: true, message: "Testing \(nodes.count) hosts…")
+        let backend = self.backend
+        let nodeStore = self.nodeStore
         Task {
             var okCount = 0
             var failures: [(String, String)] = []
+            var succeededIDs: [UUID] = []
             for node in nodes {
                 do {
                     if node.kind == .ssh {
@@ -234,10 +254,21 @@ struct ServersPane: View {
                         _ = try await makeInvoker(for: node).invokeOnce(node: node)
                     }
                     okCount += 1
+                    succeededIDs.append(node.id)
                 } catch {
                     let msg = (error as? SamplerInvokeError)?.errorDescription ?? error.localizedDescription
                     failures.append((node.displayName, msg))
                 }
+            }
+            // Stamp warm flag + nudge any halted pacers back to life for
+            // every host that just verified. Mirrors the single-host path
+            // so a bulk test is just as effective at recovering halted
+            // hosts as Test on each one individually.
+            await MainActor.run {
+                for id in succeededIDs { nodeStore.markConnected(id: id) }
+            }
+            for id in succeededIDs {
+                await backend?.respawnPacer(id: id)
             }
             await MainActor.run {
                 bulkRunning = false
