@@ -63,6 +63,11 @@ public sealed class PersistedThresholds
     public double MemCritical { get; set; } = 0.90;
     public double DiskWarn { get; set; } = 0.85;
     public double DiskCritical { get; set; } = 0.95;
+    // Defaults to 1 (no sustain) so existing settings.json files round-trip
+    // without behavior change.
+    public int CpuSustainSamples { get; set; } = 1;
+    public int MemSustainSamples { get; set; } = 1;
+    public int DiskSustainSamples { get; set; } = 1;
 
     public static PersistedThresholds Defaults => new();
 }

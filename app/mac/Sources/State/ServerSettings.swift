@@ -30,7 +30,10 @@ final class ServerSettings {
         self.thresholds = MetricThresholds(
             cpuWarn: p.thresholds.cpuWarn, cpuCritical: p.thresholds.cpuCritical,
             memWarn: p.thresholds.memWarn, memCritical: p.thresholds.memCritical,
-            diskWarn: p.thresholds.diskWarn, diskCritical: p.thresholds.diskCritical
+            diskWarn: p.thresholds.diskWarn, diskCritical: p.thresholds.diskCritical,
+            cpuSustainSamples: p.thresholds.cpuSustainSamples,
+            memSustainSamples: p.thresholds.memSustainSamples,
+            diskSustainSamples: p.thresholds.diskSustainSamples
         )
         self.localPollingIntervalSeconds = max(1, min(300, p.localPollingIntervalSeconds))
         self.sshPollingIntervalSeconds = max(1, min(300, p.sshPollingIntervalSeconds))
@@ -51,7 +54,10 @@ final class ServerSettings {
         self.thresholds = MetricThresholds(
             cpuWarn: p.thresholds.cpuWarn, cpuCritical: p.thresholds.cpuCritical,
             memWarn: p.thresholds.memWarn, memCritical: p.thresholds.memCritical,
-            diskWarn: p.thresholds.diskWarn, diskCritical: p.thresholds.diskCritical
+            diskWarn: p.thresholds.diskWarn, diskCritical: p.thresholds.diskCritical,
+            cpuSustainSamples: p.thresholds.cpuSustainSamples,
+            memSustainSamples: p.thresholds.memSustainSamples,
+            diskSustainSamples: p.thresholds.diskSustainSamples
         )
         self.localPollingIntervalSeconds = max(1, min(300, p.localPollingIntervalSeconds))
         self.sshPollingIntervalSeconds = max(1, min(300, p.sshPollingIntervalSeconds))
@@ -76,7 +82,10 @@ final class ServerSettings {
         p.thresholds = PersistedThresholds(
             cpuWarn: thresholds.cpuWarn, cpuCritical: thresholds.cpuCritical,
             memWarn: thresholds.memWarn, memCritical: thresholds.memCritical,
-            diskWarn: thresholds.diskWarn, diskCritical: thresholds.diskCritical
+            diskWarn: thresholds.diskWarn, diskCritical: thresholds.diskCritical,
+            cpuSustainSamples: thresholds.cpuSustainSamples,
+            memSustainSamples: thresholds.memSustainSamples,
+            diskSustainSamples: thresholds.diskSustainSamples
         )
         p.localPollingIntervalSeconds = localPollingIntervalSeconds
         p.sshPollingIntervalSeconds = sshPollingIntervalSeconds
@@ -97,6 +106,9 @@ final class ServerSettings {
         SettingsField("memCritical") { "\($0.thresholds.memCritical)" },
         SettingsField("diskWarn") { "\($0.thresholds.diskWarn)" },
         SettingsField("diskCritical") { "\($0.thresholds.diskCritical)" },
+        SettingsField("cpuSustainSamples") { "\($0.thresholds.cpuSustainSamples)" },
+        SettingsField("memSustainSamples") { "\($0.thresholds.memSustainSamples)" },
+        SettingsField("diskSustainSamples") { "\($0.thresholds.diskSustainSamples)" },
         SettingsField("localPollSec") { "\($0.localPollingIntervalSeconds)" },
         SettingsField("sshPollSec") { "\($0.sshPollingIntervalSeconds)" },
         SettingsField("notificationsEnabled") { "\($0.notificationsEnabled)" },

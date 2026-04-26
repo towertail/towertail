@@ -273,12 +273,57 @@ struct PersistedThresholds: Codable, Equatable {
     var memCritical: Double
     var diskWarn: Double
     var diskCritical: Double
+    /// See MetricThresholds.cpuSustainSamples. Defaults to 1 (no sustain) so
+    /// existing on-disk settings written before this field round-trip cleanly.
+    var cpuSustainSamples: Int
+    var memSustainSamples: Int
+    var diskSustainSamples: Int
 
     static let defaults = PersistedThresholds(
         cpuWarn: 0.75, cpuCritical: 0.90,
         memWarn: 0.75, memCritical: 0.90,
-        diskWarn: 0.85, diskCritical: 0.95
+        diskWarn: 0.85, diskCritical: 0.95,
+        cpuSustainSamples: 1, memSustainSamples: 1, diskSustainSamples: 1
     )
+
+    enum CodingKeys: String, CodingKey {
+        case cpuWarn, cpuCritical, memWarn, memCritical, diskWarn, diskCritical
+        case cpuSustainSamples, memSustainSamples, diskSustainSamples
+    }
+
+    init(
+        cpuWarn: Double, cpuCritical: Double,
+        memWarn: Double, memCritical: Double,
+        diskWarn: Double, diskCritical: Double,
+        cpuSustainSamples: Int = 1,
+        memSustainSamples: Int = 1,
+        diskSustainSamples: Int = 1
+    ) {
+        self.cpuWarn = cpuWarn
+        self.cpuCritical = cpuCritical
+        self.memWarn = memWarn
+        self.memCritical = memCritical
+        self.diskWarn = diskWarn
+        self.diskCritical = diskCritical
+        self.cpuSustainSamples = max(1, cpuSustainSamples)
+        self.memSustainSamples = max(1, memSustainSamples)
+        self.diskSustainSamples = max(1, diskSustainSamples)
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            cpuWarn: try c.decode(Double.self, forKey: .cpuWarn),
+            cpuCritical: try c.decode(Double.self, forKey: .cpuCritical),
+            memWarn: try c.decode(Double.self, forKey: .memWarn),
+            memCritical: try c.decode(Double.self, forKey: .memCritical),
+            diskWarn: try c.decode(Double.self, forKey: .diskWarn),
+            diskCritical: try c.decode(Double.self, forKey: .diskCritical),
+            cpuSustainSamples: try c.decodeIfPresent(Int.self, forKey: .cpuSustainSamples) ?? 1,
+            memSustainSamples: try c.decodeIfPresent(Int.self, forKey: .memSustainSamples) ?? 1,
+            diskSustainSamples: try c.decodeIfPresent(Int.self, forKey: .diskSustainSamples) ?? 1
+        )
+    }
 }
 
 enum SettingsPersistence {

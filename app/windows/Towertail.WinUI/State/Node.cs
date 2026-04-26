@@ -77,7 +77,14 @@ public sealed record MetricThresholds(
     double MemWarn,
     double MemCritical,
     double DiskWarn,
-    double DiskCritical)
+    double DiskCritical,
+    // Minimum consecutive over-threshold samples required before a metric
+    // can escalate. 1 = original "fire on first crossing"; per-metric so a
+    // bursty CPU doesn't force users to slow disk alerts down too. Shared
+    // between warn and critical; clear path is unconditional.
+    int CpuSustainSamples = 1,
+    int MemSustainSamples = 1,
+    int DiskSustainSamples = 1)
 {
     public static MetricThresholds Defaults => new(
         CpuWarn: 0.75, CpuCritical: 0.90,

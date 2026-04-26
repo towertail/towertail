@@ -17,6 +17,12 @@ struct ThresholdsPane: View {
                         settings.persist()
                     })
                 )
+                sustainRow(
+                    samples: Binding(get: { settings.thresholds.cpuSustainSamples }, set: {
+                        settings.thresholds.cpuSustainSamples = max(1, $0)
+                        settings.persist()
+                    })
+                )
             }
             Section("Memory") {
                 thresholdRow(
@@ -29,6 +35,12 @@ struct ThresholdsPane: View {
                         settings.persist()
                     })
                 )
+                sustainRow(
+                    samples: Binding(get: { settings.thresholds.memSustainSamples }, set: {
+                        settings.thresholds.memSustainSamples = max(1, $0)
+                        settings.persist()
+                    })
+                )
             }
             Section("Disk") {
                 thresholdRow(
@@ -38,6 +50,12 @@ struct ThresholdsPane: View {
                     }),
                     critical: Binding(get: { settings.thresholds.diskCritical }, set: {
                         settings.thresholds.diskCritical = max($0, settings.thresholds.diskWarn)
+                        settings.persist()
+                    })
+                )
+                sustainRow(
+                    samples: Binding(get: { settings.thresholds.diskSustainSamples }, set: {
+                        settings.thresholds.diskSustainSamples = max(1, $0)
                         settings.persist()
                     })
                 )
@@ -56,6 +74,19 @@ struct ThresholdsPane: View {
             }
             .padding(.horizontal, 4)
             .padding(.top, 8)
+        }
+    }
+
+    @ViewBuilder
+    private func sustainRow(samples: Binding<Int>) -> some View {
+        HStack {
+            Text("Sustain").frame(width: 60, alignment: .leading)
+            Stepper(value: samples, in: 1...30) {
+                let s = samples.wrappedValue
+                Text(s == 1 ? "Trigger immediately" : "After \(s) consecutive samples")
+                    .foregroundStyle(.secondary)
+                    .font(.callout)
+            }
         }
     }
 

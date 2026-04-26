@@ -15,6 +15,10 @@ public sealed class ThresholdNotifier
     private readonly NodeStore _nodes;
     private readonly Dictionary<(Guid, Metric), Severity> _state = new();
     private readonly Dictionary<(Guid, Metric), DateTime> _lastNotified = new();
+    // Per-metric streak counters (warn / critical), reset on the first
+    // under-threshold sample. In memory only — restarts start fresh.
+    private readonly Dictionary<(Guid, Metric), int> _warnStreak = new();
+    private readonly Dictionary<(Guid, Metric), int> _critStreak = new();
     private readonly object _lock = new();
 
     public event EventHandler<NotifyPayload>? Raised;
@@ -29,16 +33,46 @@ public sealed class ThresholdNotifier
     {
         var node = vm.Node;
         var thresholds = node.CustomThresholds ?? _settings.Thresholds;
-        if (vm.CpuPct is double cpu) Check(node, Metric.Cpu, cpu / 100.0, thresholds.CpuWarn, thresholds.CpuCritical);
-        if (vm.MemPct is double mem) Check(node, Metric.Mem, mem / 100.0, thresholds.MemWarn, thresholds.MemCritical);
-        if (vm.DiskMaxPct is double disk) Check(node, Metric.Disk, disk / 100.0, thresholds.DiskWarn, thresholds.DiskCritical);
+        if (vm.CpuPct is double cpu) Check(node, Metric.Cpu, cpu / 100.0, thresholds.CpuWarn, thresholds.CpuCritical, thresholds.CpuSustainSamples);
+        if (vm.MemPct is double mem) Check(node, Metric.Mem, mem / 100.0, thresholds.MemWarn, thresholds.MemCritical, thresholds.MemSustainSamples);
+        if (vm.DiskMaxPct is double disk) Check(node, Metric.Disk, disk / 100.0, thresholds.DiskWarn, thresholds.DiskCritical, thresholds.DiskSustainSamples);
     }
 
-    private void Check(Node node, Metric m, double value, double warn, double critical)
+    private void Check(Node node, Metric m, double value, double warn, double critical, int sustain)
     {
-        var sev = value >= critical ? Severity.Critical
-                : value >= warn ? Severity.Warn
-                : Severity.Nominal;
+        var key = (node.Id, m);
+        // Update streaks before deriving the gated severity. A single sample
+        // back under the warn line resets both counters so flapping clears
+        // immediately.
+        lock (_lock)
+        {
+            if (value >= warn) _warnStreak[key] = _warnStreak.GetValueOrDefault(key, 0) + 1;
+            else _warnStreak[key] = 0;
+            if (value >= critical) _critStreak[key] = _critStreak.GetValueOrDefault(key, 0) + 1;
+            else _critStreak[key] = 0;
+        }
+        var need = Math.Max(1, sustain);
+        var rawSev = value >= critical ? Severity.Critical
+                   : value >= warn ? Severity.Warn
+                   : Severity.Nominal;
+        var sev = rawSev;
+        if (need > 1)
+        {
+            int wStreak, cStreak;
+            lock (_lock)
+            {
+                wStreak = _warnStreak.GetValueOrDefault(key, 0);
+                cStreak = _critStreak.GetValueOrDefault(key, 0);
+            }
+            sev = rawSev switch
+            {
+                Severity.Critical => cStreak >= need ? Severity.Critical
+                                  : wStreak >= need ? Severity.Warn
+                                  : Severity.Nominal,
+                Severity.Warn => wStreak >= need ? Severity.Warn : Severity.Nominal,
+                _ => Severity.Nominal,
+            };
+        }
         bool changed;
         Severity prior;
         lock (_lock)

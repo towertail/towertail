@@ -53,6 +53,9 @@ public sealed partial class ServerSettings : ObservableObject
             MemCritical = Thresholds.MemCritical,
             DiskWarn = Thresholds.DiskWarn,
             DiskCritical = Thresholds.DiskCritical,
+            CpuSustainSamples = Thresholds.CpuSustainSamples,
+            MemSustainSamples = Thresholds.MemSustainSamples,
+            DiskSustainSamples = Thresholds.DiskSustainSamples,
         };
         p.LocalPollingIntervalSeconds = LocalPollingIntervalSeconds;
         p.SshPollingIntervalSeconds = SshPollingIntervalSeconds;
@@ -70,7 +73,10 @@ public sealed partial class ServerSettings : ObservableObject
         Thresholds = new MetricThresholds(
             p.Thresholds.CpuWarn, p.Thresholds.CpuCritical,
             p.Thresholds.MemWarn, p.Thresholds.MemCritical,
-            p.Thresholds.DiskWarn, p.Thresholds.DiskCritical);
+            p.Thresholds.DiskWarn, p.Thresholds.DiskCritical,
+            Math.Max(1, p.Thresholds.CpuSustainSamples),
+            Math.Max(1, p.Thresholds.MemSustainSamples),
+            Math.Max(1, p.Thresholds.DiskSustainSamples));
         LocalPollingIntervalSeconds = Math.Clamp(p.LocalPollingIntervalSeconds, 1, 300);
         SshPollingIntervalSeconds = Math.Clamp(p.SshPollingIntervalSeconds, 1, 300);
         NotificationsEnabled = p.NotificationsEnabled;

@@ -90,6 +90,14 @@ final class ServerViewModel: Identifiable {
     private var prevNetTxCum: Int64?
     private var prevNetTS: Date?
 
+    /// Consecutive over-warn / over-critical sample counts per metric. Reset
+    /// to zero on the first sample that's *under* the corresponding threshold.
+    /// Drives the per-metric sustain gate; lives in memory only — restarts
+    /// start fresh, which matches the user's mental model (a freshly relaunched
+    /// app shouldn't fire on a backlog of historical spikes).
+    @ObservationIgnored private var warnStreak: [Metric: Int] = [:]
+    @ObservationIgnored private var criticalStreak: [Metric: Int] = [:]
+
     init(
         id: UUID = UUID(),
         hostname: String,
@@ -188,6 +196,10 @@ final class ServerViewModel: Identifiable {
             procsAvailable = true
             procsRoot = ps.root
         }
+
+        updateStreak(.cpu, value: cpuV, warn: thresholds.cpuWarn, critical: thresholds.cpuCritical)
+        updateStreak(.mem, value: memV, warn: thresholds.memWarn, critical: thresholds.memCritical)
+        updateStreak(.disk, value: diskV, warn: thresholds.diskWarn, critical: thresholds.diskCritical)
 
         let previous = state
         state = computeState()
@@ -376,13 +388,48 @@ final class ServerViewModel: Identifiable {
 
     private func computeState() -> ServerConnState {
         let tints = [
-            cpu.tint(warn: thresholds.cpuWarn, critical: thresholds.cpuCritical),
-            mem.tint(warn: thresholds.memWarn, critical: thresholds.memCritical),
-            disk.tint(warn: thresholds.diskWarn, critical: thresholds.diskCritical),
+            sustainedTint(for: .cpu, raw: cpu.tint(warn: thresholds.cpuWarn, critical: thresholds.cpuCritical)),
+            sustainedTint(for: .mem, raw: mem.tint(warn: thresholds.memWarn, critical: thresholds.memCritical)),
+            sustainedTint(for: .disk, raw: disk.tint(warn: thresholds.diskWarn, critical: thresholds.diskCritical)),
         ]
         if tints.contains(.critical) { return .critical }
         if tints.contains(.warn) { return .warn }
         return .online
+    }
+
+    /// Increments or resets per-metric warn/critical streaks based on the
+    /// latest value. A single under-threshold sample resets the streak so a
+    /// host that drops back to nominal stops being flagged immediately.
+    private func updateStreak(_ metric: Metric, value: Double, warn: Double, critical: Double) {
+        if value >= warn {
+            warnStreak[metric, default: 0] += 1
+        } else {
+            warnStreak[metric] = 0
+        }
+        if value >= critical {
+            criticalStreak[metric, default: 0] += 1
+        } else {
+            criticalStreak[metric] = 0
+        }
+    }
+
+    /// Maps a raw tint to its sustain-gated equivalent. If the streak hasn't
+    /// reached the configured `sustainSamples`, the tint is downgraded —
+    /// critical → warn → nominal. With the default of 1, this is a no-op.
+    private func sustainedTint(for metric: Metric, raw: ThresholdTint) -> ThresholdTint {
+        let need = thresholds.sustainSamples(for: metric)
+        if need <= 1 { return raw }
+        switch raw {
+        case .critical:
+            if (criticalStreak[metric] ?? 0) >= need { return .critical }
+            if (warnStreak[metric] ?? 0) >= need { return .warn }
+            return .nominal
+        case .warn:
+            if (warnStreak[metric] ?? 0) >= need { return .warn }
+            return .nominal
+        case .nominal, .stale:
+            return raw
+        }
     }
 
     var worstTint: ThresholdTint {
@@ -407,9 +454,9 @@ final class ServerViewModel: Identifiable {
     /// specific metric that crossed, and by the UI when focusing a notif.
     func tint(for metric: Metric) -> ThresholdTint {
         switch metric {
-        case .cpu: return cpu.tint(warn: thresholds.cpuWarn, critical: thresholds.cpuCritical)
-        case .mem: return mem.tint(warn: thresholds.memWarn, critical: thresholds.memCritical)
-        case .disk: return disk.tint(warn: thresholds.diskWarn, critical: thresholds.diskCritical)
+        case .cpu: return sustainedTint(for: .cpu, raw: cpu.tint(warn: thresholds.cpuWarn, critical: thresholds.cpuCritical))
+        case .mem: return sustainedTint(for: .mem, raw: mem.tint(warn: thresholds.memWarn, critical: thresholds.memCritical))
+        case .disk: return sustainedTint(for: .disk, raw: disk.tint(warn: thresholds.diskWarn, critical: thresholds.diskCritical))
         case .net: return .nominal
         }
     }
@@ -426,10 +473,76 @@ struct MetricThresholds: Sendable, Equatable, Codable {
     var memCritical: Double
     var diskWarn: Double
     var diskCritical: Double
+    /// Minimum number of consecutive over-threshold samples required before
+    /// a metric is allowed to escalate the host's state or fire a notification.
+    /// 1 (default) preserves the original "fire on first crossing" behavior.
+    /// Shared between warn and critical (per-metric, not per-severity); the
+    /// clear path is unconditional — a single under-threshold sample resets
+    /// the streak so a flapping host stops being warn/critical instantly.
+    var cpuSustainSamples: Int
+    var memSustainSamples: Int
+    var diskSustainSamples: Int
 
     static let defaults = MetricThresholds(
         cpuWarn: 0.75, cpuCritical: 0.90,
         memWarn: 0.75, memCritical: 0.90,
-        diskWarn: 0.85, diskCritical: 0.95
+        diskWarn: 0.85, diskCritical: 0.95,
+        cpuSustainSamples: 1,
+        memSustainSamples: 1,
+        diskSustainSamples: 1
     )
+
+    enum CodingKeys: String, CodingKey {
+        case cpuWarn, cpuCritical, memWarn, memCritical, diskWarn, diskCritical
+        case cpuSustainSamples, memSustainSamples, diskSustainSamples
+    }
+
+    init(
+        cpuWarn: Double, cpuCritical: Double,
+        memWarn: Double, memCritical: Double,
+        diskWarn: Double, diskCritical: Double,
+        cpuSustainSamples: Int = 1,
+        memSustainSamples: Int = 1,
+        diskSustainSamples: Int = 1
+    ) {
+        self.cpuWarn = cpuWarn
+        self.cpuCritical = cpuCritical
+        self.memWarn = memWarn
+        self.memCritical = memCritical
+        self.diskWarn = diskWarn
+        self.diskCritical = diskCritical
+        self.cpuSustainSamples = max(1, cpuSustainSamples)
+        self.memSustainSamples = max(1, memSustainSamples)
+        self.diskSustainSamples = max(1, diskSustainSamples)
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let cpuW = try c.decode(Double.self, forKey: .cpuWarn)
+        let cpuC = try c.decode(Double.self, forKey: .cpuCritical)
+        let memW = try c.decode(Double.self, forKey: .memWarn)
+        let memC = try c.decode(Double.self, forKey: .memCritical)
+        let diskW = try c.decode(Double.self, forKey: .diskWarn)
+        let diskC = try c.decode(Double.self, forKey: .diskCritical)
+        let cpuS = try c.decodeIfPresent(Int.self, forKey: .cpuSustainSamples) ?? 1
+        let memS = try c.decodeIfPresent(Int.self, forKey: .memSustainSamples) ?? 1
+        let diskS = try c.decodeIfPresent(Int.self, forKey: .diskSustainSamples) ?? 1
+        self.init(
+            cpuWarn: cpuW, cpuCritical: cpuC,
+            memWarn: memW, memCritical: memC,
+            diskWarn: diskW, diskCritical: diskC,
+            cpuSustainSamples: cpuS,
+            memSustainSamples: memS,
+            diskSustainSamples: diskS
+        )
+    }
+
+    func sustainSamples(for metric: Metric) -> Int {
+        switch metric {
+        case .cpu: return cpuSustainSamples
+        case .mem: return memSustainSamples
+        case .disk: return diskSustainSamples
+        case .net: return 1
+        }
+    }
 }
