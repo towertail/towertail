@@ -18,6 +18,21 @@ enum DiskDeviceSelection: Hashable, Sendable {
     case device(String)       // specific device (e.g. "nvme0n1")
 }
 
+/// NET tab — picks which secondary table sits under the chart. Defaults
+/// to processes (parity with every other tab); `ports` flips to the
+/// per-process socket footprint table.
+enum NetSubTab: String, CaseIterable, Identifiable, Sendable {
+    case processes
+    case ports
+    var id: String { rawValue }
+    var displayName: String {
+        switch self {
+        case .processes: return "Processes"
+        case .ports: return "Ports"
+        }
+    }
+}
+
 @Observable
 @MainActor
 final class FullViewModel {
@@ -32,6 +47,11 @@ final class FullViewModel {
     /// DISK tab — I/O chart device picker. "Total" aggregates across
     /// devices.
     var diskDevice: DiskDeviceSelection = .total
+
+    /// NET tab — picks Processes or Ports for the table below the chart.
+    /// Persisted only in memory; resets to `.processes` each time the
+    /// window opens so the default state is the familiar one.
+    var netSubTab: NetSubTab = .processes
 
     /// Committed zoom range. When set, charts render only samples within
     /// it and the x-axis is bounded to this window. Stacking zoom levels

@@ -55,8 +55,10 @@ Used over a persistent SSH channel when the user wants sub-30s updates without p
 | `--interval <dur>` | (mode) | Emit every `<dur>` (e.g. `1s`, `5s`, `30s`) until killed. |
 | `--version` | — | Print `towertail-sampler <semver> <sha>` and exit 0. Used by the bootstrap handshake. |
 | `--self-check` | — | Collect one sample, throw it away, print `ok` + exit 0. Used to verify the binary runs on the target kernel before the app commits to using it. |
-| `--no-disk` / `--no-net` / `--no-proc` | off | Escape hatches if a specific collector hangs on a weird host — Mac-side config disables it for that server. |
+| `--no-disk` / `--no-net` / `--no-proc` / `--no-ports` | off | Escape hatches if a specific collector hangs on a weird host — Mac-side config disables it for that server. |
 | `--top-n <int>` | 20 | Cap on the process list. Returns the union of top-N by CPU% and top-N by RSS, deduped (so you get between N and 2N rows). `0` disables the cap. |
+| `--ports-interval <dur>` | 10s | How often the streaming sampler rebuilds the per-process ports table. Between refreshes the previous snapshot is re-emitted with its `collected_ts` unchanged. Ignored in `--once` mode (always one fresh scan). |
+| `--ports-max <int>` | 2000 | Hard cap on connections collected per refresh (passed straight to gopsutil's `ConnectionsMax`). When hit, `ports.truncated=true`. |
 
 No other flags for v1. No config file. No env vars beyond what Go reads by default.
 
@@ -120,6 +122,17 @@ One JSON object per sample. Newline-delimited in streaming mode. Fields are stab
       { "pid": 914, "ppid": 1, "name": "node",     "cmd": "node /app/server.js", "user": "app", "cpu_pct": 18.3, "rss": 430080000, "threads": 12, "state": "S" }
     ]
   },
+  "ports": {
+    "root": false,
+    "collected_ts": "2026-04-20T19:42:05.001Z",
+    "max_conn": 2000,
+    "truncated": false,
+    "total": 184,
+    "items": [
+      { "pid": 812, "name": "postgres", "user": "postgres", "listen_tcp": [5432], "est_out": 0, "est_in": 38 },
+      { "pid": 914, "name": "node",     "user": "app",      "listen_tcp": [8080], "est_out": 47, "est_in": 12, "top_remote_ports": [{ "port": 443, "count": 41 }, { "port": 5432, "count": 6 }] }
+    ]
+  },
   "errors": []
 }
 ```
@@ -138,6 +151,7 @@ One JSON object per sample. Newline-delimited in streaming mode. Fields are stab
 - **`machine_id`**: optional, read-only. `/etc/machine-id` on Linux, `IOPlatformUUID` on Darwin. Omitted when unavailable (containers without `machine-id`, hardened kernels, etc.). The app uses it as a secondary key to detect hostname renames or collisions — the primary key is still the user-configured SSH target.
 - **`procs`**: optional per-process table. Omitted when `--no-proc` is set. `root=true` means the sampler ran with euid 0, so the list is comprehensive across users (Linux: full `/proc` visibility; macOS: `kinfo_proc` with other-user fields filled). `root=false` + macOS means the list only contains the SSH user's own processes. `top_n` echoes the requested cap; `total` is the full process count on the host; `visible` is how many the sampler could inspect (lower than `total` when some entries were gated). `items` is the union of top-N by `cpu_pct` and top-N by `rss`, deduped by pid, ordered CPU-desc. `cpu_pct` is computed from a ~200ms self-sampling delta (same window as aggregate CPU) so it matches `top(1)`'s aggregate-across-cores convention (0..100×cores). `rss` is resident set size in bytes. Per-proc `user`, `cmd`, `threads`, `state`, `ppid`, `start_ts` are best-effort and omitted when the kernel denies access.
 - **`procs.items[].read_bytes` / `write_bytes`**: lifetime cumulative per-process disk I/O in bytes. Only present when the sampler can read the counters. **Linux** reads `/proc/<pid>/io`, which is mode 0400 and requires either owning the process or `CAP_SYS_PTRACE` (grant once via `sudo setcap cap_sys_ptrace+ep ~/.towertail/towertail-sampler`); rows without the capability omit both fields. **Windows** uses `GetProcessIoCounters`, which the owning user can call by default — per-proc I/O is populated for the sampler's own user out of the box, and for all users when the sampler runs elevated. **macOS** does not surface per-process I/O via any API gopsutil supports today, so both fields are always omitted there. Clients distinguish `null` (no visibility) from `0` (truly no I/O since start).
+- **`ports`**: per-process aggregate of open sockets. Refreshed every `--ports-interval` (default 10s) in streaming mode and re-emitted unchanged in between — `collected_ts` is the wall-clock when the snapshot was actually built and lets the client render staleness. Omitted when `--no-ports` is set. `root` mirrors `procs.root` (matters because non-root on Linux can see system-wide listeners but PIDs for *other users'* sockets come back as 0). `total` is the number of connections gopsutil returned; `truncated=true` when `max_conn` was hit and some connections are not represented. Each `items[]` row is one PID: `listen_tcp` / `listen_udp` are sorted, deduped local ports the process is listening on, `est_out` / `est_in` count outbound vs inbound ESTABLISHED TCP connections (inbound = peer connected to one of our listeners; outbound = we connected to a peer), `udp_sockets` counts UDP sockets without a peer (UDP is connectionless — this is "how many open UDP ports this process holds"), `top_remote_ports` is the most-frequent remote ports for outbound connections capped at 5 entries (so the UI can spot "talking to a lot of :443" patterns). Listening sockets and processes with no sockets are skipped — empty `items[]` is normal on a quiet host. Aggregating server-side keeps the wire payload bounded (≤50 rows in practice) regardless of connection count.
 
 Omitted fields for v1: per-CPU breakdown, temperature, GPU, sensors, per-process network bytes (not exposed by Linux or macOS kernels without root + eBPF / private frameworks). Per-process disk I/O **is** included but may be `null` per-row on Linux without `CAP_SYS_PTRACE` and is always `null` on macOS.
 

@@ -80,6 +80,17 @@ final class ServerViewModel: Identifiable {
     @ObservationIgnored
     var procsHydrationStarted: Bool = false
 
+    /// Latest-known per-process ports snapshot. Refreshed every
+    /// `--ports-interval` (default 10s) on the sampler side and re-emitted
+    /// unchanged in between, so the value here changes infrequently.
+    /// Snapshot-only (not time-windowed) — the table just shows the
+    /// freshest known state with `collected_ts` rendered as staleness.
+    var ports: PortList?
+    /// True when at least one sample carried a `ports` payload. Used to
+    /// drive the "ports collection disabled" state separately from procs
+    /// since `--no-ports` and `--no-proc` are independent flags.
+    var portsAvailable: Bool = false
+
     var hoverDate: Date?
 
     var thresholds: MetricThresholds
@@ -195,6 +206,11 @@ final class ServerViewModel: Identifiable {
             procs.append(ProcSeries.Snapshot(t: s.ts, items: ps.items))
             procsAvailable = true
             procsRoot = ps.root
+        }
+
+        if let pl = s.ports {
+            ports = pl
+            portsAvailable = true
         }
 
         updateStreak(.cpu, value: cpuV, warn: thresholds.cpuWarn, critical: thresholds.cpuCritical)

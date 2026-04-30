@@ -428,7 +428,7 @@ struct ProcRow: Identifiable, Hashable {
 /// The button is always present in the layout; hover only changes its
 /// opacity. Opacity changes don't invalidate layout, so the cell's
 /// width stays stable and SwiftUI can skip most of the per-row work.
-private struct PIDCell: View {
+struct PIDCell: View {
     let pid: Int32
     let name: String
     let canKill: Bool

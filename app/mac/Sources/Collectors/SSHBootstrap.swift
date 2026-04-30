@@ -1,4 +1,5 @@
 import Foundation
+import Compression
 import NIO
 import Citadel
 
@@ -94,6 +95,11 @@ enum SSHBootstrap {
 
     /// Ensures `<home>/.towertail/` exists, uploads the binary, chmod's it
     /// 0755. Returns the absolute remote path.
+    ///
+    /// The binary is gzipped in-memory before SFTP transfer, then decompressed
+    /// on the remote with `gunzip` — cuts the wire payload by ~60% (8 MB → 3.3 MB)
+    /// at the cost of one extra exec round-trip. Falls back to uncompressed
+    /// upload if `gunzip` isn't on the remote PATH.
     static func copyBinary(
         client: SSHClient,
         localBinary: URL
@@ -105,25 +111,53 @@ enum SSHBootstrap {
         // mkdir (via exec; SFTP createDirectory errors if it exists).
         _ = try? await client.executeCommand("mkdir -p \(remoteDir)")
 
+        let raw = try Data(contentsOf: localBinary)
+        let useGzip = await remoteHasGunzip(client: client)
+        let payload: Data
+        let uploadPath: String
+        if useGzip, let gz = GzipEncoder.encode(raw) {
+            payload = gz
+            uploadPath = remotePath + ".gz"
+        } else {
+            payload = raw
+            uploadPath = remotePath
+        }
+
         let sftp = try await client.openSFTP()
         defer { Task { try? await sftp.close() } }
 
-        let data = try Data(contentsOf: localBinary)
         var attrs = SFTPFileAttributes()
         attrs.permissions = 0o755
         try await sftp.withFile(
-            filePath: remotePath,
+            filePath: uploadPath,
             flags: [.write, .create, .truncate],
             attributes: attrs
         ) { file in
-            var buffer = ByteBufferAllocator().buffer(capacity: data.count)
-            buffer.writeBytes(data)
+            var buffer = ByteBufferAllocator().buffer(capacity: payload.count)
+            buffer.writeBytes(payload)
             try await file.write(buffer)
+        }
+
+        if uploadPath != remotePath {
+            // `-f` overwrites any existing decompressed file from a prior push.
+            _ = try? await client.executeCommand("gunzip -f \(uploadPath)")
         }
         // Some servers ignore the attribute on create — belt-and-suspenders
         // chmod via exec so the binary is guaranteed executable.
         _ = try? await client.executeCommand("chmod +x \(remotePath)")
         return remotePath
+    }
+
+    /// Probes the remote for a working `gunzip`. Returns false on any error so
+    /// the caller falls back to plain upload.
+    private static func remoteHasGunzip(client: SSHClient) async -> Bool {
+        do {
+            let buf = try await client.executeCommand("command -v gunzip || true")
+            let path = String(buffer: buf).trimmingCharacters(in: .whitespacesAndNewlines)
+            return !path.isEmpty
+        } catch {
+            return false
+        }
     }
 
     /// Runs the remote sampler with `--once` and decodes the sample.
@@ -176,6 +210,68 @@ enum SSHErrorRenderer {
         let raw = String(decoding: bytes, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return raw.isEmpty ? nil : raw
+    }
+}
+
+/// Minimal gzip encoder. Apple's `Compression` framework exposes raw DEFLATE
+/// via `COMPRESSION_ZLIB` but no gzip framing — we add the 10-byte header and
+/// 8-byte CRC32+ISIZE trailer ourselves so the remote can decompress with the
+/// stock `gunzip` available on every Linux/macOS host.
+enum GzipEncoder {
+    /// Returns nil on encode failure; callers fall back to uncompressed upload.
+    static func encode(_ source: Data) -> Data? {
+        guard let deflate = rawDeflate(source) else { return nil }
+        var out = Data(capacity: deflate.count + 18)
+        // Header: magic, deflate, no flags, no mtime, default xfl, unknown OS.
+        out.append(contentsOf: [0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff])
+        out.append(deflate)
+        let crc = crc32(source)
+        let isize = UInt32(source.count & 0xffffffff)
+        for shift in stride(from: 0, through: 24, by: 8) {
+            out.append(UInt8((crc >> shift) & 0xff))
+        }
+        for shift in stride(from: 0, through: 24, by: 8) {
+            out.append(UInt8((isize >> shift) & 0xff))
+        }
+        return out
+    }
+
+    private static func rawDeflate(_ source: Data) -> Data? {
+        // Worst-case bound for DEFLATE: input + 0.1% + 12 bytes; we round up.
+        let bound = source.count + (source.count / 1000) + 64
+        var out = Data(count: bound)
+        let written = source.withUnsafeBytes { (src: UnsafeRawBufferPointer) -> Int in
+            guard let srcBase = src.baseAddress else { return 0 }
+            return out.withUnsafeMutableBytes { (dst: UnsafeMutableRawBufferPointer) -> Int in
+                guard let dstBase = dst.baseAddress else { return 0 }
+                return compression_encode_buffer(
+                    dstBase.assumingMemoryBound(to: UInt8.self), bound,
+                    srcBase.assumingMemoryBound(to: UInt8.self), source.count,
+                    nil, COMPRESSION_ZLIB
+                )
+            }
+        }
+        guard written > 0 else { return nil }
+        out.removeSubrange(written..<out.count)
+        return out
+    }
+
+    private static let crcTable: [UInt32] = {
+        (0..<256).map { i -> UInt32 in
+            var c = UInt32(i)
+            for _ in 0..<8 {
+                c = (c & 1) != 0 ? 0xedb88320 ^ (c >> 1) : c >> 1
+            }
+            return c
+        }
+    }()
+
+    private static func crc32(_ data: Data) -> UInt32 {
+        var c: UInt32 = 0xffffffff
+        for byte in data {
+            c = crcTable[Int((c ^ UInt32(byte)) & 0xff)] ^ (c >> 8)
+        }
+        return c ^ 0xffffffff
     }
 }
 

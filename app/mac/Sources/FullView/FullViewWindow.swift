@@ -282,7 +282,7 @@ struct FullViewWindow: View {
                 } else {
                     chartArea(vm: vm)
                 }
-                processTable(vm: vm)
+                bottomTable(vm: vm)
             } else {
                 ContentUnavailableView("No data", systemImage: "questionmark.circle")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -587,6 +587,41 @@ struct FullViewWindow: View {
             metric: model.metric,
             node: nodeStore.node(withId: activeHostId)
         )
+    }
+
+    /// Picks the table beneath the chart. Outside NET this is always the
+    /// process table — same shape as v1. On NET we expose a small
+    /// segmented picker so the user can flip to the per-process port
+    /// footprint, which answers "is this binary opening a lot of
+    /// outbound connections?" directly.
+    @ViewBuilder
+    private func bottomTable(vm: ServerViewModel) -> some View {
+        if model.metric == .net {
+            VStack(alignment: .leading, spacing: 6) {
+                Picker("Sub-tab", selection: $model.netSubTab) {
+                    ForEach(NetSubTab.allCases) { t in
+                        Text(t.displayName).tag(t)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .padding(.horizontal, 16)
+
+                switch model.netSubTab {
+                case .processes:
+                    processTable(vm: vm)
+                case .ports:
+                    PortsTable(
+                        ports: vm.ports,
+                        available: vm.portsAvailable,
+                        isRootSampler: vm.ports?.root ?? vm.procsRoot,
+                        node: nodeStore.node(withId: activeHostId)
+                    )
+                }
+            }
+        } else {
+            processTable(vm: vm)
+        }
     }
 
 private func valueText(vm: ServerViewModel) -> some View {

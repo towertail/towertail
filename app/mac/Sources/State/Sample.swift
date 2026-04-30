@@ -11,12 +11,13 @@ struct Sample: Decodable, Sendable {
     let diskIO: DiskIOInfo?
     let net: NetInfo?
     let procs: ProcList?
+    let ports: PortList?
     let errors: [String]
 
     enum CodingKeys: String, CodingKey {
         case v, ts, host, cpu, mem, swap, disks
         case diskIO = "disk_io"
-        case net, procs, errors
+        case net, procs, ports, errors
     }
 
     init(
@@ -30,6 +31,7 @@ struct Sample: Decodable, Sendable {
         diskIO: DiskIOInfo? = nil,
         net: NetInfo? = nil,
         procs: ProcList? = nil,
+        ports: PortList? = nil,
         errors: [String]
     ) {
         self.v = v
@@ -42,6 +44,7 @@ struct Sample: Decodable, Sendable {
         self.diskIO = diskIO
         self.net = net
         self.procs = procs
+        self.ports = ports
         self.errors = errors
     }
 }
@@ -256,6 +259,51 @@ struct ProcSample: Codable, Sendable, Identifiable {
         self.readBytes = readBytes
         self.writeBytes = writeBytes
     }
+}
+
+struct PortList: Codable, Sendable {
+    let root: Bool
+    let collectedTS: Date
+    let maxConn: Int
+    let truncated: Bool
+    let total: Int
+    let items: [PortItem]
+
+    enum CodingKeys: String, CodingKey {
+        case root
+        case collectedTS = "collected_ts"
+        case maxConn = "max_conn"
+        case truncated, total, items
+    }
+}
+
+struct PortItem: Codable, Sendable, Identifiable {
+    let pid: Int32
+    let name: String?
+    let user: String?
+    let listenTCP: [UInt32]?
+    let listenUDP: [UInt32]?
+    let estOut: Int
+    let estIn: Int
+    let udpSockets: Int?
+    let topRemotePorts: [PortCount]?
+
+    var id: Int32 { pid }
+
+    enum CodingKeys: String, CodingKey {
+        case pid, name, user
+        case listenTCP = "listen_tcp"
+        case listenUDP = "listen_udp"
+        case estOut = "est_out"
+        case estIn = "est_in"
+        case udpSockets = "udp_sockets"
+        case topRemotePorts = "top_remote_ports"
+    }
+}
+
+struct PortCount: Codable, Sendable, Hashable {
+    let port: UInt32
+    let count: Int
 }
 
 enum SampleCodec {
