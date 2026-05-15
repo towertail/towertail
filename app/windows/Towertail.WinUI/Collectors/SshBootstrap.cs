@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using Renci.SshNet;
 using Renci.SshNet.Common;
 using Towertail.WinUI.State;
@@ -83,6 +84,9 @@ public sealed class SshBootstrap
     /// <summary>
     /// Upload the local bundled binary for <paramref name="target"/> to the
     /// remote deploy path via SFTP. Sets 0755 via ChangePermissions afterwards.
+    /// On Linux/macOS targets the binary is gzipped before upload and
+    /// decompressed remotely with <c>gunzip</c> — cuts the wire payload by
+    /// roughly 60%. Falls back to raw upload if <c>gunzip</c> is missing.
     /// </summary>
     public Task<bool> DeployAsync(RemoteTriple target, string? bundleRoot = null, CancellationToken ct = default)
         => Task.Run(() =>
@@ -104,8 +108,30 @@ public sealed class SshBootstrap
             var dir = PosixDirname(remotePath);
             TryCreateDir(sftp, dir);
 
-            using var fs = File.OpenRead(localPath);
-            sftp.UploadFile(fs, remotePath);
+            // gunzip is universal on Linux/macOS hosts; on Windows-remote we
+            // skip compression to avoid depending on a PowerShell unzip path.
+            var useGzip = !target.IsWindows && RemoteHasGunzip();
+            if (useGzip)
+            {
+                var uploadPath = remotePath + ".gz";
+                using (var fs = File.OpenRead(localPath))
+                using (var ms = new MemoryStream())
+                {
+                    using (var gz = new GZipStream(ms, CompressionLevel.Optimal, leaveOpen: true))
+                    {
+                        fs.CopyTo(gz);
+                    }
+                    ms.Position = 0;
+                    sftp.UploadFile(ms, uploadPath);
+                }
+                using var client = Connect();
+                client.RunCommand($"gunzip -f {uploadPath}");
+            }
+            else
+            {
+                using var fs = File.OpenRead(localPath);
+                sftp.UploadFile(fs, remotePath);
+            }
 
             try
             {
@@ -116,6 +142,20 @@ public sealed class SshBootstrap
 
             return true;
         }, ct);
+
+    private bool RemoteHasGunzip()
+    {
+        try
+        {
+            using var client = Connect();
+            var cmd = client.RunCommand("command -v gunzip || true");
+            return !string.IsNullOrWhiteSpace(cmd.Result);
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     /// <summary>
     /// Run <c>--self-check</c> on the newly-deployed binary.

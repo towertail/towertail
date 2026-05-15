@@ -22,6 +22,7 @@ public sealed class ServerViewModelTests
             DiskIo: null,
             Net: new NetInfo(0, 0, 0, 0),
             Procs: null,
+            Ports: null,
             Errors: Array.Empty<string>());
         vm.Ingest(sample);
 
@@ -51,6 +52,7 @@ public sealed class ServerViewModelTests
             new MemInfo(0, 0),
             null, null,
             new NetInfo(0, 0, rxCum, 0),
+            null,
             null,
             Array.Empty<string>());
     }

@@ -29,6 +29,17 @@ public sealed partial class ServerViewModel : ObservableObject
     public DiskSeries Disk { get; } = new();
     public ProcSeries Procs { get; } = new();
 
+    /// <summary>
+    /// Latest-known per-process port snapshot. Snapshot-only (not
+    /// time-windowed) — the sampler refreshes every 10s by default and
+    /// re-emits the cached snapshot in between, so there's no useful
+    /// per-tick history. <c>PortsAvailable</c> is set the first time a
+    /// sample carries a <c>ports</c> payload so the UI can show "ports
+    /// disabled" separately from "ports loading".
+    /// </summary>
+    [ObservableProperty] private PortList? _ports;
+    [ObservableProperty] private bool _portsAvailable;
+
     private long? _lastRxCum;
     private long? _lastTxCum;
     private DateTime? _lastSampleTs;
@@ -88,5 +99,11 @@ public sealed partial class ServerViewModel : ObservableObject
 
         if (s.Procs is { } p)
             Procs.Append(now, p.Root, p.Items);
+
+        if (s.Ports is { } pl)
+        {
+            Ports = pl;
+            PortsAvailable = true;
+        }
     }
 }

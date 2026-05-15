@@ -53,7 +53,10 @@ final class RemoteBackend: Backend {
                     dnsName: node.userAtHost,
                     osArch: "",
                     kind: node.kind,
-                    thresholds: node.customThresholds ?? .defaults
+                    thresholds: MetricThresholds.effective(
+                        global: serverSettings.thresholds,
+                        override: node.customThresholds
+                    )
                 )
                 servers.register(vm)
             }

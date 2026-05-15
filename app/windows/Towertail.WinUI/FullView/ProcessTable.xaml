@@ -3,7 +3,8 @@
     x:Class="Towertail.WinUI.FullView.ProcessTable"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:design="using:Towertail.WinUI.Design">
+    xmlns:design="using:Towertail.WinUI.Design"
+    xmlns:fv="using:Towertail.WinUI.FullView">
 
     <UserControl.Resources>
         <design:CpuPctFormatConverter x:Key="CpuFmt" />
@@ -16,7 +17,7 @@
         <Grid RowDefinitions="Auto,Auto,*">
             <Grid Grid.Row="0" Padding="16,10,16,10">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="70" />
+                    <ColumnDefinition Width="90" />
                     <ColumnDefinition Width="70" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="80" />
@@ -59,10 +60,10 @@
                     </Style>
                 </ListView.ItemContainerStyle>
                 <ListView.ItemTemplate>
-                    <DataTemplate>
+                    <DataTemplate x:DataType="fv:ProcessRow">
                         <Grid>
                             <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="70" />
+                                <ColumnDefinition Width="90" />
                                 <ColumnDefinition Width="70" />
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="80" />
@@ -70,28 +71,30 @@
                                 <ColumnDefinition Width="80" />
                                 <ColumnDefinition Width="120" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="{Binding Pid}"
-                                       Style="{ThemeResource BodyTextBlockStyle}"
-                                       FontFamily="{StaticResource MonoFont}" />
-                            <TextBlock Grid.Column="1" Text="{Binding Ppid}"
+                            <fv:PidCell Grid.Column="0"
+                                        Pid="{x:Bind Pid}"
+                                        Name="{x:Bind Name}"
+                                        CanKill="{x:Bind CanKill}"
+                                        Killed="OnKillRequested" />
+                            <TextBlock Grid.Column="1" Text="{x:Bind Ppid}"
                                        Style="{ThemeResource BodyTextBlockStyle}"
                                        FontFamily="{StaticResource MonoFont}"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            <TextBlock Grid.Column="2" Text="{Binding Name}"
+                            <TextBlock Grid.Column="2" Text="{x:Bind Name}"
                                        Style="{ThemeResource BodyTextBlockStyle}"
                                        TextTrimming="CharacterEllipsis" />
-                            <TextBlock Grid.Column="3" Text="{Binding CpuPct, Converter={StaticResource CpuFmt}}"
+                            <TextBlock Grid.Column="3" Text="{x:Bind CpuPct, Converter={StaticResource CpuFmt}}"
                                        Style="{ThemeResource BodyTextBlockStyle}"
                                        FontFamily="{StaticResource MonoFont}" />
-                            <TextBlock Grid.Column="4" Text="{Binding Rss, Converter={StaticResource BytesFmt}}"
+                            <TextBlock Grid.Column="4" Text="{x:Bind Rss, Converter={StaticResource BytesFmt}}"
                                        Style="{ThemeResource BodyTextBlockStyle}"
                                        FontFamily="{StaticResource MonoFont}"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            <TextBlock Grid.Column="5" Text="{Binding Threads}"
+                            <TextBlock Grid.Column="5" Text="{x:Bind Threads}"
                                        Style="{ThemeResource BodyTextBlockStyle}"
                                        FontFamily="{StaticResource MonoFont}"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            <TextBlock Grid.Column="6" Text="{Binding User}"
+                            <TextBlock Grid.Column="6" Text="{x:Bind User}"
                                        Style="{ThemeResource BodyTextBlockStyle}"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         </Grid>

@@ -79,14 +79,59 @@ public sealed partial class FullViewWindow : Window
     private UIElement MakeNet()
     {
         if (_vm is null) return new TextBlock();
-        var grid = new Grid { RowSpacing = 12 };
+        // Layout:
+        //   row 0: RX chart
+        //   row 1: TX chart
+        //   row 2: Processes/Ports segmented selector
+        //   row 3: selected sub-table (Processes by default; Ports on toggle)
+        var grid = new Grid { RowSpacing = 8 };
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
         var rx = new MetricChart(); rx.Bind(_vm.RxSeries, "RX MB/s", isPercent: false); rx.SetPaused(_paused);
         var tx = new MetricChart(); tx.Bind(_vm.TxSeries, "TX MB/s", isPercent: false); tx.SetPaused(_paused);
         _charts.Add(rx); _charts.Add(tx);
         Grid.SetRow(rx, 0); Grid.SetRow(tx, 1);
         grid.Children.Add(rx); grid.Children.Add(tx);
+
+        // SelectorBar with Processes/Ports — picked instead of NavigationView
+        // so the selector docks tightly under the charts and doesn't grab
+        // the whole row height like a NavigationView pane would.
+        var selector = new SelectorBar { HorizontalAlignment = HorizontalAlignment.Stretch };
+        var procsItem = new SelectorBarItem { Text = "Processes", Tag = "processes" };
+        var portsItem = new SelectorBarItem { Text = "Ports", Tag = "ports" };
+        selector.Items.Add(procsItem);
+        selector.Items.Add(portsItem);
+        selector.SelectedItem = procsItem;
+        Grid.SetRow(selector, 2);
+        grid.Children.Add(selector);
+
+        var slot = new ContentControl
+        {
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            VerticalContentAlignment = VerticalAlignment.Stretch,
+        };
+        Grid.SetRow(slot, 3);
+        grid.Children.Add(slot);
+
+        // Pre-build both tables once so toggling between them doesn't pay
+        // a re-bind cost on every flip — the underlying VM is the same
+        // and both controls cleanly handle being shown/hidden.
+        var procs = new ProcessTable();
+        procs.Bind(_vm);
+        var ports = new PortsTable();
+        ports.Bind(_vm);
+        slot.Content = procs;
+
+        selector.SelectionChanged += (_, _) =>
+        {
+            slot.Content = (selector.SelectedItem?.Tag as string) == "ports"
+                ? (UIElement)ports
+                : procs;
+        };
+
         return grid;
     }
 

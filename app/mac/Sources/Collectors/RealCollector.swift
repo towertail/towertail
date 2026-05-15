@@ -338,7 +338,7 @@ final class RealCollector: Collector {
                 dnsName: node.kind == .ssh ? node.userAtHost : "local",
                 osArch: node.kind == .local ? "macOS" : "—",
                 kind: node.kind,
-                thresholds: node.customThresholds ?? settings.thresholds
+                thresholds: MetricThresholds.effective(global: settings.thresholds, override: node.customThresholds)
             )
             // Local nodes are always considered "warm" — the sampler is
             // a bundled binary on the same machine, so an offline reading
@@ -352,11 +352,8 @@ final class RealCollector: Collector {
         // picks up edits to either the global sliders or a node's custom
         // set without waiting for the next collector tick.
         for vm in store.serverVMs {
-            if let node = byID[vm.id], let custom = node.customThresholds {
-                vm.thresholds = custom
-            } else {
-                vm.thresholds = settings.thresholds
-            }
+            let override = byID[vm.id]?.customThresholds
+            vm.thresholds = MetricThresholds.effective(global: settings.thresholds, override: override)
             // Refresh the warm flag from the persisted node — handles the
             // case where the node was added in this session and just got
             // its first stamp (the pacer also flips the in-memory flag,

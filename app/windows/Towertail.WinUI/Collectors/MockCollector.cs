@@ -53,6 +53,7 @@ public sealed class MockCollector : ICollector
                     DiskIo: null,
                     Net: new NetInfo(0, 0, 0, 0),
                     Procs: null,
+                    Ports: null,
                     Errors: Array.Empty<string>());
                 _store.Ingest(node.Id, sample);
             }

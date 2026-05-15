@@ -18,6 +18,7 @@ public sealed record Sample(
     [property: JsonPropertyName("disk_io")] DiskIoInfo? DiskIo,
     [property: JsonPropertyName("net")] NetInfo? Net,
     [property: JsonPropertyName("procs")] ProcList? Procs,
+    [property: JsonPropertyName("ports")] PortList? Ports,
     [property: JsonPropertyName("errors")] IReadOnlyList<string> Errors
 );
 
@@ -115,6 +116,45 @@ public sealed record ProcSample(
     [property: JsonPropertyName("start_ts")] DateTime? StartTs,
     [property: JsonPropertyName("read_bytes")] long? ReadBytes,
     [property: JsonPropertyName("write_bytes")] long? WriteBytes
+);
+
+/// <summary>
+/// Per-process aggregate of open sockets. Refreshed every
+/// <c>--ports-interval</c> (default 10s) on the sampler side and
+/// re-emitted unchanged in between — <c>CollectedTs</c> is the wall
+/// clock when the snapshot was actually built so the UI can render
+/// staleness. <c>Truncated</c> is true when <c>MaxConn</c> was hit.
+/// </summary>
+public sealed record PortList(
+    [property: JsonPropertyName("root")] bool Root,
+    [property: JsonPropertyName("collected_ts")] DateTime CollectedTs,
+    [property: JsonPropertyName("max_conn")] int MaxConn,
+    [property: JsonPropertyName("truncated")] bool Truncated,
+    [property: JsonPropertyName("total")] int Total,
+    [property: JsonPropertyName("items")] IReadOnlyList<PortItem> Items
+);
+
+/// <summary>
+/// One process's port footprint. <c>EstOut</c>/<c>EstIn</c> count
+/// outbound vs inbound ESTABLISHED TCP connections (inbound = peer
+/// connected to one of our listeners). <c>UdpSockets</c> counts UDP
+/// sockets without a peer. <c>TopRemotePorts</c> is capped at 5.
+/// </summary>
+public sealed record PortItem(
+    [property: JsonPropertyName("pid")] int Pid,
+    [property: JsonPropertyName("name")] string? Name,
+    [property: JsonPropertyName("user")] string? User,
+    [property: JsonPropertyName("listen_tcp")] IReadOnlyList<uint>? ListenTcp,
+    [property: JsonPropertyName("listen_udp")] IReadOnlyList<uint>? ListenUdp,
+    [property: JsonPropertyName("est_out")] int EstOut,
+    [property: JsonPropertyName("est_in")] int EstIn,
+    [property: JsonPropertyName("udp_sockets")] int? UdpSockets,
+    [property: JsonPropertyName("top_remote_ports")] IReadOnlyList<PortCount>? TopRemotePorts
+);
+
+public sealed record PortCount(
+    [property: JsonPropertyName("port")] uint Port,
+    [property: JsonPropertyName("count")] int Count
 );
 
 /// <summary>

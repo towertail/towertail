@@ -286,6 +286,39 @@ final class ServerViewModelTests: XCTestCase {
         XCTAssertEqual(vm.state, .critical)
     }
 
+    func testEffectiveThresholdsInheritsSustainFromGlobal() {
+        // Per-node `customThresholds` overrides the warn/critical levels,
+        // but sustain always comes from the global. Without this, a node
+        // override saved before the sustain UI existed would silently pin
+        // sustain=1 and bypass the user's "after N consecutive samples".
+        let global = MetricThresholds(
+            cpuWarn: 0.75, cpuCritical: 0.90,
+            memWarn: 0.75, memCritical: 0.90,
+            diskWarn: 0.85, diskCritical: 0.95,
+            cpuSustainSamples: 3,
+            memSustainSamples: 4,
+            diskSustainSamples: 5
+        )
+        let override = MetricThresholds(
+            cpuWarn: 0.50, cpuCritical: 0.80,
+            memWarn: 0.50, memCritical: 0.80,
+            diskWarn: 0.60, diskCritical: 0.90,
+            cpuSustainSamples: 1,
+            memSustainSamples: 1,
+            diskSustainSamples: 1
+        )
+        let eff = MetricThresholds.effective(global: global, override: override)
+        XCTAssertEqual(eff.cpuWarn, 0.50)
+        XCTAssertEqual(eff.cpuCritical, 0.80)
+        XCTAssertEqual(eff.cpuSustainSamples, 3)
+        XCTAssertEqual(eff.memSustainSamples, 4)
+        XCTAssertEqual(eff.diskSustainSamples, 5)
+
+        // No override → use the global thresholds wholesale.
+        let nilOverride = MetricThresholds.effective(global: global, override: nil)
+        XCTAssertEqual(nilOverride, global)
+    }
+
     func testMarkOfflineSetsState() {
         let vm = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x")
         let t = Date()

@@ -561,4 +561,22 @@ struct MetricThresholds: Sendable, Equatable, Codable {
         case .net: return 1
         }
     }
+
+    /// Effective thresholds for a host: warn/critical levels come from the
+    /// per-node override (when set), but `*SustainSamples` always inherits
+    /// from the global. Sustain is a global noise filter — there is no
+    /// per-node UI for it, so any stale value in `customThresholds` from
+    /// before the sustain stepper existed (or from a parallel client) would
+    /// silently override the user's global setting otherwise.
+    static func effective(global: MetricThresholds, override: MetricThresholds?) -> MetricThresholds {
+        guard let override else { return global }
+        return MetricThresholds(
+            cpuWarn: override.cpuWarn, cpuCritical: override.cpuCritical,
+            memWarn: override.memWarn, memCritical: override.memCritical,
+            diskWarn: override.diskWarn, diskCritical: override.diskCritical,
+            cpuSustainSamples: global.cpuSustainSamples,
+            memSustainSamples: global.memSustainSamples,
+            diskSustainSamples: global.diskSustainSamples
+        )
+    }
 }

@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Towertail.WinUI.FullView.PortsTable"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:fv="using:Towertail.WinUI.FullView">
+
+    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+            BorderThickness="1" CornerRadius="8">
+        <Grid RowDefinitions="Auto,Auto,Auto,*">
+            <Grid Grid.Row="0" Padding="16,8,16,4">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="Ports" Style="{ThemeResource SubtitleTextBlockStyle}" />
+                    <TextBlock x:Name="ScopeText"
+                               VerticalAlignment="Center"
+                               Style="{ThemeResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock x:Name="TruncatedText"
+                               VerticalAlignment="Center"
+                               Visibility="Collapsed"
+                               Foreground="DarkOrange"
+                               Style="{ThemeResource CaptionTextBlockStyle}"
+                               Text="truncated" />
+                </StackPanel>
+                <TextBlock Grid.Column="1" x:Name="CollectedText"
+                           Style="{ThemeResource CaptionTextBlockStyle}"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            </Grid>
+            <Grid Grid.Row="1" Padding="16,4,16,8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="80" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="120" />
+                    <ColumnDefinition Width="160" />
+                    <ColumnDefinition Width="140" />
+                    <ColumnDefinition Width="50" />
+                    <ColumnDefinition Width="50" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="PID" Style="{ThemeResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBlock Grid.Column="1" Text="Name" Style="{ThemeResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBlock Grid.Column="2" Text="User" Style="{ThemeResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBlock Grid.Column="3" Text="Listen TCP" Style="{ThemeResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBlock Grid.Column="4" Text="Listen UDP" Style="{ThemeResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBlock Grid.Column="5" Text="Out" Style="{ThemeResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBlock Grid.Column="6" Text="In" Style="{ThemeResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBlock Grid.Column="7" Text="Top remotes" Style="{ThemeResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            </Grid>
+            <Border Grid.Row="2" Height="1"
+                    Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
+            <ListView Grid.Row="3" x:Name="Items" SelectionMode="None"
+                      Padding="8,4,8,4" Background="Transparent">
+                <ListView.ItemContainerStyle>
+                    <Style TargetType="ListViewItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="Padding" Value="8,6,8,6" />
+                        <Setter Property="CornerRadius" Value="4" />
+                        <Setter Property="MinHeight" Value="28" />
+                    </Style>
+                </ListView.ItemContainerStyle>
+                <ListView.ItemTemplate>
+                    <DataTemplate x:DataType="fv:PortRow">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="80" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="120" />
+                                <ColumnDefinition Width="160" />
+                                <ColumnDefinition Width="140" />
+                                <ColumnDefinition Width="50" />
+                                <ColumnDefinition Width="50" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <fv:PidCell Grid.Column="0"
+                                        Pid="{x:Bind Pid}"
+                                        Name="{x:Bind Name}"
+                                        CanKill="{x:Bind CanKill}"
+                                        Killed="OnKillRequested" />
+                            <TextBlock Grid.Column="1" Text="{x:Bind Name}" Style="{ThemeResource BodyTextBlockStyle}" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Grid.Column="2" Text="{x:Bind User}" Style="{ThemeResource BodyTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <TextBlock Grid.Column="3" Text="{x:Bind ListenTcpText}" FontFamily="{StaticResource MonoFont}" Style="{ThemeResource BodyTextBlockStyle}" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Grid.Column="4" Text="{x:Bind ListenUdpText}" FontFamily="{StaticResource MonoFont}" Style="{ThemeResource BodyTextBlockStyle}" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Grid.Column="5" Text="{x:Bind EstOut}" FontFamily="{StaticResource MonoFont}" Style="{ThemeResource BodyTextBlockStyle}" />
+                            <TextBlock Grid.Column="6" Text="{x:Bind EstIn}" FontFamily="{StaticResource MonoFont}" Style="{ThemeResource BodyTextBlockStyle}" />
+                            <TextBlock Grid.Column="7" Text="{x:Bind TopRemotesText}" FontFamily="{StaticResource MonoFont}" Style="{ThemeResource BodyTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+        </Grid>
+    </Border>
+</UserControl>

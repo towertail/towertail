@@ -61,6 +61,6 @@ public sealed class ThresholdNotifierTests
             new MemInfo(memUsed, 16_000_000_000),
             new MemInfo(0, 0),
             new[] { new DiskSample("C:", "NTFS", diskUsed, 500_000_000_000) },
-            null, null, null, Array.Empty<string>());
+            null, null, null, null, Array.Empty<string>());
     }
 }
