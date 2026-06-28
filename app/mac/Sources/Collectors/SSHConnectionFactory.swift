@@ -220,14 +220,23 @@ enum SSHConnectionFactory {
             }
         }
         // Translate Citadel's opaque "SSHClientError error 4" (all auth
-        // options failed) into something the user can act on.
-        if let last = lastError, isAllAuthFailed(last) && node.authMethod == .key {
-            throw NoCredential(reason:
-                "\(host): all SSH keys rejected. Citadel's RSA auth uses SHA-1, " +
-                "which modern OpenSSH servers disable. Fix options: " +
-                "(1) generate an ed25519 key — `ssh-keygen -t ed25519` + add to server's authorized_keys, " +
-                "(2) switch this host to password auth, or " +
-                "(3) re-enable legacy RSA on the server (PubkeyAcceptedAlgorithms +ssh-rsa).")
+        // options failed) into something the user can act on. We surface it
+        // as NoCredential (a "permanent" error in RealCollector's taxonomy)
+        // so the pacer halts instead of hammering the server — important
+        // for password auth, which would otherwise trip fail2ban.
+        if let last = lastError, isAllAuthFailed(last) {
+            switch node.authMethod {
+            case .key:
+                throw NoCredential(reason:
+                    "\(host): all SSH keys rejected. Citadel's RSA auth uses SHA-1, " +
+                    "which modern OpenSSH servers disable. Fix options: " +
+                    "(1) generate an ed25519 key — `ssh-keygen -t ed25519` + add to server's authorized_keys, " +
+                    "(2) switch this host to password auth, or " +
+                    "(3) re-enable legacy RSA on the server (PubkeyAcceptedAlgorithms +ssh-rsa).")
+            case .password:
+                throw NoCredential(reason:
+                    "\(host): password rejected. Update the password in Preferences and hit Test.")
+            }
         }
         throw lastError ?? NoCredential(reason: "SSH authentication failed")
     }

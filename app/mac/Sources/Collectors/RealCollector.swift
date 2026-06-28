@@ -148,31 +148,24 @@ final class RealCollector: Collector {
         // Tracks whether this pacer has marked the VM suspended, so the
         // next resumed tick can clear the badge on a single main-hop.
         var wasSuspended = false
-        // Retry policy depends on whether we've ever talked to this host.
+        // Retry policy: transport / channel / decode errors are always
+        // transient. Retry indefinitely with exponential backoff capped at
+        // `maxBackoffSec`. A host that comes back hours later recovers
+        // without user intervention.
         //
-        //   Never connected → likely a real misconfig the user needs to
-        //     fix (wrong port, firewall, sampler not installed). Try
-        //     `maxColdAttempts` times with short exponential backoff,
-        //     then halt — the supervisor respawns when the node is
-        //     edited (NodeStore.update → snapshot diff).
+        // Permanent errors (auth failed, host-key mismatch, misconfig)
+        // halt the pacer immediately — see isPermanentError. The
+        // supervisor respawns when the user edits the node or hits Test.
         //
-        //   Connected at least once → host is real and was reachable.
-        //     Treat outages as transient (laptop sleep, Tailscale flap,
-        //     server reboot, NAT eviction) and retry indefinitely with
-        //     exponential backoff capped at `maxBackoffSec`. So a host
-        //     that comes back hours later still recovers automatically
-        //     without user intervention.
+        // We still track `everConnected` (seeded from disk) to inform UI
+        // — a never-connected host is "cold" for badge/escalation
+        // purposes — but it no longer changes the retry cadence.
         //
         // Counter resets to 0 on any successful sample.
         var transientFailures = 0
-        // Seed from disk so a host that connected on a previous launch
-        // gets the indefinite-retry treatment immediately at startup,
-        // even if it never recovers in this session.
         var everConnected = node.lastSuccessfulConnect != nil
-        let maxColdAttempts = 3
-        let coldBaseSec: Double = 2          // 2, 4, 8 → halts after ~14s
-        let warmBaseSec: Double = 10         // 10, 20, 40, 80, … capped
-        let maxBackoffSec: Double = 30 * 60  // 30 min ceiling once warm
+        let baseBackoffSec: Double = 5       // 5, 10, 20, 40, 80, 160, 300, 300, …
+        let maxBackoffSec: Double = 5 * 60   // 5 min ceiling
         while !Task.isCancelled {
             let gate = await Self.gate(reachability: reachability)
             if let reason = gate {
@@ -226,21 +219,12 @@ final class RealCollector: Collector {
                 let reason = shortReason(for: error)
                 let permanent = isPermanentError(error)
                 let attempt = permanent ? 0 : transientFailures + 1
-                // Cold-start exhaustion only applies to hosts we've never
-                // talked to. Once warm, we keep retrying with longer and
-                // longer backoff until the user disables the node.
-                let exhausted = !permanent && !everConnected && attempt >= maxColdAttempts
 
                 let backoffSec: Double = {
-                    if permanent || exhausted { return 0 }
-                    if everConnected {
-                        // Warm: 10s, 20s, 40s, 80s, … capped at 30 min.
-                        let raw = warmBaseSec * pow(2.0, Double(attempt - 1))
-                        return min(maxBackoffSec, raw)
-                    } else {
-                        // Cold: 2s, 4s, 8s — short retries before halting.
-                        return coldBaseSec * pow(2.0, Double(attempt - 1))
-                    }
+                    if permanent { return 0 }
+                    // 5, 10, 20, 40, 80, 160, 300, 300, … capped at 5 min.
+                    let raw = baseBackoffSec * pow(2.0, Double(attempt - 1))
+                    return min(maxBackoffSec, raw)
                 }()
 
                 await MainActor.run {
@@ -248,12 +232,8 @@ final class RealCollector: Collector {
                     let msg: String
                     if permanent {
                         msg = "sample: halting on permanent error"
-                    } else if exhausted {
-                        msg = "sample: halting after \(maxColdAttempts) cold-start retries"
-                    } else if everConnected {
-                        msg = "sample: transient error, retrying in \(Int(backoffSec))s (warm)"
                     } else {
-                        msg = "sample: transient error, retrying in \(Int(backoffSec))s (\(attempt)/\(maxColdAttempts))"
+                        msg = "sample: transient error, retrying in \(Int(backoffSec))s"
                     }
                     Logger.shared.warn(
                         msg,
@@ -267,15 +247,13 @@ final class RealCollector: Collector {
                         ]
                     )
                 }
-                if permanent || exhausted {
-                    // Permanent: auth / host-key / misconfig — retry
-                    // doesn't help and Citadel leaks the underlying TCP
-                    // socket when its connect chain fails before
-                    // `.authenticated`.
-                    // Exhausted: a never-reached host has missed
-                    // `maxColdAttempts` connects in a row, almost certainly
-                    // a config problem. Stop hammering; the supervisor
-                    // respawns once the user edits the node.
+                if permanent {
+                    // Auth / host-key / misconfig — retry doesn't help and
+                    // would risk fail2ban on password mistakes. Citadel
+                    // also leaks the underlying TCP socket when its
+                    // connect chain fails before `.authenticated`. The
+                    // supervisor respawns once the user edits the node or
+                    // hits Test in Preferences.
                     return
                 }
                 transientFailures = attempt
