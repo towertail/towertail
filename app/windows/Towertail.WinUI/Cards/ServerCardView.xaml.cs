@@ -64,6 +64,20 @@ public sealed partial class ServerCardView : UserControl
         MemCell.Value = ViewModel.MemPct;
         DiskCell.Value = ViewModel.DiskMaxPct;
         NetCell.Value = (ViewModel.RxMBps ?? 0) + (ViewModel.TxMBps ?? 0);
+
+        var health = ViewModel.Health;
+        if (health.Level == HealthLevel.Nominal)
+        {
+            HealthText.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            HealthText.Text = health.Summary;
+            ToolTipService.SetToolTip(HealthText, health.Body);
+            HealthText.Foreground = ThresholdTint.Brush(
+                health.Level == HealthLevel.Critical ? ThresholdTint.Critical : ThresholdTint.Warn);
+            HealthText.Visibility = Visibility.Visible;
+        }
     }
 
     private void UpdateFavoriteIcon()
@@ -80,6 +94,13 @@ public sealed partial class ServerCardView : UserControl
     {
         if (ViewModel is null) return;
         FullViewRegistry.Open(ViewModel);
+    }
+
+    private void OnHealthTapped(object sender, TappedRoutedEventArgs e)
+    {
+        if (ViewModel is null) return;
+        e.Handled = true;
+        FullViewRegistry.Open(ViewModel).SelectTab("health");
     }
 
     // Prevent the parent Border's Tapped (which opens FullView) from firing when an action

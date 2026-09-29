@@ -19,6 +19,12 @@ public sealed partial class ServerViewModel : ObservableObject
     [ObservableProperty] private string? _samplerVersion;
     [ObservableProperty] private string? _offlineReason;
     [ObservableProperty] private int _errorCount;
+    [ObservableProperty] private HealthStatus _health = HealthStatus.Nominal;
+    /// <summary>Latest <c>procs.total</c> when the sampler skipped the per-process scan.</summary>
+    [ObservableProperty] private int? _procsSkippedTotal;
+
+    /// <summary>Effective thresholds for this host. Set by <see cref="ServerStore"/> before each ingest.</summary>
+    public MetricThresholds Thresholds { get; set; } = MetricThresholds.Defaults;
 
     public MetricSeries CpuSeries { get; } = new();
     public MetricSeries MemSeries { get; } = new();
@@ -28,6 +34,8 @@ public sealed partial class ServerViewModel : ObservableObject
     public MetricSeries TxSeries { get; } = new();
     public DiskSeries Disk { get; } = new();
     public ProcSeries Procs { get; } = new();
+    /// <summary>Raw process count per sample (not a percentage).</summary>
+    public MetricSeries ProcCountSeries { get; } = new();
 
     /// <summary>
     /// Latest-known per-process port snapshot. Snapshot-only (not
@@ -98,7 +106,14 @@ public sealed partial class ServerViewModel : ObservableObject
             Disk.AppendIo(now, dio.Devices);
 
         if (s.Procs is { } p)
-            Procs.Append(now, p.Root, p.Items);
+        {
+            ProcsSkippedTotal = p.Skipped == true ? p.Total : null;
+            if (p.Skipped != true) Procs.Append(now, p.Root, p.Items);
+        }
+
+        if (s.Health is { } h)
+            ProcCountSeries.Append(now, h.Procs);
+        Health = HealthStatus.Evaluate(s.Health, s.Disks, Thresholds);
 
         if (s.Ports is { } pl)
         {

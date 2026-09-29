@@ -68,6 +68,11 @@ public sealed class PersistedThresholds
     public int CpuSustainSamples { get; set; } = 1;
     public int MemSustainSamples { get; set; } = 1;
     public int DiskSustainSamples { get; set; } = 1;
+    // Host health counts. Missing keys in older files load as these defaults.
+    public int ProcsWarn { get; set; } = MetricThresholds.DefaultProcsWarn;
+    public int ProcsCritical { get; set; } = MetricThresholds.DefaultProcsCritical;
+    public int ZombiesWarn { get; set; } = MetricThresholds.DefaultZombiesWarn;
+    public int ZombiesCritical { get; set; } = MetricThresholds.DefaultZombiesCritical;
 
     public static PersistedThresholds Defaults => new();
 }

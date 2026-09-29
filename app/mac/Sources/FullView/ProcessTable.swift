@@ -20,6 +20,8 @@ struct ProcessTable: View {
     /// Optional: older call sites / previews don't wire it up and simply
     /// hide the kill button.
     let node: Node?
+    /// Process count when the latest sample skipped the per-process scan.
+    var skippedTotal: Int? = nil
 
     @State private var sort: [KeyPathComparator<ProcRow>] = [
         KeyPathComparator(\ProcRow.cpuPct, order: .reverse),
@@ -55,6 +57,8 @@ struct ProcessTable: View {
             header
             if !available {
                 unavailable("Per-process collection disabled on this host.")
+            } else if let n = skippedTotal {
+                unavailable("Process scan skipped: \(HealthStatus.count(n)) processes (over the sampler's scan limit).")
             } else if displayed.isEmpty {
                 unavailable("Waiting for first process sample…")
             } else {
@@ -242,7 +246,7 @@ struct ProcessTable: View {
                 KeyPathComparator(\ProcRow.ioTotalBps, order: .reverse),
                 KeyPathComparator(\ProcRow.cpuPct, order: .reverse),
             ]
-        case .cpu, .net:
+        case .cpu, .net, .health:
             sort = [KeyPathComparator(\ProcRow.cpuPct, order: .reverse)]
         }
     }

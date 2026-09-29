@@ -30,6 +30,15 @@ public sealed partial class ProcessTable : UserControl
     private void Refresh()
     {
         if (_vm is null) return;
+        if (_vm.ProcsSkippedTotal is int skipped)
+        {
+            SkippedText.Text = $"Process scan skipped: {skipped:N0} processes (over the sampler's scan limit)";
+            SkippedText.Visibility = Visibility.Visible;
+            Items.Visibility = Visibility.Collapsed;
+            return;
+        }
+        SkippedText.Visibility = Visibility.Collapsed;
+        Items.Visibility = Visibility.Visible;
         var latest = _vm.Procs.Latest;
         var canKill = _vm.Node is not null;
         Items.ItemsSource = (latest?.Items ?? Array.Empty<ProcSample>())

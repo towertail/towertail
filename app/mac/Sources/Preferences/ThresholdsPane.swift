@@ -42,6 +42,34 @@ struct ThresholdsPane: View {
                     })
                 )
             }
+            Section {
+                countRow("Processes",
+                    warn: Binding(get: { settings.thresholds.procsWarn }, set: {
+                        settings.thresholds.procsWarn = max(1, min($0, settings.thresholds.procsCritical))
+                        settings.persist()
+                    }),
+                    critical: Binding(get: { settings.thresholds.procsCritical }, set: {
+                        settings.thresholds.procsCritical = max($0, settings.thresholds.procsWarn)
+                        settings.persist()
+                    })
+                )
+                countRow("Zombies",
+                    warn: Binding(get: { settings.thresholds.zombiesWarn }, set: {
+                        settings.thresholds.zombiesWarn = max(1, min($0, settings.thresholds.zombiesCritical))
+                        settings.persist()
+                    }),
+                    critical: Binding(get: { settings.thresholds.zombiesCritical }, set: {
+                        settings.thresholds.zombiesCritical = max($0, settings.thresholds.zombiesWarn)
+                        settings.persist()
+                    })
+                )
+            } header: {
+                Text("Host health")
+            } footer: {
+                Text("Also checked: PID use 70/90%, open files 80/95%, inodes 85/95%, memory pressure 10/20%, I/O pressure 20/40%.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Section("Disk") {
                 thresholdRow(
                     warn: Binding(get: { settings.thresholds.diskWarn }, set: {
@@ -74,6 +102,21 @@ struct ThresholdsPane: View {
             }
             .padding(.horizontal, 4)
             .padding(.top, 8)
+        }
+    }
+
+    @ViewBuilder
+    private func countRow(_ label: String, warn: Binding<Int>, critical: Binding<Int>) -> some View {
+        HStack {
+            Text(label).frame(width: 80, alignment: .leading)
+            Text("Warn").foregroundStyle(.secondary)
+            TextField("", value: warn, format: .number)
+                .frame(width: 80)
+                .multilineTextAlignment(.trailing)
+            Text("Critical").foregroundStyle(.secondary)
+            TextField("", value: critical, format: .number)
+                .frame(width: 80)
+                .multilineTextAlignment(.trailing)
         }
     }
 

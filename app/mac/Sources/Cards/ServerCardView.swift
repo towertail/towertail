@@ -35,6 +35,9 @@ struct ServerCardView: View {
             header
             subtitle
             metricGrid
+            if !offline && !suspended, let summary = vm.health.summary {
+                healthLine(summary)
+            }
         }
         .opacity(offline ? 0.55 : (suspended ? 0.7 : 1.0))
         .contextMenu { contextMenuContent }
@@ -93,6 +96,19 @@ struct ServerCardView: View {
     private func openFullView(metric: Metric) {
         openWindow(id: "full-view", value: FullViewContext(hostId: vm.id, metric: metric))
         dismiss()
+    }
+
+    /// One compact line for host health problems. Opens the HEALTH tab.
+    private func healthLine(_ summary: String) -> some View {
+        Button { openFullView(metric: .health) } label: {
+            Label(summary, systemImage: "stethoscope")
+                .font(Typography.metaText)
+                .foregroundStyle(vm.health.tint.color)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+        .help(vm.health.reasons.map(\.text).joined(separator: "\n"))
     }
 
     private var header: some View {

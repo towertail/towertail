@@ -12,12 +12,13 @@ struct Sample: Decodable, Sendable {
     let net: NetInfo?
     let procs: ProcList?
     let ports: PortList?
+    let health: HealthInfo?
     let errors: [String]
 
     enum CodingKeys: String, CodingKey {
         case v, ts, host, cpu, mem, swap, disks
         case diskIO = "disk_io"
-        case net, procs, ports, errors
+        case net, procs, ports, health, errors
     }
 
     init(
@@ -32,6 +33,7 @@ struct Sample: Decodable, Sendable {
         net: NetInfo? = nil,
         procs: ProcList? = nil,
         ports: PortList? = nil,
+        health: HealthInfo? = nil,
         errors: [String]
     ) {
         self.v = v
@@ -45,6 +47,7 @@ struct Sample: Decodable, Sendable {
         self.net = net
         self.procs = procs
         self.ports = ports
+        self.health = health
         self.errors = errors
     }
 }
@@ -145,6 +148,62 @@ struct DiskSample: Decodable, Sendable {
     let fs: String
     let used: Int64
     let total: Int64
+    var inodesUsed: Int64? = nil
+    var inodesTotal: Int64? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case mount, fs, used, total
+        case inodesUsed = "inodes_used"
+        case inodesTotal = "inodes_total"
+    }
+}
+
+/// Cheap host-level health signals (`health` in docs/sampler.md §4).
+/// Every field except `procs` is nil when the host OS does not expose it.
+struct HealthInfo: Codable, Sendable, Equatable {
+    let procs: Int
+    var zombies: Int? = nil
+    var zombieParents: [ZombieParent]? = nil
+    var pidsUsed: Int64? = nil
+    var pidsMax: Int64? = nil
+    var filesUsed: Int64? = nil
+    var filesMax: Int64? = nil
+    var psi: PSIInfo? = nil
+    var memPressure: Int? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case procs, zombies
+        case zombieParents = "zombie_parents"
+        case pidsUsed = "pids_used"
+        case pidsMax = "pids_max"
+        case filesUsed = "files_used"
+        case filesMax = "files_max"
+        case psi
+        case memPressure = "mem_pressure"
+    }
+}
+
+struct ZombieParent: Codable, Sendable, Equatable {
+    let pid: Int32
+    let name: String
+    let count: Int
+}
+
+/// Linux PSI avg10 values, in percent.
+struct PSIInfo: Codable, Sendable, Equatable {
+    let cpuSome: Double
+    let memSome: Double
+    let memFull: Double
+    let ioSome: Double
+    let ioFull: Double
+
+    enum CodingKeys: String, CodingKey {
+        case cpuSome = "cpu_some"
+        case memSome = "mem_some"
+        case memFull = "mem_full"
+        case ioSome = "io_some"
+        case ioFull = "io_full"
+    }
 }
 
 struct NetInfo: Decodable, Sendable {
@@ -198,12 +257,15 @@ struct ProcList: Codable, Sendable {
     let topN: Int
     let total: Int
     let visible: Int
+    /// True when the host had more processes than the sampler's scan
+    /// limit, so `items` is empty.
+    var skipped: Bool? = nil
     let items: [ProcSample]
 
     enum CodingKeys: String, CodingKey {
         case root
         case topN = "top_n"
-        case total, visible, items
+        case total, visible, skipped, items
     }
 }
 

@@ -93,6 +93,14 @@ final class ServerViewModel: Identifiable {
 
     var hoverDate: Date?
 
+    /// Latest host health, re-evaluated on every ingest.
+    var health: HealthStatus = .empty
+    /// Process count per sample, raw (not a fraction).
+    var procCount: MetricSeries
+    /// Process count when the latest sample skipped the per-process scan
+    /// (`procs.skipped`); nil when the scan ran.
+    var procsSkippedTotal: Int?
+
     var thresholds: MetricThresholds
 
     private var prevCPUTotalMs: Int64?
@@ -134,6 +142,7 @@ final class ServerViewModel: Identifiable {
         self.disksPerMount = DiskSeries()
         self.diskIO = DiskIOSeries()
         self.procs = ProcSeries()
+        self.procCount = MetricSeries()
     }
 
     @discardableResult
@@ -203,9 +212,18 @@ final class ServerViewModel: Identifiable {
         }
 
         if let ps = s.procs {
-            procs.append(ProcSeries.Snapshot(t: s.ts, items: ps.items))
+            procsSkippedTotal = ps.skipped == true ? ps.total : nil
+            if procsSkippedTotal == nil {
+                procs.append(ProcSeries.Snapshot(t: s.ts, items: ps.items))
+            }
             procsAvailable = true
             procsRoot = ps.root
+        }
+
+        health = HealthStatus(info: s.health, disks: s.disks, thresholds: thresholds)
+        let procsV = (s.health?.procs ?? s.procs?.total).map(Double.init)
+        if let procsV {
+            procCount.append(MetricPoint(t: s.ts, v: procsV))
         }
 
         if let pl = s.ports {
@@ -220,22 +238,27 @@ final class ServerViewModel: Identifiable {
         let previous = state
         state = computeState()
         if previous != state {
+            var kv = [
+                "cpu_pct": String(format: "%.0f", cpuV * 100),
+                "mem_pct": String(format: "%.0f", memV * 100),
+                "disk_pct": String(format: "%.0f", diskV * 100),
+            ]
+            if !health.reasons.isEmpty {
+                kv["health"] = health.reasons.map(\.text).joined(separator: "; ")
+            }
             Logger.shared.info(
                 "state: \(Self.stateLabel(previous)) → \(Self.stateLabel(state))",
                 category: "thresholds",
                 hostID: id, host: hostname,
-                kv: [
-                    "cpu_pct": String(format: "%.0f", cpuV * 100),
-                    "mem_pct": String(format: "%.0f", memV * 100),
-                    "disk_pct": String(format: "%.0f", diskV * 100),
-                ]
+                kv: kv
             )
         }
         return HistoryPoint(
             t: s.ts,
             cpu: cpuV, mem: memV, disk: diskV, net: netV,
             rxMBps: rxV,
-            txMBps: txV
+            txMBps: txV,
+            procs: procsV
         )
     }
 
@@ -278,6 +301,7 @@ final class ServerViewModel: Identifiable {
             if let v = p.net { net.append(MetricPoint(t: p.t, v: v)) }
             if let v = p.rxMBps { netRx.append(MetricPoint(t: p.t, v: v)) }
             if let v = p.txMBps { netTx.append(MetricPoint(t: p.t, v: v)) }
+            if let v = p.procs { procCount.append(MetricPoint(t: p.t, v: v)) }
         }
         if let last = points.last {
             lastSeen = last.t
@@ -407,6 +431,7 @@ final class ServerViewModel: Identifiable {
             sustainedTint(for: .cpu, raw: cpu.tint(warn: thresholds.cpuWarn, critical: thresholds.cpuCritical)),
             sustainedTint(for: .mem, raw: mem.tint(warn: thresholds.memWarn, critical: thresholds.memCritical)),
             sustainedTint(for: .disk, raw: disk.tint(warn: thresholds.diskWarn, critical: thresholds.diskCritical)),
+            health.tint,
         ]
         if tints.contains(.critical) { return .critical }
         if tints.contains(.warn) { return .warn }
@@ -474,6 +499,7 @@ final class ServerViewModel: Identifiable {
         case .mem: return sustainedTint(for: .mem, raw: mem.tint(warn: thresholds.memWarn, critical: thresholds.memCritical))
         case .disk: return sustainedTint(for: .disk, raw: disk.tint(warn: thresholds.diskWarn, critical: thresholds.diskCritical))
         case .net: return .nominal
+        case .health: return health.tint
         }
     }
 
@@ -498,6 +524,16 @@ struct MetricThresholds: Sendable, Equatable, Codable {
     var cpuSustainSamples: Int
     var memSustainSamples: Int
     var diskSustainSamples: Int
+    /// Host health counts. See `HealthStatus` for the fixed-limit rules.
+    var procsWarn: Int
+    var procsCritical: Int
+    var zombiesWarn: Int
+    var zombiesCritical: Int
+
+    static let defaultProcsWarn = 5000
+    static let defaultProcsCritical = 20000
+    static let defaultZombiesWarn = 200
+    static let defaultZombiesCritical = 2000
 
     static let defaults = MetricThresholds(
         cpuWarn: 0.75, cpuCritical: 0.90,
@@ -511,6 +547,7 @@ struct MetricThresholds: Sendable, Equatable, Codable {
     enum CodingKeys: String, CodingKey {
         case cpuWarn, cpuCritical, memWarn, memCritical, diskWarn, diskCritical
         case cpuSustainSamples, memSustainSamples, diskSustainSamples
+        case procsWarn, procsCritical, zombiesWarn, zombiesCritical
     }
 
     init(
@@ -519,7 +556,11 @@ struct MetricThresholds: Sendable, Equatable, Codable {
         diskWarn: Double, diskCritical: Double,
         cpuSustainSamples: Int = 1,
         memSustainSamples: Int = 1,
-        diskSustainSamples: Int = 1
+        diskSustainSamples: Int = 1,
+        procsWarn: Int = defaultProcsWarn,
+        procsCritical: Int = defaultProcsCritical,
+        zombiesWarn: Int = defaultZombiesWarn,
+        zombiesCritical: Int = defaultZombiesCritical
     ) {
         self.cpuWarn = cpuWarn
         self.cpuCritical = cpuCritical
@@ -530,6 +571,23 @@ struct MetricThresholds: Sendable, Equatable, Codable {
         self.cpuSustainSamples = max(1, cpuSustainSamples)
         self.memSustainSamples = max(1, memSustainSamples)
         self.diskSustainSamples = max(1, diskSustainSamples)
+        self.procsWarn = max(1, procsWarn)
+        self.procsCritical = max(self.procsWarn, procsCritical)
+        self.zombiesWarn = max(1, zombiesWarn)
+        self.zombiesCritical = max(self.zombiesWarn, zombiesCritical)
+    }
+
+    init(_ p: PersistedThresholds) {
+        self.init(
+            cpuWarn: p.cpuWarn, cpuCritical: p.cpuCritical,
+            memWarn: p.memWarn, memCritical: p.memCritical,
+            diskWarn: p.diskWarn, diskCritical: p.diskCritical,
+            cpuSustainSamples: p.cpuSustainSamples,
+            memSustainSamples: p.memSustainSamples,
+            diskSustainSamples: p.diskSustainSamples,
+            procsWarn: p.procsWarn, procsCritical: p.procsCritical,
+            zombiesWarn: p.zombiesWarn, zombiesCritical: p.zombiesCritical
+        )
     }
 
     init(from decoder: Decoder) throws {
@@ -549,7 +607,11 @@ struct MetricThresholds: Sendable, Equatable, Codable {
             diskWarn: diskW, diskCritical: diskC,
             cpuSustainSamples: cpuS,
             memSustainSamples: memS,
-            diskSustainSamples: diskS
+            diskSustainSamples: diskS,
+            procsWarn: try c.decodeIfPresent(Int.self, forKey: .procsWarn) ?? Self.defaultProcsWarn,
+            procsCritical: try c.decodeIfPresent(Int.self, forKey: .procsCritical) ?? Self.defaultProcsCritical,
+            zombiesWarn: try c.decodeIfPresent(Int.self, forKey: .zombiesWarn) ?? Self.defaultZombiesWarn,
+            zombiesCritical: try c.decodeIfPresent(Int.self, forKey: .zombiesCritical) ?? Self.defaultZombiesCritical
         )
     }
 
@@ -558,13 +620,13 @@ struct MetricThresholds: Sendable, Equatable, Codable {
         case .cpu: return cpuSustainSamples
         case .mem: return memSustainSamples
         case .disk: return diskSustainSamples
-        case .net: return 1
+        case .net, .health: return 1
         }
     }
 
     /// Effective thresholds for a host: warn/critical levels come from the
-    /// per-node override (when set), but `*SustainSamples` always inherits
-    /// from the global. Sustain is a global noise filter — there is no
+    /// per-node override (when set), but `*SustainSamples` and the health
+    /// counts always inherit from the global. Sustain is a global noise filter — there is no
     /// per-node UI for it, so any stale value in `customThresholds` from
     /// before the sustain stepper existed (or from a parallel client) would
     /// silently override the user's global setting otherwise.
@@ -576,7 +638,9 @@ struct MetricThresholds: Sendable, Equatable, Codable {
             diskWarn: override.diskWarn, diskCritical: override.diskCritical,
             cpuSustainSamples: global.cpuSustainSamples,
             memSustainSamples: global.memSustainSamples,
-            diskSustainSamples: global.diskSustainSamples
+            diskSustainSamples: global.diskSustainSamples,
+            procsWarn: global.procsWarn, procsCritical: global.procsCritical,
+            zombiesWarn: global.zombiesWarn, zombiesCritical: global.zombiesCritical
         )
     }
 }

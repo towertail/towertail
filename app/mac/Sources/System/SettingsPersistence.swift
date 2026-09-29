@@ -278,6 +278,11 @@ struct PersistedThresholds: Codable, Equatable {
     var cpuSustainSamples: Int
     var memSustainSamples: Int
     var diskSustainSamples: Int
+    /// See MetricThresholds.procsWarn. Missing keys load as defaults.
+    var procsWarn: Int
+    var procsCritical: Int
+    var zombiesWarn: Int
+    var zombiesCritical: Int
 
     static let defaults = PersistedThresholds(
         cpuWarn: 0.75, cpuCritical: 0.90,
@@ -289,6 +294,7 @@ struct PersistedThresholds: Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case cpuWarn, cpuCritical, memWarn, memCritical, diskWarn, diskCritical
         case cpuSustainSamples, memSustainSamples, diskSustainSamples
+        case procsWarn, procsCritical, zombiesWarn, zombiesCritical
     }
 
     init(
@@ -297,7 +303,11 @@ struct PersistedThresholds: Codable, Equatable {
         diskWarn: Double, diskCritical: Double,
         cpuSustainSamples: Int = 1,
         memSustainSamples: Int = 1,
-        diskSustainSamples: Int = 1
+        diskSustainSamples: Int = 1,
+        procsWarn: Int = MetricThresholds.defaultProcsWarn,
+        procsCritical: Int = MetricThresholds.defaultProcsCritical,
+        zombiesWarn: Int = MetricThresholds.defaultZombiesWarn,
+        zombiesCritical: Int = MetricThresholds.defaultZombiesCritical
     ) {
         self.cpuWarn = cpuWarn
         self.cpuCritical = cpuCritical
@@ -308,6 +318,23 @@ struct PersistedThresholds: Codable, Equatable {
         self.cpuSustainSamples = max(1, cpuSustainSamples)
         self.memSustainSamples = max(1, memSustainSamples)
         self.diskSustainSamples = max(1, diskSustainSamples)
+        self.procsWarn = max(1, procsWarn)
+        self.procsCritical = max(self.procsWarn, procsCritical)
+        self.zombiesWarn = max(1, zombiesWarn)
+        self.zombiesCritical = max(self.zombiesWarn, zombiesCritical)
+    }
+
+    init(_ t: MetricThresholds) {
+        self.init(
+            cpuWarn: t.cpuWarn, cpuCritical: t.cpuCritical,
+            memWarn: t.memWarn, memCritical: t.memCritical,
+            diskWarn: t.diskWarn, diskCritical: t.diskCritical,
+            cpuSustainSamples: t.cpuSustainSamples,
+            memSustainSamples: t.memSustainSamples,
+            diskSustainSamples: t.diskSustainSamples,
+            procsWarn: t.procsWarn, procsCritical: t.procsCritical,
+            zombiesWarn: t.zombiesWarn, zombiesCritical: t.zombiesCritical
+        )
     }
 
     init(from decoder: Decoder) throws {
@@ -321,7 +348,11 @@ struct PersistedThresholds: Codable, Equatable {
             diskCritical: try c.decode(Double.self, forKey: .diskCritical),
             cpuSustainSamples: try c.decodeIfPresent(Int.self, forKey: .cpuSustainSamples) ?? 1,
             memSustainSamples: try c.decodeIfPresent(Int.self, forKey: .memSustainSamples) ?? 1,
-            diskSustainSamples: try c.decodeIfPresent(Int.self, forKey: .diskSustainSamples) ?? 1
+            diskSustainSamples: try c.decodeIfPresent(Int.self, forKey: .diskSustainSamples) ?? 1,
+            procsWarn: try c.decodeIfPresent(Int.self, forKey: .procsWarn) ?? MetricThresholds.defaultProcsWarn,
+            procsCritical: try c.decodeIfPresent(Int.self, forKey: .procsCritical) ?? MetricThresholds.defaultProcsCritical,
+            zombiesWarn: try c.decodeIfPresent(Int.self, forKey: .zombiesWarn) ?? MetricThresholds.defaultZombiesWarn,
+            zombiesCritical: try c.decodeIfPresent(Int.self, forKey: .zombiesCritical) ?? MetricThresholds.defaultZombiesCritical
         )
     }
 }

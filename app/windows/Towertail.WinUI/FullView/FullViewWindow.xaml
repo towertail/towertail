@@ -55,6 +55,7 @@
                 <NavigationViewItem Content="DISK"  Tag="disk" />
                 <NavigationViewItem Content="NET"   Tag="net" />
                 <NavigationViewItem Content="PROCS" Tag="procs" />
+                <NavigationViewItem Content="HEALTH" Tag="health" />
             </NavigationView.MenuItems>
             <Grid x:Name="Host" Margin="24,12,24,24" />
         </NavigationView>

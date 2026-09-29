@@ -38,6 +38,22 @@ public sealed class HistoryStoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ProcsRoundTripsAndSurvivesReopen()
+    {
+        var node = Guid.NewGuid();
+        _store.Append(node, new HistoryPoint(DateTime.UtcNow.AddSeconds(-2), 1, 2, 3, 4, 5, 6, Procs: 34983));
+        _store.Append(node, new HistoryPoint(DateTime.UtcNow.AddSeconds(-1), 1, 2, 3, 4, 5, 6));
+        await Task.Delay(100);
+
+        // Reopen: the procs ALTER runs again and must ignore the duplicate column.
+        await _store.DisposeAsync();
+        _store = new HistoryStore(_path);
+
+        var rows = _store.LoadRecent(node, limit: 10);
+        rows.Select(r => r.Procs).Should().Equal(34983, null);
+    }
+
+    [Fact]
     public async Task TrimKeepsOnlyLatest()
     {
         var node = Guid.NewGuid();

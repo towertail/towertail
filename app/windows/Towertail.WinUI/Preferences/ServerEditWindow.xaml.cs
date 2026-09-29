@@ -182,10 +182,15 @@ public sealed partial class ServerEditWindow : Window
             double cpuW = CpuWarnSlider.Value / 100.0, cpuC = CpuCriticalSlider.Value / 100.0;
             double memW = MemWarnSlider.Value / 100.0, memC = MemCriticalSlider.Value / 100.0;
             double dW = DiskWarnSlider.Value / 100.0, dC = DiskCriticalSlider.Value / 100.0;
+            // No per-node health UI: carry the counts over from the existing
+            // override, else from the global settings.
+            var baseT = _existing?.CustomThresholds
+                ?? Towertail.WinUI.App.Current.Environment.ServerSettings.Thresholds;
             custom = new MetricThresholds(
                 Math.Min(cpuW, cpuC), Math.Max(cpuW, cpuC),
                 Math.Min(memW, memC), Math.Max(memW, memC),
-                Math.Min(dW, dC), Math.Max(dW, dC));
+                Math.Min(dW, dC), Math.Max(dW, dC))
+                .WithHealth(baseT.ProcsWarn, baseT.ProcsCritical, baseT.ZombiesWarn, baseT.ZombiesCritical);
         }
 
         int? port = null;

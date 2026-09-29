@@ -93,6 +93,16 @@ public sealed class HistoryStore : IAsyncDisposable
         using var cmd = _conn.CreateCommand();
         cmd.CommandText = sql;
         cmd.ExecuteNonQuery();
+
+        // Added after v1 shipped. SQLite has no ADD COLUMN IF NOT EXISTS, so
+        // ignore the "duplicate column" error on databases that have it.
+        try
+        {
+            using var alter = _conn.CreateCommand();
+            alter.CommandText = "ALTER TABLE samples ADD COLUMN procs REAL";
+            alter.ExecuteNonQuery();
+        }
+        catch (SqliteException ex) when (ex.Message.Contains("duplicate column", StringComparison.OrdinalIgnoreCase)) { }
     }
 
     private void WorkerLoop()
@@ -118,7 +128,7 @@ public sealed class HistoryStore : IAsyncDisposable
         Enqueue(conn =>
         {
             using var cmd = conn.CreateCommand();
-            cmd.CommandText = "INSERT INTO samples (node_id, ts, cpu, mem, disk, net, rx_mbps, tx_mbps) VALUES ($id, $ts, $cpu, $mem, $disk, $net, $rx, $tx)";
+            cmd.CommandText = "INSERT INTO samples (node_id, ts, cpu, mem, disk, net, rx_mbps, tx_mbps, procs) VALUES ($id, $ts, $cpu, $mem, $disk, $net, $rx, $tx, $procs)";
             cmd.Parameters.AddWithValue("$id", id);
             cmd.Parameters.AddWithValue("$ts", ToEpoch(point.T));
             cmd.Parameters.AddWithValue("$cpu", (object?)point.Cpu ?? DBNull.Value);
@@ -127,6 +137,7 @@ public sealed class HistoryStore : IAsyncDisposable
             cmd.Parameters.AddWithValue("$net", (object?)point.Net ?? DBNull.Value);
             cmd.Parameters.AddWithValue("$rx", (object?)point.RxMBps ?? DBNull.Value);
             cmd.Parameters.AddWithValue("$tx", (object?)point.TxMBps ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$procs", (object?)point.Procs ?? DBNull.Value);
             cmd.ExecuteNonQuery();
         });
     }
@@ -139,7 +150,7 @@ public sealed class HistoryStore : IAsyncDisposable
             var list = new List<HistoryPoint>();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = @"
-                SELECT ts, cpu, mem, disk, net, rx_mbps, tx_mbps FROM samples
+                SELECT ts, cpu, mem, disk, net, rx_mbps, tx_mbps, procs FROM samples
                 WHERE node_id = $id ORDER BY ts DESC LIMIT $limit";
             cmd.Parameters.AddWithValue("$id", nodeId.ToString());
             cmd.Parameters.AddWithValue("$limit", limit);
@@ -153,7 +164,8 @@ public sealed class HistoryStore : IAsyncDisposable
                     Disk: reader.IsDBNull(3) ? null : reader.GetDouble(3),
                     Net: reader.IsDBNull(4) ? null : reader.GetDouble(4),
                     RxMBps: reader.IsDBNull(5) ? null : reader.GetDouble(5),
-                    TxMBps: reader.IsDBNull(6) ? null : reader.GetDouble(6)));
+                    TxMBps: reader.IsDBNull(6) ? null : reader.GetDouble(6),
+                    Procs: reader.IsDBNull(7) ? null : reader.GetDouble(7)));
             }
             list.Reverse();
             tcs.TrySetResult(list);
@@ -372,4 +384,5 @@ public sealed record HistoryPoint(
     double? Disk,
     double? Net,
     double? RxMBps,
-    double? TxMBps);
+    double? TxMBps,
+    double? Procs = null);

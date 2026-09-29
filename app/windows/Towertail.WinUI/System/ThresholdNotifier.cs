@@ -9,7 +9,7 @@ namespace Towertail.WinUI.SystemServices;
 public sealed class ThresholdNotifier
 {
     public enum Severity { Nominal, Warn, Critical }
-    public enum Metric { Cpu, Mem, Disk }
+    public enum Metric { Cpu, Mem, Disk, Health }
 
     private readonly ServerSettings _settings;
     private readonly NodeStore _nodes;
@@ -32,13 +32,15 @@ public sealed class ThresholdNotifier
     public void Evaluate(ServerViewModel vm)
     {
         var node = vm.Node;
-        var thresholds = node.CustomThresholds ?? _settings.Thresholds;
+        var thresholds = MetricThresholds.Effective(_settings.Thresholds, node.CustomThresholds);
         if (vm.CpuPct is double cpu) Check(node, Metric.Cpu, cpu / 100.0, thresholds.CpuWarn, thresholds.CpuCritical, thresholds.CpuSustainSamples);
         if (vm.MemPct is double mem) Check(node, Metric.Mem, mem / 100.0, thresholds.MemWarn, thresholds.MemCritical, thresholds.MemSustainSamples);
         if (vm.DiskMaxPct is double disk) Check(node, Metric.Disk, disk / 100.0, thresholds.DiskWarn, thresholds.DiskCritical, thresholds.DiskSustainSamples);
+        // Health is already a level. Map it onto 0/1/2 so Check applies the same gates. No sustain.
+        Check(node, Metric.Health, (double)vm.Health.Level, (double)HealthLevel.Warn, (double)HealthLevel.Critical, 1, vm.Health.Body);
     }
 
-    private void Check(Node node, Metric m, double value, double warn, double critical, int sustain)
+    private void Check(Node node, Metric m, double value, double warn, double critical, int sustain, string? body = null)
     {
         var key = (node.Id, m);
         // Update streaks before deriving the gated severity. A single sample
@@ -96,8 +98,8 @@ public sealed class ThresholdNotifier
             _lastNotified[(node.Id, m)] = DateTime.UtcNow;
         }
 
-        Raised?.Invoke(this, new NotifyPayload(node.Id, m, sev, value));
+        Raised?.Invoke(this, new NotifyPayload(node.Id, m, sev, value, body));
     }
 
-    public sealed record NotifyPayload(Guid NodeId, Metric Metric, Severity Severity, double Value);
+    public sealed record NotifyPayload(Guid NodeId, Metric Metric, Severity Severity, double Value, string? Body = null);
 }

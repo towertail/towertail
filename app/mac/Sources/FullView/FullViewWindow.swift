@@ -147,6 +147,7 @@ struct FullViewWindow: View {
         case .cpu:  updateMain(clipToZoom(vm.cpu.snapshot()))
         case .mem:  updateMain(clipToZoom(vm.mem.snapshot()))
         case .net:  updateMain(clipToZoom(vm.net.snapshot()))
+        case .health: updateMain(clipToZoom(vm.procCount.snapshot()))
         case .disk:
             let capacity: [MetricPoint] = {
                 switch model.diskMount {
@@ -281,6 +282,10 @@ struct FullViewWindow: View {
                     diskArea(vm: vm)
                 } else {
                     chartArea(vm: vm)
+                }
+                if model.metric == .health {
+                    HealthDetails(health: vm.health, thresholds: vm.thresholds)
+                        .padding(.horizontal, 16)
                 }
                 bottomTable(vm: vm)
             } else {
@@ -552,10 +557,14 @@ struct FullViewWindow: View {
                 critical: critical,
                 hoverAt: model.hoverAt,
                 pinnedAt: pinned,
-                yDomain: model.metric == .net ? nil : 0...1,
-                yAxisLabel: model.metric == .net
-                    ? { v in Self.formatByteRate(bytesPerSec: v * 100.0 * 1_048_576.0) }
-                    : { v in "\(Int(v * 100))%" },
+                yDomain: model.metric == .net || model.metric == .health ? nil : 0...1,
+                yAxisLabel: {
+                    switch model.metric {
+                    case .net: return { v in Self.formatByteRate(bytesPerSec: v * 100.0 * 1_048_576.0) }
+                    case .health: return { v in HealthStatus.count(Int(v.rounded())) }
+                    default: return { v in "\(Int(v * 100))%" }
+                    }
+                }(),
                 selectionRange: model.pendingSelection,
                 onHover: { t in
                     model.hoverAt = t
@@ -585,7 +594,8 @@ struct FullViewWindow: View {
             available: vm.procsAvailable,
             isRootSampler: vm.procsRoot,
             metric: model.metric,
-            node: nodeStore.node(withId: activeHostId)
+            node: nodeStore.node(withId: activeHostId),
+            skippedTotal: vm.procsSkippedTotal
         )
     }
 
@@ -643,6 +653,8 @@ private func valueText(vm: ServerViewModel) -> some View {
             let rx = Self.formatByteRate(bytesPerSec: rxMBps * 1_048_576.0)
             let tx = Self.formatByteRate(bytesPerSec: txMBps * 1_048_576.0)
             text = "↓\(rx) · ↑\(tx)"
+        case .health:
+            text = "\(HealthStatus.count(Int(v.rounded()))) processes"
         default:
             text = "\(Int(round(v * 100)))%"
         }
@@ -656,6 +668,7 @@ private func valueText(vm: ServerViewModel) -> some View {
         case .mem: return vm.mem
         case .disk: return vm.disk
         case .net: return vm.net
+        case .health: return vm.procCount
         }
     }
 
@@ -664,11 +677,12 @@ private func valueText(vm: ServerViewModel) -> some View {
         case .cpu: return (vm.thresholds.cpuWarn, vm.thresholds.cpuCritical)
         case .mem: return (vm.thresholds.memWarn, vm.thresholds.memCritical)
         case .disk: return (vm.thresholds.diskWarn, vm.thresholds.diskCritical)
-        case .net: return (nil, nil)
+        case .net, .health: return (nil, nil)
         }
     }
 
     private func tint(vm: ServerViewModel, series: MetricSeries, metric: Metric) -> Color {
+        if metric == .health { return vm.health.tint.color }
         let (warn, critical) = thresholds(for: metric, vm: vm)
         if let w = warn, let c = critical {
             return series.tint(warn: w, critical: c).color

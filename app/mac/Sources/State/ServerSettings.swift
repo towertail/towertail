@@ -27,14 +27,7 @@ final class ServerSettings {
     init(url: URL = SettingsPersistence.defaultURL()) {
         self.url = url
         let p = SettingsPersistence.load(from: url)
-        self.thresholds = MetricThresholds(
-            cpuWarn: p.thresholds.cpuWarn, cpuCritical: p.thresholds.cpuCritical,
-            memWarn: p.thresholds.memWarn, memCritical: p.thresholds.memCritical,
-            diskWarn: p.thresholds.diskWarn, diskCritical: p.thresholds.diskCritical,
-            cpuSustainSamples: p.thresholds.cpuSustainSamples,
-            memSustainSamples: p.thresholds.memSustainSamples,
-            diskSustainSamples: p.thresholds.diskSustainSamples
-        )
+        self.thresholds = MetricThresholds(p.thresholds)
         self.localPollingIntervalSeconds = max(1, min(300, p.localPollingIntervalSeconds))
         self.sshPollingIntervalSeconds = max(1, min(300, p.sshPollingIntervalSeconds))
         self.notificationsEnabled = p.notificationsEnabled
@@ -51,14 +44,7 @@ final class ServerSettings {
 
     func reloadFromDisk() {
         let p = SettingsPersistence.load(from: url)
-        self.thresholds = MetricThresholds(
-            cpuWarn: p.thresholds.cpuWarn, cpuCritical: p.thresholds.cpuCritical,
-            memWarn: p.thresholds.memWarn, memCritical: p.thresholds.memCritical,
-            diskWarn: p.thresholds.diskWarn, diskCritical: p.thresholds.diskCritical,
-            cpuSustainSamples: p.thresholds.cpuSustainSamples,
-            memSustainSamples: p.thresholds.memSustainSamples,
-            diskSustainSamples: p.thresholds.diskSustainSamples
-        )
+        self.thresholds = MetricThresholds(p.thresholds)
         self.localPollingIntervalSeconds = max(1, min(300, p.localPollingIntervalSeconds))
         self.sshPollingIntervalSeconds = max(1, min(300, p.sshPollingIntervalSeconds))
         self.notificationsEnabled = p.notificationsEnabled
@@ -79,14 +65,7 @@ final class ServerSettings {
     func persist() {
         let before = SettingsPersistence.load(from: url)
         var p = before
-        p.thresholds = PersistedThresholds(
-            cpuWarn: thresholds.cpuWarn, cpuCritical: thresholds.cpuCritical,
-            memWarn: thresholds.memWarn, memCritical: thresholds.memCritical,
-            diskWarn: thresholds.diskWarn, diskCritical: thresholds.diskCritical,
-            cpuSustainSamples: thresholds.cpuSustainSamples,
-            memSustainSamples: thresholds.memSustainSamples,
-            diskSustainSamples: thresholds.diskSustainSamples
-        )
+        p.thresholds = PersistedThresholds(thresholds)
         p.localPollingIntervalSeconds = localPollingIntervalSeconds
         p.sshPollingIntervalSeconds = sshPollingIntervalSeconds
         p.notificationsEnabled = notificationsEnabled
@@ -109,6 +88,10 @@ final class ServerSettings {
         SettingsField("cpuSustainSamples") { "\($0.thresholds.cpuSustainSamples)" },
         SettingsField("memSustainSamples") { "\($0.thresholds.memSustainSamples)" },
         SettingsField("diskSustainSamples") { "\($0.thresholds.diskSustainSamples)" },
+        SettingsField("procsWarn") { "\($0.thresholds.procsWarn)" },
+        SettingsField("procsCritical") { "\($0.thresholds.procsCritical)" },
+        SettingsField("zombiesWarn") { "\($0.thresholds.zombiesWarn)" },
+        SettingsField("zombiesCritical") { "\($0.thresholds.zombiesCritical)" },
         SettingsField("localPollSec") { "\($0.localPollingIntervalSeconds)" },
         SettingsField("sshPollSec") { "\($0.sshPollingIntervalSeconds)" },
         SettingsField("notificationsEnabled") { "\($0.notificationsEnabled)" },

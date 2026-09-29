@@ -17,6 +17,7 @@ public sealed partial class ServerStore : ObservableObject
     private readonly ServerSettings _settings;
     private readonly HistoryStore _history;
     private ThresholdNotifier? _notifier;
+    private Logger? _logger;
     private readonly object _hydrationLock = new();
     private readonly HashSet<Guid> _hydratedProcs = new();
 
@@ -45,6 +46,7 @@ public sealed partial class ServerStore : ObservableObject
     }
 
     public void AttachNotifier(ThresholdNotifier notifier) => _notifier = notifier;
+    public void AttachLogger(Logger logger) => _logger = logger;
 
     public ServerViewModel? Find(Guid id)
     {
@@ -58,7 +60,16 @@ public sealed partial class ServerStore : ObservableObject
         var vm = Find(nodeId);
         if (vm == null) return;
 
+        vm.Thresholds = MetricThresholds.Effective(_settings.Thresholds, vm.Node.CustomThresholds);
+        var priorHealth = vm.Health.Level;
         vm.Ingest(sample);
+        if (vm.Health.Level != priorHealth)
+        {
+            var msg = $"thresholds host={vm.Node.DisplayName} health: {priorHealth} -> {vm.Health.Level}";
+            if (vm.Health.Reasons.Count > 0) msg += $" reasons=\"{vm.Health.Body}\"";
+            if (vm.Health.Level == HealthLevel.Nominal) _logger?.Info(msg);
+            else _logger?.Warning(msg);
+        }
 
         var frac = sample.Disks is { Count: > 0 } disks
             ? disks.Max(d => d.Total > 0 ? (double)d.Used / d.Total : 0)
@@ -71,7 +82,8 @@ public sealed partial class ServerStore : ObservableObject
             Disk: frac is double f ? f * 100.0 : null,
             Net: net,
             RxMBps: vm.RxMBps,
-            TxMBps: vm.TxMBps));
+            TxMBps: vm.TxMBps,
+            Procs: sample.Health?.Procs));
 
         if (sample.Disks is { Count: > 0 } ds)
             _history.AppendDiskCapacity(nodeId, sample.Ts, ds);
@@ -79,7 +91,7 @@ public sealed partial class ServerStore : ObservableObject
         if (sample.DiskIo is { } dio)
             _history.AppendDiskIO(nodeId, sample.Ts, dio.ReadBps, dio.WriteBps, dio.Devices);
 
-        if (sample.Procs is { } p)
+        if (sample.Procs is { Skipped: not true } p)
             _history.AppendProcs(nodeId, sample.Ts, p.Root, p.Items);
 
         _notifier?.Evaluate(vm);
@@ -110,6 +122,7 @@ public sealed partial class ServerStore : ObservableObject
             if (p.Net is double nt) vm.NetSeries.Append(p.T, nt);
             if (p.RxMBps is double rx) vm.RxSeries.Append(p.T, rx);
             if (p.TxMBps is double tx) vm.TxSeries.Append(p.T, tx);
+            if (p.Procs is double pc) vm.ProcCountSeries.Append(p.T, pc);
         }
         return vm;
     }

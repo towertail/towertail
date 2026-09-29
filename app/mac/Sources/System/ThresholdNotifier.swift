@@ -41,7 +41,7 @@ final class ThresholdNotifier {
     }
 
     func evaluate(vm: ServerViewModel, node: Node) {
-        for metric in [Metric.cpu, .mem, .disk] {
+        for metric in [Metric.cpu, .mem, .disk, .health] {
             let key = Key(hostId: vm.id, metric: metric)
             let current = vm.tint(for: metric)
             let previous = lastTint[key] ?? .nominal
@@ -144,6 +144,9 @@ final class ThresholdNotifier {
             }
         case .disk:
             if let v = vm.disk.latest?.v { return "Disk at \(Int(round(v * 100)))%" }
+        case .health:
+            let text = vm.health.reasons.map(\.text).joined(separator: " · ")
+            if !text.isEmpty { return text }
         case .net:
             break
         }
@@ -166,7 +169,7 @@ final class ThresholdNotifier {
                 .sorted { $0.rss > $1.rss }
                 .prefix(2)
                 .map { "\(procLabel($0)) \(formatBytes($0.rss))" }
-        case .disk, .net:
+        case .disk, .net, .health:
             return nil
         }
     }

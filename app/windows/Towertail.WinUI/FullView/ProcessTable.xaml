@@ -49,6 +49,10 @@
             </Grid>
             <Border Grid.Row="1" Height="1"
                     Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
+            <TextBlock Grid.Row="2" x:Name="SkippedText" Visibility="Collapsed"
+                       Margin="16,12,16,12" TextWrapping="Wrap"
+                       Style="{ThemeResource BodyTextBlockStyle}"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
             <ListView Grid.Row="2" x:Name="Items" SelectionMode="None"
                       Padding="8,4,8,4" Background="Transparent">
                 <ListView.ItemContainerStyle>

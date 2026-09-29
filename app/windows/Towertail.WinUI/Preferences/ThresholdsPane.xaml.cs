@@ -19,6 +19,8 @@ public sealed partial class ThresholdsPane : UserControl
         CpuSustainBox.Value  = t.CpuSustainSamples;
         MemSustainBox.Value  = t.MemSustainSamples;
         DiskSustainBox.Value = t.DiskSustainSamples;
+        ProcsWarnBox.Value   = t.ProcsWarn;   ProcsCritBox.Value   = t.ProcsCritical;
+        ZombiesWarnBox.Value = t.ZombiesWarn; ZombiesCritBox.Value = t.ZombiesCritical;
     }
 
     private void OnSaveClick(object sender, RoutedEventArgs e)
@@ -29,11 +31,18 @@ public sealed partial class ThresholdsPane : UserControl
             FromPct(DiskWarnBox.Value), FromPct(DiskCritBox.Value),
             FromSustain(CpuSustainBox.Value),
             FromSustain(MemSustainBox.Value),
-            FromSustain(DiskSustainBox.Value));
+            FromSustain(DiskSustainBox.Value))
+            .WithHealth(
+                FromCount(ProcsWarnBox.Value, MetricThresholds.DefaultProcsWarn),
+                FromCount(ProcsCritBox.Value, MetricThresholds.DefaultProcsCritical),
+                FromCount(ZombiesWarnBox.Value, MetricThresholds.DefaultZombiesWarn),
+                FromCount(ZombiesCritBox.Value, MetricThresholds.DefaultZombiesCritical));
         _env.ServerSettings.Persist();
     }
 
     private static int FromSustain(double v) => double.IsNaN(v) ? 1 : Math.Max(1, (int)Math.Round(v));
+
+    private static int FromCount(double v, int fallback) => double.IsNaN(v) ? fallback : (int)Math.Round(v);
 
     private static double ToPct(double fraction) => Math.Round(fraction * 100.0);
     private static double FromPct(double percent) => Math.Clamp(percent / 100.0, 0.0, 1.0);

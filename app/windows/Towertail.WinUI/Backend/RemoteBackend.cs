@@ -129,10 +129,13 @@ public sealed class RemoteBackend : IBackend
 
     private void ApplyServerSettings(RemoteServerSettings s)
     {
+        // The remote wire has no health counts yet; keep the local ones.
+        var cur = ServerSettings.Thresholds;
         ServerSettings.Thresholds = new MetricThresholds(
             s.Thresholds.CpuWarn, s.Thresholds.CpuCritical,
             s.Thresholds.MemWarn, s.Thresholds.MemCritical,
-            s.Thresholds.DiskWarn, s.Thresholds.DiskCritical);
+            s.Thresholds.DiskWarn, s.Thresholds.DiskCritical)
+            .WithHealth(cur.ProcsWarn, cur.ProcsCritical, cur.ZombiesWarn, cur.ZombiesCritical);
         ServerSettings.LocalPollingIntervalSeconds = s.LocalPollingIntervalSeconds;
         ServerSettings.SshPollingIntervalSeconds = s.SshPollingIntervalSeconds;
         ServerSettings.NotificationsEnabled = s.NotificationsEnabled;

@@ -19,7 +19,8 @@ public sealed record Sample(
     [property: JsonPropertyName("net")] NetInfo? Net,
     [property: JsonPropertyName("procs")] ProcList? Procs,
     [property: JsonPropertyName("ports")] PortList? Ports,
-    [property: JsonPropertyName("errors")] IReadOnlyList<string> Errors
+    [property: JsonPropertyName("errors")] IReadOnlyList<string> Errors,
+    [property: JsonPropertyName("health")] HealthInfo? Health = null
 );
 
 public sealed record HostInfo(
@@ -69,7 +70,9 @@ public sealed record DiskSample(
     [property: JsonPropertyName("mount")] string Mount,
     [property: JsonPropertyName("fs")] string Fs,
     [property: JsonPropertyName("used")] long Used,
-    [property: JsonPropertyName("total")] long Total
+    [property: JsonPropertyName("total")] long Total,
+    [property: JsonPropertyName("inodes_used")] long? InodesUsed = null,
+    [property: JsonPropertyName("inodes_total")] long? InodesTotal = null
 );
 
 public sealed record NetInfo(
@@ -100,7 +103,10 @@ public sealed record ProcList(
     [property: JsonPropertyName("top_n")] int TopN,
     [property: JsonPropertyName("total")] int Total,
     [property: JsonPropertyName("visible")] int Visible,
-    [property: JsonPropertyName("items")] IReadOnlyList<ProcSample> Items
+    [property: JsonPropertyName("items")] IReadOnlyList<ProcSample> Items,
+    // True when the host had more processes than the sampler's scan limit;
+    // Items is then empty.
+    [property: JsonPropertyName("skipped")] bool? Skipped = null
 );
 
 public sealed record ProcSample(
@@ -116,6 +122,37 @@ public sealed record ProcSample(
     [property: JsonPropertyName("start_ts")] DateTime? StartTs,
     [property: JsonPropertyName("read_bytes")] long? ReadBytes,
     [property: JsonPropertyName("write_bytes")] long? WriteBytes
+);
+
+/// <summary>
+/// Cheap host-level health signals (docs/sampler.md §4 <c>health</c>). Every field except
+/// <c>Procs</c> is null when the host OS does not expose it.
+/// </summary>
+public sealed record HealthInfo(
+    [property: JsonPropertyName("procs")] int Procs,
+    [property: JsonPropertyName("zombies")] int? Zombies = null,
+    [property: JsonPropertyName("zombie_parents")] IReadOnlyList<ZombieParent>? ZombieParents = null,
+    [property: JsonPropertyName("pids_used")] long? PidsUsed = null,
+    [property: JsonPropertyName("pids_max")] long? PidsMax = null,
+    [property: JsonPropertyName("files_used")] long? FilesUsed = null,
+    [property: JsonPropertyName("files_max")] long? FilesMax = null,
+    [property: JsonPropertyName("psi")] PsiInfo? Psi = null,
+    [property: JsonPropertyName("mem_pressure")] int? MemPressure = null
+);
+
+public sealed record ZombieParent(
+    [property: JsonPropertyName("pid")] int Pid,
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("count")] int Count
+);
+
+/// <summary>Linux pressure stall information, avg10 in percent.</summary>
+public sealed record PsiInfo(
+    [property: JsonPropertyName("cpu_some")] double CpuSome,
+    [property: JsonPropertyName("mem_some")] double MemSome,
+    [property: JsonPropertyName("mem_full")] double MemFull,
+    [property: JsonPropertyName("io_some")] double IoSome,
+    [property: JsonPropertyName("io_full")] double IoFull
 );
 
 /// <summary>

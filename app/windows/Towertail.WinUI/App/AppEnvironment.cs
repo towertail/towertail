@@ -43,6 +43,7 @@ public sealed class AppEnvironment
         var backend = new LocalBackend(nodes, servers, clientSettings, serverSettings);
         var notifier = new ThresholdNotifier(serverSettings, nodes);
         servers.AttachNotifier(notifier);
+        servers.AttachLogger(logger);
 
         // First-run seed: a Local node for "this machine" so the popover is not
         // empty on fresh installs. Users can rename, disable, or delete it.

@@ -62,6 +62,7 @@ public sealed partial class FullViewWindow : Window
             "disk"  => MakeChart(_vm.DiskSeries, "DISK %"),
             "net"   => MakeNet(),
             "procs" => MakeProcs(),
+            "health" => MakeHealth(),
             _ => new TextBlock { Text = "—" },
         };
         Host.Children.Add(content);
@@ -132,6 +133,26 @@ public sealed partial class FullViewWindow : Window
                 : procs;
         };
 
+        return grid;
+    }
+
+    private UIElement MakeHealth()
+    {
+        if (_vm is null) return new TextBlock();
+        var grid = new Grid { RowSpacing = 12 };
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+        var chart = new MetricChart();
+        chart.Bind(_vm.ProcCountSeries, "Processes", isPercent: false);
+        chart.SetPaused(_paused);
+        _charts.Add(chart);
+        grid.Children.Add(chart);
+
+        var details = new HealthDetails();
+        details.Bind(_vm);
+        Grid.SetRow(details, 1);
+        grid.Children.Add(details);
         return grid;
     }
 

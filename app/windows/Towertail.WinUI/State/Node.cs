@@ -84,8 +84,39 @@ public sealed record MetricThresholds(
     // between warn and critical; clear path is unconditional.
     int CpuSustainSamples = 1,
     int MemSustainSamples = 1,
-    int DiskSustainSamples = 1)
+    int DiskSustainSamples = 1,
+    // Host health: absolute counts, not fractions.
+    int ProcsWarn = MetricThresholds.DefaultProcsWarn,
+    int ProcsCritical = MetricThresholds.DefaultProcsCritical,
+    int ZombiesWarn = MetricThresholds.DefaultZombiesWarn,
+    int ZombiesCritical = MetricThresholds.DefaultZombiesCritical)
 {
+    public const int DefaultProcsWarn = 5000;
+    public const int DefaultProcsCritical = 20000;
+    public const int DefaultZombiesWarn = 200;
+    public const int DefaultZombiesCritical = 2000;
+
+    /// <summary>Copy with health counts clamped to min 1 and warn &lt;= critical.</summary>
+    public MetricThresholds WithHealth(int procsWarn, int procsCritical, int zombiesWarn, int zombiesCritical)
+    {
+        procsWarn = Math.Max(1, procsWarn);
+        zombiesWarn = Math.Max(1, zombiesWarn);
+        return this with
+        {
+            ProcsWarn = procsWarn,
+            ProcsCritical = Math.Max(procsWarn, procsCritical),
+            ZombiesWarn = zombiesWarn,
+            ZombiesCritical = Math.Max(zombiesWarn, zombiesCritical),
+        };
+    }
+
+    /// <summary>
+    /// Thresholds that apply to one host. The per-node editor has no health fields, so the
+    /// health counts always come from <paramref name="global"/>.
+    /// </summary>
+    public static MetricThresholds Effective(MetricThresholds global, MetricThresholds? custom)
+        => custom is null ? global : custom.WithHealth(global.ProcsWarn, global.ProcsCritical, global.ZombiesWarn, global.ZombiesCritical);
+
     public static MetricThresholds Defaults => new(
         CpuWarn: 0.75, CpuCritical: 0.90,
         MemWarn: 0.75, MemCritical: 0.90,

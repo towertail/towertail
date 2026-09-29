@@ -113,10 +113,13 @@ final class HistoryStore: @unchecked Sendable {
         CREATE INDEX IF NOT EXISTS idx_disk_io_node_ts ON disk_io(node_id, ts);
         """
         sqlite3_exec(db, sql, nil, nil, nil)
+        // Added after v1 shipped; fails harmlessly with "duplicate column"
+        // on databases that already have it.
+        sqlite3_exec(db, "ALTER TABLE samples ADD COLUMN procs REAL;", nil, nil, nil)
 
         let insertSQL = """
-        INSERT INTO samples (node_id, ts, cpu, mem, disk, net, rx_mbps, tx_mbps)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+        INSERT INTO samples (node_id, ts, cpu, mem, disk, net, rx_mbps, tx_mbps, procs)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
         """
         sqlite3_prepare_v2(db, insertSQL, -1, &insertStmt, nil)
 
@@ -168,6 +171,7 @@ final class HistoryStore: @unchecked Sendable {
             Self.bindOptional(stmt, 6, point.net)
             Self.bindOptional(stmt, 7, point.rxMBps)
             Self.bindOptional(stmt, 8, point.txMBps)
+            Self.bindOptional(stmt, 9, point.procs)
             sqlite3_step(stmt)
         }
     }
@@ -177,7 +181,7 @@ final class HistoryStore: @unchecked Sendable {
         queue.sync {
             guard let db else { return [] }
             let sql = """
-            SELECT ts, cpu, mem, disk, net, rx_mbps, tx_mbps
+            SELECT ts, cpu, mem, disk, net, rx_mbps, tx_mbps, procs
             FROM samples WHERE node_id = ?
             ORDER BY ts DESC LIMIT ?;
             """
@@ -199,7 +203,8 @@ final class HistoryStore: @unchecked Sendable {
                     disk: Self.readOptional(stmt, 3),
                     net: Self.readOptional(stmt, 4),
                     rxMBps: Self.readOptional(stmt, 5),
-                    txMBps: Self.readOptional(stmt, 6)
+                    txMBps: Self.readOptional(stmt, 6),
+                    procs: Self.readOptional(stmt, 7)
                 )
                 out.append(point)
             }
@@ -538,4 +543,6 @@ struct HistoryPoint: Sendable, Equatable {
     let net: Double?
     let rxMBps: Double?
     let txMBps: Double?
+    /// Raw process count; nil for rows written before it existed.
+    var procs: Double? = nil
 }
