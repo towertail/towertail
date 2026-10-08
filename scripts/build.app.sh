@@ -59,8 +59,8 @@ BUILD_ARGS=()
 [[ -n "${VERSION:-}" ]] && BUILD_ARGS+=(MARKETING_VERSION="$VERSION")
 [[ -n "${BUILD_NUMBER:-}" ]] && BUILD_ARGS+=(CURRENT_PROJECT_VERSION="$BUILD_NUMBER")
 if [[ "$CONFIG" == "Release" ]]; then
-  # Universal binary. Notarization needs a secure timestamp.
-  BUILD_ARGS+=(ONLY_ACTIVE_ARCH=NO)
+  # Universal binary. Notarization needs a secure timestamp and no get-task-allow.
+  BUILD_ARGS+=(ONLY_ACTIVE_ARCH=NO CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO)
   [[ "$SIGN_IDENTITY" != "-" ]] && BUILD_ARGS+=(OTHER_CODE_SIGN_FLAGS=--timestamp)
 fi
 
