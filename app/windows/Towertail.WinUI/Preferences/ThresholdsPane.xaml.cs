@@ -12,35 +12,36 @@ public sealed partial class ThresholdsPane : UserControl
     {
         _env = env;
         InitializeComponent();
-        var t = env.ServerSettings.Thresholds;
+        Show(env.ServerSettings.Thresholds, env.ServerSettings.Alerts);
+    }
+
+    private void Show(MetricThresholds t, AlertRules alerts)
+    {
         CpuWarnBox.Value  = ToPct(t.CpuWarn);     CpuCritBox.Value  = ToPct(t.CpuCritical);
         MemWarnBox.Value  = ToPct(t.MemWarn);     MemCritBox.Value  = ToPct(t.MemCritical);
         DiskWarnBox.Value = ToPct(t.DiskWarn);    DiskCritBox.Value = ToPct(t.DiskCritical);
-        CpuSustainBox.Value  = t.CpuSustainSamples;
-        MemSustainBox.Value  = t.MemSustainSamples;
-        DiskSustainBox.Value = t.DiskSustainSamples;
         ProcsWarnBox.Value   = t.ProcsWarn;   ProcsCritBox.Value   = t.ProcsCritical;
         ZombiesWarnBox.Value = t.ZombiesWarn; ZombiesCritBox.Value = t.ZombiesCritical;
+        AlertsEditor.Rules = alerts;
     }
+
+    private void OnResetClick(object sender, RoutedEventArgs e)
+        => Show(MetricThresholds.Defaults, AlertRules.Defaults);
 
     private void OnSaveClick(object sender, RoutedEventArgs e)
     {
         _env.ServerSettings.Thresholds = new MetricThresholds(
             FromPct(CpuWarnBox.Value),  FromPct(CpuCritBox.Value),
             FromPct(MemWarnBox.Value),  FromPct(MemCritBox.Value),
-            FromPct(DiskWarnBox.Value), FromPct(DiskCritBox.Value),
-            FromSustain(CpuSustainBox.Value),
-            FromSustain(MemSustainBox.Value),
-            FromSustain(DiskSustainBox.Value))
+            FromPct(DiskWarnBox.Value), FromPct(DiskCritBox.Value))
             .WithHealth(
                 FromCount(ProcsWarnBox.Value, MetricThresholds.DefaultProcsWarn),
                 FromCount(ProcsCritBox.Value, MetricThresholds.DefaultProcsCritical),
                 FromCount(ZombiesWarnBox.Value, MetricThresholds.DefaultZombiesWarn),
                 FromCount(ZombiesCritBox.Value, MetricThresholds.DefaultZombiesCritical));
+        _env.ServerSettings.Alerts = AlertsEditor.Rules;
         _env.ServerSettings.Persist();
     }
-
-    private static int FromSustain(double v) => double.IsNaN(v) ? 1 : Math.Max(1, (int)Math.Round(v));
 
     private static int FromCount(double v, int fallback) => double.IsNaN(v) ? fallback : (int)Math.Round(v);
 

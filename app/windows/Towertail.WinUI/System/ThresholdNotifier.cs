@@ -3,8 +3,8 @@ using Towertail.WinUI.State;
 namespace Towertail.WinUI.SystemServices;
 
 /// <summary>
-/// Per-(host, metric) finite state machine (nominal ↔ warn ↔ critical) with debounce and
-/// snooze/reachability gates. Mirrors ThresholdNotifier.swift.
+/// Per-(host, metric) finite state machine over the sustain-gated alert level, with per-rule
+/// notify gates, debounce, and snooze. Mirrors ThresholdNotifier.swift.
 /// </summary>
 public sealed class ThresholdNotifier
 {
@@ -15,10 +15,6 @@ public sealed class ThresholdNotifier
     private readonly NodeStore _nodes;
     private readonly Dictionary<(Guid, Metric), Severity> _state = new();
     private readonly Dictionary<(Guid, Metric), DateTime> _lastNotified = new();
-    // Per-metric streak counters (warn / critical), reset on the first
-    // under-threshold sample. In memory only — restarts start fresh.
-    private readonly Dictionary<(Guid, Metric), int> _warnStreak = new();
-    private readonly Dictionary<(Guid, Metric), int> _critStreak = new();
     private readonly object _lock = new();
 
     public event EventHandler<NotifyPayload>? Raised;
@@ -29,63 +25,37 @@ public sealed class ThresholdNotifier
         _nodes = nodes;
     }
 
+    /// <summary>
+    /// Fires on escalation of the sustain-gated alert level. A downgrade only updates
+    /// state, so the next escalation can fire again.
+    /// </summary>
     public void Evaluate(ServerViewModel vm)
     {
         var node = vm.Node;
-        var thresholds = MetricThresholds.Effective(_settings.Thresholds, node.CustomThresholds);
-        if (vm.CpuPct is double cpu) Check(node, Metric.Cpu, cpu / 100.0, thresholds.CpuWarn, thresholds.CpuCritical, thresholds.CpuSustainSamples);
-        if (vm.MemPct is double mem) Check(node, Metric.Mem, mem / 100.0, thresholds.MemWarn, thresholds.MemCritical, thresholds.MemSustainSamples);
-        if (vm.DiskMaxPct is double disk) Check(node, Metric.Disk, disk / 100.0, thresholds.DiskWarn, thresholds.DiskCritical, thresholds.DiskSustainSamples);
-        // Health is already a level. Map it onto 0/1/2 so Check applies the same gates. No sustain.
-        Check(node, Metric.Health, (double)vm.Health.Level, (double)HealthLevel.Warn, (double)HealthLevel.Critical, 1, vm.Health.Body);
+        if (vm.CpuPct is double cpu) Check(node, vm, Metric.Cpu, AlertMetric.Cpu, cpu / 100.0);
+        if (vm.MemPct is double mem) Check(node, vm, Metric.Mem, AlertMetric.Mem, mem / 100.0);
+        if (vm.DiskMaxPct is double disk) Check(node, vm, Metric.Disk, AlertMetric.Disk, disk / 100.0);
+        Check(node, vm, Metric.Health, AlertMetric.Health, (double)vm.Health.Level, vm.Health.Body);
     }
 
-    private void Check(Node node, Metric m, double value, double warn, double critical, int sustain, string? body = null)
+    private void Check(Node node, ServerViewModel vm, Metric m, AlertMetric am, double value, string? body = null)
     {
-        var key = (node.Id, m);
-        // Update streaks before deriving the gated severity. A single sample
-        // back under the warn line resets both counters so flapping clears
-        // immediately.
-        lock (_lock)
+        var level = vm.AlertLevel(am);
+        var sev = level switch
         {
-            if (value >= warn) _warnStreak[key] = _warnStreak.GetValueOrDefault(key, 0) + 1;
-            else _warnStreak[key] = 0;
-            if (value >= critical) _critStreak[key] = _critStreak.GetValueOrDefault(key, 0) + 1;
-            else _critStreak[key] = 0;
-        }
-        var need = Math.Max(1, sustain);
-        var rawSev = value >= critical ? Severity.Critical
-                   : value >= warn ? Severity.Warn
-                   : Severity.Nominal;
-        var sev = rawSev;
-        if (need > 1)
-        {
-            int wStreak, cStreak;
-            lock (_lock)
-            {
-                wStreak = _warnStreak.GetValueOrDefault(key, 0);
-                cStreak = _critStreak.GetValueOrDefault(key, 0);
-            }
-            sev = rawSev switch
-            {
-                Severity.Critical => cStreak >= need ? Severity.Critical
-                                  : wStreak >= need ? Severity.Warn
-                                  : Severity.Nominal,
-                Severity.Warn => wStreak >= need ? Severity.Warn : Severity.Nominal,
-                _ => Severity.Nominal,
-            };
-        }
-        bool changed;
+            HealthLevel.Critical => Severity.Critical,
+            HealthLevel.Warn => Severity.Warn,
+            _ => Severity.Nominal,
+        };
         Severity prior;
         lock (_lock)
         {
             prior = _state.GetValueOrDefault((node.Id, m), Severity.Nominal);
-            changed = prior != sev;
             _state[(node.Id, m)] = sev;
         }
-        if (!changed) return;
-        if (sev == Severity.Nominal) return;
+        if (sev <= prior) return;
 
+        if (!vm.AlertRules.For(am).Allows(level)) return;
         if (node.IsSnoozed) return;
         if (!_settings.NotificationsEnabled) return;
         if (sev == Severity.Warn && !(_settings.NotifyWarn && node.NotifyOnWarn)) return;

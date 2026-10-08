@@ -2,7 +2,8 @@
 <Window
     x:Class="Towertail.WinUI.Preferences.ServerEditWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Towertail.WinUI.Preferences">
     <Grid RowDefinitions="*,Auto">
         <ScrollViewer Grid.Row="0" Padding="20,16,20,12" VerticalScrollBarVisibility="Auto">
             <StackPanel Spacing="10" MaxWidth="520" HorizontalAlignment="Stretch">
@@ -117,6 +118,12 @@
                         <TextBlock Grid.Column="2" x:Name="DiskCriticalValue" HorizontalAlignment="Right" VerticalAlignment="Center" />
                     </Grid>
                 </StackPanel>
+
+                <TextBlock Text="Alerting" FontWeight="SemiBold" Margin="0,4,0,0" />
+                <CheckBox x:Name="CustomAlertsCheck" Content="Customize alerting for this server"
+                          Checked="OnCustomAlertsToggled" Unchecked="OnCustomAlertsToggled"
+                          ToolTipService.ToolTip="When off, this server uses the global alerting rules from the Thresholds tab." />
+                <local:AlertRulesEditor x:Name="AlertsEditor" IsEnabled="False" />
             </StackPanel>
         </ScrollViewer>
 

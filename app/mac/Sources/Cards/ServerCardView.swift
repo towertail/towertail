@@ -96,6 +96,7 @@ struct ServerCardView: View {
     private func openFullView(metric: Metric) {
         openWindow(id: "full-view", value: FullViewContext(hostId: vm.id, metric: metric))
         dismiss()
+        ActivationPolicyCoordinator.shared.bringToFront()
     }
 
     /// One compact line for host health problems. Opens the HEALTH tab.
@@ -172,7 +173,7 @@ struct ServerCardView: View {
             Button {
                 if let n = node {
                     openWindow(id: "server-edit", value: n.id)
-                    NSApp.activate(ignoringOtherApps: true)
+                    ActivationPolicyCoordinator.shared.bringToFront()
                 }
             } label: {
                 Image(systemName: "slider.horizontal.3")

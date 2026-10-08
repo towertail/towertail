@@ -25,7 +25,7 @@ public sealed partial class ServerEditWindow : Window
         _env = Towertail.WinUI.App.Current.Environment;
         InitializeComponent();
         Title = "Server";
-        ResizeInitial(560, 760);
+        ResizeInitial(560, 860);
         _thresholdSliders = new[]
         {
             CpuWarnSlider, CpuCriticalSlider,
@@ -94,6 +94,10 @@ public sealed partial class ServerEditWindow : Window
         SetSliderPct(MemCriticalSlider, MemCriticalValue, t.MemCritical);
         SetSliderPct(DiskWarnSlider, DiskWarnValue, t.DiskWarn);
         SetSliderPct(DiskCriticalSlider, DiskCriticalValue, t.DiskCritical);
+
+        AlertsEditor.Rules = n?.CustomAlerts ?? _env.ServerSettings.Alerts;
+        CustomAlertsCheck.IsChecked = n?.CustomAlerts != null;
+        AlertsEditor.IsEnabled = CustomAlertsCheck.IsChecked == true;
 
         CustomThresholdsCheck.IsChecked = n?.CustomThresholds != null;
         SetThresholdsEnabled(CustomThresholdsCheck.IsChecked == true);
@@ -167,6 +171,9 @@ public sealed partial class ServerEditWindow : Window
     private void OnCustomToggled(object sender, RoutedEventArgs e)
         => SetThresholdsEnabled(CustomThresholdsCheck.IsChecked == true);
 
+    private void OnCustomAlertsToggled(object sender, RoutedEventArgs e)
+        => AlertsEditor.IsEnabled = CustomAlertsCheck.IsChecked == true;
+
     private void OnCancel(object sender, RoutedEventArgs e) { _onDone?.Invoke(null); Close(); }
 
     private void OnOk(object sender, RoutedEventArgs e)
@@ -222,6 +229,7 @@ public sealed partial class ServerEditWindow : Window
             NotifyOnWarn = NotifyWarnCheck.IsChecked == true,
             NotifyOnCritical = NotifyCriticalCheck.IsChecked == true,
             CustomThresholds = custom,
+            CustomAlerts = CustomAlertsCheck.IsChecked == true ? AlertsEditor.Rules : null,
             Favorite = _existing?.Favorite ?? false,
             SnoozedUntil = _existing?.SnoozedUntil,
         };

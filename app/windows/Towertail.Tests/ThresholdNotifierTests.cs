@@ -25,7 +25,7 @@ public sealed class ThresholdNotifierTests
 
             var node = new Node { DisplayName = "n", Kind = NodeKind.Local };
             nodes.Add(node);
-            var vm = new ServerViewModel(node);
+            var vm = new ServerViewModel(node) { AlertRules = AlertRulesTests.Immediate };
 
             // Nominal → no fire.
             vm.Ingest(Make(node, 10, 10, 10));

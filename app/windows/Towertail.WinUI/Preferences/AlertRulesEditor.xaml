@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Towertail.WinUI.Preferences.AlertRulesEditor"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <StackPanel Spacing="8">
+        <Grid x:Name="RulesGrid" ColumnSpacing="12" RowSpacing="8"
+              ColumnDefinitions="110,*,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto">
+            <TextBlock Grid.Row="0" Grid.Column="1" Text="Sustain"
+                       Style="{ThemeResource CaptionTextBlockStyle}"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       ToolTipService.ToolTip="How long the metric must stay over the line before it alerts." />
+            <TextBlock Grid.Row="0" Grid.Column="2" Text="Notify"
+                       Style="{ThemeResource CaptionTextBlockStyle}"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="CPU" VerticalAlignment="Center" />
+            <ComboBox Grid.Row="1" Grid.Column="1" x:Name="CpuSustainBox" HorizontalAlignment="Stretch" />
+            <ComboBox Grid.Row="1" Grid.Column="2" x:Name="CpuNotifyBox" HorizontalAlignment="Stretch" />
+
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="Memory" VerticalAlignment="Center" />
+            <ComboBox Grid.Row="2" Grid.Column="1" x:Name="MemSustainBox" HorizontalAlignment="Stretch" />
+            <ComboBox Grid.Row="2" Grid.Column="2" x:Name="MemNotifyBox" HorizontalAlignment="Stretch" />
+
+            <TextBlock Grid.Row="3" Grid.Column="0" Text="Disk" VerticalAlignment="Center" />
+            <ComboBox Grid.Row="3" Grid.Column="1" x:Name="DiskSustainBox" HorizontalAlignment="Stretch" />
+            <ComboBox Grid.Row="3" Grid.Column="2" x:Name="DiskNotifyBox" HorizontalAlignment="Stretch" />
+
+            <TextBlock Grid.Row="4" Grid.Column="0" Text="Host health" VerticalAlignment="Center" />
+            <ComboBox Grid.Row="4" Grid.Column="1" x:Name="HealthSustainBox" HorizontalAlignment="Stretch" />
+            <ComboBox Grid.Row="4" Grid.Column="2" x:Name="HealthNotifyBox" HorizontalAlignment="Stretch" />
+        </Grid>
+        <TextBlock Text="Critical fires at once under memory pressure. Without pressure, high memory only warns. Inode limits alert at once."
+                   Style="{ThemeResource CaptionTextBlockStyle}"
+                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                   TextWrapping="Wrap" />
+        <StackPanel Orientation="Horizontal" Spacing="8"
+                    ToolTipService.ToolTip="Part of the sustain period the metric must be over the line. Short dips below the line do not reset the timer.">
+            <TextBlock Text="Tolerance %" VerticalAlignment="Center" />
+            <NumberBox x:Name="ToleranceBox" Minimum="60" Maximum="100" SmallChange="5" LargeChange="10"
+                       SpinButtonPlacementMode="Inline" Width="140" />
+        </StackPanel>
+    </StackPanel>
+</UserControl>

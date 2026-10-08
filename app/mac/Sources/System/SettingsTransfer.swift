@@ -205,7 +205,13 @@ enum SettingsTransfer {
         }
 
         if selection.globalThresholds {
+            let currentAlerts = out.thresholds.alerts
             out.thresholds = imported.globalThresholds
+            // An export from before alert rules keeps the current rules.
+            if imported.globalThresholds.legacySustain != nil {
+                out.thresholds.alerts = currentAlerts
+                out.thresholds.legacySustain = nil
+            }
             report.globalThresholdsApplied = true
         }
 
@@ -250,8 +256,10 @@ enum SettingsTransfer {
             for inc in imported.nodes {
                 let idx = byId[inc.id] ?? byName[inc.displayName]
                 guard let i = idx else { continue }
-                if out.nodes[i].customThresholds != inc.customThresholds {
+                if out.nodes[i].customThresholds != inc.customThresholds
+                    || out.nodes[i].customAlerts != inc.customAlerts {
                     out.nodes[i].customThresholds = inc.customThresholds
+                    out.nodes[i].customAlerts = inc.customAlerts
                     updated += 1
                 }
                 // Reindex in case displayName was the match path and

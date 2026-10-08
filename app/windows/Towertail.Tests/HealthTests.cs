@@ -264,7 +264,7 @@ public sealed class HealthTests
             notifier.Raised += (_, p) => raised.Add(p);
             var node = new Node { DisplayName = "n", Kind = NodeKind.Local };
             nodes.Add(node);
-            var vm = new ServerViewModel(node);
+            var vm = new ServerViewModel(node) { AlertRules = AlertRulesTests.Immediate };
 
             vm.Ingest(SampleCodec.Decode(Head + ""","health":{"procs":6000}}"""));
             notifier.Evaluate(vm);

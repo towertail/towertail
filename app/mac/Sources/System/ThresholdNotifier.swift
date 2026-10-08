@@ -3,10 +3,11 @@ import SwiftUI
 import UserNotifications
 import AppKit
 
-/// Evaluates per-(host, metric) threshold transitions and fires a macOS
-/// notification on warn/critical escalation. Respects per-node opt-in
-/// (notifyOnWarn, notifyOnCritical), the global on/off, and a debounce so a
-/// metric that flaps around the line doesn't buzz the user continuously.
+/// Evaluates per-(host, metric) alert transitions and fires a macOS
+/// notification on warn/critical escalation. Uses the sustained alert level
+/// and the metric's notify rule, plus per-node opt-in (notifyOnWarn,
+/// notifyOnCritical), the global on/off, and a debounce so a metric that
+/// flaps around the line doesn't buzz the user continuously.
 ///
 /// Tap routing: each notification carries the hostId + metric in userInfo.
 /// A tap posts to `NotificationTapRouter`, which invokes a handler
@@ -43,13 +44,14 @@ final class ThresholdNotifier {
     func evaluate(vm: ServerViewModel, node: Node) {
         for metric in [Metric.cpu, .mem, .disk, .health] {
             let key = Key(hostId: vm.id, metric: metric)
-            let current = vm.tint(for: metric)
+            let current = vm.alertTint(for: metric)
             let previous = lastTint[key] ?? .nominal
             lastTint[key] = current
 
             // Only fire on escalation (nominal→warn, nominal→critical, warn→critical).
             // Downgrades update state silently so the next escalation can fire.
-            guard isEscalation(from: previous, to: current) else { continue }
+            guard current.rank > previous.rank else { continue }
+            guard vm.alertRules[metric].notify.allows(current) else { continue }
 
             let allowed: Bool = {
                 switch current {
@@ -78,18 +80,6 @@ final class ThresholdNotifier {
             lastFired[key] = Date()
 
             fire(host: vm, metric: metric, tint: current)
-        }
-    }
-
-    private func isEscalation(from old: ThresholdTint, to new: ThresholdTint) -> Bool {
-        rank(new) > rank(old)
-    }
-
-    private func rank(_ t: ThresholdTint) -> Int {
-        switch t {
-        case .nominal, .stale: return 0
-        case .warn: return 1
-        case .critical: return 2
         }
     }
 

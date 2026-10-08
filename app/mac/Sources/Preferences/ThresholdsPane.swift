@@ -17,14 +17,9 @@ struct ThresholdsPane: View {
                         settings.persist()
                     })
                 )
-                sustainRow(
-                    samples: Binding(get: { settings.thresholds.cpuSustainSamples }, set: {
-                        settings.thresholds.cpuSustainSamples = max(1, $0)
-                        settings.persist()
-                    })
-                )
+                AlertRuleControls(rule: alertBinding(\.cpu))
             }
-            Section("Memory") {
+            Section {
                 thresholdRow(
                     warn: Binding(get: { settings.thresholds.memWarn }, set: {
                         settings.thresholds.memWarn = min($0, settings.thresholds.memCritical)
@@ -35,12 +30,13 @@ struct ThresholdsPane: View {
                         settings.persist()
                     })
                 )
-                sustainRow(
-                    samples: Binding(get: { settings.thresholds.memSustainSamples }, set: {
-                        settings.thresholds.memSustainSamples = max(1, $0)
-                        settings.persist()
-                    })
-                )
+                AlertRuleControls(rule: alertBinding(\.mem))
+            } header: {
+                Text("Memory")
+            } footer: {
+                Text("Critical fires at once under memory pressure (PSI, macOS pressure, or fast swap growth). Without pressure, high memory only warns.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Section {
                 countRow("Processes",
@@ -63,10 +59,11 @@ struct ThresholdsPane: View {
                         settings.persist()
                     })
                 )
+                AlertRuleControls(rule: alertBinding(\.health))
             } header: {
                 Text("Host health")
             } footer: {
-                Text("Also checked: PID use 70/90%, open files 80/95%, inodes 85/95%, memory pressure 10/20%, I/O pressure 20/40%.")
+                Text("Also checked: PID use 70/90%, open files 80/95%, inodes 85/95%, memory pressure 10/20%, I/O pressure 20/40%. Inodes alert at once.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -81,18 +78,26 @@ struct ThresholdsPane: View {
                         settings.persist()
                     })
                 )
-                sustainRow(
-                    samples: Binding(get: { settings.thresholds.diskSustainSamples }, set: {
-                        settings.thresholds.diskSustainSamples = max(1, $0)
-                        settings.persist()
-                    })
-                )
+                AlertRuleControls(rule: alertBinding(\.disk))
+            }
+            Section {
+                AlertToleranceControl(tolerance: Binding(get: { settings.alertRules.tolerance }, set: {
+                    settings.alertRules.tolerance = $0
+                    settings.persist()
+                }))
+            } header: {
+                Text("Alerts")
+            } footer: {
+                Text("Sustain and notify settings control notifications and the menu-bar icon. Cards always show the live value.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .safeAreaInset(edge: .bottom) {
             HStack {
                 Button("Reset to defaults") {
                     settings.thresholds = .defaults
+                    settings.alertRules = .defaults
                     settings.persist()
                 }
                 Spacer()
@@ -120,17 +125,11 @@ struct ThresholdsPane: View {
         }
     }
 
-    @ViewBuilder
-    private func sustainRow(samples: Binding<Int>) -> some View {
-        HStack {
-            Text("Sustain").frame(width: 60, alignment: .leading)
-            Stepper(value: samples, in: 1...30) {
-                let s = samples.wrappedValue
-                Text(s == 1 ? "Trigger immediately" : "After \(s) consecutive samples")
-                    .foregroundStyle(.secondary)
-                    .font(.callout)
-            }
-        }
+    private func alertBinding(_ path: WritableKeyPath<AlertRules, AlertRule>) -> Binding<AlertRule> {
+        Binding(get: { settings.alertRules[keyPath: path] }, set: {
+            settings.alertRules[keyPath: path] = $0
+            settings.persist()
+        })
     }
 
     @ViewBuilder

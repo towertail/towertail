@@ -79,6 +79,11 @@ struct PersistedSettings: Codable, Equatable {
         } else {
             self.sshPollingIntervalSeconds = PersistedSettings.defaults.sshPollingIntervalSeconds
         }
+        // Old sample counts become seconds at this file's SSH poll interval.
+        if let legacy = thresholds.legacySustain {
+            thresholds.alerts = legacy.alerts(pollSeconds: sshPollingIntervalSeconds)
+            thresholds.legacySustain = nil
+        }
 
         // Platform envelope ------------------------------------------------
         // New shape: top-level "platform" object keyed by OS ("darwin" /
@@ -273,41 +278,48 @@ struct PersistedThresholds: Codable, Equatable {
     var memCritical: Double
     var diskWarn: Double
     var diskCritical: Double
-    /// See MetricThresholds.cpuSustainSamples. Defaults to 1 (no sustain) so
-    /// existing on-disk settings written before this field round-trip cleanly.
-    var cpuSustainSamples: Int
-    var memSustainSamples: Int
-    var diskSustainSamples: Int
     /// See MetricThresholds.procsWarn. Missing keys load as defaults.
     var procsWarn: Int
     var procsCritical: Int
     var zombiesWarn: Int
     var zombiesCritical: Int
+    var alerts: AlertRules
+    /// Old `*SustainSamples` values, set only when the file has no `alerts`.
+    /// Read for migration, never written.
+    var legacySustain: LegacySustain?
+
+    struct LegacySustain: Equatable {
+        var cpu: Int
+        var mem: Int
+        var disk: Int
+
+        func alerts(pollSeconds: Int) -> AlertRules {
+            .migrated(cpuSamples: cpu, memSamples: mem, diskSamples: disk, pollSeconds: pollSeconds)
+        }
+    }
 
     static let defaults = PersistedThresholds(
         cpuWarn: 0.75, cpuCritical: 0.90,
         memWarn: 0.75, memCritical: 0.90,
-        diskWarn: 0.85, diskCritical: 0.95,
-        cpuSustainSamples: 1, memSustainSamples: 1, diskSustainSamples: 1
+        diskWarn: 0.85, diskCritical: 0.95
     )
 
     enum CodingKeys: String, CodingKey {
         case cpuWarn, cpuCritical, memWarn, memCritical, diskWarn, diskCritical
-        case cpuSustainSamples, memSustainSamples, diskSustainSamples
         case procsWarn, procsCritical, zombiesWarn, zombiesCritical
+        case alerts
+        case cpuSustainSamples, memSustainSamples, diskSustainSamples
     }
 
     init(
         cpuWarn: Double, cpuCritical: Double,
         memWarn: Double, memCritical: Double,
         diskWarn: Double, diskCritical: Double,
-        cpuSustainSamples: Int = 1,
-        memSustainSamples: Int = 1,
-        diskSustainSamples: Int = 1,
         procsWarn: Int = MetricThresholds.defaultProcsWarn,
         procsCritical: Int = MetricThresholds.defaultProcsCritical,
         zombiesWarn: Int = MetricThresholds.defaultZombiesWarn,
-        zombiesCritical: Int = MetricThresholds.defaultZombiesCritical
+        zombiesCritical: Int = MetricThresholds.defaultZombiesCritical,
+        alerts: AlertRules = .defaults
     ) {
         self.cpuWarn = cpuWarn
         self.cpuCritical = cpuCritical
@@ -315,25 +327,21 @@ struct PersistedThresholds: Codable, Equatable {
         self.memCritical = memCritical
         self.diskWarn = diskWarn
         self.diskCritical = diskCritical
-        self.cpuSustainSamples = max(1, cpuSustainSamples)
-        self.memSustainSamples = max(1, memSustainSamples)
-        self.diskSustainSamples = max(1, diskSustainSamples)
         self.procsWarn = max(1, procsWarn)
         self.procsCritical = max(self.procsWarn, procsCritical)
         self.zombiesWarn = max(1, zombiesWarn)
         self.zombiesCritical = max(self.zombiesWarn, zombiesCritical)
+        self.alerts = alerts
     }
 
-    init(_ t: MetricThresholds) {
+    init(_ t: MetricThresholds, alerts: AlertRules) {
         self.init(
             cpuWarn: t.cpuWarn, cpuCritical: t.cpuCritical,
             memWarn: t.memWarn, memCritical: t.memCritical,
             diskWarn: t.diskWarn, diskCritical: t.diskCritical,
-            cpuSustainSamples: t.cpuSustainSamples,
-            memSustainSamples: t.memSustainSamples,
-            diskSustainSamples: t.diskSustainSamples,
             procsWarn: t.procsWarn, procsCritical: t.procsCritical,
-            zombiesWarn: t.zombiesWarn, zombiesCritical: t.zombiesCritical
+            zombiesWarn: t.zombiesWarn, zombiesCritical: t.zombiesCritical,
+            alerts: alerts
         )
     }
 
@@ -346,14 +354,37 @@ struct PersistedThresholds: Codable, Equatable {
             memCritical: try c.decode(Double.self, forKey: .memCritical),
             diskWarn: try c.decode(Double.self, forKey: .diskWarn),
             diskCritical: try c.decode(Double.self, forKey: .diskCritical),
-            cpuSustainSamples: try c.decodeIfPresent(Int.self, forKey: .cpuSustainSamples) ?? 1,
-            memSustainSamples: try c.decodeIfPresent(Int.self, forKey: .memSustainSamples) ?? 1,
-            diskSustainSamples: try c.decodeIfPresent(Int.self, forKey: .diskSustainSamples) ?? 1,
             procsWarn: try c.decodeIfPresent(Int.self, forKey: .procsWarn) ?? MetricThresholds.defaultProcsWarn,
             procsCritical: try c.decodeIfPresent(Int.self, forKey: .procsCritical) ?? MetricThresholds.defaultProcsCritical,
             zombiesWarn: try c.decodeIfPresent(Int.self, forKey: .zombiesWarn) ?? MetricThresholds.defaultZombiesWarn,
             zombiesCritical: try c.decodeIfPresent(Int.self, forKey: .zombiesCritical) ?? MetricThresholds.defaultZombiesCritical
         )
+        if let alerts = try c.decodeIfPresent(AlertRules.self, forKey: .alerts) {
+            self.alerts = alerts
+        } else {
+            let legacy = LegacySustain(
+                cpu: try c.decodeIfPresent(Int.self, forKey: .cpuSustainSamples) ?? 1,
+                mem: try c.decodeIfPresent(Int.self, forKey: .memSustainSamples) ?? 1,
+                disk: try c.decodeIfPresent(Int.self, forKey: .diskSustainSamples) ?? 1
+            )
+            self.legacySustain = legacy
+            self.alerts = legacy.alerts(pollSeconds: PersistedSettings.defaults.sshPollingIntervalSeconds)
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(cpuWarn, forKey: .cpuWarn)
+        try c.encode(cpuCritical, forKey: .cpuCritical)
+        try c.encode(memWarn, forKey: .memWarn)
+        try c.encode(memCritical, forKey: .memCritical)
+        try c.encode(diskWarn, forKey: .diskWarn)
+        try c.encode(diskCritical, forKey: .diskCritical)
+        try c.encode(procsWarn, forKey: .procsWarn)
+        try c.encode(procsCritical, forKey: .procsCritical)
+        try c.encode(zombiesWarn, forKey: .zombiesWarn)
+        try c.encode(zombiesCritical, forKey: .zombiesCritical)
+        try c.encode(alerts, forKey: .alerts)
     }
 }
 

@@ -11,6 +11,7 @@ namespace Towertail.WinUI.State;
 public sealed partial class ServerSettings : ObservableObject
 {
     [ObservableProperty] private MetricThresholds _thresholds = MetricThresholds.Defaults;
+    [ObservableProperty] private AlertRules _alerts = AlertRules.Defaults;
     [ObservableProperty] private int _localPollingIntervalSeconds = 2;
     [ObservableProperty] private int _sshPollingIntervalSeconds = 10;
     [ObservableProperty] private bool _notificationsEnabled;
@@ -53,9 +54,7 @@ public sealed partial class ServerSettings : ObservableObject
             MemCritical = Thresholds.MemCritical,
             DiskWarn = Thresholds.DiskWarn,
             DiskCritical = Thresholds.DiskCritical,
-            CpuSustainSamples = Thresholds.CpuSustainSamples,
-            MemSustainSamples = Thresholds.MemSustainSamples,
-            DiskSustainSamples = Thresholds.DiskSustainSamples,
+            Alerts = Alerts,
             ProcsWarn = Thresholds.ProcsWarn,
             ProcsCritical = Thresholds.ProcsCritical,
             ZombiesWarn = Thresholds.ZombiesWarn,
@@ -77,14 +76,12 @@ public sealed partial class ServerSettings : ObservableObject
         Thresholds = new MetricThresholds(
             p.Thresholds.CpuWarn, p.Thresholds.CpuCritical,
             p.Thresholds.MemWarn, p.Thresholds.MemCritical,
-            p.Thresholds.DiskWarn, p.Thresholds.DiskCritical,
-            Math.Max(1, p.Thresholds.CpuSustainSamples),
-            Math.Max(1, p.Thresholds.MemSustainSamples),
-            Math.Max(1, p.Thresholds.DiskSustainSamples))
+            p.Thresholds.DiskWarn, p.Thresholds.DiskCritical)
             .WithHealth(p.Thresholds.ProcsWarn, p.Thresholds.ProcsCritical,
                         p.Thresholds.ZombiesWarn, p.Thresholds.ZombiesCritical);
         LocalPollingIntervalSeconds = Math.Clamp(p.LocalPollingIntervalSeconds, 1, 300);
         SshPollingIntervalSeconds = Math.Clamp(p.SshPollingIntervalSeconds, 1, 300);
+        Alerts = p.Thresholds.AlertsOrMigrated(SshPollingIntervalSeconds);
         NotificationsEnabled = p.NotificationsEnabled;
         NotifyWarn = p.NotifyWarn;
         NotifyCritical = p.NotifyCritical;

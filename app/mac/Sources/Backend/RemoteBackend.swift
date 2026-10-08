@@ -56,7 +56,8 @@ final class RemoteBackend: Backend {
                     thresholds: MetricThresholds.effective(
                         global: serverSettings.thresholds,
                         override: node.customThresholds
-                    )
+                    ),
+                    alertRules: node.customAlerts ?? serverSettings.alertRules
                 )
                 servers.register(vm)
             }

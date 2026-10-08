@@ -41,6 +41,10 @@ public sealed record HealthStatus(
     public HealthLevel TintOf(HealthSignal signal)
         => Reasons.Where(r => r.Signal == signal).Select(r => r.Level).DefaultIfEmpty(HealthLevel.Nominal).Max();
 
+    /// <summary>Worst level among the reasons not from <paramref name="signal"/>.</summary>
+    public HealthLevel LevelExcluding(HealthSignal signal)
+        => Reasons.Where(r => r.Signal != signal).Select(r => r.Level).DefaultIfEmpty(HealthLevel.Nominal).Max();
+
     public static HealthStatus Evaluate(HealthInfo? h, IReadOnlyList<DiskSample>? disks, MetricThresholds t)
     {
         var reasons = new List<HealthReason>();

@@ -9,6 +9,7 @@ import SwiftUI
 @MainActor
 final class ServerSettings {
     var thresholds: MetricThresholds
+    var alertRules: AlertRules
     var localPollingIntervalSeconds: Int
     var sshPollingIntervalSeconds: Int
     var notificationsEnabled: Bool
@@ -28,6 +29,7 @@ final class ServerSettings {
         self.url = url
         let p = SettingsPersistence.load(from: url)
         self.thresholds = MetricThresholds(p.thresholds)
+        self.alertRules = p.thresholds.alerts
         self.localPollingIntervalSeconds = max(1, min(300, p.localPollingIntervalSeconds))
         self.sshPollingIntervalSeconds = max(1, min(300, p.sshPollingIntervalSeconds))
         self.notificationsEnabled = p.notificationsEnabled
@@ -45,6 +47,7 @@ final class ServerSettings {
     func reloadFromDisk() {
         let p = SettingsPersistence.load(from: url)
         self.thresholds = MetricThresholds(p.thresholds)
+        self.alertRules = p.thresholds.alerts
         self.localPollingIntervalSeconds = max(1, min(300, p.localPollingIntervalSeconds))
         self.sshPollingIntervalSeconds = max(1, min(300, p.sshPollingIntervalSeconds))
         self.notificationsEnabled = p.notificationsEnabled
@@ -65,7 +68,7 @@ final class ServerSettings {
     func persist() {
         let before = SettingsPersistence.load(from: url)
         var p = before
-        p.thresholds = PersistedThresholds(thresholds)
+        p.thresholds = PersistedThresholds(thresholds, alerts: alertRules)
         p.localPollingIntervalSeconds = localPollingIntervalSeconds
         p.sshPollingIntervalSeconds = sshPollingIntervalSeconds
         p.notificationsEnabled = notificationsEnabled
@@ -85,9 +88,11 @@ final class ServerSettings {
         SettingsField("memCritical") { "\($0.thresholds.memCritical)" },
         SettingsField("diskWarn") { "\($0.thresholds.diskWarn)" },
         SettingsField("diskCritical") { "\($0.thresholds.diskCritical)" },
-        SettingsField("cpuSustainSamples") { "\($0.thresholds.cpuSustainSamples)" },
-        SettingsField("memSustainSamples") { "\($0.thresholds.memSustainSamples)" },
-        SettingsField("diskSustainSamples") { "\($0.thresholds.diskSustainSamples)" },
+        SettingsField("cpuAlert") { $0.thresholds.alerts.cpu.logValue },
+        SettingsField("memAlert") { $0.thresholds.alerts.mem.logValue },
+        SettingsField("diskAlert") { $0.thresholds.alerts.disk.logValue },
+        SettingsField("healthAlert") { $0.thresholds.alerts.health.logValue },
+        SettingsField("alertTolerance") { "\($0.thresholds.alerts.tolerance)" },
         SettingsField("procsWarn") { "\($0.thresholds.procsWarn)" },
         SettingsField("procsCritical") { "\($0.thresholds.procsCritical)" },
         SettingsField("zombiesWarn") { "\($0.thresholds.zombiesWarn)" },

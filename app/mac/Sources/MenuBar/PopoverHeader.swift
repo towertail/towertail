@@ -44,11 +44,11 @@ struct PopoverHeader: View {
                 .buttonStyle(.plain)
                 .help("Settings")
                 .simultaneousGesture(TapGesture().onEnded {
-                    NSApp.activate(ignoringOtherApps: true)
                     // Auto-hide the menu-bar popover (same behavior as tapping a
                     // chart card). Without this the popover stays pinned over
                     // Settings until the user clicks away.
                     dismiss()
+                    ActivationPolicyCoordinator.shared.bringToFront()
                 })
                 Button {
                     NSApp.terminate(nil)

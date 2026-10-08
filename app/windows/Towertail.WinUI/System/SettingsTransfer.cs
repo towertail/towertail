@@ -118,7 +118,13 @@ public static class SettingsTransfer
             p.PostWakeGraceSeconds = export.General.PostWakeGraceSeconds;
             p.AutoUpdateSamplersEnabled = export.General.AutoUpdateSamplersEnabled;
         }
-        if (options.ImportThresholds) p.Thresholds = export.GlobalThresholds;
+        if (options.ImportThresholds)
+        {
+            // An export without alerts keeps the current rules.
+            var alerts = export.GlobalThresholds.Alerts ?? p.Thresholds.AlertsOrMigrated(p.SshPollingIntervalSeconds);
+            p.Thresholds = export.GlobalThresholds;
+            p.Thresholds.Alerts = alerts;
+        }
         if (options.ImportNotifications)
         {
             p.NotificationsEnabled = export.Notifications.NotificationsEnabled;

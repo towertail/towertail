@@ -63,11 +63,16 @@ public sealed class PersistedThresholds
     public double MemCritical { get; set; } = 0.90;
     public double DiskWarn { get; set; } = 0.85;
     public double DiskCritical { get; set; } = 0.95;
-    // Defaults to 1 (no sustain) so existing settings.json files round-trip
-    // without behavior change.
-    public int CpuSustainSamples { get; set; } = 1;
-    public int MemSustainSamples { get; set; } = 1;
-    public int DiskSustainSamples { get; set; } = 1;
+    /// <summary>Global alert rules. Null in files written before alerts existed.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public AlertRules? Alerts { get; set; }
+    // Legacy sample-count sustain. Read for migration only; never written.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? CpuSustainSamples { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? MemSustainSamples { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? DiskSustainSamples { get; set; }
     // Host health counts. Missing keys in older files load as these defaults.
     public int ProcsWarn { get; set; } = MetricThresholds.DefaultProcsWarn;
     public int ProcsCritical { get; set; } = MetricThresholds.DefaultProcsCritical;
@@ -75,6 +80,10 @@ public sealed class PersistedThresholds
     public int ZombiesCritical { get; set; } = MetricThresholds.DefaultZombiesCritical;
 
     public static PersistedThresholds Defaults => new();
+
+    /// <summary>Stored alerts, or rules migrated from the legacy sample counts.</summary>
+    public AlertRules AlertsOrMigrated(int sshPollSeconds)
+        => Alerts ?? AlertRules.Migrate(CpuSustainSamples, MemSustainSamples, DiskSustainSamples, sshPollSeconds);
 }
 
 public static class SettingsPersistence

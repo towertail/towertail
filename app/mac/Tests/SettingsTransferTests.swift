@@ -50,6 +50,22 @@ final class SettingsTransferTests: XCTestCase {
         XCTAssertLessThan(abs(back.exportedAt.timeIntervalSince(export.exportedAt)), 1.0)
     }
 
+    func testImportWithoutAlertsKeepsCurrentAlerts() throws {
+        var b = base()
+        b.thresholds.alerts.cpu = AlertRule(sustainSeconds: 900, notify: .off)
+        let ex = makeExport(nodes: [])
+        var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(ex)) as! [String: Any]
+        var t = json["globalThresholds"] as! [String: Any]
+        t["alerts"] = nil
+        t["cpuSustainSamples"] = 6
+        json["globalThresholds"] = t
+        let old = try JSONDecoder().decode(SettingsExport.self, from: JSONSerialization.data(withJSONObject: json))
+        let (merged, _) = SettingsTransfer.apply(old, to: b, selection: .allDefaults)
+        XCTAssertEqual(merged.thresholds.cpuWarn, 0.9)
+        XCTAssertEqual(merged.thresholds.alerts.cpu, AlertRule(sustainSeconds: 900, notify: .off))
+        XCTAssertNil(merged.thresholds.legacySustain)
+    }
+
     func testRejectsFutureVersion() throws {
         var export = makeExport(nodes: [])
         export.version = SettingsExport.currentVersion + 99

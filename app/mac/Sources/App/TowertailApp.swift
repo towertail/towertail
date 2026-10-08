@@ -133,7 +133,7 @@ private struct SceneTapInstaller: View {
             .onAppear {
                 AppDelegate.opener = { ctx in
                     openWindow(id: "full-view", value: ctx)
-                    NSApp.activate(ignoringOtherApps: true)
+                    ActivationPolicyCoordinator.shared.bringToFront()
                 }
             }
     }

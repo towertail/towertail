@@ -20,6 +20,20 @@ final class ActivationPolicyCoordinator {
         }
     }
 
+    /// Activates the app and raises the window that SwiftUI just opened or
+    /// re-focused. Call after `openWindow` / `SettingsLink`. The delay lets
+    /// SwiftUI order the window and the popover close first; without it an
+    /// already-open window stays behind other apps.
+    func bringToFront() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            NSApp.activate(ignoringOtherApps: true)
+            let target = NSApp.orderedWindows.first {
+                $0.isVisible && !($0 is NSPanel) && $0.canBecomeMain
+            }
+            target?.makeKeyAndOrderFront(nil)
+        }
+    }
+
     func release() {
         count = max(0, count - 1)
         if count == 0 {

@@ -43,6 +43,9 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
     // booleans + doubles) so "disabled" and "never set" look the same on
     // disk — reverting to global is just clearing the field.
     var customThresholds: MetricThresholds?
+    /// Per-node alert rules. Nil inherits the global rules. Separate from
+    /// `customThresholds` so old overrides do not pin old sustain values.
+    var customAlerts: AlertRules?
     /// If set to a future date, notifications for this node are suppressed
     /// until that time. Past dates are ignored (the notifier does a <=
     /// check), so we don't have to actively clear expired snoozes — they
@@ -73,6 +76,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         notifyOnWarn: Bool = true,
         notifyOnCritical: Bool = true,
         customThresholds: MetricThresholds? = nil,
+        customAlerts: AlertRules? = nil,
         snoozedUntil: Date? = nil,
         favorite: Bool = false,
         lastSuccessfulConnect: Date? = nil
@@ -92,6 +96,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         self.notifyOnWarn = notifyOnWarn
         self.notifyOnCritical = notifyOnCritical
         self.customThresholds = customThresholds
+        self.customAlerts = customAlerts
         self.snoozedUntil = snoozedUntil
         self.favorite = favorite
         self.lastSuccessfulConnect = lastSuccessfulConnect
@@ -102,7 +107,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         case knownHostFingerprint
         case tags, enabled
         case iconOnWarn, iconOnCritical, notifyOnWarn, notifyOnCritical
-        case customThresholds, snoozedUntil, favorite
+        case customThresholds, customAlerts, snoozedUntil, favorite
         case lastSuccessfulConnect
         // Legacy single-toggle flag from the first pass. If present it
         // seeds both iconOnWarn and iconOnCritical so users who already
@@ -128,6 +133,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         try c.encode(notifyOnWarn, forKey: .notifyOnWarn)
         try c.encode(notifyOnCritical, forKey: .notifyOnCritical)
         try c.encodeIfPresent(customThresholds, forKey: .customThresholds)
+        try c.encodeIfPresent(customAlerts, forKey: .customAlerts)
         try c.encodeIfPresent(snoozedUntil, forKey: .snoozedUntil)
         try c.encode(favorite, forKey: .favorite)
         try c.encodeIfPresent(lastSuccessfulConnect, forKey: .lastSuccessfulConnect)
@@ -157,6 +163,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         self.notifyOnWarn = try c.decodeIfPresent(Bool.self, forKey: .notifyOnWarn) ?? true
         self.notifyOnCritical = try c.decodeIfPresent(Bool.self, forKey: .notifyOnCritical) ?? true
         self.customThresholds = try c.decodeIfPresent(MetricThresholds.self, forKey: .customThresholds)
+        self.customAlerts = try c.decodeIfPresent(AlertRules.self, forKey: .customAlerts)
         self.snoozedUntil = try c.decodeIfPresent(Date.self, forKey: .snoozedUntil)
         self.favorite = try c.decodeIfPresent(Bool.self, forKey: .favorite) ?? false
         self.lastSuccessfulConnect = try c.decodeIfPresent(Date.self, forKey: .lastSuccessfulConnect)
@@ -185,6 +192,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
             && lhs.notifyOnWarn == rhs.notifyOnWarn
             && lhs.notifyOnCritical == rhs.notifyOnCritical
             && lhs.customThresholds == rhs.customThresholds
+            && lhs.customAlerts == rhs.customAlerts
             && lhs.snoozedUntil == rhs.snoozedUntil
             && lhs.favorite == rhs.favorite
     }

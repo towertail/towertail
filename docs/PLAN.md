@@ -493,16 +493,20 @@ default: break
 
 ### 5.3 Built-in rules (v1)
 
-| Rule ID              | Default threshold       | Default on?  |
-| -------------------- | ----------------------- | ------------ |
-| `cpu_high_5m`        | > 90 % for 5 min        | Yes          |
-| `mem_high_5m`        | > 90 % for 5 min        | Yes          |
-| `disk_nearly_full`   | any mount ≥ 95 %        | Yes          |
-| `host_unreachable`   | 3 consecutive poll fail | Yes          |
-| `host_reachable`     | resolved (edge)         | Yes          |
-| `net_saturated`      | ≥ user-set bps for 2 m  | No           |
+Each metric has an alert rule: a **sustain** duration and a **notify** level (Off / Critical only / Warn + Critical). Warn and critical levels come from the thresholds.
 
-Per-server overrides exist on every rule.
+| Metric      | Default sustain | Default notify   | Notes                                                                 |
+| ----------- | --------------- | ---------------- | --------------------------------------------------------------------- |
+| CPU         | 5 min           | Critical only    | A spike is normal. Only sustained saturation alerts.                  |
+| Memory      | 2 min           | Warn + Critical  | Under memory pressure, critical fires at once. Without pressure, high memory only warns. |
+| Disk        | Immediately     | Warn + Critical  | A full disk breaks things at once.                                    |
+| Host health | 5 min           | Warn + Critical  | Inodes skip the sustain and alert at once, like disk.                 |
+| Unreachable | 3 poll fails    | Yes              | Edge-triggered, with a "reachable again" edge.                        |
+
+- **Sustain window.** The client keeps the per-sample levels of the last sustain period. Each sample holds its level until the next sample. A level alerts when it covers at least the **tolerance** share of the window (default 80 %), so one short dip does not restart the timer. The window resets when the host goes offline or suspended.
+- **Memory pressure** comes from Linux PSI (`mem_full` ≥ 5 % or `mem_some` ≥ 20 %), then the macOS pressure level (critical), then swap growth ≥ 1 MiB/s.
+- **Scope.** Sustain gates notifications and the menu-bar icon only. Cards always show the live value.
+- **Per-server override.** `customAlerts` on a node replaces the global rules (`thresholds.alerts` in `settings.json`). It is separate from `customThresholds`.
 
 ---
 
@@ -520,7 +524,7 @@ Per-row edit opens inline sheet with: display name, ssh user, per-server thresho
 Secrets: we don't store passwords; key material comes from the user's sampler. If a server requires a passphrase-protected key, we rely on the sampler prompt on first connect.
 
 ### Thresholds
-Global defaults: three sliders per metric (warn, critical). Preview swatch changes color as you drag. "Reset to defaults" per metric.
+Global defaults: warn and critical sliders per metric, plus a Sustain and a Notify picker (§5.3) and one Tolerance picker. Preview swatch changes color as you drag. "Reset to defaults" per metric.
 
 ### Notifications
 Master toggle + per-rule toggles + "Quiet hours" time range + "Reminder interval" stepper (default 30 min). Test notification button.

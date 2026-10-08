@@ -61,6 +61,7 @@ public sealed partial class ServerStore : ObservableObject
         if (vm == null) return;
 
         vm.Thresholds = MetricThresholds.Effective(_settings.Thresholds, vm.Node.CustomThresholds);
+        vm.AlertRules = vm.Node.EffectiveAlerts(_settings.Alerts);
         var priorHealth = vm.Health.Level;
         vm.Ingest(sample);
         if (vm.Health.Level != priorHealth)
@@ -96,6 +97,9 @@ public sealed partial class ServerStore : ObservableObject
 
         _notifier?.Evaluate(vm);
     }
+
+    /// <summary>A failed poll breaks the sample stream, so sustain must start again.</summary>
+    public void MarkUnreachable(Guid nodeId) => Find(nodeId)?.ResetAlerts();
 
     public async Task EnsureProcsHydratedAsync(Guid nodeId)
     {

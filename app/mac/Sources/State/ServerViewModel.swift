@@ -102,6 +102,13 @@ final class ServerViewModel: Identifiable {
     var procsSkippedTotal: Int?
 
     var thresholds: MetricThresholds
+    var alertRules: AlertRules
+    /// Worst sustained alert level across metrics. Drives the menu-bar icon;
+    /// the card uses the raw `state`.
+    private(set) var alertLevel: ThresholdTint = .nominal
+    /// True when the host shows memory pressure (PSI, macOS pressure, or
+    /// fast swap growth). Nil when the sample has no signal for it.
+    private(set) var memPressured: Bool?
 
     private var prevCPUTotalMs: Int64?
     private var prevCPUBusyMs: Int64?
@@ -109,13 +116,17 @@ final class ServerViewModel: Identifiable {
     private var prevNetTxCum: Int64?
     private var prevNetTS: Date?
 
-    /// Consecutive over-warn / over-critical sample counts per metric. Reset
-    /// to zero on the first sample that's *under* the corresponding threshold.
-    /// Drives the per-metric sustain gate; lives in memory only — restarts
-    /// start fresh, which matches the user's mental model (a freshly relaunched
-    /// app shouldn't fire on a backlog of historical spikes).
-    @ObservationIgnored private var warnStreak: [Metric: Int] = [:]
-    @ObservationIgnored private var criticalStreak: [Metric: Int] = [:]
+    @ObservationIgnored private var prevSwap: (used: Int64, t: Date)?
+
+    /// Per-metric sustain history. In memory only, so a relaunch does not
+    /// fire on old spikes.
+    @ObservationIgnored private var windows: [Metric: SustainWindow] = [:]
+
+    /// Swap growth (bytes/s) that counts as memory pressure when the host
+    /// reports no PSI or macOS pressure level.
+    static let swapGrowthPressureBps: Double = 1_048_576
+    static let psiMemFullPressure = 5.0
+    static let psiMemSomePressure = 20.0
 
     init(
         id: UUID = UUID(),
@@ -124,7 +135,8 @@ final class ServerViewModel: Identifiable {
         osArch: String,
         kind: NodeKind = .local,
         state: ServerConnState = .unknown,
-        thresholds: MetricThresholds = .defaults
+        thresholds: MetricThresholds = .defaults,
+        alertRules: AlertRules = .defaults
     ) {
         self.id = id
         self.hostname = hostname
@@ -133,6 +145,7 @@ final class ServerViewModel: Identifiable {
         self.kind = kind
         self.state = state
         self.thresholds = thresholds
+        self.alertRules = alertRules
         self.cpu = MetricSeries()
         self.mem = MetricSeries()
         self.disk = MetricSeries()
@@ -231,9 +244,12 @@ final class ServerViewModel: Identifiable {
             portsAvailable = true
         }
 
-        updateStreak(.cpu, value: cpuV, warn: thresholds.cpuWarn, critical: thresholds.cpuCritical)
-        updateStreak(.mem, value: memV, warn: thresholds.memWarn, critical: thresholds.memCritical)
-        updateStreak(.disk, value: diskV, warn: thresholds.diskWarn, critical: thresholds.diskCritical)
+        memPressured = memoryPressure(s)
+        record(.cpu, tint(for: .cpu), at: s.ts)
+        record(.mem, tint(for: .mem), at: s.ts)
+        record(.disk, tint(for: .disk), at: s.ts)
+        record(.health, health.tintExcludingInodes, at: s.ts)
+        alertLevel = [Metric.cpu, .mem, .disk, .health].map(alertTint(for:)).max { $0.rank < $1.rank } ?? .nominal
 
         let previous = state
         state = computeState()
@@ -311,6 +327,7 @@ final class ServerViewModel: Identifiable {
     }
 
     func markOffline(reason: String, at t: Date) {
+        resetAlerts()
         let previous = state
         state = .offline(reason: reason)
         lastSeen = t
@@ -332,6 +349,7 @@ final class ServerViewModel: Identifiable {
         // Don't overwrite an existing suspended state with a re-entry
         // (e.g. network flap during sleep); only log real transitions.
         if case .suspended(let r) = previous, r == reason { return }
+        resetAlerts()
         state = .suspended(reason: reason)
         if case .suspended = previous { return }
         Logger.shared.info(
@@ -427,50 +445,36 @@ final class ServerViewModel: Identifiable {
     }
 
     private func computeState() -> ServerConnState {
-        let tints = [
-            sustainedTint(for: .cpu, raw: cpu.tint(warn: thresholds.cpuWarn, critical: thresholds.cpuCritical)),
-            sustainedTint(for: .mem, raw: mem.tint(warn: thresholds.memWarn, critical: thresholds.memCritical)),
-            sustainedTint(for: .disk, raw: disk.tint(warn: thresholds.diskWarn, critical: thresholds.diskCritical)),
-            health.tint,
-        ]
+        let tints = [Metric.cpu, .mem, .disk, .health].map(tint(for:))
         if tints.contains(.critical) { return .critical }
         if tints.contains(.warn) { return .warn }
         return .online
     }
 
-    /// Increments or resets per-metric warn/critical streaks based on the
-    /// latest value. A single under-threshold sample resets the streak so a
-    /// host that drops back to nominal stops being flagged immediately.
-    private func updateStreak(_ metric: Metric, value: Double, warn: Double, critical: Double) {
-        if value >= warn {
-            warnStreak[metric, default: 0] += 1
-        } else {
-            warnStreak[metric] = 0
-        }
-        if value >= critical {
-            criticalStreak[metric, default: 0] += 1
-        } else {
-            criticalStreak[metric] = 0
-        }
+    private func record(_ metric: Metric, _ level: ThresholdTint, at t: Date) {
+        windows[metric, default: SustainWindow()].record(level, at: t, keep: alertRules[metric].sustainSeconds)
     }
 
-    /// Maps a raw tint to its sustain-gated equivalent. If the streak hasn't
-    /// reached the configured `sustainSamples`, the tint is downgraded —
-    /// critical → warn → nominal. With the default of 1, this is a no-op.
-    private func sustainedTint(for metric: Metric, raw: ThresholdTint) -> ThresholdTint {
-        let need = thresholds.sustainSamples(for: metric)
-        if need <= 1 { return raw }
-        switch raw {
-        case .critical:
-            if (criticalStreak[metric] ?? 0) >= need { return .critical }
-            if (warnStreak[metric] ?? 0) >= need { return .warn }
-            return .nominal
-        case .warn:
-            if (warnStreak[metric] ?? 0) >= need { return .warn }
-            return .nominal
-        case .nominal, .stale:
-            return raw
+    private func resetAlerts() {
+        windows.removeAll()
+        prevSwap = nil
+        memPressured = nil
+        alertLevel = .nominal
+    }
+
+    /// PSI first, then the macOS pressure level, then swap growth.
+    private func memoryPressure(_ s: Sample) -> Bool? {
+        defer { prevSwap = (s.swap.used, s.ts) }
+        if let psi = s.health?.psi {
+            return psi.memFull >= Self.psiMemFullPressure || psi.memSome >= Self.psiMemSomePressure
         }
+        if let level = s.health?.memPressure {
+            return level == 4
+        }
+        guard s.swap.total > 0, let prev = prevSwap else { return nil }
+        let dt = s.ts.timeIntervalSince(prev.t)
+        guard dt > 0 else { return nil }
+        return Double(s.swap.used - prev.used) / dt >= Self.swapGrowthPressureBps
     }
 
     var worstTint: ThresholdTint {
@@ -490,16 +494,37 @@ final class ServerViewModel: Identifiable {
         }
     }
 
-    /// Per-metric tint derived from the latest sample against current
-    /// thresholds. Used by the notifier to attribute a transition to the
-    /// specific metric that crossed, and by the UI when focusing a notif.
+    /// Raw per-metric tint of the latest sample. The card uses it.
     func tint(for metric: Metric) -> ThresholdTint {
         switch metric {
-        case .cpu: return sustainedTint(for: .cpu, raw: cpu.tint(warn: thresholds.cpuWarn, critical: thresholds.cpuCritical))
-        case .mem: return sustainedTint(for: .mem, raw: mem.tint(warn: thresholds.memWarn, critical: thresholds.memCritical))
-        case .disk: return sustainedTint(for: .disk, raw: disk.tint(warn: thresholds.diskWarn, critical: thresholds.diskCritical))
+        case .cpu: return cpu.tint(warn: thresholds.cpuWarn, critical: thresholds.cpuCritical)
+        case .mem: return mem.tint(warn: thresholds.memWarn, critical: thresholds.memCritical)
+        case .disk: return disk.tint(warn: thresholds.diskWarn, critical: thresholds.diskCritical)
         case .net: return .nominal
         case .health: return health.tint
+        }
+    }
+
+    /// Sustained per-metric level after `alertRules`. Notifications and the
+    /// menu-bar icon use it.
+    func alertTint(for metric: Metric) -> ThresholdTint {
+        let rule = alertRules[metric]
+        let sustained = windows[metric]?.level(sustain: rule.sustainSeconds, tolerance: alertRules.tolerance) ?? .nominal
+        switch metric {
+        case .mem:
+            // Pressure means real stalls: alert at once. Without it, high
+            // memory is mostly reclaimable and only warns.
+            let raw = windows[.mem]?.latest ?? .nominal
+            switch memPressured {
+            case true?: return raw.rank >= ThresholdTint.warn.rank ? .critical : sustained
+            case false?: return sustained == .critical ? .warn : sustained
+            case nil: return sustained
+            }
+        case .health:
+            let inodes = health.tint(of: .inodes)
+            return inodes.rank > sustained.rank ? inodes : sustained
+        case .cpu, .disk, .net:
+            return sustained
         }
     }
 
@@ -515,15 +540,6 @@ struct MetricThresholds: Sendable, Equatable, Codable {
     var memCritical: Double
     var diskWarn: Double
     var diskCritical: Double
-    /// Minimum number of consecutive over-threshold samples required before
-    /// a metric is allowed to escalate the host's state or fire a notification.
-    /// 1 (default) preserves the original "fire on first crossing" behavior.
-    /// Shared between warn and critical (per-metric, not per-severity); the
-    /// clear path is unconditional — a single under-threshold sample resets
-    /// the streak so a flapping host stops being warn/critical instantly.
-    var cpuSustainSamples: Int
-    var memSustainSamples: Int
-    var diskSustainSamples: Int
     /// Host health counts. See `HealthStatus` for the fixed-limit rules.
     var procsWarn: Int
     var procsCritical: Int
@@ -538,15 +554,11 @@ struct MetricThresholds: Sendable, Equatable, Codable {
     static let defaults = MetricThresholds(
         cpuWarn: 0.75, cpuCritical: 0.90,
         memWarn: 0.75, memCritical: 0.90,
-        diskWarn: 0.85, diskCritical: 0.95,
-        cpuSustainSamples: 1,
-        memSustainSamples: 1,
-        diskSustainSamples: 1
+        diskWarn: 0.85, diskCritical: 0.95
     )
 
     enum CodingKeys: String, CodingKey {
         case cpuWarn, cpuCritical, memWarn, memCritical, diskWarn, diskCritical
-        case cpuSustainSamples, memSustainSamples, diskSustainSamples
         case procsWarn, procsCritical, zombiesWarn, zombiesCritical
     }
 
@@ -554,9 +566,6 @@ struct MetricThresholds: Sendable, Equatable, Codable {
         cpuWarn: Double, cpuCritical: Double,
         memWarn: Double, memCritical: Double,
         diskWarn: Double, diskCritical: Double,
-        cpuSustainSamples: Int = 1,
-        memSustainSamples: Int = 1,
-        diskSustainSamples: Int = 1,
         procsWarn: Int = defaultProcsWarn,
         procsCritical: Int = defaultProcsCritical,
         zombiesWarn: Int = defaultZombiesWarn,
@@ -568,9 +577,6 @@ struct MetricThresholds: Sendable, Equatable, Codable {
         self.memCritical = memCritical
         self.diskWarn = diskWarn
         self.diskCritical = diskCritical
-        self.cpuSustainSamples = max(1, cpuSustainSamples)
-        self.memSustainSamples = max(1, memSustainSamples)
-        self.diskSustainSamples = max(1, diskSustainSamples)
         self.procsWarn = max(1, procsWarn)
         self.procsCritical = max(self.procsWarn, procsCritical)
         self.zombiesWarn = max(1, zombiesWarn)
@@ -582,9 +588,6 @@ struct MetricThresholds: Sendable, Equatable, Codable {
             cpuWarn: p.cpuWarn, cpuCritical: p.cpuCritical,
             memWarn: p.memWarn, memCritical: p.memCritical,
             diskWarn: p.diskWarn, diskCritical: p.diskCritical,
-            cpuSustainSamples: p.cpuSustainSamples,
-            memSustainSamples: p.memSustainSamples,
-            diskSustainSamples: p.diskSustainSamples,
             procsWarn: p.procsWarn, procsCritical: p.procsCritical,
             zombiesWarn: p.zombiesWarn, zombiesCritical: p.zombiesCritical
         )
@@ -598,16 +601,10 @@ struct MetricThresholds: Sendable, Equatable, Codable {
         let memC = try c.decode(Double.self, forKey: .memCritical)
         let diskW = try c.decode(Double.self, forKey: .diskWarn)
         let diskC = try c.decode(Double.self, forKey: .diskCritical)
-        let cpuS = try c.decodeIfPresent(Int.self, forKey: .cpuSustainSamples) ?? 1
-        let memS = try c.decodeIfPresent(Int.self, forKey: .memSustainSamples) ?? 1
-        let diskS = try c.decodeIfPresent(Int.self, forKey: .diskSustainSamples) ?? 1
         self.init(
             cpuWarn: cpuW, cpuCritical: cpuC,
             memWarn: memW, memCritical: memC,
             diskWarn: diskW, diskCritical: diskC,
-            cpuSustainSamples: cpuS,
-            memSustainSamples: memS,
-            diskSustainSamples: diskS,
             procsWarn: try c.decodeIfPresent(Int.self, forKey: .procsWarn) ?? Self.defaultProcsWarn,
             procsCritical: try c.decodeIfPresent(Int.self, forKey: .procsCritical) ?? Self.defaultProcsCritical,
             zombiesWarn: try c.decodeIfPresent(Int.self, forKey: .zombiesWarn) ?? Self.defaultZombiesWarn,
@@ -615,30 +612,14 @@ struct MetricThresholds: Sendable, Equatable, Codable {
         )
     }
 
-    func sustainSamples(for metric: Metric) -> Int {
-        switch metric {
-        case .cpu: return cpuSustainSamples
-        case .mem: return memSustainSamples
-        case .disk: return diskSustainSamples
-        case .net, .health: return 1
-        }
-    }
-
     /// Effective thresholds for a host: warn/critical levels come from the
-    /// per-node override (when set), but `*SustainSamples` and the health
-    /// counts always inherit from the global. Sustain is a global noise filter — there is no
-    /// per-node UI for it, so any stale value in `customThresholds` from
-    /// before the sustain stepper existed (or from a parallel client) would
-    /// silently override the user's global setting otherwise.
+    /// per-node override (when set); health counts always come from the global.
     static func effective(global: MetricThresholds, override: MetricThresholds?) -> MetricThresholds {
         guard let override else { return global }
         return MetricThresholds(
             cpuWarn: override.cpuWarn, cpuCritical: override.cpuCritical,
             memWarn: override.memWarn, memCritical: override.memCritical,
             diskWarn: override.diskWarn, diskCritical: override.diskCritical,
-            cpuSustainSamples: global.cpuSustainSamples,
-            memSustainSamples: global.memSustainSamples,
-            diskSustainSamples: global.diskSustainSamples,
             procsWarn: global.procsWarn, procsCritical: global.procsCritical,
             zombiesWarn: global.zombiesWarn, zombiesCritical: global.zombiesCritical
         )

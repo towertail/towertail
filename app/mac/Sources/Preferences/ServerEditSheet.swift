@@ -23,6 +23,8 @@ struct ServerEditSheet: View {
     @State private var notifyOnCritical: Bool
     @State private var useCustomThresholds: Bool
     @State private var thresholds: MetricThresholds
+    @State private var useCustomAlerts: Bool
+    @State private var alerts: AlertRules
     @State private var existingId: UUID?
     /// Snapshot of the on-disk authMethod when the sheet opens. Used to
     /// decide whether to delete the Keychain entry on save when the user
@@ -57,6 +59,8 @@ struct ServerEditSheet: View {
             _notifyOnCritical = State(initialValue: true)
             _useCustomThresholds = State(initialValue: false)
             _thresholds = State(initialValue: .defaults)
+            _useCustomAlerts = State(initialValue: false)
+            _alerts = State(initialValue: .defaults)
             _existingId = State(initialValue: nil)
             _originalAuthMethod = State(initialValue: .key)
         case .edit(let node):
@@ -78,6 +82,8 @@ struct ServerEditSheet: View {
             _notifyOnCritical = State(initialValue: node.notifyOnCritical)
             _useCustomThresholds = State(initialValue: node.customThresholds != nil)
             _thresholds = State(initialValue: node.customThresholds ?? .defaults)
+            _useCustomAlerts = State(initialValue: node.customAlerts != nil)
+            _alerts = State(initialValue: node.customAlerts ?? .defaults)
             _existingId = State(initialValue: node.id)
             _originalAuthMethod = State(initialValue: node.authMethod)
         }
@@ -158,6 +164,19 @@ struct ServerEditSheet: View {
                                    warn: $thresholds.diskWarn,
                                    critical: $thresholds.diskCritical)
                 }
+
+                Section("Alerts") {
+                    Toggle("Customize alerting for this server", isOn: $useCustomAlerts)
+                        .help("When off, this server uses the global sustain and notify settings from the Thresholds tab.")
+                    Group {
+                        alertGroup(title: "CPU", rule: $alerts.cpu)
+                        alertGroup(title: "Memory", rule: $alerts.mem)
+                        alertGroup(title: "Disk", rule: $alerts.disk)
+                        alertGroup(title: "Host health", rule: $alerts.health)
+                        AlertToleranceControl(tolerance: $alerts.tolerance)
+                    }
+                    .disabled(!useCustomAlerts)
+                }
             }
 
             HStack {
@@ -178,6 +197,9 @@ struct ServerEditSheet: View {
                 thresholds = serverSettings.thresholds
             } else if case .edit(let node) = context, node.customThresholds == nil {
                 thresholds = serverSettings.thresholds
+            }
+            if !useCustomAlerts {
+                alerts = serverSettings.alertRules
             }
             // Seed password from Keychain so the field isn't blank on edit.
             if case .edit(let node) = context,
@@ -208,6 +230,16 @@ struct ServerEditSheet: View {
                          ))
         }
         .disabled(!useCustomThresholds)
+    }
+
+    @ViewBuilder
+    private func alertGroup(title: String, rule: Binding<AlertRule>) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.subheadline)
+                .foregroundStyle(useCustomAlerts ? .primary : .secondary)
+            AlertRuleControls(rule: rule)
+        }
     }
 
     @ViewBuilder
@@ -265,7 +297,8 @@ struct ServerEditSheet: View {
             iconOnCritical: iconOnCritical,
             notifyOnWarn: notifyOnWarn,
             notifyOnCritical: notifyOnCritical,
-            customThresholds: useCustomThresholds ? thresholds : nil
+            customThresholds: useCustomThresholds ? thresholds : nil,
+            customAlerts: useCustomAlerts ? alerts : nil
         )
 
         // Keychain handling: write on password auth, clear when the user

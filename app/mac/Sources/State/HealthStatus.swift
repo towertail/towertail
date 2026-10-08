@@ -38,6 +38,14 @@ struct HealthStatus: Sendable, Equatable {
         return .nominal
     }
 
+    /// Inodes alert at once like disk space, so the sustain rule skips them.
+    var tintExcludingInodes: ThresholdTint {
+        let rest = reasons.filter { $0.signal != .inodes }
+        if rest.contains(where: { $0.tint == .critical }) { return .critical }
+        if rest.contains(where: { $0.tint == .warn }) { return .warn }
+        return .nominal
+    }
+
     init(reasons: [Reason], info: HealthInfo?) {
         self.reasons = reasons
         self.info = info

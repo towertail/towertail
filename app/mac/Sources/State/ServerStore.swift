@@ -179,12 +179,13 @@ final class ServerStore {
             let iconWarn = node?.iconOnWarn ?? true
             let iconCritical = node?.iconOnCritical ?? true
             switch vm.state {
-            case .critical:
-                if iconCritical {
-                    return .critical
+            case .online, .critical, .warn:
+                // The icon follows the sustained alert level; the card stays raw.
+                switch vm.alertLevel {
+                case .critical: if iconCritical { return .critical }
+                case .warn: if iconWarn { hasWarn = true }
+                case .nominal, .stale: break
                 }
-            case .warn:
-                if iconWarn { hasWarn = true }
             case .offline:
                 // A host that has previously connected but is now offline
                 // is treated as critical immediately — losing contact

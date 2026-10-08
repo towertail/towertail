@@ -49,8 +49,12 @@ public sealed record Node
     public bool NotifyOnWarn { get; init; } = true;
     public bool NotifyOnCritical { get; init; } = true;
     public MetricThresholds? CustomThresholds { get; init; }
+    /// <summary>Per-node alert rules; null inherits the global rules.</summary>
+    public AlertRules? CustomAlerts { get; init; }
     public DateTime? SnoozedUntil { get; init; }
     public bool Favorite { get; init; }
+
+    public AlertRules EffectiveAlerts(AlertRules global) => CustomAlerts ?? global;
 
     [JsonIgnore]
     public bool IsSnoozed => SnoozedUntil is { } u && u > DateTime.UtcNow;
@@ -78,13 +82,6 @@ public sealed record MetricThresholds(
     double MemCritical,
     double DiskWarn,
     double DiskCritical,
-    // Minimum consecutive over-threshold samples required before a metric
-    // can escalate. 1 = original "fire on first crossing"; per-metric so a
-    // bursty CPU doesn't force users to slow disk alerts down too. Shared
-    // between warn and critical; clear path is unconditional.
-    int CpuSustainSamples = 1,
-    int MemSustainSamples = 1,
-    int DiskSustainSamples = 1,
     // Host health: absolute counts, not fractions.
     int ProcsWarn = MetricThresholds.DefaultProcsWarn,
     int ProcsCritical = MetricThresholds.DefaultProcsCritical,

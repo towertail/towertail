@@ -39,9 +39,8 @@ Today only `app/mac/` and `sampler/` have real content. `app/windows/`, `server/
 From the repo root:
 
 ```bash
-scripts/build.sh                # build sampler (all triples) + Debug app
-scripts/build.sh Release        # Release app build
-scripts/build.sh Debug --open   # build and launch
+scripts/build.sh                # build sampler + signed Debug app, install to /Applications, restart
+scripts/build.sh Release        # same, Release build
 ```
 
 Individual steps:
@@ -52,7 +51,7 @@ scripts/build.sampler.sh darwin-arm64 # single triple (fast iteration)
 scripts/build.app.sh                  # app only; needs dist/samplers/ populated
 ```
 
-The app bundle ends up at `app/mac/build/<Configuration>/Towertail.app`.
+The app bundle ends up at `app/mac/build/Build/Products/<Configuration>/Towertail.app`. Builds sign with the Developer ID cert when it is in the keychain, else ad-hoc.
 
 ## Run
 
