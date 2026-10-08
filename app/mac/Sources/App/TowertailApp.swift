@@ -45,6 +45,7 @@ struct TowertailApp: App {
 
         Settings {
             PreferencesWindow()
+                .environment(env.updater)
                 .environment(env.store)
                 .environment(env.clientSettings)
                 .environment(env.serverSettings)

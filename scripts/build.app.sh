@@ -14,6 +14,9 @@
 # Signing: uses $SIGN_IDENTITY (default: the Developer ID cert, if it is in
 # the keychain). Falls back to ad-hoc ("-") when the cert is not found.
 #
+# Version: $VERSION sets CFBundleShortVersionString and $BUILD_NUMBER sets
+# CFBundleVersion. Without $VERSION the app is a "-dev" build (see project.yml).
+#
 # Output: app/mac/build/Build/Products/<Configuration>/Towertail.app
 set -euo pipefail
 
@@ -52,6 +55,15 @@ if [[ "$SIGN_IDENTITY" != "-" ]]; then
   SIGN_ARGS+=(CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="$TEAM_ID")
 fi
 
+BUILD_ARGS=()
+[[ -n "${VERSION:-}" ]] && BUILD_ARGS+=(MARKETING_VERSION="$VERSION")
+[[ -n "${BUILD_NUMBER:-}" ]] && BUILD_ARGS+=(CURRENT_PROJECT_VERSION="$BUILD_NUMBER")
+if [[ "$CONFIG" == "Release" ]]; then
+  # Universal binary. Notarization needs a secure timestamp.
+  BUILD_ARGS+=(ONLY_ACTIVE_ARCH=NO)
+  [[ "$SIGN_IDENTITY" != "-" ]] && BUILD_ARGS+=(OTHER_CODE_SIGN_FLAGS=--timestamp)
+fi
+
 echo "→ building Towertail ($CONFIG), signing with: $SIGN_IDENTITY"
 DERIVED="$APP_DIR/build"
 xcodebuild \
@@ -60,6 +72,7 @@ xcodebuild \
   -configuration "$CONFIG" \
   -derivedDataPath "$DERIVED" \
   "${SIGN_ARGS[@]}" \
+  ${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"} \
   build
 
 APP_PATH="$DERIVED/Build/Products/$CONFIG/Towertail.app"

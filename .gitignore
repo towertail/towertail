@@ -92,3 +92,7 @@ logs/
 
 # Claude Code agent state (local only)
 .claude/
+
+# Signing keys
+*.p8
+*.p12

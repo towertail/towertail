@@ -8,6 +8,7 @@ import SwiftUI
 @MainActor
 final class AppEnvironment {
     let backend: any Backend
+    let updater = Updater()
 
     /// Remote mode is selected by env vars `TOWERTAIL_REMOTE_URL` +
     /// `TOWERTAIL_REMOTE_TOKEN` at launch. Absent both, we stay in
@@ -49,6 +50,9 @@ final class AppEnvironment {
         }
     }
 
-    func start() { backend.start() }
+    func start() {
+        backend.start()
+        updater.start()
+    }
     func stop()  { backend.stop() }
 }

@@ -6,6 +6,10 @@
 #   scripts/build.sampler.sh linux-arm64  # build a single target (fast iteration)
 #
 # Output: dist/samplers/<triple>/towertail-sampler (+ manifest.json with sha256s).
+#
+# Env:
+#   SIGN_IDENTITY   when set (not "-"), signs the darwin binaries with the hardened
+#                   runtime and a secure timestamp. Notarization of the app needs this.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -103,6 +107,14 @@ if [[ ${#BUILT[@]} -eq 0 ]]; then
     echo "  $1" >&2
   done
   exit 1
+fi
+
+if [[ -n "${SIGN_IDENTITY:-}" && "$SIGN_IDENTITY" != "-" ]]; then
+  for triple in "${BUILT[@]}"; do
+    [[ "$triple" == darwin-* ]] || continue
+    echo "→ signing $triple"
+    codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$OUT_DIR/$triple/towertail-sampler"
+  done
 fi
 
 # Write manifest.json: {"version": "...", "sha": "...", "binaries": {triple: sha256}}.

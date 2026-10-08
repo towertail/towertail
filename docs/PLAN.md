@@ -57,7 +57,7 @@ The lines between these phases are deliberately sharp — each is a separately s
 | ------------------------ | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | Target                   | **macOS 14 Sonoma+**, Apple silicon + Intel                                                  | `MenuBarExtra(.window)` + Observation framework; covers ~85% of active Macs in 2026  |
 | Language / UI            | **Swift 5.9+, SwiftUI** for popover & prefs                                                  | Native, fast, tight binary, minimal deps                                              |
-| Distribution             | **Developer ID + notarized .dmg**, Sparkle 2 auto-update                                     | Shelling out to `ssh` rules out App Sandbox → no App Store                            |
+| Distribution             | **Developer ID + notarized .zip**, GitHub Releases auto-update                              | Shelling out to `ssh` rules out App Sandbox → no App Store                            |
 | Data collection          | **Shell out to `/usr/bin/ssh`** with `ControlMaster=auto, ControlPersist=10m`                | Respects ssh-sampler, `~/.ssh/config`, MagicDNS; Tailscale "just works"                 |
 | Host discovery           | **`tailscale status --json`** + a manual "Add server" path                                   | Tailnet is the target network; manual option for non-Tailscale hosts                  |
 | Metrics source on host   | **`towertail-sampler`** — static Go binary pushed to `~/.towertail/towertail-sampler` on first connect, `gopsutil` under the hood | Uniform JSON schema across Linux/macOS/BSD, single exec per poll, runs fine as non-root. See [`sampler.md`](sampler.md). |
@@ -285,8 +285,7 @@ towertail/
 │   │   │   ├── LaunchAtLogin.swift          # SMAppService
 │   │   │   ├── Notifier.swift               # UNUserNotificationCenter
 │   │   │   └── KeychainStore.swift
-│   │   └── Updates/
-│   │       └── SparkleUpdater.swift
+│   │   │   └── Updater.swift               # GitHub Releases auto-update
 │   ├── Tests/
 │   │   ├── SampleDecoderTests/              # JSON fixtures from ../../sampler/test/fixtures/
 │   │   ├── StoreTests/
@@ -302,7 +301,6 @@ towertail/
 │   └── Packaging/
 │       ├── build-samplers.sh                  # cross-compiles from ../../sampler/, writes Resources/samplers/
 │       ├── create-dmg.sh
-│       ├── sparkle-sign.sh
 │       └── entitlements.plist
 │
 └── sampler/                                   # Go — the remote collector
@@ -530,7 +528,7 @@ Global defaults: warn and critical sliders per metric, plus a Sustain and a Noti
 Master toggle + per-rule toggles + "Quiet hours" time range + "Reminder interval" stepper (default 30 min). Test notification button.
 
 ### General
-Launch at login (`SMAppService.mainApp`), sampling cadence (15/30/60 s), sparkline retention (1 d / 3 d / 7 d), card density (A-grid / B-dense), appearance (auto / light / dark), menu-bar icon color behavior (critical-only / warn-and-critical / never). Check-for-updates button (Sparkle).
+Launch at login (`SMAppService.mainApp`), sampling cadence (15/30/60 s), sparkline retention (1 d / 3 d / 7 d), card density (A-grid / B-dense), appearance (auto / light / dark), menu-bar icon color behavior (critical-only / warn-and-critical / never). Check-for-updates button and auto-install toggle.
 
 Storage: scalars → `@AppStorage`. Structured data (`servers.json`, `thresholds.json`) → `~/Library/Application Support/Towertail/`, atomic writes.
 
@@ -562,9 +560,10 @@ Storage: scalars → `@AppStorage`. Structured data (`servers.json`, `thresholds
 ## 8. Packaging & distribution
 
 - **Signing**: Developer ID Application cert, hardened runtime, no sandbox. Entitlements: `com.apple.security.network.client`.
-- **Notarization**: `xcrun notarytool submit Towertail.dmg --wait` → `xcrun stapler staple`.
+- **Notarization**: `xcrun notarytool submit` → `xcrun stapler staple`. CI does this in `.github/workflows/release.yml`.
 - **DMG**: `create-dmg` with a background image showing drag-to-Applications.
-- **Auto-update**: Sparkle 2 via SPM. `SUFeedURL` pointing to a GitHub Pages–hosted `appcast.xml`. EdDSA-sign every release.
+- **Release**: each push to `main` that changes the Mac app makes a release. The tag is the last `v*` tag with the patch number plus one. A higher `MARKETING_VERSION` in `project.yml` wins, for minor or major bumps. Local builds are `-dev`.
+- **Auto-update**: no dependency. `System/Updater.swift` reads the latest GitHub release, downloads `Towertail.zip`, and checks the code signature against our team ID (`Q56WK6TB88`) and notarization. It swaps the bundle when the app is not in use, and restores the old bundle if the new one does not start. Dev builds only report new releases.
 - **Launch at login**: `SMAppService.mainApp.register()`.
 - **Crash reports**: opt-in in General pane, ships minidumps to a Cloudflare Workers endpoint or just `os_log` to Console — decide in Milestone 5.
 
@@ -635,7 +634,7 @@ A rough, ~6–8 week arc for a single engineer working part time. Each milestone
 **Goal:** signed, notarized, auto-updating `.dmg`.
 
 - Developer ID signing pipeline.
-- Sparkle 2 integration, first appcast published to GitHub Pages.
+- Auto-update from GitHub Releases, release on each push to `main`.
 - `SMAppService` launch-at-login.
 - Landing page (optional) — separate repo.
 - v1.0 DMG released.
@@ -650,7 +649,7 @@ A rough, ~6–8 week arc for a single engineer working part time. Each milestone
 2. **Key picking.** We read `~/.ssh/config` and offer its `Host` entries as a picker. Do we add a "use ssh-sampler only" mode? **Yes, default.** Explicit key path is an advanced field.
 3. **Multiple mounts on disk card.** Show worst by used %. Hovering the disk cell (popover is a window, hover works) reveals a compact list of all mounts for 1.5 s. Alternative: expand-to-full-detail by clicking card → skip for v1.
 4. **What if Tailscale isn't installed?** Show an empty state in the Servers pane — "No Tailscale found. Add servers manually." Don't block the app.
-5. **Telemetry.** None in v1. No phone-home except Sparkle's appcast fetch.
+5. **Telemetry.** None in v1. No phone-home except the update check against the GitHub Releases API.
 
 ---
 

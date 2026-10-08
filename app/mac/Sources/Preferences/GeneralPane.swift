@@ -6,6 +6,7 @@ struct GeneralPane: View {
     @Environment(ClientSettings.self) private var clientSettings
     @Environment(ServerSettings.self) private var serverSettings
     @Environment(NodeStore.self) private var nodeStore
+    @Environment(Updater.self) private var updater
     @State private var launchAtLoginError: String?
     @State private var importStaged: SettingsExport?
     @State private var transferStatus: TransferStatus?
@@ -19,6 +20,7 @@ struct GeneralPane: View {
     var body: some View {
         @Bindable var clientSettings = clientSettings
         @Bindable var serverSettings = serverSettings
+        @Bindable var updater = updater
         Form {
             Section("Polling") {
                 HStack {
@@ -126,6 +128,21 @@ struct GeneralPane: View {
                     Text(err)
                         .font(.caption)
                         .foregroundStyle(.red)
+                }
+            }
+
+            Section("Updates") {
+                Toggle("Install updates automatically", isOn: $updater.autoInstall)
+                HStack(spacing: 8) {
+                    Button("Check for Updates") { updater.check(manual: true) }
+                        .disabled(updater.busy)
+                    Text(updater.statusText)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("v\(updater.current)")
+                        .font(.system(.callout, design: .monospaced))
+                        .foregroundStyle(.secondary)
                 }
             }
 
