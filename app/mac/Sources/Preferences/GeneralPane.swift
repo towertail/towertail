@@ -164,8 +164,8 @@ struct GeneralPane: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-
         }
+        .formStyle(.grouped)
         .sheet(item: $importStaged) { export in
             ImportSettingsSheet(
                 imported: export,

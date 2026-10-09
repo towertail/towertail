@@ -256,9 +256,9 @@ enum SettingsTransfer {
             for inc in imported.nodes {
                 let idx = byId[inc.id] ?? byName[inc.displayName]
                 guard let i = idx else { continue }
-                if out.nodes[i].customThresholds != inc.customThresholds
+                if out.nodes[i].thresholdOverrides != inc.thresholdOverrides
                     || out.nodes[i].customAlerts != inc.customAlerts {
-                    out.nodes[i].customThresholds = inc.customThresholds
+                    out.nodes[i].thresholdOverrides = inc.thresholdOverrides
                     out.nodes[i].customAlerts = inc.customAlerts
                     updated += 1
                 }

@@ -188,20 +188,71 @@ final class HealthStatusTests: XCTestCase {
         XCTAssertEqual(m.zombiesCritical, 500)
     }
 
-    func testEffectiveHealthThresholdsComeFromGlobal() {
+    func testEffectiveAppliesOnlyOverriddenMetrics() {
         var global = defaults
         global.procsWarn = 9000
         global.procsCritical = 30000
-        global.zombiesWarn = 50
-        global.zombiesCritical = 60
-        let override = MetricThresholds(
-            cpuWarn: 0.5, cpuCritical: 0.6, memWarn: 0.5, memCritical: 0.6, diskWarn: 0.5, diskCritical: 0.6)
+        global.health.pids = ThresholdPair(warn: 0.5, critical: 0.6)
+        let override = ThresholdOverrides(disk: ThresholdPair(warn: 0.9, critical: 0.98),
+                                          zombies: ThresholdPair(warn: 10, critical: 20))
         let eff = MetricThresholds.effective(global: global, override: override)
-        XCTAssertEqual(eff.cpuWarn, 0.5)
+        XCTAssertEqual(eff.cpuWarn, global.cpuWarn)
+        XCTAssertEqual(eff.diskWarn, 0.9)
+        XCTAssertEqual(eff.diskCritical, 0.98)
         XCTAssertEqual(eff.procsWarn, 9000)
-        XCTAssertEqual(eff.procsCritical, 30000)
-        XCTAssertEqual(eff.zombiesWarn, 50)
-        XCTAssertEqual(eff.zombiesCritical, 60)
+        XCTAssertEqual(eff.zombiesWarn, 10)
+        XCTAssertEqual(eff.zombiesCritical, 20)
+        XCTAssertEqual(eff.health.pids, global.health.pids)
+    }
+
+    func testOverridesApplyToHealthLimits() throws {
+        let override = ThresholdOverrides(inodes: ThresholdPair(warn: 0.5, critical: 0.6),
+                                          memPressure: ThresholdPair(warn: 30, critical: 50))
+        let eff = MetricThresholds.effective(global: defaults, override: override)
+        XCTAssertEqual(eff.health.inodes, ThresholdPair(warn: 0.5, critical: 0.6))
+        XCTAssertEqual(eff.health.memPressure, ThresholdPair(warn: 30, critical: 50))
+        XCTAssertEqual(eff.health.pids, HealthLimits.defaults.pids)
+
+        let data = try JSONEncoder().encode(override)
+        XCTAssertEqual(try JSONDecoder().decode(ThresholdOverrides.self, from: data), override)
+        XCTAssertEqual(override.overridden, [.inodes, .memPressure])
+    }
+
+    func testLegacyCustomThresholdsMigrateToOverrides() throws {
+        let json = """
+        { "id": "6F9619FF-8B86-D011-B42D-00C04FC964FF", "displayName": "db", "kind": "ssh",
+          "customThresholds": { "cpuWarn": 0.5, "cpuCritical": 0.6, "memWarn": 0.5, "memCritical": 0.6,
+                                "diskWarn": 0.5, "diskCritical": 0.6, "procsWarn": 1 } }
+        """.data(using: .utf8)!
+        let node = try JSONDecoder().decode(Node.self, from: json)
+        XCTAssertEqual(node.thresholdOverrides?.overridden, [.cpu, .mem, .disk])
+        XCTAssertEqual(node.thresholdOverrides?.cpu, ThresholdPair(warn: 0.5, critical: 0.6))
+
+        let again = try JSONDecoder().decode(Node.self, from: JSONEncoder().encode(node))
+        XCTAssertEqual(again.thresholdOverrides, node.thresholdOverrides)
+    }
+
+    func testEmptyOverridesStoreAsNil() {
+        let node = Node(displayName: "a", kind: .local, thresholdOverrides: ThresholdOverrides())
+        XCTAssertNil(node.thresholdOverrides)
+    }
+
+    func testHealthLimitsDriveReasons() {
+        var t = defaults
+        t.health.pids = ThresholdPair(warn: 0.1, critical: 0.2)
+        let info = HealthInfo(procs: 10, pidsUsed: 15, pidsMax: 100)
+        let s = HealthStatus(info: info, disks: nil, thresholds: t)
+        XCTAssertEqual(s.tint(of: .pids), .warn)
+    }
+
+    func testThresholdsWithoutHealthLimitsLoadDefaults() throws {
+        let json = """
+        { "cpuWarn": 0.7, "cpuCritical": 0.9, "memWarn": 0.7, "memCritical": 0.9, "diskWarn": 0.8, "diskCritical": 0.9,
+          "health": { "inodes": { "warn": 0.5, "critical": 0.7 } } }
+        """.data(using: .utf8)!
+        let m = try JSONDecoder().decode(MetricThresholds.self, from: json)
+        XCTAssertEqual(m.health.inodes, ThresholdPair(warn: 0.5, critical: 0.7))
+        XCTAssertEqual(m.health.pids, HealthLimits.defaults.pids)
     }
 
     // MARK: history

@@ -212,11 +212,7 @@ final class SettingsTransferTests: XCTestCase {
         let existingID = UUID()
         let existing = Node(id: existingID, displayName: "db", kind: .ssh, sshUser: "ops", sshHost: "db")
         var withThresh = existing
-        withThresh.customThresholds = MetricThresholds(
-            cpuWarn: 0.3, cpuCritical: 0.6,
-            memWarn: 0.3, memCritical: 0.6,
-            diskWarn: 0.3, diskCritical: 0.6
-        )
+        withThresh.thresholdOverrides = ThresholdOverrides(cpu: ThresholdPair(warn: 0.3, critical: 0.6))
         let b = base(nodes: [existing])
         let ex = makeExport(nodes: [withThresh])
         var sel = ImportSelection.allDefaults
@@ -224,8 +220,8 @@ final class SettingsTransferTests: XCTestCase {
         sel.serverThresholds = true  // but do sync custom overrides
         let (merged, report) = SettingsTransfer.apply(ex, to: b, selection: sel)
         XCTAssertEqual(merged.nodes.count, 1)
-        XCTAssertNotNil(merged.nodes.first?.customThresholds)
-        XCTAssertEqual(merged.nodes.first?.customThresholds?.cpuWarn, 0.3)
+        XCTAssertNotNil(merged.nodes.first?.thresholdOverrides)
+        XCTAssertEqual(merged.nodes.first?.thresholdOverrides?.cpu?.warn, 0.3)
         XCTAssertEqual(report.serverThresholdsUpdated, 1)
     }
 }

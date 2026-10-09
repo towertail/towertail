@@ -208,13 +208,15 @@ extension Node {
             iconOnCritical: r.iconOnCritical,
             notifyOnWarn: r.notifyOnWarn,
             notifyOnCritical: r.notifyOnCritical,
-            customThresholds: r.customThresholds,
+            thresholdOverrides: r.customThresholds.map(ThresholdOverrides.init(legacy:)),
             snoozedUntil: r.snoozedUntil,
             favorite: r.favorite
         )
     }
 
-    func toRemote() -> RemoteNode {
+    /// The server takes a full threshold set, so unset metrics are filled
+    /// from `global`.
+    func toRemote(global: MetricThresholds) -> RemoteNode {
         RemoteNode(
             id: id,
             displayName: displayName,
@@ -227,7 +229,7 @@ extension Node {
             iconOnCritical: iconOnCritical,
             notifyOnWarn: notifyOnWarn,
             notifyOnCritical: notifyOnCritical,
-            customThresholds: customThresholds,
+            customThresholds: thresholdOverrides?.applied(to: global),
             snoozedUntil: snoozedUntil,
             favorite: favorite
         )

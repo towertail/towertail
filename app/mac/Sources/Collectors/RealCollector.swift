@@ -316,7 +316,7 @@ final class RealCollector: Collector {
                 dnsName: node.kind == .ssh ? node.userAtHost : "local",
                 osArch: node.kind == .local ? "macOS" : "—",
                 kind: node.kind,
-                thresholds: MetricThresholds.effective(global: settings.thresholds, override: node.customThresholds),
+                thresholds: MetricThresholds.effective(global: settings.thresholds, override: node.thresholdOverrides),
                 alertRules: node.customAlerts ?? settings.alertRules
             )
             // Local nodes are always considered "warm" — the sampler is
@@ -331,7 +331,7 @@ final class RealCollector: Collector {
         // picks up edits to either the global sliders or a node's custom
         // set without waiting for the next collector tick.
         for vm in store.serverVMs {
-            let override = byID[vm.id]?.customThresholds
+            let override = byID[vm.id]?.thresholdOverrides
             vm.thresholds = MetricThresholds.effective(global: settings.thresholds, override: override)
             vm.alertRules = byID[vm.id]?.customAlerts ?? settings.alertRules
             // Refresh the warm flag from the persisted node — handles the

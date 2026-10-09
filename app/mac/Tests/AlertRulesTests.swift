@@ -260,7 +260,7 @@ final class AlertRulesTests: XCTestCase {
            "diskWarn":0.6,"diskCritical":0.9,"cpuSustainSamples":1}}
         """
         let node = try JSONDecoder().decode(Node.self, from: Data(json.utf8))
-        XCTAssertEqual(node.customThresholds?.cpuWarn, 0.5)
+        XCTAssertEqual(node.thresholdOverrides?.cpu?.warn, 0.5)
         XCTAssertNil(node.customAlerts)
     }
 }

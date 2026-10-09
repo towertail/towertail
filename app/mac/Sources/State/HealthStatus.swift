@@ -1,8 +1,7 @@
 import Foundation
 
 /// Host health evaluated from one sample's `health` block and disk inodes.
-/// Process and zombie limits come from `MetricThresholds`; the other
-/// limits are fixed defaults below.
+/// All limits come from `MetricThresholds`.
 struct HealthStatus: Sendable, Equatable {
     enum Signal: Sendable, Equatable {
         case procs, zombies, pids, files, memPressure, ioPressure, inodes
@@ -13,18 +12,6 @@ struct HealthStatus: Sendable, Equatable {
         let tint: ThresholdTint
         let text: String
     }
-
-    static let pidsWarn = 0.70
-    static let pidsCritical = 0.90
-    static let filesWarn = 0.80
-    static let filesCritical = 0.95
-    static let inodesWarn = 0.85
-    static let inodesCritical = 0.95
-    /// PSI avg10 percent. Memory warns on `some`, goes critical on `full`.
-    static let memSomeWarn = 10.0
-    static let memFullCritical = 20.0
-    static let ioFullWarn = 20.0
-    static let ioFullCritical = 40.0
 
     /// Critical reasons first, then warn.
     let reasons: [Reason]
@@ -69,20 +56,20 @@ struct HealthStatus: Sendable, Equatable {
                     "\(Self.count(z)) zombies\(top)")
             }
             if let f = Self.fraction(h.pidsUsed, h.pidsMax) {
-                add(.pids, level(f, warn: Self.pidsWarn, critical: Self.pidsCritical),
+                add(.pids, level(f, warn: t.health.pids.warn, critical: t.health.pids.critical),
                     "PIDs \(Self.pct(f)) of limit")
             }
             if let f = Self.fraction(h.filesUsed, h.filesMax) {
-                add(.files, level(f, warn: Self.filesWarn, critical: Self.filesCritical),
+                add(.files, level(f, warn: t.health.files.warn, critical: t.health.files.critical),
                     "Open files \(Self.pct(f)) of limit")
             }
             if let p = h.psi {
-                if p.memFull >= Self.memFullCritical {
+                if p.memFull >= t.health.memPressure.critical {
                     add(.memPressure, .critical, "Memory pressure \(Int(p.memFull.rounded()))%")
-                } else if p.memSome >= Self.memSomeWarn {
+                } else if p.memSome >= t.health.memPressure.warn {
                     add(.memPressure, .warn, "Memory pressure \(Int(p.memSome.rounded()))%")
                 }
-                add(.ioPressure, level(p.ioFull, warn: Self.ioFullWarn, critical: Self.ioFullCritical),
+                add(.ioPressure, level(p.ioFull, warn: t.health.ioPressure.warn, critical: t.health.ioPressure.critical),
                     "I/O pressure \(Int(p.ioFull.rounded()))%")
             }
             switch h.memPressure {
@@ -93,7 +80,7 @@ struct HealthStatus: Sendable, Equatable {
         }
         for d in disks ?? [] {
             if let f = Self.fraction(d.inodesUsed, d.inodesTotal) {
-                add(.inodes, level(f, warn: Self.inodesWarn, critical: Self.inodesCritical),
+                add(.inodes, level(f, warn: t.health.inodes.warn, critical: t.health.inodes.critical),
                     "Inodes \(Self.pct(f)) on \(d.mount)")
             }
         }

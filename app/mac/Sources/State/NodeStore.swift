@@ -134,7 +134,7 @@ final class NodeStore {
     /// Replaces the entire node list in one shot without re-persisting —
     /// used by settings-import, which has already written the merged
     /// PersistedSettings to disk. Persisting again here would stomp any
-    /// fields the importer handled (e.g. per-node customThresholds that
+    /// fields the importer handled (e.g. per-node thresholdOverrides that
     /// live inside Node).
     func replaceAllFromDisk() {
         let s = SettingsPersistence.load(from: url)

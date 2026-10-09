@@ -55,7 +55,7 @@ final class RemoteBackend: Backend {
                     kind: node.kind,
                     thresholds: MetricThresholds.effective(
                         global: serverSettings.thresholds,
-                        override: node.customThresholds
+                        override: node.thresholdOverrides
                     ),
                     alertRules: node.customAlerts ?? serverSettings.alertRules
                 )
@@ -141,7 +141,7 @@ final class RemoteBackend: Backend {
     // MARK: - Backend mutations
 
     func addNode(_ node: Node) async throws {
-        let created = try await client.createNode(node.toRemote())
+        let created = try await client.createNode(node.toRemote(global: serverSettings.thresholds))
         nodes.add(Node(remote: created))
     }
 
@@ -150,7 +150,7 @@ final class RemoteBackend: Backend {
     }
 
     func updateNode(_ node: Node) async throws {
-        let updated = try await client.updateNode(node.toRemote())
+        let updated = try await client.updateNode(node.toRemote(global: serverSettings.thresholds))
         nodes.update(Node(remote: updated))
     }
 

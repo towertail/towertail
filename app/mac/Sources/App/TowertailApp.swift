@@ -52,11 +52,6 @@ struct TowertailApp: App {
                 .environment(env.nodeStore)
                 .environment(env.samplerUpdater)
                 .environment(\.backend, env.backend)
-                // Injected so the Servers pane's Version column can show
-                // "updating…" while a push is in flight. Safe now that
-                // PreferencesWindow only instantiates the active tab's
-                // content (see paneContent) — the Table-in-TabView
-                // observation crash no longer applies.
                 // Settings is an .accessory-policy scene by default, so
                 // without flipping activation policy the app never gets a
                 // Dock icon while it's open — meaning the user can't ⌘-Tab
@@ -66,6 +61,7 @@ struct TowertailApp: App {
                 .onAppear { ActivationPolicyCoordinator.shared.acquire() }
                 .onDisappear { ActivationPolicyCoordinator.shared.release() }
         }
+        .windowResizability(.contentMinSize)
 
         WindowGroup(id: "full-view", for: FullViewContext.self) { $ctx in
             Group {
@@ -83,16 +79,16 @@ struct TowertailApp: App {
         .windowResizability(.contentSize)
         .defaultSize(width: 1080, height: 760)
 
-        // Per-server edit, opened from a card's gear button. A real window
-        // (rather than a SwiftUI .sheet on the card) survives the popover
-        // auto-closing when the sheet takes focus — otherwise Save never
-        // fires because the card unmounts along with the popover.
+        // Per-server settings, opened from a card's gear button. A real
+        // window (rather than a SwiftUI .sheet on the card) survives the
+        // popover auto-closing when the window takes focus.
         WindowGroup(id: "server-edit", for: UUID.self) { $nodeId in
             ServerEditWindow(nodeId: nodeId)
                 .environment(env.nodeStore)
                 .environment(env.clientSettings)
                 .environment(env.serverSettings)
                 .environment(env.store)
+                .environment(env.samplerUpdater)
                 .environment(\.backend, env.backend)
                 .onAppear { ActivationPolicyCoordinator.shared.acquire() }
                 .onDisappear { ActivationPolicyCoordinator.shared.release() }
