@@ -102,3 +102,4 @@ scripts/winvm.env
 # Signing keys
 *.p8
 *.p12
+/.perception/
