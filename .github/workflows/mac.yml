@@ -1,0 +1,80 @@
+name: mac
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The required checks must report on every PR, so path filters live
+  # here and not in "on:". A skipped job counts as a pass.
+  changes:
+    name: mac / changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      run: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.run == 'true' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: filter
+        if: github.event_name != 'workflow_dispatch'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            run:
+              - 'apps/mac/**'
+              - 'sampler/**'
+              - 'scripts/*.sh'
+              - 'samplers.lock'
+              - '.github/workflows/mac.yml'
+
+  unit:
+    name: mac / unit
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.work
+          cache-dependency-path: sampler/go.sum
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - run: bash scripts/tests.sh --swift-unit
+
+  # Hosted macOS runners have no Docker. The Go server runs on the host
+  # with ClickHouse disabled. server.yml covers ClickHouse.
+  integration:
+    name: mac / integration
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.work
+          cache-dependency-path: |
+            server/go.sum
+            sampler/go.sum
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - run: bash scripts/tests.sh --server-local --swift-integration

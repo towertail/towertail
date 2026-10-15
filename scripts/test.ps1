@@ -153,6 +153,17 @@ function Require-Docker {
   }
 }
 
+# TOWERTAIL_LOCAL_SERVER=1 forces the no-Docker path. Hosted Windows
+# runners have Docker, but only for Windows containers.
+function Test-Docker {
+  if ($env:TOWERTAIL_LOCAL_SERVER -eq '1') { return $false }
+  try {
+    $null = Get-Command docker -ErrorAction Stop
+    & docker compose version | Out-Null
+    return ($LASTEXITCODE -eq 0)
+  } catch { return $false }
+}
+
 function Docker-Up {
   Require-Docker
   Write-Section 'bringing up docker stack (clickhouse + server)'
@@ -203,7 +214,7 @@ function Run-Unit {
   # Tests live in Towertail.Tests.csproj (net9.0-windows, plain class lib +
   # Towertail.Core). FlaUI lives in Towertail.UITests.csproj; integration
   # tests inside Towertail.Tests carry [Trait("Category","Integration")].
-  & dotnet test $winTestsProj --no-restore:$false `
+  & dotnet test $winTestsProj `
     --filter 'Category!=FlaUI&Category!=Integration'
   if ($LASTEXITCODE -ne 0) { throw 'unit tests failed' }
   Write-Pass 'windows unit tests'
@@ -216,12 +227,7 @@ function Run-RemoteIntegration {
   # local-server mode (no-Docker): the fixture boots a real go binary with
   # TT_CLICKHOUSE__DISABLED=true. Either way, no mocks; real sampler push
   # → real hub → real WS fan-out.
-  $dockerAvailable = $false
-  try {
-    $null = Get-Command docker -ErrorAction Stop
-    & docker compose version | Out-Null
-    if ($LASTEXITCODE -eq 0) { $dockerAvailable = $true }
-  } catch { }
+  $dockerAvailable = Test-Docker
 
   Write-Flag-File
   try {
@@ -297,13 +303,7 @@ try {
     # Run-RemoteIntegration decides between docker compose and the
     # no-Docker local-server path itself; we only bring docker up here
     # when it's actually available.
-    $dockerOk = $false
-    try {
-      $null = Get-Command docker -ErrorAction Stop
-      & docker compose version | Out-Null
-      if ($LASTEXITCODE -eq 0) { $dockerOk = $true }
-    } catch { }
-    if ($dockerOk -and -not $broughtUp) { Docker-Up; $broughtUp = $true }
+    if ((Test-Docker) -and -not $broughtUp) { Docker-Up; $broughtUp = $true }
     try { Run-RemoteIntegration } catch { $failures++; Write-Fail $_.Exception.Message }
   }
   if ($Flaui)             { try { Run-Flaui }             catch { $failures++; Write-Fail $_.Exception.Message } }
