@@ -7,7 +7,7 @@ Thumbs.db
 desktop.ini
 
 # ---------------------------------------------------------------------------
-# .NET / Visual Studio / Rider (app/windows)
+# .NET / Visual Studio / Rider (apps/windows)
 # ---------------------------------------------------------------------------
 # Build output
 **/bin/
@@ -45,10 +45,10 @@ desktop.ini
 
 # Sampler binaries are copied into the app bundle at build time by the
 # CopySamplers MSBuild target — the source of truth is dist/samplers/.
-app/windows/Towertail.WinUI/Assets/samplers/
+apps/windows/Towertail.WinUI/Assets/samplers/
 
 # ---------------------------------------------------------------------------
-# Swift / Xcode (app/mac)
+# Swift / Xcode (apps/mac)
 # ---------------------------------------------------------------------------
 # XcodeGen regenerates the project from project.yml; the generated project
 # can stay tracked (existing repo behavior), but user-local state must not.

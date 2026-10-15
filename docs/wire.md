@@ -119,7 +119,7 @@ The server's [`internal/wire`](../server/internal/wire/wire.go) package is the s
 
 - `Sample` — identical to `sampler/internal/schema/sample.go` Sample, just relaxed around optional fields.
 - `Event` — `{ id, ts, kind, nodeId, metric?, tint? }` where `kind` ∈ `threshold_crossed | reachability_changed | sampler_version` and `tint` ∈ `ok | warn | critical`.
-- `Node` — camelCase mirror of the Swift `Node` struct (`app/mac/Sources/State/Node.swift`).
+- `Node` — camelCase mirror of the Swift `Node` struct (`apps/mac/Sources/State/Node.swift`).
 - `ServerSettings` — camelCase mirror of the Swift `ServerSettings` class.
 - `LoginRequest`, `LoginResponse`.
 - `EnrollRequest`, `EnrollResponse`.

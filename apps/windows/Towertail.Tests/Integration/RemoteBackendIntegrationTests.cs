@@ -23,7 +23,7 @@ namespace Towertail.Tests.Integration;
 /// The suite is skipped when neither flag is set, so the default
 /// <c>dotnet test</c> (Tier 1) path stays green on developer boxes.
 ///
-/// Mirrors <c>app/mac/Tests/Integration/RemoteBackendIntegrationTests.swift</c>.
+/// Mirrors <c>apps/mac/Tests/Integration/RemoteBackendIntegrationTests.swift</c>.
 /// </summary>
 [Trait("Category", "Integration")]
 public sealed class RemoteBackendIntegrationTests : IClassFixture<LocalServerFixture>

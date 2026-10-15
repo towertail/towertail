@@ -6,8 +6,8 @@
   Mirrors scripts/build.app.sh for the Mac side. Regenerates nothing
   automatically (no XcodeGen equivalent); builds Towertail.sln via dotnet.
   The publish output (the shippable app) lands at
-  dist/app/windows-<arch>/ (e.g. dist/app/windows-x64/). Intermediate
-  MSBuild output still lives in app/windows/Towertail.WinUI/bin|obj/ —
+  dist/apps/windows-<arch>/ (e.g. dist/apps/windows-x64/). Intermediate
+  MSBuild output still lives in apps/windows/Towertail.WinUI/bin|obj/ —
   IDEs expect it there — but those are gitignored.
 
 .PARAMETER Configuration
@@ -19,7 +19,7 @@
 .PARAMETER Publish
   Also publish the WinUI app to a folder-output layout (useful for MSIX
   packaging and portable-zip distribution). Produces a folder under
-  app/windows/Towertail.WinUI/bin/<Configuration>/net9.0-windows*/<rid>/publish/.
+  apps/windows/Towertail.WinUI/bin/<Configuration>/net9.0-windows*/<rid>/publish/.
 
 .PARAMETER Zip
   After -Publish, produce a portable ZIP at dist/windows/Towertail-<ver>-<rid>.zip.
@@ -55,8 +55,8 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
 Set-Location $repoRoot
 
-$sln     = Join-Path $repoRoot 'app/windows/Towertail.sln'
-$winProj = Join-Path $repoRoot 'app/windows/Towertail.WinUI/Towertail.WinUI.csproj'
+$sln     = Join-Path $repoRoot 'apps/windows/Towertail.sln'
+$winProj = Join-Path $repoRoot 'apps/windows/Towertail.WinUI/Towertail.WinUI.csproj'
 
 Write-Host ">>> building sampler binaries (prereq for Towertail.WinUI CopySamplers)"
 & bash (Join-Path $repoRoot 'scripts/build.sampler.sh')
@@ -77,7 +77,7 @@ if ($Zip -or $Msix) { $Publish = $true }
 
 $rid  = if ($Platform -eq 'ARM64') { 'win-arm64' } else { 'win-x64' }
 $arch = if ($Platform -eq 'ARM64') { 'arm64' }    else { 'x64' }
-$publishDir = Join-Path $repoRoot "dist/app/windows-$arch"
+$publishDir = Join-Path $repoRoot "dist/apps/windows-$arch"
 
 if ($Publish) {
   Write-Host ">>> publishing Towertail.WinUI ($Configuration / $rid) -> $publishDir"
@@ -139,7 +139,7 @@ if ($Open) {
     if (Test-Path $candidate) { $exePath = $candidate }
   }
   if (-not $exePath) {
-    $exe = Get-ChildItem -Path (Join-Path $repoRoot 'app/windows/Towertail.WinUI/bin') `
+    $exe = Get-ChildItem -Path (Join-Path $repoRoot 'apps/windows/Towertail.WinUI/bin') `
       -Recurse -Filter 'Towertail.exe' -ErrorAction SilentlyContinue |
       Sort-Object LastWriteTime -Descending |
       Select-Object -First 1

@@ -30,7 +30,7 @@ EXCLUDES=(
   --exclude='./node_modules'
   --exclude='.DS_Store'
   --exclude='._*'
-  --exclude='./app/mac'
+  --exclude='./apps/mac'
   --exclude='*.xcodeproj'
   --exclude='./DerivedData'
   --exclude='**/bin'
@@ -40,7 +40,7 @@ EXCLUDES=(
 if [[ "${WINVM_USE_RSYNC:-0}" == "1" ]]; then
   rsync -az --delete \
     --exclude '.git/' --exclude 'bin/' --exclude 'obj/' --exclude 'dist/' \
-    --exclude 'node_modules/' --exclude '.DS_Store' --exclude 'app/mac/' \
+    --exclude 'node_modules/' --exclude '.DS_Store' --exclude 'apps/mac/' \
     --exclude '*.xcodeproj/' --exclude 'DerivedData/' \
     "$REPO_ROOT/" "$HOST:$REMOTE_UNIX/"
   echo ">>> synced (rsync) to $HOST:$REMOTE_UNIX"

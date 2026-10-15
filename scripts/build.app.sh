@@ -17,12 +17,12 @@
 # Version: $VERSION sets CFBundleShortVersionString and $BUILD_NUMBER sets
 # CFBundleVersion. Without $VERSION the app is a "-dev" build (see project.yml).
 #
-# Output: app/mac/build/Build/Products/<Configuration>/Towertail.app
+# Output: apps/mac/build/Build/Products/<Configuration>/Towertail.app
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 REPO_ROOT="$(pwd)"
-APP_DIR="$REPO_ROOT/app/mac"
+APP_DIR="$REPO_ROOT/apps/mac"
 CONFIG="${1:-Debug}"
 OPEN_FLAG="${2:-}"
 

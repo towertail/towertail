@@ -1,4 +1,4 @@
-# app/mac
+# apps/mac
 
 Swift / SwiftUI macOS menu-bar application. The v1 shipping target — see [Phase 1 in PLAN.md](../../docs/PLAN.md#roadmap-phases).
 

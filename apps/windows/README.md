@@ -1,4 +1,4 @@
-# app/windows
+# apps/windows
 
 Windows WinUI 3 client, functional parity with the Mac client.
 
@@ -20,12 +20,12 @@ Windows WinUI 3 client, functional parity with the Mac client.
 .\scripts\build.windows.ps1
 
 # run the app (Debug)
-dotnet run --project app\windows\Towertail.WinUI -c Debug
+dotnet run --project apps\windows\Towertail.WinUI -c Debug
 ```
 
 ## Project layout
 
-See `docs/windows-app.md` §3 — directory structure mirrors `app/mac/Sources/` file-for-file.
+See `docs/windows-app.md` §3 — directory structure mirrors `apps/mac/Sources/` file-for-file.
 
 ## Where things live
 

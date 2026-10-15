@@ -7,9 +7,8 @@ updates:
     groups:
       minor-patch:
         update-types: [minor, patch]
-  # Change to /apps/windows after the layout move.
   - package-ecosystem: nuget
-    directory: /app/windows
+    directory: /apps/windows
     schedule:
       interval: weekly
     groups:

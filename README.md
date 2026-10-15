@@ -14,17 +14,16 @@ Hosts are discovered from `tailscale status --json` and/or added manually. Crede
 
 ```
 towertail/
-├── app/
+├── apps/
 │   ├── mac/      # Phase 1 — SwiftUI macOS menu-bar app (v1 shipping target)
 │   └── windows/  # Phase 2 — stub, not started
-├── sampler/      # Go collector binary, 5 target triples, bundled into app/mac
+├── sampler/      # Go collector binary, 5 target triples, bundled into apps/mac
 ├── server/       # Phase 3 — stub; self-hostable Go control-plane service
-├── proto/        # Phase 3 — stub; wire contract shared across components
 ├── scripts/      # build.sh, build.app.sh, build.sampler.sh
 └── docs/         # PLAN.md (source of truth), sampler.md, research notes, design.pen, screenshots/
 ```
 
-Today only `app/mac/` and `sampler/` have real content. `app/windows/`, `server/`, and `proto/` are README-only stubs reflecting the phased roadmap — see [PLAN.md § Roadmap: phases](docs/PLAN.md#roadmap-phases).
+Today only `apps/mac/` and `sampler/` have real content. `apps/windows/` and `server/` are README-only stubs reflecting the phased roadmap — see [PLAN.md § Roadmap: phases](docs/PLAN.md#roadmap-phases).
 
 ## Requirements
 
@@ -51,12 +50,12 @@ scripts/build.sampler.sh darwin-arm64 # single triple (fast iteration)
 scripts/build.app.sh                  # app only; needs dist/samplers/ populated
 ```
 
-The app bundle ends up at `app/mac/build/Build/Products/<Configuration>/Towertail.app`. Builds sign with the Developer ID cert when it is in the keychain, else ad-hoc.
+The app bundle ends up at `apps/mac/build/Build/Products/<Configuration>/Towertail.app`. Builds sign with the Developer ID cert when it is in the keychain, else ad-hoc.
 
 ## Run
 
 ```bash
-open app/mac/build/Debug/Towertail.app
+open apps/mac/build/Debug/Towertail.app
 ```
 
 It runs as a menu-bar only app (`LSUIElement`) — look for the `server.rack` glyph in the status bar. Click to open the popover; ⌘, opens Preferences to add servers, tune thresholds, pick a sampling cadence, and manage launch-at-login.
@@ -65,7 +64,7 @@ It runs as a menu-bar only app (`LSUIElement`) — look for the `server.rack` gl
 
 ```bash
 # Swift tests
-xcodebuild -project app/mac/Towertail.xcodeproj -scheme Towertail test
+xcodebuild -project apps/mac/Towertail.xcodeproj -scheme Towertail test
 
 # Go sampler tests
 cd sampler && go test ./...
@@ -194,6 +193,6 @@ See [`docs/sampler.md`](docs/sampler.md) §4 for full field semantics, permissio
 
 ## License
 
-- The apps (`app/`) and the server (`server/`) use the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0).
+- The apps (`apps/`) and the server (`server/`) use the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0).
 - The sampler uses the Apache License 2.0. It is in its own repository: [towertail/sampler](https://github.com/towertail/sampler).
 - The name "Towertail" and the logo are trademarks. A fork must use a different name and logo. Refer to [TRADEMARK.md](TRADEMARK.md).

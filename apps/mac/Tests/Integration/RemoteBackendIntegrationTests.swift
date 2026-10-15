@@ -218,7 +218,7 @@ final class RemoteBackendIntegrationTests: XCTestCase {
             dir.deleteLastPathComponent()
         }
         // Source-file walk (this test file is at
-        // <repo>/app/mac/Tests/Integration/RemoteBackendIntegrationTests.swift).
+        // <repo>/apps/mac/Tests/Integration/RemoteBackendIntegrationTests.swift).
         var src = URL(fileURLWithPath: #filePath)
         for _ in 0..<6 {
             src.deleteLastPathComponent()

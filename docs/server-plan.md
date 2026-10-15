@@ -804,7 +804,7 @@ Each fixture round-trips through three decoders in CI:
 2. **Server** (`models.Sample` decode + CH row build).
 3. **Swift** (`Sample.swift` `JSONDecoder`; runs as part of the existing Xcode test target — a new "WireFixtures" XCTest case reads the same JSON files).
 
-Any of the three failing to decode a fixture, or a fixture's canonical form changing unexpectedly, fails CI. This is the contract enforcement that replaces a full `proto/` definition for v1.
+Any of the three failing to decode a fixture, or a fixture's canonical form changing unexpectedly, fails CI. This is the contract enforcement that replaces a full protobuf definition for v1.
 
 ### 9.5 End-to-end smoke test
 
@@ -821,7 +821,7 @@ Runs in CI on every `main` push, time-budgeted to < 3 minutes:
 
 Lives at `server/testdata/e2e/smoke.sh`, invoked by a `make e2e` target.
 
-### 9.6 Swift side (`app/mac/Tests/`)
+### 9.6 Swift side (`apps/mac/Tests/`)
 
 New XCTest target `RemoteBackendTests`:
 
@@ -863,7 +863,7 @@ Each phase is an independently reviewable, shippable increment. Later phases do 
 - Introduce `urfave/cli/v3`. Preserve all existing flags as root-command shims so Mac-side bootstrap over SSH (`--version`, `--once`, `--self-check`) still works.
 - Add subcommands: `once`, `stream`, `push`, `version`, `self-check`. `push` is a stub that prints "not yet wired" in this phase.
 - Update `sampler/cmd/sampler/main_test.go` to exercise the new tree. Add golden help output tests.
-- Update `app/mac/Sources/Collectors/SamplerInvoker.swift` and `SamplerUpdateCoordinator.swift` if they rely on exact `--` flag form — they should still work; add assertions in a bootstrap test.
+- Update `apps/mac/Sources/Collectors/SamplerInvoker.swift` and `SamplerUpdateCoordinator.swift` if they rely on exact `--` flag form — they should still work; add assertions in a bootstrap test.
 
 **DoD:** existing Mac-app bootstrap works unchanged; `towertail-sampler --help` shows new subcommands; `go test ./...` green.
 
@@ -926,7 +926,7 @@ Each phase is an independently reviewable, shippable increment. Later phases do 
 
 ### Phase I — Wire `RemoteBackend` in Swift (≈ 2 days)
 
-- Flesh out `app/mac/Sources/Backend/RemoteBackend.swift`:
+- Flesh out `apps/mac/Sources/Backend/RemoteBackend.swift`:
   - `URLSession` REST client, `URLSessionWebSocketTask` for stream.
   - Token + endpoint persisted in Keychain / `ClientSettings`.
   - Populate `servers` / `nodes` / `serverSettings` from server responses.
@@ -972,7 +972,7 @@ Each phase is an independently reviewable, shippable increment. Later phases do 
 - **Tailscale identity.** Sampler enrollment could leverage the host's Tailscale identity instead of a pre-shared token — nice for fleets already on Tailnet. Deferred; token path ships first.
 - **mTLS instead of bearer.** Nicer for closed networks. Add once `enroll` lands — cert material reuses the enroll path.
 - **Retention UX.** Today retention is a config knob. A future settings pane may expose it per-org once Postgres is active.
-- **Proto repo.** `proto/` stays empty in this plan; the ingest/stream wire stays JSON/NDJSON for simplicity. If we adopt gRPC for ingest later it moves to `proto/` per `PLAN.md`.
+- **Proto definitions.** The ingest/stream wire stays JSON/NDJSON for simplicity. If we adopt gRPC for ingest later, the `.proto` files get a new home then.
 - **Sampler → WebSocket back-channel.** Eliminates control long-poll latency (currently up to 15s for a kill). Deferred until we see real demand.
 
 ---

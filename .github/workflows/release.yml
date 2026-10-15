@@ -2,7 +2,7 @@ name: Release
 
 # Each push to main that changes the Mac app makes a signed, notarized release.
 # Installed apps update to it automatically. The tag is the last tag with the
-# patch number plus one. A higher MARKETING_VERSION in app/mac/project.yml wins,
+# patch number plus one. A higher MARKETING_VERSION in apps/mac/project.yml wins,
 # for minor or major bumps.
 on:
   push:
@@ -11,9 +11,8 @@ on:
     paths-ignore:
       - '**.md'
       - 'docs/**'
-      - 'app/windows/**'
+      - 'apps/windows/**'
       - 'server/**'
-      - 'proto/**'
       - 'scripts/*.ps1'
       - 'scripts/winvm-*.sh'
       - '.github/workflows/ci.yaml'
@@ -54,7 +53,7 @@ jobs:
         run: |
           latest=$(git tag -l 'v*' --sort=-v:refname | head -1)
           latest=${latest#v}
-          base=$(sed -n 's/^ *MARKETING_VERSION: *"\([0-9.]*\).*"/\1/p' app/mac/project.yml)
+          base=$(sed -n 's/^ *MARKETING_VERSION: *"\([0-9.]*\).*"/\1/p' apps/mac/project.yml)
           if [ -z "$latest" ]; then
             next=$base
           else
@@ -95,7 +94,7 @@ jobs:
         run: |
           scripts/build.sampler.sh
           scripts/build.app.sh Release
-          ditto app/mac/build/Build/Products/Release/Towertail.app Towertail.app
+          ditto apps/mac/build/Build/Products/Release/Towertail.app Towertail.app
           codesign --verify --deep --strict Towertail.app
 
       - name: Notarize

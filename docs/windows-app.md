@@ -2,12 +2,12 @@ Towertail Windows Port — Implementation Plan
 
 1. Context
 
-Why now. Phase 1 (app/mac, ~74 Swift files, ~12k SLOC) is feature-complete on macOS: menu-bar popover with live CPU/MEM/DISK/NET sparklines, full-view charts
+Why now. Phase 1 (apps/mac, ~74 Swift files, ~12k SLOC) is feature-complete on macOS: menu-bar popover with live CPU/MEM/DISK/NET sparklines, full-view charts
 with zoom/pan/hover, per-host process tables hydrated from a 2h SQLite ring, Tailscale bulk-import, per-host threshold overrides, toast notifications, SSH
 sampler bootstrap via /usr/bin/ssh. docs/PLAN.md Phase 2 reads: "Ship the same product on Windows. Still local-only. Shared wire format with the sampler; UI is
- a from-scratch native build." app/windows/README.md is the only thing currently in that folder.
+ a from-scratch native build." apps/windows/README.md is the only thing currently in that folder.
 
-What we're building. A native Windows tray app at $HOME/Projects/towertail/app/windows/ that is functionally equivalent to the Mac client: same sampler
+What we're building. A native Windows tray app at $HOME/Projects/towertail/apps/windows/ that is functionally equivalent to the Mac client: same sampler
 binaries, same JSON wire format (schema v=1 from docs/sampler.md §4), same SQLite history schema (4 tables from HistoryStore.swift), and a settings.json format
  that round-trips with the Mac client so a user can copy the file between OSes. WinUI 3 + .NET 9 + C# 13, packaged both as unpackaged portable ZIP and MSIX
 (Store + sideload). x64 primary, ARM64 secondary (Surface Pro X / Copilot+ PCs).
@@ -90,7 +90,7 @@ cadences; threshold defaults; the <goos>-<goarch> triple convention.
 
 Mirrors the Mac Sources/ tree file-for-file where sensible:
 
-app/windows/
+apps/windows/
 ├── Towertail.sln
 ├── Towertail.WinUI/                       # main app project
 │   ├── Towertail.WinUI.csproj
@@ -337,8 +337,8 @@ Windows build pipeline
 scripts/build.windows.ps1           # NEW — on Windows
 scripts/build.windows.sh            # NEW — documents the steps; actual build runs on Win/CI
 
-- dotnet build app/windows/Towertail.sln -c Release -p:Platform=x64
-- dotnet publish app/windows/Towertail.WinUI -c Release -r win-x64 --self-contained
+- dotnet build apps/windows/Towertail.sln -c Release -p:Platform=x64
+- dotnet publish apps/windows/Towertail.WinUI -c Release -r win-x64 --self-contained
 - MSIX via msbuild /p:GenerateAppxPackageOnBuild=true /p:AppxPackageSigningEnabled=true
 - Pre-build target in Towertail.WinUI.csproj copies dist/samplers/** into Assets/samplers/ so the sampler binaries ship inside the package (parity with Mac's
 preBuildScript):
@@ -383,7 +383,7 @@ Goal. Local-only persistence parity with Mac; cross-OS settings round-trip works
 - SettingsPersistence.cs — records with System.Text.Json source-gen; reads legacy flat Mac files AND new platform.<os> envelope; always saves normalized.
 - SettingsTransfer.cs — SettingsExport encode/decode; merge/overwrite engine; handles foreign `platform.*` blocks by preserving them.
 - IBackend.cs + LocalBackend.cs — identical surface to Mac's Backend protocol.
-- Mac-side change: update SettingsPersistence.swift + SettingsTransfer.swift to emit/accept the new platform envelope while reading legacy flat files. Ship as Mac app v1.1. Extend app/mac/Tests/SettingsTransferTests.swift with the same golden fixture.
+- Mac-side change: update SettingsPersistence.swift + SettingsTransfer.swift to emit/accept the new platform envelope while reading legacy flat files. Ship as Mac app v1.1. Extend apps/mac/Tests/SettingsTransferTests.swift with the same golden fixture.
 - Tests:
   - HistoryStoreTests (insert 10k samples, verify 2h trim, verify concurrent writer doesn't crash).
   - MetricSeriesTests + ProcSeriesTests (decimation + decay math; ported verbatim from Swift).
@@ -507,7 +507,7 @@ Paint cost ~100 µs per 60×20 sparkline.
 9. Cross-Platform Parity Matrix
 
 ┌────────────────────┬──────────────────────────────────┬────────────────────────────────────────────────────────────────┬──────────────────────────────────┐
-│      Feature       │          Mac (app/mac)           │                     Windows (app/windows)                      │              Notes               │
+│      Feature       │          Mac (apps/mac)           │                     Windows (apps/windows)                      │              Notes               │
 ├────────────────────┼──────────────────────────────────┼────────────────────────────────────────────────────────────────┼──────────────────────────────────┤
 │ Menu-bar/tray icon │ MenuBarExtra + custom Canvas     │ H.NotifyIcon.WinUI + 16×16 rendered PNG                        │ —                                │
 ├────────────────────┼──────────────────────────────────┼────────────────────────────────────────────────────────────────┼──────────────────────────────────┤
@@ -554,7 +554,7 @@ Paint cost ~100 µs per 60×20 sparkline.
 ---
 10. Verification / Test Plan
 
-Strategy. A 3-tier pyramid, mirroring the Mac side (scripts/tests.sh, app/mac/Tests/) and sharing the same Docker stack (server/docker/docker-compose.test.yaml) so the clients cannot drift from the server contract.
+Strategy. A 3-tier pyramid, mirroring the Mac side (scripts/tests.sh, apps/mac/Tests/) and sharing the same Docker stack (server/docker/docker-compose.test.yaml) so the clients cannot drift from the server contract.
 
 ┌─────┬───────────────────────────┬────────────────────────────────────┬────────────────────────────┬─────────────────────────────────────┐
 │ Tier│          Runs              │           What it covers           │         Deps on host       │       CI invocation                  │
@@ -575,13 +575,13 @@ Tier 1 — unit + in-process (no Docker, runs on every commit)
 
 Each listed test class is required before the phase that introduces it can be marked complete.
 
-LocalBackend coverage (mirrors app/mac/Tests/LocalBackendTests.swift):
+LocalBackend coverage (mirrors apps/mac/Tests/LocalBackendTests.swift):
 - `LocalBackend_Instantiates_WiresObservableStores` — assert b.Servers, b.Nodes, b.ClientSettings, b.ServerSettings are distinct concrete objects loaded from disk.
 - `LocalBackend_NodeCRUD_RoundTrips` — AddNode, UpdateNode, SetNodeEnabled, SetNodeFavorite, SetNodeSnooze, RemoveNode. Uses a scoped %APPDATA% override so tests don't stomp on the dev install.
 - `LocalBackend_BulkAddNodes` — 5 nodes added atomically; all removed cleanly.
 - `LocalBackend_UpdateServerSettings_Persists` — mutate → UpdateServerSettingsAsync → re-load from disk → assert value round-trips.
 
-RemoteBackend + RemoteClient coverage (mirrors app/mac/Tests/RemoteBackendTests.swift, uses LocalTestHttpServer):
+RemoteBackend + RemoteClient coverage (mirrors apps/mac/Tests/RemoteBackendTests.swift, uses LocalTestHttpServer):
 - `RemoteClient_ListNodes_ReturnsSeededFleet`
 - `RemoteClient_SendsBearerTokenHeader` — assert exact Authorization header shape on every request.
 - `RemoteClient_CreateNode_RoundTrips` — handler echoes request body, verify decode.
@@ -609,7 +609,7 @@ Other Tier 1:
 Tier 2 — real server integration (Docker required, runs every PR on windows-latest with `services: docker`)
 
 - `IntegrationConfig.cs` reads %TEMP%\towertail-integration-test.env, parity with Mac's /tmp flag file. Tests are `Skip`'d when `TOWERTAIL_INTEGRATION != "1"` so the unit-only `dotnet test` path remains green.
-- `RemoteBackendIntegrationTests` (mirrors app/mac/Tests/Integration/RemoteBackendIntegrationTests.swift):
+- `RemoteBackendIntegrationTests` (mirrors apps/mac/Tests/Integration/RemoteBackendIntegrationTests.swift):
   - `AdminToken_CanListNodes` — smoke.
   - `Settings_RoundTripThroughRealServer` — mutate notifyDebounceSeconds → PUT → GET → assert persistence through the real Go server, through ClickHouse-less config path.
   - `SamplerPush_DeliversSampleOverWebSocket` — `POST /v1/sampler/enroll` → spawn the real `dist/samplers/windows-<arch>/towertail-sampler.exe` in push mode → open WS on `/v1/stream` → assert a `type:"sample"` frame arrives for our enrolled node within 30s.
@@ -627,7 +627,7 @@ Contract tests (cross-language)
 
 - Sampler schema contract: one golden `testdata/sample-v1.json` (committed to the repo root or `sampler/testdata/`) is decoded by:
   - Go: `sampler/internal/schema/schema_test.go`
-  - Swift: `app/mac/Tests/SampleDecodingTests.swift`
+  - Swift: `apps/mac/Tests/SampleDecodingTests.swift`
   - C#: `Towertail.Tests/SampleDecodingTests.cs`
   Any schema change requires bumping `v` AND updating all three decoders in the same PR. This is enforced by CI: all three jobs must pass.
 - Wire contract for server REST/WS shares `server/internal/wire/*.go` types; Mac's Backend/RemoteClient.swift and Windows's Backend/RemoteClient.cs each duplicate those types as DTOs. `SettingsTransferTests` + `RemoteClient_PutSettings_EncodesAndDecodes` catch drift on the two most-trafficked payloads.
@@ -652,7 +652,7 @@ scripts/test.ps1 — Windows test runner
 PowerShell 7 script mirroring the UX of scripts/tests.sh. Lives at the repo root, runs under `pwsh` or `powershell` (prefer pwsh for `&&`).
 
 Flags (composable; default: `--unit`):
-- `--unit` — `dotnet test app/windows/Towertail.sln --filter "Category!=FlaUI&Category!=Integration"`. Tier 1 only.
+- `--unit` — `dotnet test apps/windows/Towertail.sln --filter "Category!=FlaUI&Category!=Integration"`. Tier 1 only.
 - `--remote-integration` — writes `$env:TEMP\towertail-integration-test.env` with `TOWERTAIL_INTEGRATION=1`, endpoint, and admin token. Brings up docker-compose.test.yaml via `docker compose -f server/docker/docker-compose.test.yaml -p towertail-win-test up -d --wait`. Runs `dotnet test --filter Category=Integration`. Tears down on exit.
 - `--flaui` — runs `dotnet test Towertail.UITests --filter Category=FlaUI`. Requires interactive session.
 - `--go-unit` / `--go-integration` / `--sampler` — delegates to the existing Go test paths (cd into server/ or sampler/ and run `go test`). Kept for parity with tests.sh so a Windows dev can validate the server before hitting the Tier 2 path.
@@ -691,7 +691,7 @@ RemoteBackend mode (backend = real `towertail-server` via docker-compose.test.ya
 ---
 11. Critical Files to Create/Modify
 
-New (Windows app) — ~70 files in app/windows/Towertail.WinUI/ + ~20 in Towertail.Tests/ + ~2 in Towertail.UITests/
+New (Windows app) — ~70 files in apps/windows/Towertail.WinUI/ + ~20 in Towertail.Tests/ + ~2 in Towertail.UITests/
 
 Listed exhaustively in §3.
 
@@ -716,15 +716,15 @@ Docs:
 - docs/PLAN.md — tick Phase 2 status; link to this plan
 
 Mac (required for cross-OS round-trip):
-- app/mac/Sources/System/SettingsPersistence.swift — emit platform.darwin envelope; read legacy flat form
-- app/mac/Sources/System/SettingsTransfer.swift — include sourcePlatform; handle foreign platform.* blocks
-- app/mac/Tests/SettingsTransferTests.swift — add cross-OS fixtures (shared TestData/settings.mac.json with Windows)
+- apps/mac/Sources/System/SettingsPersistence.swift — emit platform.darwin envelope; read legacy flat form
+- apps/mac/Sources/System/SettingsTransfer.swift — include sourcePlatform; handle foreign platform.* blocks
+- apps/mac/Tests/SettingsTransferTests.swift — add cross-OS fixtures (shared TestData/settings.mac.json with Windows)
 
 Server (minor — already supports what clients need):
 - server/docker/docker-compose.test.yaml — no changes expected; the Windows tests reuse this file verbatim. If CI needs a different project name (`-p towertail-win-test` vs `-p towertail-test`), that's configured in test.ps1, not the compose file.
 
 Windows app stubs:
-- app/windows/README.md — replace stub with real setup instructions (.NET 9 SDK install, `scripts/test.ps1 --unit` quickstart, docker requirements for Tier 2)
+- apps/windows/README.md — replace stub with real setup instructions (.NET 9 SDK install, `scripts/test.ps1 --unit` quickstart, docker requirements for Tier 2)
 
 ---
 12. Known Risks & Deferred Decisions

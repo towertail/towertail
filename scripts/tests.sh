@@ -130,14 +130,14 @@ docker_follow_logs() {
 
 # -- Swift tests ----------------------------------------------------------
 
-PROJECT="$REPO_ROOT/app/mac/Towertail.xcodeproj"
+PROJECT="$REPO_ROOT/apps/mac/Towertail.xcodeproj"
 SCHEME="Towertail"
 DESTINATION="platform=macOS"
 
 regenerate_xcode_if_needed() {
-  if [[ ! -d "$PROJECT" ]] || [[ "$REPO_ROOT/app/mac/project.yml" -nt "$PROJECT" ]]; then
+  if [[ ! -d "$PROJECT" ]] || [[ "$REPO_ROOT/apps/mac/project.yml" -nt "$PROJECT" ]]; then
     section "regenerating Xcode project"
-    (cd "$REPO_ROOT/app/mac" && xcodegen generate)
+    (cd "$REPO_ROOT/apps/mac" && xcodegen generate)
   fi
 }
 

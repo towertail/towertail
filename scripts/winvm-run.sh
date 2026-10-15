@@ -51,14 +51,14 @@ case "$CMD" in
     sync
     # Build for the VM's native arch. WindowsAppSDKSelfContained does not run
     # well under x64-on-ARM emulation, so we match the host.
-    ps_run "\$arch = if ([Environment]::Is64BitOperatingSystem -and (\$env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or \$env:PROCESSOR_ARCHITEW6432 -eq 'ARM64')) { 'ARM64' } else { 'x64' }; dotnet build app\\windows\\Towertail.sln -c Debug -p:Platform=\$arch"
+    ps_run "\$arch = if ([Environment]::Is64BitOperatingSystem -and (\$env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or \$env:PROCESSOR_ARCHITEW6432 -eq 'ARM64')) { 'ARM64' } else { 'x64' }; dotnet build apps\\windows\\Towertail.sln -c Debug -p:Platform=\$arch"
     ;;
   run)
     sync
     ssh "$HOST" "pwsh -NoProfile -Command \"Get-Process Towertail -ErrorAction SilentlyContinue | Stop-Process -Force\"" || true
     # Build + launch for the VM's native arch. WindowsAppSDKSelfContained
     # cannot run under x64-on-ARM emulation on an ARM64 host.
-    ps_run "\$arch = if (\$env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or \$env:PROCESSOR_ARCHITEW6432 -eq 'ARM64') { 'ARM64' } else { 'x64' }; \$archLow = \$arch.ToLower(); dotnet build app\\windows\\Towertail.sln -c Debug -p:Platform=\$arch --nologo -v:m; \$exe = Join-Path '$REMOTE_PATH' \"app\\windows\\Towertail.WinUI\\bin\\\$arch\\Debug\\net9.0-windows10.0.19041.0\\Towertail.exe\"; Start-Process -FilePath \$exe"
+    ps_run "\$arch = if (\$env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or \$env:PROCESSOR_ARCHITEW6432 -eq 'ARM64') { 'ARM64' } else { 'x64' }; \$archLow = \$arch.ToLower(); dotnet build apps\\windows\\Towertail.sln -c Debug -p:Platform=\$arch --nologo -v:m; \$exe = Join-Path '$REMOTE_PATH' \"apps\\windows\\Towertail.WinUI\\bin\\\$arch\\Debug\\net9.0-windows10.0.19041.0\\Towertail.exe\"; Start-Process -FilePath \$exe"
     echo ">>> launched Towertail.exe on $HOST (tray icon in system tray)"
     ;;
   test)

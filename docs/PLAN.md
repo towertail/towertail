@@ -17,19 +17,18 @@ Top-level folders, one per build target + shared contract + docs:
 
 ```
 towertail/
-├── app/
+├── apps/
 │   ├── mac/       # Phase 1 — SwiftUI macOS menu-bar app (Xcode project, v1 shipping target)
 │   ├── windows/   # Phase 2 — WinUI 3 / .NET 9 port (see docs/windows-app.md); Tier 1+2 tests green
 │   └── (shared/)  # speculative; create only when something is truly shared
-├── sampler/         # Go collector binary, 5 target triples, bundled into app/mac
+├── sampler/         # Go collector binary, 5 target triples, bundled into apps/mac
 ├── server/        # Phase 3 — stub; Go control-plane service (ingest, store, alert), Dockerised, self-hostable
-├── proto/         # Phase 3 — stub; wire contract shared by sampler ↔ server ↔ app
 └── docs/          # this doc, research notes, sampler spec, design.pen, screenshots/
 ```
 
-Each folder has its own toolchain and CI pipeline; they never share a build graph. **Today only `app/mac` and `sampler/` have real content** — `app/windows`, `server/`, and `proto/` are README-only stubs so the shape reflects the plan and future folder moves don't break Swift imports or doc links. See [Roadmap: phases](#roadmap-phases) for when each turns on.
+Each folder has its own toolchain and CI pipeline; they never share a build graph. **Today only `apps/mac` and `sampler/` have real content** — `apps/windows` and `server/` are README-only stubs so the shape reflects the plan and future folder moves don't break Swift imports or doc links. See [Roadmap: phases](#roadmap-phases) for when each turns on.
 
-The Mac app embeds the sampler binaries (`Contents/Resources/samplers/<triple>/`) and pushes the right one to `~/.towertail/towertail-sampler` on each monitored server on first connect. Sampler and server are siblings (not nested) because they run in different trust zones with different deploy cadences; the only thing they'll share is the wire contract in `proto/`. See [`sampler.md`](sampler.md) for the sampler details.
+The Mac app embeds the sampler binaries (`Contents/Resources/samplers/<triple>/`) and pushes the right one to `~/.towertail/towertail-sampler` on each monitored server on first connect. Sampler and server are siblings (not nested) because they run in different trust zones with different deploy cadences; the only thing they share is the wire contract (the sampler JSON schema). See [`sampler.md`](sampler.md) for the sampler details.
 
 <a id="roadmap-phases"></a>
 ### Roadmap: phases
@@ -38,16 +37,16 @@ The lines between these phases are deliberately sharp — each is a separately s
 
 | Phase | Scope | Components |
 |---|---|---|
-| **Phase 1 — Local Mac client** *(shipping)* | A single user watches their own fleet from a menu bar, all state local. No server, no account, no cloud. | `app/mac`, `sampler/` |
-| **Phase 2 — Windows client** *(active; feature-complete, polish + MSIX pending)* | Same product on Windows. Shared wire format with the sampler and the self-hosted server; UI is a WinUI 3 / .NET 9 / C# 13 build. See [`windows-app.md`](windows-app.md). | + `app/windows` (WinUI app, xUnit Tier 1 + Tier 2 integration tests against the real Go server with `TT_CLICKHOUSE__DISABLED=true` for the no-Docker dev loop) |
-| **Phase 3 — Self-hosted server** | A company runs a Go service in their own network. Samplers ship samples to the server (not to a desktop). Desktop clients become read-only consoles talking to the server. Alert rules live on the server. | + `server/`, `proto/` formalised |
+| **Phase 1 — Local Mac client** *(shipping)* | A single user watches their own fleet from a menu bar, all state local. No server, no account, no cloud. | `apps/mac`, `sampler/` |
+| **Phase 2 — Windows client** *(active; feature-complete, polish + MSIX pending)* | Same product on Windows. Shared wire format with the sampler and the self-hosted server; UI is a WinUI 3 / .NET 9 / C# 13 build. See [`windows-app.md`](windows-app.md). | + `apps/windows` (WinUI app, xUnit Tier 1 + Tier 2 integration tests against the real Go server with `TT_CLICKHOUSE__DISABLED=true` for the no-Docker dev loop) |
+| **Phase 3 — Self-hosted server** | A company runs a Go service in their own network. Samplers ship samples to the server (not to a desktop). Desktop clients become read-only consoles talking to the server. Alert rules live on the server. | + `server/` |
 | **Phase 4 — Managed cloud** | We run the server. Multi-tenant, auth, billing. Same desktop client, a URL+key away from either a customer's self-hosted server or ours. | infrastructure repo (separate), no new top-level folder |
 
 **Guardrails.**
 
 - Don't leak later-phase concerns into earlier code. Phase 1 has no "account" concept, no "server URL" field, no "org." When Phase 3 lands, those get added in one well-scoped migration, not drip-fed through v1.
 - The desktop app's data source is an abstraction behind one protocol (local-samplers vs remote-server). Introducing the server in Phase 3 replaces the implementation, not the call sites.
-- `proto/` stays empty until Phase 3 starts. Before then, the JSON in [`sampler.md`](sampler.md) §4 *is* the contract.
+- The JSON in [`sampler.md`](sampler.md) §4 *is* the contract. There is no separate `proto/` folder.
 
 ---
 
@@ -241,7 +240,7 @@ Two sibling trees at the repo root. The Swift app consumes the Go sampler as a b
 
 ```
 towertail/
-├── app/mac/                                 # Swift — the Mac menu-bar app (Phase 1)
+├── apps/mac/                                 # Swift — the Mac menu-bar app (Phase 1)
 │   ├── Towertail.xcodeproj
 │   ├── Sources/
 │   │   ├── App/
@@ -309,7 +308,7 @@ towertail/
     ├── internal/collect/ …
     ├── internal/schema/sample.go            # canonical JSON schema
     ├── Makefile                             # build-all, build-<triple>
-    └── test/fixtures/*.json                 # shared with app/Tests/SampleDecoderTests
+    └── test/fixtures/*.json                 # shared with apps/mac/Tests/SampleDecoderTests
 ```
 
 A **`TowertailCore`** SPM package wrapping `State/`, `Collectors/`, `Storage/`, `System/Notifier`, `System/KeychainStore` is worth extracting once APIs settle — enables pure unit tests and keeps UI ignorant of SSH.

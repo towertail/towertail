@@ -14,7 +14,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 CONFIG="${1:-Debug}"
 INSTALL_DIR="${INSTALL_DIR:-/Applications}"
-BUILT_APP="app/mac/build/Build/Products/$CONFIG/Towertail.app"
+BUILT_APP="apps/mac/build/Build/Products/$CONFIG/Towertail.app"
 INSTALLED_APP="$INSTALL_DIR/Towertail.app"
 
 ./scripts/build.sampler.sh

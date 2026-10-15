@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// Node mirrors the Swift-side Node struct in app/mac/Sources/State/Node.swift.
+// Node mirrors the Swift-side Node struct in apps/mac/Sources/State/Node.swift.
 // Keys are camelCase to match the existing on-disk and wire shape.
 type Node struct {
 	ID                uuid.UUID         `json:"id"`

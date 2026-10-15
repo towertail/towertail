@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   Unified test runner for Towertail on Windows. Mirrors the UX of scripts/tests.sh
-  (Bash) but operates against the Windows client solution at app/windows/ and the
+  (Bash) but operates against the Windows client solution at apps/windows/ and the
   Go server/sampler on the same repo.
 
 .DESCRIPTION
@@ -10,7 +10,7 @@
   for Mac's default.
 
 .PARAMETER Unit
-  Tier 1. Runs `dotnet test app/windows/Towertail.sln` with
+  Tier 1. Runs `dotnet test apps/windows/Towertail.sln` with
   `--filter "Category!=FlaUI&Category!=Integration"`. No Docker required.
 
 .PARAMETER RemoteIntegration
@@ -19,7 +19,7 @@
   `Category=Integration`. Tears the stack down on exit (unless -KeepDocker).
 
 .PARAMETER Flaui
-  Tier 3. Runs `dotnet test app/windows/Towertail.UITests` with
+  Tier 3. Runs `dotnet test apps/windows/Towertail.UITests` with
   `--filter Category=FlaUI`. Requires an interactive Windows desktop session.
 
 .PARAMETER GoUnit
@@ -88,9 +88,9 @@ Set-Location $repoRoot
 
 $composeFile = Join-Path $repoRoot 'server/docker/docker-compose.test.yaml'
 $composeProject = 'towertail-win-test'
-$winSln = Join-Path $repoRoot 'app/windows/Towertail.sln'
-$winTestsProj = Join-Path $repoRoot 'app/windows/Towertail.Tests/Towertail.Tests.csproj'
-$winUiTestsProj = Join-Path $repoRoot 'app/windows/Towertail.UITests/Towertail.UITests.csproj'
+$winSln = Join-Path $repoRoot 'apps/windows/Towertail.sln'
+$winTestsProj = Join-Path $repoRoot 'apps/windows/Towertail.Tests/Towertail.Tests.csproj'
+$winUiTestsProj = Join-Path $repoRoot 'apps/windows/Towertail.UITests/Towertail.UITests.csproj'
 $flagFile = Join-Path $env:TEMP 'towertail-integration-test.env'
 
 # Parse long-form bash-style flags the Mac suite accepts, so muscle-memory
