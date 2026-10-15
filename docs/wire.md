@@ -5,7 +5,7 @@ Authoritative description of every message that flows between:
 - **Sampler → Server** — NDJSON ingest + heartbeat long-poll control channel.
 - **Server → Mac/Windows client** — REST + WebSocket.
 
-See also: [`sampler.md`](sampler.md) for the `Sample` schema (unchanged), [`server-plan.md`](server-plan.md) for the server architecture.
+See also: [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) for the `Sample` schema (unchanged), [`server-plan.md`](server-plan.md) for the server architecture.
 
 ---
 
@@ -117,7 +117,7 @@ On connect the server immediately replays the most recent `sample` for every nod
 
 The server's [`internal/wire`](../server/internal/wire/wire.go) package is the source of truth. Notable cross-module shapes:
 
-- `Sample` — identical to `sampler/internal/schema/sample.go` Sample, just relaxed around optional fields.
+- `Sample` — identical to `pkg/schema/sample.go` Sample in [towertail/sampler](https://github.com/towertail/sampler), just relaxed around optional fields.
 - `Event` — `{ id, ts, kind, nodeId, metric?, tint? }` where `kind` ∈ `threshold_crossed | reachability_changed | sampler_version` and `tint` ∈ `ok | warn | critical`.
 - `Node` — camelCase mirror of the Swift `Node` struct (`apps/mac/Sources/State/Node.swift`).
 - `ServerSettings` — camelCase mirror of the Swift `ServerSettings` class.
@@ -130,6 +130,6 @@ The server's [`internal/wire`](../server/internal/wire/wire.go) package is the s
 
 ## 6. Schema versioning
 
-- `Sample.v` tracks the sampler schema (see [`sampler.md`](sampler.md) §11). Server rejects samples with unknown `v`; it ingests `v=1` today.
+- `Sample.v` tracks the sampler schema (see [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) §11). Server rejects samples with unknown `v`; it ingests `v=1` today.
 - REST + WS do not carry a version field. Breaking changes bump the path prefix (`/v2`).
 - Bolt and ClickHouse storage are internal; schema migrations run on boot.

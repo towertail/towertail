@@ -9,7 +9,7 @@ namespace Towertail.WinUI.Backend;
 /// keys for node/settings/thresholds (matching Swift Codable defaults on
 /// the Mac side) and <b>snake_case</b> for the sampler-wire types
 /// (sample frames, enroll request/response) that mirror
-/// <c>docs/sampler.md</c>. We match both conventions explicitly.
+/// <c>https://github.com/towertail/sampler/blob/main/docs/wire-format.md</c>. We match both conventions explicitly.
 /// </summary>
 public sealed record RemoteNode(
     [property: JsonPropertyName("id")] Guid Id,
@@ -45,7 +45,7 @@ public sealed record RemoteClientSettings(
 
 // Stream frames: envelope uses camelCase (`nodeId`) per
 // server/internal/wire/wire.go WSMessage. The inner sample payload is
-// the raw sampler NDJSON which stays snake_case per docs/sampler.md §4.
+// the raw sampler NDJSON which stays snake_case per https://github.com/towertail/sampler/blob/main/docs/wire-format.md §4.
 public sealed record RemoteStreamFrame(
     [property: JsonPropertyName("type")] string Type,
     [property: JsonPropertyName("nodeId")] Guid? NodeId,

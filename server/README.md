@@ -47,7 +47,7 @@ Defaults ship in code; override via `TT_CONFIG_FILE=/path/to/towertail-server.ya
 
 ## Build
 
-The module path is `github.com/towertail/towertail/server`. Release tags use the form `server/vX.Y.Z`. The module imports `sampler/pkg/schema` through the root `go.work`.
+The module path is `github.com/towertail/towertail/server`. Release tags use the form `server/vX.Y.Z`. The module imports `pkg/schema` from `github.com/towertail/sampler` (version in `go.mod`).
 
 ```bash
 go build -o bin/towertail-server ./cmd/towertail-server

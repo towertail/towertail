@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 namespace Towertail.WinUI.State;
 
 /// <summary>
-/// Top-level sampler output. Mirrors docs/sampler.md §4 byte-for-byte.
+/// Top-level sampler output. Mirrors https://github.com/towertail/sampler/blob/main/docs/wire-format.md §4 byte-for-byte.
 /// Schema is versioned via the top-level <c>v</c> integer — bumps are a wire-contract change.
 /// </summary>
 public sealed record Sample(
@@ -125,7 +125,7 @@ public sealed record ProcSample(
 );
 
 /// <summary>
-/// Cheap host-level health signals (docs/sampler.md §4 <c>health</c>). Every field except
+/// Cheap host-level health signals (https://github.com/towertail/sampler/blob/main/docs/wire-format.md §4 <c>health</c>). Every field except
 /// <c>Procs</c> is null when the host OS does not expose it.
 /// </summary>
 public sealed record HealthInfo(

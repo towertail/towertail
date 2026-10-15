@@ -16,14 +16,14 @@ Hosts are discovered from `tailscale status --json` and/or added manually. Crede
 towertail/
 ├── apps/
 │   ├── mac/      # Phase 1 — SwiftUI macOS menu-bar app (v1 shipping target)
-│   └── windows/  # Phase 2 — stub, not started
-├── sampler/      # Go collector binary, 5 target triples, bundled into apps/mac
-├── server/       # Phase 3 — stub; self-hostable Go control-plane service
+│   └── windows/  # Phase 2 — WinUI 3 / .NET 9 client
+├── server/       # Phase 3 — self-hostable Go control-plane service
 ├── scripts/      # build.sh, build.app.sh, fetch-samplers.sh
-└── docs/         # PLAN.md (source of truth), sampler.md, research notes, design.pen, screenshots/
+├── samplers.lock # the towertail/sampler release that the apps bundle
+└── docs/         # PLAN.md (source of truth), research notes, design.pen, screenshots/
 ```
 
-Today only `apps/mac/` and `sampler/` have real content. `apps/windows/` and `server/` are README-only stubs reflecting the phased roadmap — see [PLAN.md § Roadmap: phases](docs/PLAN.md#roadmap-phases).
+The sampler (the Go collector on each host) is in its own repository: [towertail/sampler](https://github.com/towertail/sampler). The apps bundle the binaries of the release that `samplers.lock` pins. See [PLAN.md § Roadmap: phases](docs/PLAN.md#roadmap-phases) for the phases.
 
 ## Requirements
 
@@ -69,23 +69,22 @@ It runs as a menu-bar only app (`LSUIElement`) — look for the `server.rack` gl
 # Swift tests
 xcodebuild -project apps/mac/Towertail.xcodeproj -scheme Towertail test
 
-# Go sampler tests
-cd sampler && go test ./...
+# Go server tests
+cd server && go test ./...
 ```
 
 ## Sampler — standalone
 
-The sampler runs fine on its own if you want to see what a sample looks like:
+The sampler runs fine on its own if you want to see what a sample looks like. In a clone of [towertail/sampler](https://github.com/towertail/sampler):
 
 ```bash
-cd sampler
 go run ./cmd/sampler --once          # one JSON sample
 go run ./cmd/sampler --interval 1s   # NDJSON stream
 go run ./cmd/sampler --version
 go run ./cmd/sampler --self-check
 ```
 
-Schema and flags are documented in [`docs/sampler.md`](docs/sampler.md).
+Schema and flags are documented in [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md).
 
 ### Sample output
 
@@ -185,12 +184,12 @@ One JSON object per sample. Newline-delimited in streaming mode. Fields are stab
 | `procs.items[].read_bytes` / `write_bytes` | int? | Lifetime per-proc disk I/O. Linux only, SSH user's own procs without `CAP_SYS_PTRACE`; always omitted on macOS. |
 | `errors[]` | string[] | Non-fatal collector errors. |
 
-See [`docs/sampler.md`](docs/sampler.md) §4 for full field semantics, permission notes, and degradation rules.
+See [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) §4 for full field semantics, permission notes, and degradation rules.
 
 ## Docs
 
 - [`docs/PLAN.md`](docs/PLAN.md) — product decisions, visual design, architecture, milestones.
-- [`docs/sampler.md`](docs/sampler.md) — Go sampler spec: JSON schema, build matrix, bootstrap handshake.
+- [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) (towertail/sampler) — Go sampler spec: JSON schema, build matrix, bootstrap handshake.
 - [`docs/research-stats.md`](docs/research-stats.md), [`research-backend.md`](docs/research-backend.md), [`research-frontend.md`](docs/research-frontend.md) — background research.
 - [`docs/screenshots/`](docs/screenshots/) — current Pencil design exports.
 

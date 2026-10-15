@@ -40,11 +40,8 @@ services:
 
   server:
     build:
-      # Context is the repo root so the Dockerfile sees both server/
-      # and sampler/ modules plus go.work — the server imports
-      # sampler/pkg/schema via the workspace.
-      context: ../..
-      dockerfile: server/docker/Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
     image: ghcr.io/towertail/server:latest
     restart: unless-stopped
     depends_on:

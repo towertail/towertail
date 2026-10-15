@@ -3,7 +3,7 @@
 // Types here are authoritative; clients must match these exactly.
 //
 // Metric-shape types (Sample, Host, CPU, …) are re-exported from
-// sampler/pkg/schema so the wire contract has one source of truth.
+// github.com/towertail/sampler/pkg/schema so the wire contract has one source of truth.
 // The sampler emits schema.Sample on stdout/push; the server decodes
 // the same struct here. Types below that aren't re-exports are
 // server-only (API envelopes, WebSocket framing, auth/enroll).
@@ -17,7 +17,7 @@ import (
 	"github.com/towertail/sampler/pkg/schema"
 )
 
-// --- Metric shapes re-exported from sampler/pkg/schema ---
+// --- Metric shapes re-exported from schema ---
 
 type (
 	Host         = schema.HostInfo

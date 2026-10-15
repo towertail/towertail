@@ -36,9 +36,6 @@ jobs:
           filters: |
             run:
               - 'server/**'
-              - 'sampler/**'
-              - 'go.work'
-              - 'go.work.sum'
               - 'scripts/build.server.sh'
               - '.github/workflows/server.yml'
 
@@ -54,9 +51,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: server/go.mod
-          cache-dependency-path: |
-            server/go.sum
-            sampler/go.sum
+          cache-dependency-path: server/go.sum
       - name: go vet
         working-directory: server
         run: go vet ./...
@@ -66,21 +61,6 @@ jobs:
       - name: ClickHouse integration tests (testcontainers)
         working-directory: server
         run: go test -tags=integration -timeout=180s ./internal/clickhouse/...
-
-  sampler:
-    name: server / sampler
-    needs: changes
-    if: needs.changes.outputs.run == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.work
-          cache-dependency-path: sampler/go.sum
-      - run: bash scripts/tests.sh --sampler
 
   build:
     name: server / build
@@ -95,10 +75,8 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: server/go.mod
-          cache-dependency-path: |
-            server/go.sum
-            sampler/go.sum
+          cache-dependency-path: server/go.sum
       - name: Build binary
         run: bash scripts/build.server.sh
       - name: Build image
-        run: docker build -f server/docker/Dockerfile -t towertail/server:ci .
+        run: docker build -f server/docker/Dockerfile -t towertail/server:ci server

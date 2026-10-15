@@ -36,7 +36,6 @@ jobs:
           filters: |
             run:
               - 'apps/windows/**'
-              - 'sampler/**'
               - 'scripts/*.ps1'
               - 'scripts/fetch-samplers.sh'
               - 'samplers.lock'
@@ -76,10 +75,8 @@ jobs:
           dotnet-version: '9.0.x'
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.work
-          cache-dependency-path: |
-            server/go.sum
-            sampler/go.sum
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
       - name: Fetch sampler binaries
         run: bash scripts/fetch-samplers.sh windows-amd64
       - name: Tier 2 integration tests

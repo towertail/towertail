@@ -59,14 +59,16 @@ apps/windows/Towertail.WinUI/Assets/samplers/
 **/.swiftpm/
 
 # ---------------------------------------------------------------------------
-# Go (sampler, server)
+# Go (server)
 # ---------------------------------------------------------------------------
 # Compiled binaries (the intended output path is dist/, already ignored).
 # Guard against stray local builds dropping into the module roots.
-sampler/sampler
-sampler/*.exe
 server/server
 server/*.exe
+
+# Local workspace for server + a sampler clone (see CLAUDE.md)
+go.work
+go.work.sum
 
 # Go test coverage
 *.out
