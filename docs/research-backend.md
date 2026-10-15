@@ -322,7 +322,7 @@ Locate the CLI in order: `/Applications/Tailscale.app/Contents/MacOS/Tailscale` 
 
 ```json
 {
-  "Self":  { "HostName": "fritz-mac", "DNSName": "fritz-mac.tail-scale.ts.net." },
+  "Self":  { "HostName": "my-mac", "DNSName": "my-mac.tail-scale.ts.net." },
   "Peer":  {
      "nodekey:abc...": {
         "HostName":     "bigbox",

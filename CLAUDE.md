@@ -104,7 +104,7 @@ Sync uses a tar pipe (no rsync needed on the VM side — winvm has `tar` via Git
 - **Samplers copy into the bundle via the `CopySamplers` MSBuild target.** If you skip `scripts/build.sampler.sh`, `Assets\samplers\<triple>\` is empty and `LocalSamplerInvoker` fails every poll. The Windows-side `build.windows.ps1` calls `bash scripts/build.sampler.sh` before building; `winvm-run.sh build` currently assumes the VM already has a recent `dist/samplers/` — run `build.windows.ps1` once after pulling fresh sampler changes to refresh.
 - **Kill existing Towertail before relaunch.** `winvm-run.sh run` does this automatically (`Get-Process Towertail | Stop-Process`). If you skip it, the single-instance guard redirects activation to the stale build.
 - **Logs live at `%LOCALAPPDATA%\Towertail\logs\towertail-YYYYMMDD.log`** (not `%APPDATA%`). Settings + SQLite history live at `%APPDATA%\Towertail\`.
-- **VS Code Remote-SSH** is an option if you want full IntelliSense + the `dotnet` debugger on the VM — connect with `code --remote ssh-remote+winvm /c/Users/fritz/Projects/towertail`. Keep the `winvm-*.sh` workflow for the Mac-side edit loop though; Remote-SSH is heavier and editing the same repo from two places invites merge pain.
+- **VS Code Remote-SSH** is an option if you want full IntelliSense + the `dotnet` debugger on the VM — connect with `code --remote ssh-remote+winvm /c/Users/<you>/Projects/towertail`. Keep the `winvm-*.sh` workflow for the Mac-side edit loop though; Remote-SSH is heavier and editing the same repo from two places invites merge pain.
 - **`git status` on the VM should show only files you actually changed.** If it reports every file as modified, the `doctor` step was skipped — rerun it.
 
 ## Sampler — `sampler/`

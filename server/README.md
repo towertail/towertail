@@ -13,7 +13,7 @@ docker compose up -d
 Point the Mac app at `https://localhost` (via Caddy) after issuing a user token:
 
 ```bash
-docker compose exec server towertail-server token issue --kind=user --label=fritz
+docker compose exec server towertail-server token issue --kind=user --label=my-mac
 ```
 
 ## Layout

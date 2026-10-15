@@ -7,7 +7,7 @@ with zoom/pan/hover, per-host process tables hydrated from a 2h SQLite ring, Tai
 sampler bootstrap via /usr/bin/ssh. docs/PLAN.md Phase 2 reads: "Ship the same product on Windows. Still local-only. Shared wire format with the sampler; UI is
  a from-scratch native build." app/windows/README.md is the only thing currently in that folder.
 
-What we're building. A native Windows tray app at /Users/fritz/Projects/towertail/app/windows/ that is functionally equivalent to the Mac client: same sampler
+What we're building. A native Windows tray app at $HOME/Projects/towertail/app/windows/ that is functionally equivalent to the Mac client: same sampler
 binaries, same JSON wire format (schema v=1 from docs/sampler.md §4), same SQLite history schema (4 tables from HistoryStore.swift), and a settings.json format
  that round-trips with the Mac client so a user can copy the file between OSes. WinUI 3 + .NET 9 + C# 13, packaged both as unpackaged portable ZIP and MSIX
 (Store + sideload). x64 primary, ARM64 secondary (Surface Pro X / Copilot+ PCs).
@@ -236,7 +236,7 @@ All fields use camelCase JSON keys matching the existing Mac Codable output. Nod
 {
   "schemaVersion": 1,
   "nodes": [ { "id": "<uuid>", "displayName": "db-primary", "kind": "ssh",
-               "sshUser": "fritz", "sshHost": "db.tail1234.ts.net",
+               "sshUser": "me", "sshHost": "db.tail1234.ts.net",
                "tags": ["prod"], "enabled": true,
                "iconOnWarn": true, "iconOnCritical": true,
                "notifyOnWarn": true, "notifyOnCritical": true,

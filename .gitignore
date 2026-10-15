@@ -78,9 +78,13 @@ coverage.*
 *.log
 logs/
 
-# Local env overrides
+# Local env overrides and keys
 .env
-.env.local
+.env.*
+*.pem
+*.key
+!*.example
+scripts/winvm.env
 
 # ---------------------------------------------------------------------------
 # Editor / tooling

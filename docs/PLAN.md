@@ -9,7 +9,7 @@ This document is the single source of truth for building v1. It consolidates the
 - [`research-frontend.md`](research-frontend.md) — MenuBarExtra scaffolding, SwiftUI Charts sparklines, `@Observable` state, preferences.
 - [`sampler.md`](sampler.md) — Go sampler binary spec: JSON schema, build matrix, bootstrap handshake, permissions.
 
-Reference imagery in [`screenshots/`](screenshots/): the Stats popover strip (`stats-popups.png`), menu-bar widget strip (`stats-menus.png`), and `mac-stats.com` hero.
+Reference imagery: see the screenshots on the [Stats GitHub page](https://github.com/exelban/stats) and the [mac-stats.com](https://mac-stats.com) site.
 
 ### Repository layout
 

@@ -21,7 +21,7 @@ struct TailscaleSource: View {
                 Spacer()
                 Toggle("Prefer MagicDNS name over IP", isOn: $preferMagicDNS)
                     .onChange(of: preferMagicDNS) { _, _ in rebuildRows() }
-                    .help("When on, the host column uses your MagicDNS name (e.g. foo.tail8ed2.ts.net) instead of 100.x.x.x.")
+                    .help("When on, the host column uses your MagicDNS name (e.g. foo.tail1234.ts.net) instead of 100.x.x.x.")
             }
 
             if loading {

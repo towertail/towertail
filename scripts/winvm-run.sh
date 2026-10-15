@@ -12,9 +12,21 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-HOST="${WINVM_HOST:-fritz@winvm}"
-REMOTE_PATH="${WINVM_REMOTE:-C:\\Users\\fritz\\Projects\\towertail}"
-REMOTE_PATH_UNIX="${WINVM_REMOTE_UNIX:-/c/Users/fritz/Projects/towertail}"
+# Read WINVM_HOST and WINVM_REMOTE from the environment or scripts/winvm.env.
+# shellcheck source=/dev/null
+[[ -f "$REPO_ROOT/scripts/winvm.env" ]] && source "$REPO_ROOT/scripts/winvm.env"
+: "${WINVM_HOST:?not set. Copy scripts/winvm.env.example to scripts/winvm.env and edit it.}"
+: "${WINVM_REMOTE:?not set. Copy scripts/winvm.env.example to scripts/winvm.env and edit it.}"
+HOST="$WINVM_HOST"
+# C:\Users\me\x -> /c/Users/me/x
+if [[ -z "${WINVM_REMOTE_UNIX:-}" ]]; then
+  WINVM_REMOTE_UNIX="${WINVM_REMOTE//\\//}"
+  drive="${WINVM_REMOTE_UNIX%%:*}"
+  WINVM_REMOTE_UNIX="/$(tr '[:upper:]' '[:lower:]' <<<"$drive")${WINVM_REMOTE_UNIX#*:}"
+fi
+REMOTE_PATH="$WINVM_REMOTE"
+REMOTE_PATH_UNIX="$WINVM_REMOTE_UNIX"
+export WINVM_HOST WINVM_REMOTE WINVM_REMOTE_UNIX
 CMD="${1:-build}"
 
 sync() {
