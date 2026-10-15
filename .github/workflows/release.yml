@@ -17,6 +17,7 @@ on:
       - 'scripts/*.ps1'
       - 'scripts/winvm-*.sh'
       - '.github/workflows/ci.yaml'
+      - '.github/workflows/cla.yml'
   workflow_dispatch:
 
 permissions: {}
