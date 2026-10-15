@@ -18,7 +18,9 @@
 # Flags (composable; default is --swift-unit --go-unit --sampler):
 #   --swift-unit          xcodebuild unit tests (fast, no Docker)
 #   --swift-integration   e2e tests against docker-compose.test.yaml
-#                         (requires --docker-up beforehand, or pair with --all)
+#                         (requires --docker-up or --server-local, or pair with --all)
+#   --server-local        build and start the Go server on the host with
+#                         ClickHouse disabled (no Docker); stop it on exit
 #   --go-unit             go test ./... on server+sampler (no build tags)
 #   --go-integration      go test -tags=integration on server (uses testcontainers)
 #   --sampler             go test ./... on sampler module
@@ -44,6 +46,7 @@ GO_UNIT=0
 GO_INT=0
 SAMPLER=0
 DOCKER_UP=0
+SERVER_LOCAL=0
 DOCKER_DOWN=0
 DOCKER_LOGS=0
 KEEP_DOCKER=0
@@ -64,13 +67,14 @@ while [[ $# -gt 0 ]]; do
     --go-integration)    GO_INT=1 ;;
     --sampler)           SAMPLER=1 ;;
     --docker-up)         DOCKER_UP=1 ;;
+    --server-local)      SERVER_LOCAL=1 ;;
     --docker-down)       DOCKER_DOWN=1 ;;
     --docker-logs)       DOCKER_LOGS=1 ;;
     --keep-docker)       KEEP_DOCKER=1 ;;
     --all)               ALL=1 ;;
     -v|--verbose)        VERBOSE=1 ;;
     -h|--help)
-      sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -126,6 +130,45 @@ docker_down() {
 
 docker_follow_logs() {
   compose logs -f --tail=50
+}
+
+# -- Local server (no Docker) ---------------------------------------------
+
+SERVER_LOCAL_DIR=""
+SERVER_LOCAL_PID=""
+
+server_local_up() {
+  section "starting local server (ClickHouse disabled)"
+  local port="${TT_TEST_PORT_SERVER:-18080}"
+  SERVER_LOCAL_DIR="$(mktemp -d)"
+  (cd "$REPO_ROOT/server" && go build -o "$SERVER_LOCAL_DIR/towertail-server" ./cmd/towertail-server)
+  TT_HTTP__ADDR="127.0.0.1:$port" \
+  TT_CLICKHOUSE__DISABLED=true \
+  TT_STORAGE__PATH="$SERVER_LOCAL_DIR/data" \
+  TT_AUTH__BOOTSTRAP_TOKEN="tt-test-admin-token-0000000000000000" \
+  TT_CLOUD__MANAGED=false \
+  TT_LOG__FORMAT=text \
+    "$SERVER_LOCAL_DIR/towertail-server" serve >"$SERVER_LOCAL_DIR/server.log" 2>&1 &
+  SERVER_LOCAL_PID=$!
+  for _ in $(seq 1 60); do
+    if curl -fsS "http://127.0.0.1:$port/readyz" >/dev/null 2>&1; then
+      pass "local server is ready on :$port"
+      return 0
+    fi
+    if ! kill -0 "$SERVER_LOCAL_PID" 2>/dev/null; then break; fi
+    sleep 1
+  done
+  fail "local server did not become ready"
+  cat "$SERVER_LOCAL_DIR/server.log" >&2
+  return 1
+}
+
+server_local_down() {
+  [[ -n "$SERVER_LOCAL_PID" ]] || return 0
+  kill "$SERVER_LOCAL_PID" 2>/dev/null || true
+  wait "$SERVER_LOCAL_PID" 2>/dev/null || true
+  rm -rf "$SERVER_LOCAL_DIR"
+  SERVER_LOCAL_PID=""
 }
 
 # -- Swift tests ----------------------------------------------------------
@@ -247,7 +290,9 @@ if [[ $NEEDS_DOCKER -eq 1 ]] && [[ $ALL -eq 1 ]]; then
   docker_up
 fi
 
-trap 'rc=$?; if [[ $ALL -eq 1 ]] && [[ $KEEP_DOCKER -eq 0 ]] && [[ $NEEDS_DOCKER -eq 1 ]]; then docker_down; fi; exit $rc' EXIT
+trap 'rc=$?; server_local_down; if [[ $ALL -eq 1 ]] && [[ $KEEP_DOCKER -eq 0 ]] && [[ $NEEDS_DOCKER -eq 1 ]]; then docker_down; fi; exit $rc' EXIT
+
+if [[ $SERVER_LOCAL -eq 1 ]]; then server_local_up; fi
 
 [[ $GO_UNIT -eq 1 ]] && go_unit
 [[ $SAMPLER -eq 1 ]] && sampler_tests

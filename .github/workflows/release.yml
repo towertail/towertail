@@ -7,16 +7,19 @@ name: Release
 on:
   push:
     branches: [main]
-    # These files are not in the Mac app. A change to them only must not restart every install.
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'apps/windows/**'
-      - 'server/**'
-      - 'scripts/*.ps1'
-      - 'scripts/winvm-*.sh'
-      - '.github/workflows/ci.yaml'
-      - '.github/workflows/cla.yml'
+    # Only the inputs of the Mac app. Each release restarts every install.
+    # To test a change to this file, use workflow_dispatch.
+    paths:
+      - 'apps/mac/**'
+      - 'sampler/**'
+      - 'samplers.lock'
+      - 'scripts/build.sh'
+      - 'scripts/build.app.sh'
+      - 'scripts/build.sampler.sh'
+      - 'scripts/fetch-samplers.sh'
+      - '!**.md'
+      - '!apps/mac/Tests/**'
+      - '!sampler/**/*_test.go'
   workflow_dispatch:
 
 permissions: {}
@@ -35,12 +38,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.24'
           cache-dependency-path: sampler/go.sum

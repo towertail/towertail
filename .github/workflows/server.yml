@@ -1,0 +1,104 @@
+name: server
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The required checks must report on every PR, so path filters live
+  # here and not in "on:". A skipped job counts as a pass.
+  changes:
+    name: server / changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      run: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.run == 'true' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: filter
+        if: github.event_name != 'workflow_dispatch'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            run:
+              - 'server/**'
+              - 'sampler/**'
+              - 'go.work'
+              - 'go.work.sum'
+              - 'scripts/build.server.sh'
+              - '.github/workflows/server.yml'
+
+  test:
+    name: server / test
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: |
+            server/go.sum
+            sampler/go.sum
+      - name: go vet
+        working-directory: server
+        run: go vet ./...
+      - name: Unit tests
+        working-directory: server
+        run: go test ./...
+      - name: ClickHouse integration tests (testcontainers)
+        working-directory: server
+        run: go test -tags=integration -timeout=180s ./internal/clickhouse/...
+
+  sampler:
+    name: server / sampler
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: sampler/go.mod
+          cache-dependency-path: sampler/go.sum
+      - run: bash scripts/tests.sh --sampler
+
+  build:
+    name: server / build
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: |
+            server/go.sum
+            sampler/go.sum
+      - name: Build binary
+        run: bash scripts/build.server.sh
+      - name: Build image
+        run: docker build -f server/docker/Dockerfile -t towertail/server:ci .

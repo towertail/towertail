@@ -1,0 +1,94 @@
+name: windows
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The required checks must report on every PR, so path filters live
+  # here and not in "on:". A skipped job counts as a pass.
+  changes:
+    name: windows / changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      run: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.run == 'true' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: filter
+        if: github.event_name != 'workflow_dispatch'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            run:
+              - 'apps/windows/**'
+              - 'sampler/**'
+              - 'scripts/*.ps1'
+              - 'scripts/build.sampler.sh'
+              - 'samplers.lock'
+              - '.github/workflows/windows.yml'
+
+  unit:
+    name: windows / unit
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '9.0.x'
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.work
+          cache-dependency-path: sampler/go.sum
+      - name: Build sampler binaries
+        run: bash scripts/build.sampler.sh windows-amd64
+      - name: Tier 1 unit tests
+        run: pwsh scripts/test.ps1 --unit
+        shell: pwsh
+
+  # Docker on hosted Windows runners runs Windows containers only, so the
+  # tests start the Go server as a child process with ClickHouse disabled.
+  integration:
+    name: windows / integration
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '9.0.x'
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.work
+          cache-dependency-path: |
+            server/go.sum
+            sampler/go.sum
+      - name: Build sampler binaries
+        run: bash scripts/build.sampler.sh windows-amd64
+      - name: Tier 2 integration tests
+        run: pwsh scripts/test.ps1 --remote-integration
+        shell: pwsh
+        env:
+          TOWERTAIL_LOCAL_SERVER: '1'
+          TOWERTAIL_REPO_ROOT: ${{ github.workspace }}

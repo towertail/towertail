@@ -634,18 +634,24 @@ Contract tests (cross-language)
 
 CI matrix (GitHub Actions)
 
+Three workflows. Each runs only when its paths change, on PRs and on pushes to `main`.
+
 ```yaml
-jobs:
-  sampler-tests:        # ubuntu-latest; scripts/tests.sh --sampler
-  mac-unit:             # macos-14;     scripts/tests.sh --swift-unit
-  mac-integration:      # macos-14;     scripts/tests.sh --all (brings Docker up/down)
-  windows-unit:         # windows-latest; scripts/test.ps1 --unit
-  windows-integration:  # windows-latest; scripts/test.ps1 --remote-integration
-  windows-flaui:        # self-hosted Windows; scripts/test.ps1 --flaui  (nightly cron)
+server.yml:   # ubuntu-latest
+  server / test         # go vet, go test, ClickHouse tests (testcontainers)
+  server / sampler      # scripts/tests.sh --sampler
+  server / build        # scripts/build.server.sh, docker build
+mac.yml:      # macos-15
+  mac / unit            # scripts/tests.sh --swift-unit
+  mac / integration     # scripts/tests.sh --server-local --swift-integration
+windows.yml:  # windows-latest
+  windows / unit        # scripts/test.ps1 --unit
+  windows / integration # scripts/test.ps1 --remote-integration (TOWERTAIL_LOCAL_SERVER=1)
 ```
 
-- `windows-latest` has Docker Desktop available via `docker/setup-docker-action@v4`. Windows App Runtime must be installed in-step (`Add-AppxPackage WindowsAppRuntimeInstall-x64.msix`) OR the project publishes self-contained (`<WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>`). We use self-contained for CI — simpler.
-- Tier 2 uses Linux containers; they run on windows-latest via WSL 2 backend (pre-installed). Fixed loopback ports avoid runner-to-runner contamination.
+- Hosted runners have no Docker for Linux containers on macOS or Windows. The integration jobs start the Go server on the host with `TT_CLICKHOUSE__DISABLED=true`. ClickHouse tests run in `server.yml` only.
+- The projects publish self-contained (`<WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>`), so CI does not install the Windows App Runtime.
+- FlaUI tests need an interactive desktop. CI does not run them. Run `scripts/test.ps1 --flaui` on a Windows desktop.
 
 scripts/test.ps1 — Windows test runner
 
