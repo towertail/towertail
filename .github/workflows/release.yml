@@ -11,15 +11,12 @@ on:
     # To test a change to this file, use workflow_dispatch.
     paths:
       - 'apps/mac/**'
-      - 'sampler/**'
       - 'samplers.lock'
       - 'scripts/build.sh'
       - 'scripts/build.app.sh'
-      - 'scripts/build.sampler.sh'
       - 'scripts/fetch-samplers.sh'
       - '!**.md'
       - '!apps/mac/Tests/**'
-      - '!sampler/**/*_test.go'
   workflow_dispatch:
 
 permissions: {}
@@ -42,11 +39,6 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version: '1.24'
-          cache-dependency-path: sampler/go.sum
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -89,13 +81,15 @@ jobs:
           rm "$RUNNER_TEMP/cert.p12"
           security find-identity -v -p codesigning "$kc"
 
+      - name: Fetch samplers
+        run: scripts/fetch-samplers.sh
+
       - name: Build
         env:
           VERSION: ${{ steps.version.outputs.version }}
           BUILD_NUMBER: ${{ github.run_number }}
           SIGN_IDENTITY: "Developer ID Application: Fritz Larco (Q56WK6TB88)"
         run: |
-          scripts/build.sampler.sh
           scripts/build.app.sh Release
           ditto apps/mac/build/Build/Products/Release/Towertail.app Towertail.app
           codesign --verify --deep --strict Towertail.app

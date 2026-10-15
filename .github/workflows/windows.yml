@@ -38,7 +38,7 @@ jobs:
               - 'apps/windows/**'
               - 'sampler/**'
               - 'scripts/*.ps1'
-              - 'scripts/build.sampler.sh'
+              - 'scripts/fetch-samplers.sh'
               - 'samplers.lock'
               - '.github/workflows/windows.yml'
 
@@ -54,12 +54,8 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: '9.0.x'
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.work
-          cache-dependency-path: sampler/go.sum
-      - name: Build sampler binaries
-        run: bash scripts/build.sampler.sh windows-amd64
+      - name: Fetch sampler binaries
+        run: bash scripts/fetch-samplers.sh windows-amd64
       - name: Tier 1 unit tests
         run: pwsh scripts/test.ps1 --unit
         shell: pwsh
@@ -84,8 +80,8 @@ jobs:
           cache-dependency-path: |
             server/go.sum
             sampler/go.sum
-      - name: Build sampler binaries
-        run: bash scripts/build.sampler.sh windows-amd64
+      - name: Fetch sampler binaries
+        run: bash scripts/fetch-samplers.sh windows-amd64
       - name: Tier 2 integration tests
         run: pwsh scripts/test.ps1 --remote-integration
         shell: pwsh

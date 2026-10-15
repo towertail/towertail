@@ -6,7 +6,7 @@
 # Cross-platform note:
 #   This script is the macOS / Linux side. The Windows client has its own
 #   PowerShell runner at scripts/test.ps1 with symmetric flags (--unit,
-#   --remote-integration, --flaui, --go-unit, --go-integration, --sampler).
+#   --remote-integration, --flaui, --go-unit, --go-integration).
 #   Both drive the same server/docker/docker-compose.test.yaml stack and
 #   share the TOWERTAIL_INTEGRATION flag-file contract so CI matrices stay
 #   in lockstep. --go-unit / --go-integration / --sampler work from a
@@ -23,7 +23,7 @@
 #                         ClickHouse disabled (no Docker); stop it on exit
 #   --go-unit             go test ./... on server+sampler (no build tags)
 #   --go-integration      go test -tags=integration on server (uses testcontainers)
-#   --sampler             go test ./... on sampler module
+#   --sampler             go test ./... on $SAMPLER_DIR (default sampler/)
 #   --docker-up           bring up docker-compose.test.yaml
 #   --docker-down         tear down docker-compose.test.yaml (volumes too)
 #   --docker-logs         follow server logs (useful when a test fails)
@@ -205,12 +205,8 @@ swift_unit() {
   section "swift unit tests"
   quit_running_towertail
   regenerate_xcode_if_needed
-  # Ensure samplers are bundled so app build succeeds.
-  if [[ ! -d "$REPO_ROOT/dist/samplers/darwin-arm64" ]] && \
-     [[ ! -d "$REPO_ROOT/dist/samplers/darwin-amd64" ]]; then
-    section "building host sampler (needed by app bundle pre-build)"
-    "$REPO_ROOT/scripts/build.sampler.sh"
-  fi
+  # The app bundle pre-build copies dist/samplers/.
+  "$REPO_ROOT/scripts/fetch-samplers.sh"
   xcodebuild -project "$PROJECT" -scheme "$SCHEME" -destination "$DESTINATION" \
     test 2>&1 | xcpretty_or_grep
   pass "swift unit tests"
@@ -220,8 +216,8 @@ swift_integration() {
   section "swift integration tests (real server + clickhouse)"
   quit_running_towertail
   regenerate_xcode_if_needed
-  # Build sampler binary for push-mode smoke test.
-  "$REPO_ROOT/scripts/build.sampler.sh"
+  # The push-mode smoke test runs the sampler binary.
+  "$REPO_ROOT/scripts/fetch-samplers.sh"
 
   # xcodebuild doesn't reliably forward shell env vars to macOS test
   # hosts, so we drop config into a file the tests read on load.
@@ -262,9 +258,15 @@ go_integration() {
   pass "server integration tests"
 }
 
+# Tests the sampler in $SAMPLER_DIR (default: sampler/ while it is still here).
 sampler_tests() {
-  section "go unit tests (sampler)"
-  (cd "$REPO_ROOT/sampler" && go test ./...)
+  local dir="${SAMPLER_DIR:-$REPO_ROOT/sampler}"
+  section "go unit tests (sampler in $dir)"
+  if [[ ! -d "$dir" ]]; then
+    echo "skip: no sampler at $dir (set SAMPLER_DIR to a towertail/sampler clone)"
+    return
+  fi
+  (cd "$dir" && go test ./...)
   pass "sampler tests"
 }
 

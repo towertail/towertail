@@ -2,7 +2,7 @@
 .SYNOPSIS
   Unified test runner for Towertail on Windows. Mirrors the UX of scripts/tests.sh
   (Bash) but operates against the Windows client solution at apps/windows/ and the
-  Go server/sampler on the same repo.
+  Go server on the same repo.
 
 .DESCRIPTION
   Flags are composable. When invoked with no flags, runs the fast tier-1 path
@@ -30,9 +30,6 @@
   Delegates to `go test -tags=integration -timeout=180s ./internal/clickhouse/...`
   on server/ (testcontainers-clickhouse).
 
-.PARAMETER Sampler
-  Delegates to `go test ./...` on sampler/.
-
 .PARAMETER DockerUp
   Boot server/docker/docker-compose.test.yaml.
 
@@ -43,7 +40,7 @@
   Tail `docker compose logs -f` on the test stack.
 
 .PARAMETER All
-  --unit + --remote-integration + --go-unit + --go-integration + --sampler.
+  --unit + --remote-integration + --go-unit + --go-integration.
   Manages docker up/down automatically.
 
 .PARAMETER KeepDocker
@@ -70,7 +67,6 @@ param(
   [switch]$Flaui,
   [switch]$GoUnit,
   [switch]$GoIntegration,
-  [switch]$Sampler,
   [switch]$DockerUp,
   [switch]$DockerDown,
   [switch]$DockerLogs,
@@ -102,7 +98,6 @@ foreach ($arg in $Rest) {
     '--flaui'               { $Flaui = $true }
     '--go-unit'             { $GoUnit = $true }
     '--go-integration'      { $GoIntegration = $true }
-    '--sampler'             { $Sampler = $true }
     '--docker-up'           { $DockerUp = $true }
     '--docker-down'         { $DockerDown = $true }
     '--docker-logs'         { $DockerLogs = $true }
@@ -121,12 +116,11 @@ if ($All) {
   $RemoteIntegration = $true
   $GoUnit = $true
   $GoIntegration = $true
-  $Sampler = $true
 }
 
 # Default to tier-1 when no flags are given.
 if (-not ($Unit -or $RemoteIntegration -or $Flaui -or $GoUnit -or $GoIntegration -or
-          $Sampler -or $DockerUp -or $DockerDown -or $DockerLogs)) {
+          $DockerUp -or $DockerDown -or $DockerLogs)) {
   $Unit = $true
 }
 
@@ -275,16 +269,6 @@ function Run-GoIntegration {
   Write-Pass 'server integration tests'
 }
 
-function Run-Sampler {
-  Write-Section 'go unit tests (sampler)'
-  Push-Location (Join-Path $repoRoot 'sampler')
-  try {
-    & go test ./...
-    if ($LASTEXITCODE -ne 0) { throw 'sampler go test failed' }
-  } finally { Pop-Location }
-  Write-Pass 'sampler tests'
-}
-
 # -- main ------------------------------------------------------------------
 
 if ($DockerDown) { Docker-Down }
@@ -296,7 +280,6 @@ $failures = 0
 
 try {
   if ($GoUnit)            { try { Run-GoUnit }            catch { $failures++; Write-Fail $_.Exception.Message } }
-  if ($Sampler)           { try { Run-Sampler }           catch { $failures++; Write-Fail $_.Exception.Message } }
   if ($GoIntegration)     { try { Run-GoIntegration }     catch { $failures++; Write-Fail $_.Exception.Message } }
   if ($Unit)              { try { Run-Unit }              catch { $failures++; Write-Fail $_.Exception.Message } }
   if ($RemoteIntegration) {

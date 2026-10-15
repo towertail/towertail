@@ -1,8 +1,8 @@
 import Foundation
 
-/// Shape of `dist/samplers/manifest.json` bundled inside the app. Produced by
-/// `scripts/build.sampler.sh` and kept in lockstep with the per-triple
-/// binaries under `samplers/<triple>/towertail-sampler`.
+/// Shape of `dist/samplers/manifest.json` bundled inside the app. It comes
+/// from the sampler release (`scripts/fetch-samplers.sh`) and pins the sha256
+/// of each binary under `samplers/<triple>/towertail-sampler`.
 struct SamplerManifest: Decodable, Sendable, Equatable {
     let version: String
     let sha: String

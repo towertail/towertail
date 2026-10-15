@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build everything (Go sampler, all triples + signed macOS app), install the
-# app, and restart it.
+# Build the signed macOS app with the pinned samplers, install the app, and
+# restart it.
 #
 # Usage:
 #   scripts/build.sh                # Debug build, install, restart
@@ -17,7 +17,6 @@ INSTALL_DIR="${INSTALL_DIR:-/Applications}"
 BUILT_APP="apps/mac/build/Build/Products/$CONFIG/Towertail.app"
 INSTALLED_APP="$INSTALL_DIR/Towertail.app"
 
-./scripts/build.sampler.sh
 ./scripts/build.app.sh "$CONFIG"
 
 echo "→ stopping running Towertail"

@@ -9,7 +9,8 @@
 # Prerequisites:
 #   - Xcode command line tools
 #   - xcodegen (brew install xcodegen)
-#   - dist/samplers/ populated (run scripts/build.sampler.sh first)
+#
+# Samplers: scripts/fetch-samplers.sh fills dist/samplers/ (see samplers.lock).
 #
 # Signing: uses $SIGN_IDENTITY (default: the Developer ID cert, if it is in
 # the keychain). Falls back to ad-hoc ("-") when the cert is not found.
@@ -31,10 +32,7 @@ if ! command -v xcodegen >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ ! -d "$REPO_ROOT/dist/samplers/darwin-arm64" ]]; then
-  echo "warning: dist/samplers/ missing — running scripts/build.sampler.sh first" >&2
-  "$REPO_ROOT/scripts/build.sampler.sh"
-fi
+"$REPO_ROOT/scripts/fetch-samplers.sh"
 
 echo "→ regenerating Xcode project"
 (cd "$APP_DIR" && xcodegen generate)
