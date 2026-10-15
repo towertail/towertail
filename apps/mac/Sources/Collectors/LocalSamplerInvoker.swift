@@ -66,7 +66,7 @@ struct LocalSamplerInvoker: SamplerInvoker {
             throw SamplerInvokeError.emptyOutput
         }
         do {
-            return try SampleCodec.decoder().decode(Sample.self, from: result.stdout)
+            return try SampleCodec.decode(result.stdout)
         } catch {
             throw SamplerInvokeError.decodeFailed(underlying: error)
         }

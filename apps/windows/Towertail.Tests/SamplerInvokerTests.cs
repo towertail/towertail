@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Towertail.WinUI.Collectors;
+using Towertail.Tests.Helpers;
 using Xunit;
 
 namespace Towertail.Tests;
@@ -24,7 +25,7 @@ public sealed class SamplerInvokerTests
     {
         var runner = new FakeRunner
         {
-            OnRun = _ => new ProcessResult(0, File.ReadAllText(Path.Combine("TestData", "sample-v1.json")), "")
+            OnRun = _ => new ProcessResult(0, ReleaseFixture.ReadSampleV1(), "")
         };
         var invoker = new LocalSamplerInvoker(runner, explicitPath: @"C:\fake\towertail-sampler.exe");
         var sample = await invoker.RunOnceAsync();

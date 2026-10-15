@@ -63,7 +63,9 @@ public sealed class AppEnvironment
         }
 
         var invokerFactory = new SamplerInvokerFactory(hostKeyPrompt: hostKeyPrompt, onTrust: onTrust);
-        var collector = new RealCollector(nodes, servers, serverSettings, invokerFactory, logger);
+        var updater = new SamplerUpdateCoordinator(
+            SamplerManifest.LoadFromBundle(), new SshSamplerPusher(hostKeyPrompt, onTrust), logger);
+        var collector = new RealCollector(nodes, servers, serverSettings, invokerFactory, logger, updater);
         // Marshal sample ingestion onto the WinUI dispatcher so observable
         // collections and PropertyChanged fire on the UI thread. Core doesn't
         // depend on WinUI, so we inject the dispatcher here.

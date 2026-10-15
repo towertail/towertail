@@ -28,6 +28,10 @@ public sealed record SamplerManifest(
         }
     }
 
+    /// <summary>The <c>host.sampler</c> value that a current remote sampler reports.</summary>
+    [JsonIgnore]
+    public string ExpectedSamplerField => $"{Version}+{Sha}";
+
     public string? ExpectedSha(string triple)
         => Binaries.TryGetValue(triple, out var sha) ? sha : null;
 }

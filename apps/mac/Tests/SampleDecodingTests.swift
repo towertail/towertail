@@ -132,4 +132,38 @@ final class SampleDecodingTests: XCTestCase {
         let sample = try SampleCodec.decoder().decode(Sample.self, from: json)
         XCTAssertNil(sample.host.machineID)
     }
+
+    /// Decodes the fixture of the pinned sampler release. `scripts/fetch-samplers.sh` puts it in dist/samplers/.
+    func testDecodesReleaseFixture() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let url = repoRoot.appendingPathComponent("dist/samplers/sample-v1.json")
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw XCTSkip("missing \(url.path); run scripts/fetch-samplers.sh")
+        }
+        let sample = try SampleCodec.decode(Data(contentsOf: url))
+        XCTAssertEqual(sample.v, 1)
+        XCTAssertEqual(sample.host.name, "db-primary")
+        XCTAssertEqual(sample.cpu.cores, 8)
+        XCTAssertEqual(sample.disks?.count, 2)
+        XCTAssertEqual(sample.diskIO?.devices?.count, 1)
+        XCTAssertEqual(sample.procs?.items.count, 2)
+        XCTAssertEqual(sample.ports?.items.count, 2)
+        XCTAssertEqual(sample.health?.zombies, 219)
+    }
+
+    func testRejectsNewerSchemaVersion() {
+        let json = """
+        {"v":2,"ts":"2026-04-20T12:00:00Z","host":{"name":"h","os":"linux","arch":"arm64","kernel":"6","uptime_s":1,"sampler":"x"},"cpu":{"pct":0,"load_1":0,"load_5":0,"load_15":0,"cores":1},"mem":{"used":1,"total":2},"swap":{"used":0,"total":0},"errors":[]}
+        """.data(using: .utf8)!
+        XCTAssertThrowsError(try SampleCodec.decode(json)) { error in
+            guard case DecodingError.dataCorrupted(let ctx) = error else {
+                return XCTFail("unexpected error: \(error)")
+            }
+            XCTAssertTrue(ctx.debugDescription.contains("v=2"), ctx.debugDescription)
+        }
+    }
 }

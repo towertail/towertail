@@ -5,7 +5,7 @@ import Citadel
 
 /// Bootstrap the remote sampler over Citadel SSH/SFTP. No shell-out — uname
 /// via `executeCommand`, upload via `openSFTP`, chmod via SFTP attributes,
-/// then `--self-check` via `executeCommand`.
+/// then `--once` via `executeCommand`. `--once` also checks that the sample decodes.
 enum SSHBootstrap {
     static let remoteSamplerDir = ".towertail"
     static let remoteSamplerName = "towertail-sampler"
@@ -20,7 +20,12 @@ enum SSHBootstrap {
                 stderr: SSHErrorRenderer.describe(error), exitCode: -1
             )
         }
-        let raw = String(buffer: out).trimmingCharacters(in: .whitespacesAndNewlines)
+        return try triple(fromUname: String(buffer: out))
+    }
+
+    /// Maps `uname -sm` output (e.g. `Linux armv7l`) to a sampler triple.
+    static func triple(fromUname output: String) throws -> String {
+        let raw = output.trimmingCharacters(in: .whitespacesAndNewlines)
         let parts = raw.split(separator: " ").map(String.init)
         guard parts.count == 2 else {
             throw SamplerInvokeError.misconfigured("unexpected uname output: \(raw)")
@@ -37,6 +42,7 @@ enum SSHBootstrap {
         switch arch {
         case "arm64", "aarch64": goarch = "arm64"
         case "x86_64", "amd64": goarch = "amd64"
+        case "armv7l", "armv7": goarch = "armv7"
         default: throw SamplerInvokeError.misconfigured("unsupported remote arch: \(arch)")
         }
         return "\(goos)-\(goarch)"
@@ -175,7 +181,7 @@ enum SSHBootstrap {
             throw SamplerInvokeError.emptyOutput
         }
         do {
-            return try SampleCodec.decoder().decode(Sample.self, from: data)
+            return try SampleCodec.decode(data)
         } catch {
             throw SamplerInvokeError.decodeFailed(underlying: error)
         }
