@@ -59,7 +59,7 @@ struct SSHSamplerInvoker: SamplerInvoker {
             guard !data.isEmpty else {
                 throw SamplerInvokeError.emptyOutput
             }
-            result = .success(try SampleCodec.decoder().decode(Sample.self, from: data))
+            result = .success(try SampleCodec.decode(data))
         } catch let err as SamplerInvokeError {
             result = .failure(err)
         } catch let err as DecodingError {

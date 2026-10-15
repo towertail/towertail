@@ -397,6 +397,22 @@ enum SampleCodec {
 
     static func decoder() -> JSONDecoder { sharedDecoder }
 
+    static let supportedVersion = 1
+
+    /// Decodes one sample and rejects a schema `v` this app does not know.
+    static func decode(_ data: Data) throws -> Sample {
+        let sample = try sharedDecoder.decode(Sample.self, from: data)
+        guard sample.v >= 1, sample.v <= supportedVersion else {
+            let reason = sample.v < 1
+                ? "missing or invalid 'v' (got \(sample.v))"
+                : "sample schema v=\(sample.v) is newer than supported v=\(supportedVersion)"
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: [Sample.CodingKeys.v], debugDescription: reason
+            ))
+        }
+        return sample
+    }
+
     /// Inverse of `parseRFC3339UTC`. Emits `YYYY-MM-DDTHH:MM:SS.fffZ`,
     /// matching the sampler's wire format so a round trip via SQLite
     /// proc-snapshot persistence is bit-stable. Pure ASCII, no locale,

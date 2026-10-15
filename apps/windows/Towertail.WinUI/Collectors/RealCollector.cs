@@ -16,6 +16,7 @@ public sealed class RealCollector : ICollector, IAsyncDisposable
     private readonly ServerSettings _settings;
     private readonly ISamplerInvokerFactory _factory;
     private readonly Logger _logger;
+    private readonly SamplerUpdateCoordinator? _updater;
     private readonly Dictionary<Guid, Worker> _workers = new();
     private readonly object _lock = new();
     private bool _started;
@@ -30,13 +31,15 @@ public sealed class RealCollector : ICollector, IAsyncDisposable
 
     public RealCollector(
         NodeStore nodes, ServerStore servers, ServerSettings settings,
-        ISamplerInvokerFactory factory, Logger logger)
+        ISamplerInvokerFactory factory, Logger logger,
+        SamplerUpdateCoordinator? updater = null)
     {
         _nodes = nodes;
         _servers = servers;
         _settings = settings;
         _factory = factory;
         _logger = logger;
+        _updater = updater;
 
         _nodes.NodeAdded += (_, id) => EnsureWorker(id);
         _nodes.NodeRemoved += (_, id) => StopWorker(id);
@@ -77,7 +80,7 @@ public sealed class RealCollector : ICollector, IAsyncDisposable
         {
             if (_workers.ContainsKey(id)) return;
             var invoker = _factory.Create(node);
-            var worker = new Worker(id, node, invoker, _servers, _settings, _logger, UiMarshaller);
+            var worker = new Worker(id, node, invoker, _servers, _settings, _logger, UiMarshaller, _updater);
             _workers[id] = worker;
             worker.Start();
         }
@@ -105,6 +108,7 @@ public sealed class RealCollector : ICollector, IAsyncDisposable
         private readonly ServerSettings _settings;
         private readonly Logger _logger;
         private readonly Func<Action, Task>? _marshal;
+        private readonly SamplerUpdateCoordinator? _updater;
         private readonly CancellationTokenSource _cts = new();
         private readonly ManualResetEventSlim _trigger = new(false);
         private Task? _loop;
@@ -112,11 +116,11 @@ public sealed class RealCollector : ICollector, IAsyncDisposable
 
         public Worker(Guid id, Node n, ISamplerInvoker invoker,
             ServerStore servers, ServerSettings settings, Logger logger,
-            Func<Action, Task>? marshal)
+            Func<Action, Task>? marshal, SamplerUpdateCoordinator? updater)
         {
             _id = id; _node = n; _invoker = invoker;
             _servers = servers; _settings = settings; _logger = logger;
-            _marshal = marshal;
+            _marshal = marshal; _updater = updater;
         }
 
         public void Start() { _loop = Task.Run(LoopAsync); }
@@ -138,6 +142,8 @@ public sealed class RealCollector : ICollector, IAsyncDisposable
                         if (_marshal is null) _servers.Ingest(_id, sample);
                         else await _marshal(() => _servers.Ingest(_id, sample)).ConfigureAwait(false);
                         _failureStreak = 0;
+                        // Fire and forget: the push must not delay the next poll.
+                        _ = _updater?.MaybeUpdateAsync(_node, sample.Host.Sampler, _settings.AutoUpdateSamplersEnabled);
                     }
                     catch (OperationCanceledException) { return; }
                     catch (Exception ex)

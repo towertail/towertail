@@ -77,7 +77,7 @@ public sealed class SshBootstrap
     {
         "x86_64" or "amd64" => "amd64",
         "aarch64" or "arm64" => "arm64",
-        "armv7l" => "armv7",
+        "armv7l" or "armv7" => "armv7",
         _ => "amd64",
     };
 
@@ -97,10 +97,7 @@ public sealed class SshBootstrap
             if (!File.Exists(localPath)) return false;
 
             using var sftp = ConnectSftp();
-            // Resolve $HOME — SFTP's `~` doesn't expand automatically on most
-            // servers. We do the lookup via a command channel on the same
-            // credentials, then rewrite the deploy path.
-            var remotePath = ResolveRemotePath(target.DeployPath);
+            var remotePath = ResolveRemotePath(target.DeployPath, sftp.WorkingDirectory);
 
             // mkdir -p equivalent. CreateDirectory throws if exists on some
             // servers; catching SftpPathNotFoundException covers the "parent
@@ -168,6 +165,21 @@ public sealed class SshBootstrap
             return cmd.ExitStatus == 0 && cmd.Result.Trim() == "ok";
         }, ct);
 
+    /// <summary>
+    /// Detect, upload and self-check. Returns the triple. Throws when a step fails.
+    /// </summary>
+    public async Task<string> PushUpdateAsync(CancellationToken ct = default)
+    {
+        var target = await DetectAsync(ct).ConfigureAwait(false);
+        if (target.Os == RemoteOs.Unknown)
+            throw new InvalidOperationException("unsupported remote OS");
+        if (!await DeployAsync(target, ct: ct).ConfigureAwait(false))
+            throw new InvalidOperationException($"no bundled sampler for triple {target.Triple}");
+        if (!await VerifyAsync(target, ct).ConfigureAwait(false))
+            throw new InvalidOperationException($"self-check failed for triple {target.Triple}");
+        return target.Triple;
+    }
+
     private SshClient Connect() => SshConnectionFactory.Connect(
         _node, _hostKeyPrompt, _onTrust is null ? null : fp => _onTrust(_node.Id, fp));
 
@@ -195,6 +207,18 @@ public sealed class SshBootstrap
         catch { /* already exists or permissions — upload will surface the real error */ }
     }
 
-    private static string ResolveRemotePath(string templated)
-        => templated.Replace('\\', '/');
+    /// <summary>
+    /// SFTP does not expand <c>~</c> or <c>%USERPROFILE%</c>. Replace them with
+    /// <paramref name="home"/>, the SFTP working directory on connect.
+    /// </summary>
+    internal static string ResolveRemotePath(string templated, string home)
+    {
+        var path = templated.Replace('\\', '/');
+        foreach (var prefix in new[] { "~/", "%USERPROFILE%/" })
+        {
+            if (path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return home.TrimEnd('/') + "/" + path[prefix.Length..];
+        }
+        return path;
+    }
 }

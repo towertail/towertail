@@ -47,7 +47,7 @@ Sources/
 Key contracts:
 
 - **`Sources/State/Sample.swift`** mirrors `docs/sampler.md` §4 byte-for-byte. Keys are snake_case via `CodingKeys`. If you change the schema, bump `v` and update both sides — it's a wire contract.
-- `Collectors/Collector.swift` defines the collector protocol; `RealCollector` wraps `SSHSamplerInvoker` + `SamplerUpdateCoordinator` (which handles the bootstrap handshake — version check, upload binary to `~/.towertail/`, verify with `--self-check`). `MockCollector` is for previews and tests.
+- `Collectors/Collector.swift` defines the collector protocol; `RealCollector` wraps `SSHSamplerInvoker` + `SamplerUpdateCoordinator`. After each good sample, the coordinator compares `host.sampler` with `<version>+<sha>` from the bundled manifest. If they differ, it uploads the bundled binary to `~/.towertail/` (cooldown 15 s after success, 300 s after failure). Windows uses the same rule. A host gets a new sampler only through an app update. `MockCollector` is for previews and tests.
 - Samples are decimated into rolling series (`MetricSeries`, `DiskSeries`, `ProcSeries`) and persisted via `HistoryStore` (7-day retention).
 - Sampler binaries are bundled as app resources under `Contents/Resources/samplers/<triple>/` — a `preBuildScript` in `project.yml` rsyncs `dist/samplers/` into the bundle at build time.
 

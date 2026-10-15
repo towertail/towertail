@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Towertail.WinUI.State;
+using Towertail.Tests.Helpers;
 using Xunit;
 
 namespace Towertail.Tests;
@@ -9,7 +10,7 @@ public sealed class SampleDecodingTests
     [Fact]
     public void DecodesGoldenSample()
     {
-        var json = File.ReadAllText(Path.Combine("TestData", "sample-v1.json"));
+        var json = ReleaseFixture.ReadSampleV1();
         var sample = SampleCodec.Decode(json);
 
         sample.V.Should().Be(1);
@@ -26,6 +27,9 @@ public sealed class SampleDecodingTests
         sample.Procs!.Items.Should().HaveCount(2);
         sample.Procs.Items[0].ReadBytes.Should().Be(58720256);
         sample.Procs.Items[1].ReadBytes.Should().BeNull("omitted read_bytes should decode as null, not 0");
+        sample.DiskIo!.Devices.Should().HaveCount(1);
+        sample.Ports!.Items.Should().HaveCount(2);
+        sample.Health!.Zombies.Should().Be(219);
     }
 
     [Fact]
