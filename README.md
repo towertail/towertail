@@ -19,7 +19,7 @@ towertail/
 │   └── windows/  # Phase 2 — stub, not started
 ├── sampler/      # Go collector binary, 5 target triples, bundled into apps/mac
 ├── server/       # Phase 3 — stub; self-hostable Go control-plane service
-├── scripts/      # build.sh, build.app.sh, build.sampler.sh
+├── scripts/      # build.sh, build.app.sh, fetch-samplers.sh
 └── docs/         # PLAN.md (source of truth), sampler.md, research notes, design.pen, screenshots/
 ```
 
@@ -38,17 +38,20 @@ Today only `apps/mac/` and `sampler/` have real content. `apps/windows/` and `se
 From the repo root:
 
 ```bash
-scripts/build.sh                # build sampler + signed Debug app, install to /Applications, restart
+scripts/build.sh                # get samplers + signed Debug app, install to /Applications, restart
 scripts/build.sh Release        # same, Release build
 ```
 
 Individual steps:
 
 ```bash
-scripts/build.sampler.sh              # all 5 triples → dist/samplers/<triple>/
-scripts/build.sampler.sh darwin-arm64 # single triple (fast iteration)
-scripts/build.app.sh                  # app only; needs dist/samplers/ populated
+scripts/fetch-samplers.sh               # all 7 triples → dist/samplers/<triple>/
+scripts/fetch-samplers.sh darwin-arm64  # one triple
+SAMPLER_DIR=../sampler scripts/fetch-samplers.sh darwin-arm64  # build from a local sampler clone
+scripts/build.app.sh                    # app; runs fetch-samplers.sh first
 ```
+
+The sampler binaries come from the [towertail/sampler](https://github.com/towertail/sampler) release that `samplers.lock` pins. The script checks each sha256.
 
 The app bundle ends up at `apps/mac/build/Build/Products/<Configuration>/Towertail.app`. Builds sign with the Developer ID cert when it is in the keychain, else ad-hoc.
 

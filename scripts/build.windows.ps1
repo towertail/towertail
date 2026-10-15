@@ -58,9 +58,9 @@ Set-Location $repoRoot
 $sln     = Join-Path $repoRoot 'apps/windows/Towertail.sln'
 $winProj = Join-Path $repoRoot 'apps/windows/Towertail.WinUI/Towertail.WinUI.csproj'
 
-Write-Host ">>> building sampler binaries (prereq for Towertail.WinUI CopySamplers)"
-& bash (Join-Path $repoRoot 'scripts/build.sampler.sh')
-if ($LASTEXITCODE -ne 0) { throw 'sampler build failed' }
+Write-Host ">>> fetching sampler binaries (prereq for Towertail.WinUI CopySamplers)"
+& bash (Join-Path $repoRoot 'scripts/fetch-samplers.sh')
+if ($LASTEXITCODE -ne 0) { throw 'sampler fetch failed' }
 
 Write-Host ">>> restoring Windows solution"
 & dotnet restore $sln

@@ -15,7 +15,7 @@ apps/mac/       SwiftUI menu-bar app (v1 shipping target)
 apps/windows/   WinUI 3 / .NET 9 client (Phase 2, in progress)
 sampler/        Go collector binary, 5 target triples
 server/         Go control plane (Phase 3), module github.com/towertail/towertail/server, tags server/vX.Y.Z
-scripts/        build.sh / build.app.sh / build.sampler.sh / build.windows.ps1 / winvm-*.sh
+scripts/        build.sh / build.app.sh / fetch-samplers.sh / build.windows.ps1 / winvm-*.sh
 docs/           PLAN.md, sampler.md, research-*.md, design.pen, screenshots/
 dist/samplers/  build output: <triple>/towertail-sampler + manifest.json
 ```
@@ -100,7 +100,7 @@ Sync uses a tar pipe (no rsync needed on the VM side — winvm has `tar` via Git
 
 - **Use `pwsh`, not `powershell`.** `scripts/test.ps1` and `build.windows.ps1` use UTF-8 content that the legacy Windows PowerShell 5.1 parser rejects. `winvm-run.sh` always shells out via `pwsh` (PowerShell 7).
 - **Don't `dotnet run` on an ARM64 VM.** It picks the host arch; the `WindowsAppSDKSelfContained=true` target refuses to build for ARM64 without explicit `-p:Platform=ARM64`. `winvm-run.sh run` instead builds `-p:Platform=x64` then `Start-Process`es the resulting exe — x64 works fine under Windows-on-ARM via emulation.
-- **Samplers copy into the bundle via the `CopySamplers` MSBuild target.** If you skip `scripts/build.sampler.sh`, `Assets\samplers\<triple>\` is empty and `LocalSamplerInvoker` fails every poll. The Windows-side `build.windows.ps1` calls `bash scripts/build.sampler.sh` before building; `winvm-run.sh build` currently assumes the VM already has a recent `dist/samplers/` — run `build.windows.ps1` once after pulling fresh sampler changes to refresh.
+- **Samplers copy into the bundle via the `CopySamplers` MSBuild target.** If you skip `scripts/fetch-samplers.sh`, `Assets\samplers\<triple>\` is empty and `LocalSamplerInvoker` fails every poll. The Windows-side `build.windows.ps1` calls `bash scripts/fetch-samplers.sh` before building; `winvm-run.sh build` currently assumes the VM already has a recent `dist/samplers/` — run `build.windows.ps1` once after pulling fresh sampler changes to refresh.
 - **Kill existing Towertail before relaunch.** `winvm-run.sh run` does this automatically (`Get-Process Towertail | Stop-Process`). If you skip it, the single-instance guard redirects activation to the stale build.
 - **Logs live at `%LOCALAPPDATA%\Towertail\logs\towertail-YYYYMMDD.log`** (not `%APPDATA%`). Settings + SQLite history live at `%APPDATA%\Towertail\`.
 - **VS Code Remote-SSH** is an option if you want full IntelliSense + the `dotnet` debugger on the VM — connect with `code --remote ssh-remote+winvm /c/Users/<you>/Projects/towertail`. Keep the `winvm-*.sh` workflow for the Mac-side edit loop though; Remote-SSH is heavier and editing the same repo from two places invites merge pain.
@@ -132,11 +132,12 @@ The sampler never writes files on the host and runs fine as the SSH-authenticate
 Always build from repo root:
 
 ```bash
-scripts/build.sh                 # sampler (all triples) + Debug app
+scripts/build.sh                 # samplers (all triples) + Debug app
 scripts/build.sh Release
 scripts/build.sh Debug --open    # build and launch
-scripts/build.sampler.sh darwin-arm64   # single triple, fast iteration
-scripts/build.app.sh Debug              # app only (needs dist/samplers/)
+scripts/fetch-samplers.sh darwin-arm64  # one triple from the release in samplers.lock
+SAMPLER_DIR=../sampler scripts/fetch-samplers.sh darwin-arm64  # build from a local clone
+scripts/build.app.sh Debug              # app (runs fetch-samplers.sh first)
 ```
 
 Tests:

@@ -234,6 +234,6 @@ final class RemoteBackendIntegrationTests: XCTestCase {
                 return candidate
             }
         }
-        throw XCTSkip("sampler binary not found under dist/samplers/\(triple)/ — run scripts/build.sampler.sh")
+        throw XCTSkip("sampler binary not found under dist/samplers/\(triple)/ — run scripts/fetch-samplers.sh")
     }
 }

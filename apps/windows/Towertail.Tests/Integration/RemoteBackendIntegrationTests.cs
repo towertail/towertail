@@ -68,7 +68,7 @@ public sealed class RemoteBackendIntegrationTests : IClassFixture<LocalServerFix
     public async Task SamplerPushDeliversSampleOverWebSocket()
     {
         var samplerBinary = IntegrationConfig.LocateSamplerBinary();
-        Assert.SkipWhen(samplerBinary is null, "sampler binary not found — run scripts/build.sampler.sh");
+        Assert.SkipWhen(samplerBinary is null, "sampler binary not found — run scripts/fetch-samplers.sh");
 
         await using var client = new RemoteClient(_fixture.Endpoint, _fixture.AdminToken);
 
