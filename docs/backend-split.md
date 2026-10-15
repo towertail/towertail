@@ -7,7 +7,7 @@ Plan for restructuring the Mac app so the same Swift client can run in two modes
 
 This plan covers **only the Swift-side restructuring**. Building the actual remote server is out of scope here (it becomes its own project once the client is ready for it). The goal is to land the `Backend` seam now, against today's embedded implementation, so remote mode becomes a greenfield addition rather than a rewrite.
 
-See also: [`PLAN.md`](PLAN.md) — Phase 3 roadmap. [`sampler.md`](sampler.md) — wire contract with the sampler (unchanged by this plan).
+See also: [`PLAN.md`](PLAN.md) — Phase 3 roadmap. [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) — wire contract with the sampler (unchanged by this plan).
 
 ---
 
@@ -253,7 +253,7 @@ This means `RemoteNotificationDispatcher` (Step 5) is purely a renderer of serve
 ## Non-goals
 
 - **Building the remote server.** Separate project, separate repo, Go. Not part of this plan.
-- **Wire format design.** Deferred until the server work starts. The sampler JSON schema in [`sampler.md`](sampler.md) is already stable and likely informs but does not dictate the client↔server contract.
+- **Wire format design.** Deferred until the server work starts. The sampler JSON schema in [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) is already stable and likely informs but does not dictate the client↔server contract.
 - **Auth, accounts, multi-tenant.** Phase 4 concerns per [`PLAN.md`](PLAN.md). Remote mode in Phase 3 is "point at a self-hosted server URL + bearer token."
 - **Removing local mode.** Both modes ship. Local mode is the zero-config onboarding experience and stays the default.
 

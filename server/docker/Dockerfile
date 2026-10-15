@@ -1,18 +1,13 @@
 # syntax=docker/dockerfile:1.7
-# Build context is the repo root (see server/docker/docker-compose.yaml).
-# We need both server/ and sampler/ modules plus go.work because the
-# server imports sampler/pkg/schema via the workspace.
+# Build context is server/ (see server/docker/docker-compose.yaml).
 FROM golang:1.25-alpine AS build
 WORKDIR /src
-COPY go.work ./
-COPY sampler/go.mod sampler/go.sum ./sampler/
-COPY server/go.mod server/go.sum ./server/
-RUN cd server && go mod download
-COPY sampler ./sampler
-COPY server ./server
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
 ARG VERSION=dev
 ARG SHA=unknown
-RUN cd server && CGO_ENABLED=0 go build \
+RUN CGO_ENABLED=0 go build \
       -trimpath \
       -ldflags="-s -w -X github.com/towertail/towertail/server/internal/version.Version=${VERSION} -X github.com/towertail/towertail/server/internal/version.SHA=${SHA}" \
       -o /out/towertail-server ./cmd/towertail-server

@@ -6,7 +6,7 @@ Source of truth companion docs:
 
 - [`PLAN.md`](PLAN.md) — overall phase roadmap; this plan is Phase 3.
 - [`backend-split.md`](backend-split.md) — Swift-side `Backend` seam already landed. `RemoteBackend` is the client this server must satisfy.
-- [`sampler.md`](sampler.md) — existing sampler JSON schema. This plan extends the sampler with **push mode** and a `service` subcommand without breaking the schema.
+- [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) — existing sampler JSON schema. This plan extends the sampler with **push mode** and a `service` subcommand without breaking the schema.
 
 **Non-goals for this plan.** Full multi-tenant SaaS, billing, SSO, managed cloud operations, Windows client — out of scope; the Postgres "cloud-managed" schema is stubbed so the seam is in place.
 
@@ -362,7 +362,7 @@ Base path: `/v1`. All requests authenticated via `Authorization: Bearer <token>`
 { "type": "ping" }
 
 // server → client
-{ "type": "sample",   "node_id": "…", "sample": { /* same as sampler.md §4 */ } }
+{ "type": "sample",   "node_id": "…", "sample": { /* same as the sampler [wire format](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) §4 */ } }
 { "type": "event",    "event": { "kind": "threshold_crossed", … } }
 { "type": "node_updated", "node": { … } }
 { "type": "settings_updated", "settings": { … } }
@@ -375,11 +375,11 @@ On connect the server replays **last known sample per node** + **active unresolv
 
 ## 5. Sampler push mode + `service` subcommand
 
-Changes to `sampler/` land alongside the server; the binary stays backward-compatible (all existing `--once` / `--interval` / `--self-check` / `--version` / flags keep working).
+Changes to towertail/sampler land alongside the server; the binary stays backward-compatible (all existing `--once` / `--interval` / `--self-check` / `--version` / flags keep working).
 
 ### 5.1 CLI migration to `urfave/cli/v3`
 
-Replace the handcrafted `flag.NewFlagSet` in `sampler/cmd/sampler/main.go` with a `cli.Command` tree:
+Replace the handcrafted `flag.NewFlagSet` in `cmd/sampler/main.go` in towertail/sampler with a `cli.Command` tree:
 
 ```
 towertail-sampler                      # default: prints help
@@ -408,7 +408,7 @@ Legacy flags `--once`, `--interval`, `--version`, `--self-check`, `--no-disk`, `
 
 ### 5.3 Service management
 
-New Go package `sampler/internal/svc/`:
+New Go package `internal/svc/` in towertail/sampler:
 
 ```
 svc/
@@ -477,10 +477,10 @@ Token persisted to `/etc/towertail/sampler.env` (0600) on Linux / `~/Library/App
 
 ### 5.4 Sampler Dockerfile + docker-compose
 
-Lives at `sampler/docker/`:
+Lives at `docker/` in towertail/sampler:
 
 ```
-sampler/docker/
+docker/   (in towertail/sampler)
 ├── Dockerfile            # multi-stage: builder → scratch with CA certs
 ├── docker-compose.yaml   # single-service example
 └── README.md             # "here is how to run the sampler in docker"
@@ -733,7 +733,7 @@ Module path: `github.com/towertail/towertail/server`. Release tags: `server/vX.Y
 | `golang.org/x/crypto` | argon2id |
 | `github.com/cespare/xxhash/v2` | Token hash keying |
 
-### Sampler additions (`sampler/go.mod`)
+### Sampler additions (`go.mod` in towertail/sampler)
 
 | Module | Purpose |
 |---|---|
@@ -777,17 +777,17 @@ Testing follows a **pyramid**: lots of fast unit tests (`go test ./...` in < 10s
 
 **Load test** (Phase L gate): 500 concurrent simulated samplers @ 30s cadence for 30 minutes via `k6` (or a small bespoke Go driver). Pass criteria: CH write latency p95 < 100ms, server RSS < 256 MiB, zero dropped samples under nominal network. Script lives in `server/testdata/load/`.
 
-### 9.3 Sampler (`sampler/`) test matrix
+### 9.3 Sampler (towertail/sampler) test matrix
 
 | Layer | Test type | Key scenarios | Tooling |
 |---|---|---|---|
 | `cmd/sampler` (CLI) | Unit | `urfave/cli/v3` tree: every subcommand parses expected flags, legacy `--once`/`--version`/`--self-check` still work, help output is stable (golden) | `testify`, golden files |
 | `internal/collect/*` | Unit | Existing gopsutil-wrapping tests stay; add a `disk/net` interface-filter test | existing fakes |
-| `internal/collect` | Integration (Linux) | Debian + Alpine Dockerfiles run `sampler once`, assert schema and plausible ranges; catches musl/cgo regressions | `sampler/test/*.dockerfile` (already planned in §10 of `sampler.md`) |
+| `internal/collect` | Integration (Linux) | Debian + Alpine Dockerfiles run `sampler once`, assert schema and plausible ranges; catches musl/cgo regressions | `test/*.dockerfile` in towertail/sampler (already planned in §10 of the sampler [wire format](https://github.com/towertail/sampler/blob/main/docs/wire-format.md)) |
 | `internal/collect` (Darwin) | Integration | `go test -tags=integration` gated on `runtime.GOOS == "darwin"`, runs on dev machine / CI mac runner | build tag |
 | `internal/push` (new in Phase E) | Unit | Ring buffer overflow drops oldest, gzip NDJSON body shape, 5xx triggers exponential backoff, 401 surfaces distinctly | `httptest` |
 | `internal/push` | Integration | Real server container receives pushes; reconnects after a restart | `testcontainers-go` |
-| `internal/svc` (launchd) | Manual playbook | Documented in `sampler/README.md`: fresh macOS VM → `service install/start/status/log/stop/uninstall`; reboot retains active service | manual checklist, captured screenshots |
+| `internal/svc` (launchd) | Manual playbook | Documented in `README.md` in towertail/sampler: fresh macOS VM → `service install/start/status/log/stop/uninstall`; reboot retains active service | manual checklist, captured screenshots |
 | `internal/svc` (systemd) | Manual playbook | Same for a Debian + a RHEL-family VM | manual checklist |
 | `internal/svc` | Unit | Unit-file rendering is byte-stable (golden); `status` parser tolerates both `systemctl` formats; error paths don't leave half-installed state | golden, fakes around `os/exec` |
 | `heartbeat` / control poll | Integration | Fake server queues a kill; sampler with `--allow-control=true` executes it; without the flag, kill is rejected and logged | `httptest` |
@@ -864,7 +864,7 @@ Each phase is an independently reviewable, shippable increment. Later phases do 
 
 - Introduce `urfave/cli/v3`. Preserve all existing flags as root-command shims so Mac-side bootstrap over SSH (`--version`, `--once`, `--self-check`) still works.
 - Add subcommands: `once`, `stream`, `push`, `version`, `self-check`. `push` is a stub that prints "not yet wired" in this phase.
-- Update `sampler/cmd/sampler/main_test.go` to exercise the new tree. Add golden help output tests.
+- Update `cmd/sampler/main_test.go` in towertail/sampler to exercise the new tree. Add golden help output tests.
 - Update `apps/mac/Sources/Collectors/SamplerInvoker.swift` and `SamplerUpdateCoordinator.swift` if they rely on exact `--` flag form — they should still work; add assertions in a bootstrap test.
 
 **DoD:** existing Mac-app bootstrap works unchanged; `towertail-sampler --help` shows new subcommands; `go test ./...` green.
@@ -894,7 +894,7 @@ Each phase is an independently reviewable, shippable increment. Later phases do 
 
 - Flesh out `push` subcommand: ring buffer, flusher, gzip NDJSON, backoff, heartbeat.
 - Add `--endpoint`, `--token`, `--interval`, `--flush`, `--batch`, `--buffer`, `--allow-control`.
-- `sampler/docker/` with Dockerfile + compose + README.
+- `docker/` in towertail/sampler with Dockerfile + compose + README.
 - Integration: `docker compose up` (server + clickhouse + one sampler) produces live rows.
 
 **DoD:** a real sampler container pushes to a real server container, samples observable in ClickHouse via HTTP query.
@@ -904,7 +904,7 @@ Each phase is an independently reviewable, shippable increment. Later phases do 
 - `internal/svc` with launchd (darwin) + systemd (linux) impls.
 - Subcommands `install`, `uninstall`, `start`, `stop`, `status`, `log` (+ `--follow`).
 - Token storage layout per §5.3.
-- Manual-test playbook in `sampler/README.md`.
+- Manual-test playbook in `README.md` in towertail/sampler.
 
 **DoD:** fresh macOS + Debian VMs: `sampler service install --endpoint=… --token=…` followed by `status` shows active; `log --follow` tails; reboot keeps service running.
 

@@ -5,9 +5,9 @@
 This document is the single source of truth for building v1. It consolidates the research reports in `docs/`:
 
 - [`research-stats.md`](research-stats.md) — visual language analysis of exelban/Stats and mac-stats.com, palette derivation.
-- [`research-backend.md`](research-backend.md) — SSH transport, Tailscale, SQLite schema, cadence, notifications. *(The host-side probe design in that doc is superseded by [`sampler.md`](sampler.md) — see §4 below.)*
+- [`research-backend.md`](research-backend.md) — SSH transport, Tailscale, SQLite schema, cadence, notifications. *(The host-side probe design in that doc is superseded by [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) — see §4 below.)*
 - [`research-frontend.md`](research-frontend.md) — MenuBarExtra scaffolding, SwiftUI Charts sparklines, `@Observable` state, preferences.
-- [`sampler.md`](sampler.md) — Go sampler binary spec: JSON schema, build matrix, bootstrap handshake, permissions.
+- [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) — Go sampler binary spec: JSON schema, build matrix, bootstrap handshake, permissions.
 
 Reference imagery: see the screenshots on the [Stats GitHub page](https://github.com/exelban/stats) and the [mac-stats.com](https://mac-stats.com) site.
 
@@ -21,14 +21,14 @@ towertail/
 │   ├── mac/       # Phase 1 — SwiftUI macOS menu-bar app (Xcode project, v1 shipping target)
 │   ├── windows/   # Phase 2 — WinUI 3 / .NET 9 port (see docs/windows-app.md); Tier 1+2 tests green
 │   └── (shared/)  # speculative; create only when something is truly shared
-├── sampler/         # Go collector binary, 5 target triples, bundled into apps/mac
-├── server/        # Phase 3 — stub; Go control-plane service (ingest, store, alert), Dockerised, self-hostable
-└── docs/          # this doc, research notes, sampler spec, design.pen, screenshots/
+├── samplers.lock  # pins the towertail/sampler release (7 target triples) that the apps bundle
+├── server/        # Phase 3 — Go control-plane service (ingest, store, alert), Dockerised, self-hostable
+└── docs/          # this doc, research notes, design.pen, screenshots/
 ```
 
-Each folder has its own toolchain and CI pipeline; they never share a build graph. **Today only `apps/mac` and `sampler/` have real content** — `apps/windows` and `server/` are README-only stubs so the shape reflects the plan and future folder moves don't break Swift imports or doc links. See [Roadmap: phases](#roadmap-phases) for when each turns on.
+Each folder has its own toolchain and CI pipeline; they never share a build graph. The sampler (the Go collector) is in its own repo, [towertail/sampler](https://github.com/towertail/sampler). The apps get its binaries from the release that `samplers.lock` pins. See [Roadmap: phases](#roadmap-phases) for when each turns on.
 
-The Mac app embeds the sampler binaries (`Contents/Resources/samplers/<triple>/`) and pushes the right one to `~/.towertail/towertail-sampler` on each monitored server on first connect. Sampler and server are siblings (not nested) because they run in different trust zones with different deploy cadences; the only thing they share is the wire contract (the sampler JSON schema). See [`sampler.md`](sampler.md) for the sampler details.
+The Mac app embeds the sampler binaries (`Contents/Resources/samplers/<triple>/`) and pushes the right one to `~/.towertail/towertail-sampler` on each monitored server on first connect. Sampler and server are siblings (not nested) because they run in different trust zones with different deploy cadences; the only thing they share is the wire contract (the sampler JSON schema). See [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) for the sampler details.
 
 <a id="roadmap-phases"></a>
 ### Roadmap: phases
@@ -37,7 +37,7 @@ The lines between these phases are deliberately sharp — each is a separately s
 
 | Phase | Scope | Components |
 |---|---|---|
-| **Phase 1 — Local Mac client** *(shipping)* | A single user watches their own fleet from a menu bar, all state local. No server, no account, no cloud. | `apps/mac`, `sampler/` |
+| **Phase 1 — Local Mac client** *(shipping)* | A single user watches their own fleet from a menu bar, all state local. No server, no account, no cloud. | `apps/mac`, [towertail/sampler](https://github.com/towertail/sampler) |
 | **Phase 2 — Windows client** *(active; feature-complete, polish + MSIX pending)* | Same product on Windows. Shared wire format with the sampler and the self-hosted server; UI is a WinUI 3 / .NET 9 / C# 13 build. See [`windows-app.md`](windows-app.md). | + `apps/windows` (WinUI app, xUnit Tier 1 + Tier 2 integration tests against the real Go server with `TT_CLICKHOUSE__DISABLED=true` for the no-Docker dev loop) |
 | **Phase 3 — Self-hosted server** | A company runs a Go service in their own network. Samplers ship samples to the server (not to a desktop). Desktop clients become read-only consoles talking to the server. Alert rules live on the server. | + `server/` |
 | **Phase 4 — Managed cloud** | We run the server. Multi-tenant, auth, billing. Same desktop client, a URL+key away from either a customer's self-hosted server or ours. | infrastructure repo (separate), no new top-level folder |
@@ -46,7 +46,7 @@ The lines between these phases are deliberately sharp — each is a separately s
 
 - Don't leak later-phase concerns into earlier code. Phase 1 has no "account" concept, no "server URL" field, no "org." When Phase 3 lands, those get added in one well-scoped migration, not drip-fed through v1.
 - The desktop app's data source is an abstraction behind one protocol (local-samplers vs remote-server). Introducing the server in Phase 3 replaces the implementation, not the call sites.
-- The JSON in [`sampler.md`](sampler.md) §4 *is* the contract. There is no separate `proto/` folder.
+- The JSON in [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) §4 *is* the contract. There is no separate `proto/` folder.
 
 ---
 
@@ -59,7 +59,7 @@ The lines between these phases are deliberately sharp — each is a separately s
 | Distribution             | **Developer ID + notarized .zip**, GitHub Releases auto-update                              | Shelling out to `ssh` rules out App Sandbox → no App Store                            |
 | Data collection          | **Shell out to `/usr/bin/ssh`** with `ControlMaster=auto, ControlPersist=10m`                | Respects ssh-sampler, `~/.ssh/config`, MagicDNS; Tailscale "just works"                 |
 | Host discovery           | **`tailscale status --json`** + a manual "Add server" path                                   | Tailnet is the target network; manual option for non-Tailscale hosts                  |
-| Metrics source on host   | **`towertail-sampler`** — static Go binary pushed to `~/.towertail/towertail-sampler` on first connect, `gopsutil` under the hood | Uniform JSON schema across Linux/macOS/BSD, single exec per poll, runs fine as non-root. See [`sampler.md`](sampler.md). |
+| Metrics source on host   | **`towertail-sampler`** — static Go binary pushed to `~/.towertail/towertail-sampler` on first connect, `gopsutil` under the hood | Uniform JSON schema across Linux/macOS/BSD, single exec per poll, runs fine as non-root. See [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md). |
 | Storage                  | **SQLite via GRDB**                                                                          | ~50 MB for 20 hosts × 7 d × 30 s; WAL; idiomatic Swift                                |
 | Sampling cadence         | **30 s default** (15/30/60 s preference) with ±0–5 s per-host jitter                         | Balance between signal freshness and laptop battery                                   |
 | History retention        | **7 days** rolling (hourly delete job)                                                       | User spec; plenty for "how was last week"                                             |
@@ -286,7 +286,7 @@ towertail/
 │   │   │   └── KeychainStore.swift
 │   │   │   └── Updater.swift               # GitHub Releases auto-update
 │   ├── Tests/
-│   │   ├── SampleDecoderTests/              # JSON fixtures from ../../sampler/test/fixtures/
+│   │   ├── SampleDecoderTests/              # sample-v1.json from the sampler release
 │   │   ├── StoreTests/
 │   │   └── ThresholdTests/
 │   ├── Resources/
@@ -298,22 +298,16 @@ towertail/
 │   │       ├── darwin-arm64/towertail-sampler
 │   │       └── darwin-amd64/towertail-sampler
 │   └── Packaging/
-│       ├── build-samplers.sh                  # cross-compiles from ../../sampler/, writes Resources/samplers/
+│       ├── build-samplers.sh                  # gets the pinned sampler release, writes Resources/samplers/
 │       ├── create-dmg.sh
 │       └── entitlements.plist
-│
-└── sampler/                                   # Go — the remote collector
-    ├── go.mod
-    ├── cmd/sampler/main.go                    # see docs/sampler.md §9 for the full tree
-    ├── internal/collect/ …
-    ├── internal/schema/sample.go            # canonical JSON schema
-    ├── Makefile                             # build-all, build-<triple>
-    └── test/fixtures/*.json                 # shared with apps/mac/Tests/SampleDecoderTests
 ```
+
+The sampler (Go, the remote collector) is in its own repo, [towertail/sampler](https://github.com/towertail/sampler). See [wire-format.md](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) §9 for its source tree.
 
 A **`TowertailCore`** SPM package wrapping `State/`, `Collectors/`, `Storage/`, `System/Notifier`, `System/KeychainStore` is worth extracting once APIs settle — enables pure unit tests and keeps UI ignorant of SSH.
 
-The sampler's JSON fixtures in `sampler/test/fixtures/` are the **shared contract** between the two trees: Go tests emit them, Swift tests decode them. Any schema drift fails both CI jobs.
+The `sample-v1.json` fixture of each sampler release is the **shared contract** between the two trees: Go tests emit them, Swift tests decode them. Any schema drift fails both CI jobs.
 
 ### 3.3 Key data types
 
@@ -359,7 +353,7 @@ enum ThresholdTint { case nominal, warn, critical, stale }
 
 ## 4. Data collection
 
-Host-side metrics come from a small static Go binary (`towertail-sampler`) that the app bundles, pushes, and invokes over SSH. The full spec — JSON schema, flags, build matrix, bootstrap handshake, permissions — lives in [`sampler.md`](sampler.md). What follows is the view from the app's side.
+Host-side metrics come from a small static Go binary (`towertail-sampler`) that the app bundles, pushes, and invokes over SSH. The full spec — JSON schema, flags, build matrix, bootstrap handshake, permissions — lives in [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md). What follows is the view from the app's side.
 
 ### 4.1 Sampler invocation
 
@@ -383,7 +377,7 @@ On every poll, the per-host actor runs:
 4. **Self-check:** `ssh host '~/.towertail/towertail-sampler --self-check'` must print `ok`. On failure (e.g., musl-only distro where a gopsutil path needs cgo), mark host as `offline(reason: "sampler incompatible")` and stop retrying until user clicks refresh.
 5. **Integrity:** `ssh host 'shasum -a 256 ~/.towertail/towertail-sampler'` must match the entry in `Resources/samplers/manifest.json`. Mismatch → abort bootstrap, flag as offline with "sampler integrity check failed."
 
-See [`sampler.md` §6](sampler.md) for the full handshake diagram and failure modes.
+See [`wire-format.md` §6](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) for the full handshake diagram and failure modes.
 
 ### 4.3 SSH config
 
@@ -536,11 +530,11 @@ Storage: scalars → `@AppStorage`. Structured data (`servers.json`, `thresholds
 ## 7. Testing strategy
 
 - **Unit tests**
-  - `SampleDecoder`: decode every `sampler/test/fixtures/*.json` (Linux, Darwin, no-swap, counter-reset, iface-rename) → expected `Sample`. Unknown-field policy is strict — protocol drift fails CI on both sides.
+  - `SampleDecoder`: decode `sample-v1.json` from the sampler release (Linux, Darwin, no-swap, counter-reset, iface-rename) → expected `Sample`. Unknown-field policy is strict — protocol drift fails CI on both sides.
   - `MetricSeries`: ring buffer correctness, decimation invariants.
   - `ThresholdTint`: boundary behavior, hysteresis if we add it.
   - `AlertEvaluator`: state machine transitions using an injected clock.
-  - **Go side** (`sampler/internal/collect/*_test.go`): deterministic fakes for procfs/sysctl, emit fixture JSON that the Swift tests consume.
+  - **Go side** (`internal/collect/*_test.go` in towertail/sampler): deterministic fakes for procfs/sysctl, emit fixture JSON that the Swift tests consume.
 - **Integration tests**
   - `SQLiteStore` with in-memory DB: write/read/delete round-trip, 7-day rollover.
   - `SamplerBootstrap` against a local Docker container running `sshd`: uploads the binary, runs `--self-check`, verifies sha256 — exercised in CI for `linux-amd64` and `linux-arm64` (via emulation).
@@ -587,7 +581,7 @@ A rough, ~6–8 week arc for a single engineer working part time. Each milestone
 **Goal:** real remote polling to one manually-configured host.
 
 - `towertail-sampler` v0.1: `--once`, `--version`, `--self-check`. Linux amd64/arm64 and darwin-arm64 first; other triples by end of milestone. Fixtures checked in.
-- `Packaging/build-samplers.sh` cross-compiles all five targets and writes `Resources/samplers/` + `manifest.json`.
+- `Packaging/build-samplers.sh` cross-compiles all seven targets and writes `Resources/samplers/` + `manifest.json`.
 - `SamplerBootstrap` handles detect → scp → chmod → self-check → sha256 verify.
 - `SSHCollector` shells out via `Process` → runs `sampler --once` → decodes JSON → emits `Sample`.
 - Per-host actor with 30 s loop, `ControlMaster` config.

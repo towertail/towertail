@@ -21,9 +21,10 @@
 #                         (requires --docker-up or --server-local, or pair with --all)
 #   --server-local        build and start the Go server on the host with
 #                         ClickHouse disabled (no Docker); stop it on exit
-#   --go-unit             go test ./... on server+sampler (no build tags)
+#   --go-unit             go test ./... on server (no build tags)
 #   --go-integration      go test -tags=integration on server (uses testcontainers)
-#   --sampler             go test ./... on $SAMPLER_DIR (default sampler/)
+#   --sampler             go test ./... on $SAMPLER_DIR (a towertail/sampler clone;
+#                         skipped when SAMPLER_DIR is not set)
 #   --docker-up           bring up docker-compose.test.yaml
 #   --docker-down         tear down docker-compose.test.yaml (volumes too)
 #   --docker-logs         follow server logs (useful when a test fails)
@@ -258,12 +259,12 @@ go_integration() {
   pass "server integration tests"
 }
 
-# Tests the sampler in $SAMPLER_DIR (default: sampler/ while it is still here).
+# Tests the towertail/sampler clone in $SAMPLER_DIR.
 sampler_tests() {
-  local dir="${SAMPLER_DIR:-$REPO_ROOT/sampler}"
-  section "go unit tests (sampler in $dir)"
-  if [[ ! -d "$dir" ]]; then
-    echo "skip: no sampler at $dir (set SAMPLER_DIR to a towertail/sampler clone)"
+  local dir="${SAMPLER_DIR:-}"
+  section "go unit tests (sampler)"
+  if [[ -z "$dir" || ! -d "$dir" ]]; then
+    echo "skip: set SAMPLER_DIR to a towertail/sampler clone"
     return
   fi
   (cd "$dir" && go test ./...)

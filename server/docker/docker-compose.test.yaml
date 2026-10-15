@@ -38,8 +38,8 @@ services:
 
   server:
     build:
-      context: ../..
-      dockerfile: server/docker/Dockerfile
+      context: ..
+      dockerfile: docker/Dockerfile
     image: towertail/server:test
     restart: "no"
     depends_on:

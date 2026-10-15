@@ -6,21 +6,21 @@ Guidance for Claude Code when working in this repo.
 
 Towertail is a macOS menu-bar app for monitoring a fleet of remote servers over SSH (typically a Tailscale network). A SwiftUI menu-bar app talks to a tiny Go collector (`towertail-sampler`) that runs on each monitored host.
 
-Source of truth for product decisions: [`docs/PLAN.md`](docs/PLAN.md). Sampler wire format: [`docs/sampler.md`](docs/sampler.md). Do not re-derive architectural decisions — check those two first.
+Source of truth for product decisions: [`docs/PLAN.md`](docs/PLAN.md). Sampler wire format: [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md). Do not re-derive architectural decisions — check those two first.
 
 ## Repo layout
 
 ```
 apps/mac/       SwiftUI menu-bar app (v1 shipping target)
 apps/windows/   WinUI 3 / .NET 9 client (Phase 2, in progress)
-sampler/        Go collector binary, 5 target triples
 server/         Go control plane (Phase 3), module github.com/towertail/towertail/server, tags server/vX.Y.Z
 scripts/        build.sh / build.app.sh / fetch-samplers.sh / build.windows.ps1 / winvm-*.sh
-docs/           PLAN.md, sampler.md, research-*.md, design.pen, screenshots/
+samplers.lock   the towertail/sampler release that the apps bundle
+docs/           PLAN.md, wire.md, research-*.md, design.pen, screenshots/
 dist/samplers/  build output: <triple>/towertail-sampler + manifest.json
 ```
 
-`apps/mac/`, `apps/windows/`, and `sampler/` have real code. Don't touch the stub folders unless the user explicitly asks — they exist so future folder moves don't break doc links or imports.
+The sampler is in its own repo, [towertail/sampler](https://github.com/towertail/sampler). See the Sampler section.
 
 ## Mac app — `apps/mac/`
 
@@ -46,7 +46,7 @@ Sources/
 
 Key contracts:
 
-- **`Sources/State/Sample.swift`** mirrors `docs/sampler.md` §4 byte-for-byte. Keys are snake_case via `CodingKeys`. If you change the schema, bump `v` and update both sides — it's a wire contract.
+- **`Sources/State/Sample.swift`** mirrors the sampler [wire format](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) §4 byte-for-byte. Keys are snake_case via `CodingKeys`. If you change the schema, bump `v` and update both sides — it's a wire contract.
 - `Collectors/Collector.swift` defines the collector protocol; `RealCollector` wraps `SSHSamplerInvoker` + `SamplerUpdateCoordinator`. After each good sample, the coordinator compares `host.sampler` with `<version>+<sha>` from the bundled manifest. If they differ, it uploads the bundled binary to `~/.towertail/` (cooldown 15 s after success, 300 s after failure). Windows uses the same rule. A host gets a new sampler only through an app update. `MockCollector` is for previews and tests.
 - Samples are decimated into rolling series (`MetricSeries`, `DiskSeries`, `ProcSeries`) and persisted via `HistoryStore` (7-day retention).
 - Sampler binaries are bundled as app resources under `Contents/Resources/samplers/<triple>/` — a `preBuildScript` in `project.yml` rsyncs `dist/samplers/` into the bundle at build time.
@@ -106,26 +106,27 @@ Sync uses a tar pipe (no rsync needed on the VM side — winvm has `tar` via Git
 - **VS Code Remote-SSH** is an option if you want full IntelliSense + the `dotnet` debugger on the VM — connect with `code --remote ssh-remote+winvm /c/Users/<you>/Projects/towertail`. Keep the `winvm-*.sh` workflow for the Mac-side edit loop though; Remote-SSH is heavier and editing the same repo from two places invites merge pain.
 - **`git status` on the VM should show only files you actually changed.** If it reports every file as modified, the `doctor` step was skipped — rerun it.
 
-## Sampler — `sampler/`
+## Sampler
 
-Go 1.24, module `github.com/towertail/sampler`, single binary (`cmd/sampler`). Uses `gopsutil/v4`. Static builds (`CGO_ENABLED=0`), size-stripped (`-s -w`), version injected via `-ldflags`.
+The sampler (`towertail-sampler`) is in its own repo: [towertail/sampler](https://github.com/towertail/sampler), Go module `github.com/towertail/sampler`, Apache-2.0. This repo has no sampler source.
 
-```
-cmd/sampler/         main + flag parsing
-internal/collect/    per-subsystem collectors (cpu, mem, disk, net, proc, host)
-internal/schema/     JSON types matching docs/sampler.md §4
-internal/version/    Version + SHA vars set by build ldflags
-```
+- **Binaries:** `samplers.lock` pins one sampler release (`SAMPLER_VERSION`, `SAMPLER_REPO`, sha256 of `manifest.json` and `sample-v1.json`). `scripts/fetch-samplers.sh [triple...]` downloads the binaries into `dist/samplers/<triple>/`, plus `manifest.json` and `sample-v1.json`, and checks each sha256. The apps bundle `dist/samplers/`.
+- **Server:** `server/go.mod` requires `github.com/towertail/sampler` and imports `pkg/schema`. There is no committed `go.work`.
+- **Bump:**
+  1. Tag and publish the new release in towertail/sampler.
+  2. In `samplers.lock`, set `SAMPLER_VERSION`, then set both sha256 values from the release assets (`shasum -a 256 manifest.json sample-v1.json`).
+  3. If the schema changes, run `cd server && go get github.com/towertail/sampler@<tag> && go mod tidy`.
+  4. Run `scripts/fetch-samplers.sh` and the app tests.
+- **Local sampler changes:** `SAMPLER_DIR=../sampler scripts/fetch-samplers.sh` builds the binaries from a clone and downloads nothing. `SAMPLER_DIR=../sampler scripts/tests.sh --sampler` runs its Go tests. To build the server against the clone, run `go work init ./server ../sampler` at the repo root. `go.work` and `go.work.sum` are git-ignored.
+- **Wire contract:** the JSON in [wire-format.md](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) §4 is the contract. `pkg/schema`, `apps/mac/Sources/State/Sample.swift` and `apps/windows/Towertail.WinUI/State/Sample.cs` must agree with it. A breaking change bumps `v` in all of them in the same release cycle. `sample-v1.json` from the release is the shared test fixture.
 
-Seven target triples ship across both clients: `linux-amd64`, `linux-arm64`, `linux-armv7`, `darwin-arm64`, `darwin-amd64`, `windows-amd64`, `windows-arm64`. The build writes `dist/samplers/manifest.json` with sha256s; the app uses it to decide whether to re-upload.
+Seven target triples: `linux-amd64`, `linux-arm64`, `linux-armv7`, `darwin-arm64`, `darwin-amd64`, `windows-amd64`, `windows-arm64`. The app compares the host sampler with `<version>+<sha>` in `manifest.json` to decide whether to upload again.
 
-Invocation modes (see `docs/sampler.md` §3 for full flag list):
+Invocation modes (see [wire-format.md](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) §3 for the full flag list):
 - `--once` — one JSON object on stdout, exit
 - `--interval 1s` — NDJSON stream
 - `--version` — used by bootstrap handshake
 - `--self-check` — prints `ok` if the binary runs on the target kernel
-
-The sampler never writes files on the host and runs fine as the SSH-authenticated non-root user. Non-goals for v1: SMART, temperatures, root-only per-process I/O, any listening socket.
 
 ## Build & test
 
@@ -144,7 +145,7 @@ Tests:
 
 ```bash
 xcodebuild -project apps/mac/Towertail.xcodeproj -scheme Towertail test
-cd sampler && go test ./...
+cd server && go test ./...
 scripts/winvm-run.sh test              # Windows unit tests over SSH
 ```
 
@@ -155,6 +156,6 @@ scripts/winvm-run.sh test              # Windows unit tests over SSH
 - Do not create files outside the established layout without a reason.
 - Don't add documentation files (PLAN-style notes, design docs) unless asked — `docs/PLAN.md` is the single source of truth and is updated deliberately.
 - Swift: follow strict concurrency. Prefer `@Observable` stores over Combine.
-- Sample schema is a wire contract — changes require updating both `Sources/State/Sample.swift` and `docs/sampler.md` §4 together and bumping `v`.
+- Sample schema is a wire contract — see the Sampler section. Do not change `Sample.swift` or `Sample.cs` without a matching sampler release.
 - Compact card network values are fixed MB/s with 1 decimal and no unit label; full view auto-scales units. Don't "improve" this without checking with the user.
 - Don't add dependencies lightly. The Mac side is pure SwiftUI + Foundation + SQLite (via GRDB, when added); the sampler is stdlib + `gopsutil`.

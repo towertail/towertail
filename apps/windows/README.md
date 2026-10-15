@@ -50,7 +50,7 @@ See `docs/windows-app.md` §3 — directory structure mirrors `apps/mac/Sources/
 .\scripts\test.ps1 --all
 ```
 
-Contract-test fixture shared with Swift + Go: `sampler/testdata/sample-v1.json`.
+Contract-test fixture shared with Swift + Go: `sample-v1.json` from the sampler release in `samplers.lock` (`scripts/fetch-samplers.sh` writes it to `dist/samplers/sample-v1.json`).
 
 ## Settings interoperability
 

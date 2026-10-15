@@ -8,7 +8,7 @@ sampler bootstrap via /usr/bin/ssh. docs/PLAN.md Phase 2 reads: "Ship the same p
  a from-scratch native build." apps/windows/README.md is the only thing currently in that folder.
 
 What we're building. A native Windows tray app at $HOME/Projects/towertail/apps/windows/ that is functionally equivalent to the Mac client: same sampler
-binaries, same JSON wire format (schema v=1 from docs/sampler.md §4), same SQLite history schema (4 tables from HistoryStore.swift), and a settings.json format
+binaries, same JSON wire format (schema v=1 from the sampler [wire format](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) §4), same SQLite history schema (4 tables from HistoryStore.swift), and a settings.json format
  that round-trips with the Mac client so a user can copy the file between OSes. WinUI 3 + .NET 9 + C# 13, packaged both as unpackaged portable ZIP and MSIX
 (Store + sideload). x64 primary, ARM64 secondary (Surface Pro X / Copilot+ PCs).
 
@@ -138,7 +138,7 @@ apps/windows/
 │   │   ├── MockCollector.cs
 │   │   └── SamplerUpdateCoordinator.cs
 │   ├── State/
-│   │   ├── Sample.cs                      # mirrors docs/sampler.md §4
+│   │   ├── Sample.cs                      # mirrors wire-format.md §4 (towertail/sampler)
 │   │   ├── Node.cs
 │   │   ├── HistoryStore.cs                # 4 SQLite tables, 2h ring
 │   │   ├── MetricSeries.cs
@@ -289,14 +289,14 @@ asserts byte-for-byte equivalence for all non-platform fields and preservation o
 
 Scope expansion: current sampler targets Unix only. Adding Windows.
 
-Code changes (sampler/)
+Code changes (towertail/sampler)
 
 - internal/collect/cpu.go — gopsutil/v4/cpu already supports Windows; verify Times() delta math works (it does on Windows via NTDLL).
 - internal/collect/mem.go — gopsutil/v4/mem.VirtualMemory() is cross-platform.
 - internal/collect/disk.go — disk.Partitions(false) on Windows returns drive letters; disk.IOCounters() works via PDH. Filter pseudo drives (A:, empty CD/DVD).
 - internal/collect/net.go — net.IOCounters(false) returns aggregate across adapters on Windows. OK.
 - internal/collect/proc.go — process.Processes() works; process.IOCounters() requires PROCESS_QUERY_LIMITED_INFORMATION which the invoker has by default.
-Populate read_bytes/write_bytes on Windows too (update docs/sampler.md §4 note that currently says "Linux only").
+Populate read_bytes/write_bytes on Windows too (update the sampler [wire format](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) §4 note that currently says "Linux only").
 - internal/collect/host.go — host.Info() cross-platform; add Windows version detection.
 - cmd/sampler/main.go — no changes; flags are portable.
 
@@ -316,7 +316,7 @@ Manifest (dist/samplers/manifest.json)
 
 Add two keys: windows-amd64, windows-arm64, same SHA256 format.
 
-Docs (docs/sampler.md)
+Docs (the sampler [wire format](https://github.com/towertail/sampler/blob/main/docs/wire-format.md))
 
 - Remove "windows-amd64 is not a goal" sentence; replace with a Windows-specific notes paragraph: executable name has .exe extension; default deploy path on
 remote Windows is %USERPROFILE%\.towertail\towertail-sampler.exe; bootstrap uses PowerShell via ssh to run $env:USERPROFILE and Test-Path.
@@ -368,10 +368,10 @@ Goal. Prove the Windows app can launch a bundled sampler and decode a Sample.
 - Create solution, csproj, minimal App.xaml blank window.
 - Create Towertail.Tests project (xUnit v3 + AwesomeAssertions + NSubstitute). CI runs `dotnet test` on every push.
 - Add windows-amd64 + windows-arm64 to scripts/build.sampler.sh; rebuild manifest.
-- Implement Sample.cs (System.Text.Json source-gen) to exactly match docs/sampler.md §4.
+- Implement Sample.cs (System.Text.Json source-gen) to exactly match the sampler [wire format](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) §4.
 - Implement LocalSamplerInvoker.cs — probe Assets/samplers/windows-<arch>/towertail-sampler.exe.
 - Implement IProcessRunner seam (ProcessRunner.cs) so invokers are testable without spawning real binaries.
-- Commit TestData/sample-v1.json shared with sampler/testdata and Mac's test suite — prevents schema drift.
+- Commit TestData/sample-v1.json shared with testdata/ in towertail/sampler and Mac's test suite — prevents schema drift.
 - Tests: SampleDecodingTests (golden sample-v1.json round-trip, fractional-second ISO8601, v=1 enforcement, unknown-field tolerance), SamplerInvokerTests (IProcessRunner fake, arg-shape assertions for --once / --interval / --self-check), LocalSamplerInvokerTests (triple resolution on x64 + ARM64).
 - Exit: `scripts/test.ps1 --unit` green on Windows dev box and on windows-latest CI runner. Manual: launch app, click a button, see decoded Sample printed to debug output.
 
@@ -625,8 +625,8 @@ Tier 3 — UI smoke (FlaUI, nightly or pre-release)
 
 Contract tests (cross-language)
 
-- Sampler schema contract: one golden `testdata/sample-v1.json` (committed to the repo root or `sampler/testdata/`) is decoded by:
-  - Go: `sampler/internal/schema/schema_test.go`
+- Sampler schema contract: one golden `testdata/sample-v1.json` (committed to the repo root or `testdata/` in towertail/sampler) is decoded by:
+  - Go: `internal/schema/schema_test.go` in towertail/sampler
   - Swift: `apps/mac/Tests/SampleDecodingTests.swift`
   - C#: `Towertail.Tests/SampleDecodingTests.cs`
   Any schema change requires bumping `v` AND updating all three decoders in the same PR. This is enforced by CI: all three jobs must pass.
@@ -661,7 +661,7 @@ Flags (composable; default: `--unit`):
 - `--unit` — `dotnet test apps/windows/Towertail.sln --filter "Category!=FlaUI&Category!=Integration"`. Tier 1 only.
 - `--remote-integration` — writes `$env:TEMP\towertail-integration-test.env` with `TOWERTAIL_INTEGRATION=1`, endpoint, and admin token. Brings up docker-compose.test.yaml via `docker compose -f server/docker/docker-compose.test.yaml -p towertail-win-test up -d --wait`. Runs `dotnet test --filter Category=Integration`. Tears down on exit.
 - `--flaui` — runs `dotnet test Towertail.UITests --filter Category=FlaUI`. Requires interactive session.
-- `--go-unit` / `--go-integration` / `--sampler` — delegates to the existing Go test paths (cd into server/ or sampler/ and run `go test`). Kept for parity with tests.sh so a Windows dev can validate the server before hitting the Tier 2 path.
+- `--go-unit` / `--go-integration` / `--sampler` — delegates to the existing Go test paths (cd into server/ or a towertail/sampler clone and run `go test`). Kept for parity with tests.sh so a Windows dev can validate the server before hitting the Tier 2 path.
 - `--docker-up` / `--docker-down` / `--docker-logs` — same semantics as tests.sh.
 - `--all` — --unit + --remote-integration + --go-unit + --go-integration + --sampler; manages docker up/down.
 - `--keep-docker` — don't tear down after --all.
@@ -704,9 +704,9 @@ Listed exhaustively in §3.
 Modified (existing repo) — cross-cutting
 
 Sampler:
-- sampler/internal/collect/disk.go — verify Windows drive enumeration; filter pseudo drives
-- sampler/internal/collect/proc.go — populate read_bytes/write_bytes on Windows
-- sampler/testdata/sample-v1.json — NEW canonical golden fixture shared across Go/Swift/C# decoders
+- internal/collect/disk.go (towertail/sampler) — verify Windows drive enumeration; filter pseudo drives
+- internal/collect/proc.go (towertail/sampler) — populate read_bytes/write_bytes on Windows
+- testdata/sample-v1.json (towertail/sampler) — NEW canonical golden fixture shared across Go/Swift/C# decoders
 
 Build/CI scripts:
 - scripts/build.sampler.sh — add windows-amd64, windows-arm64 targets with .exe extension
@@ -718,7 +718,7 @@ Build/CI scripts:
 - dist/samplers/manifest.json — (auto-regenerated) two new entries
 
 Docs:
-- docs/sampler.md — Windows notes; update §4 note on per-process I/O (Linux + Windows, not Linux-only)
+- the sampler [wire format](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) — Windows notes; update §4 note on per-process I/O (Linux + Windows, not Linux-only)
 - docs/PLAN.md — tick Phase 2 status; link to this plan
 
 Mac (required for cross-OS round-trip):

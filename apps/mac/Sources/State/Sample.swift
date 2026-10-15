@@ -158,7 +158,7 @@ struct DiskSample: Decodable, Sendable {
     }
 }
 
-/// Cheap host-level health signals (`health` in docs/sampler.md §4).
+/// Cheap host-level health signals (`health` in https://github.com/towertail/sampler/blob/main/docs/wire-format.md §4).
 /// Every field except `procs` is nil when the host OS does not expose it.
 struct HealthInfo: Codable, Sendable, Equatable {
     let procs: Int
