@@ -191,3 +191,9 @@ See [`docs/sampler.md`](docs/sampler.md) §4 for full field semantics, permissio
 - [`docs/sampler.md`](docs/sampler.md) — Go sampler spec: JSON schema, build matrix, bootstrap handshake.
 - [`docs/research-stats.md`](docs/research-stats.md), [`research-backend.md`](docs/research-backend.md), [`research-frontend.md`](docs/research-frontend.md) — background research.
 - [`docs/screenshots/`](docs/screenshots/) — current Pencil design exports.
+
+## License
+
+- The apps (`app/`) and the server (`server/`) use the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0).
+- The sampler uses the Apache License 2.0. It is in its own repository: [towertail/sampler](https://github.com/towertail/sampler).
+- The name "Towertail" and the logo are trademarks. A fork must use a different name and logo. Refer to [TRADEMARK.md](TRADEMARK.md).
