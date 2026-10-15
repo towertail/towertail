@@ -14,7 +14,7 @@ ARG VERSION=dev
 ARG SHA=unknown
 RUN cd server && CGO_ENABLED=0 go build \
       -trimpath \
-      -ldflags="-s -w -X github.com/towertail/server/internal/version.Version=${VERSION} -X github.com/towertail/server/internal/version.SHA=${SHA}" \
+      -ldflags="-s -w -X github.com/towertail/towertail/server/internal/version.Version=${VERSION} -X github.com/towertail/towertail/server/internal/version.SHA=${SHA}" \
       -o /out/towertail-server ./cmd/towertail-server
 
 FROM gcr.io/distroless/static-debian12:nonroot

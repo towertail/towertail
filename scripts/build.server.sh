@@ -22,11 +22,11 @@ if ! command -v go >/dev/null 2>&1; then
   exit 1
 fi
 
-# Prefer an annotated tag; fall back to 0.0.0-dev when there are no tags
-# (git describe --always would otherwise return the bare commit hash and
-# cause version==sha in --version output).
-if VERSION="$(git -C "$REPO_ROOT" describe --tags --dirty 2>/dev/null)"; then
-  :
+# Use the latest server/vX.Y.Z tag without its prefix; fall back to
+# 0.0.0-dev when there is no such tag (git describe --always would
+# otherwise return the bare commit hash and cause version==sha).
+if VERSION="$(git -C "$REPO_ROOT" describe --tags --match 'server/v*' --dirty 2>/dev/null)"; then
+  VERSION="${VERSION#server/v}"
 else
   VERSION="0.0.0-dev"
 fi
@@ -71,7 +71,7 @@ build_one() {
       CGO_ENABLED=0 \
       GOOS="$goos" GOARCH="$goarch" \
       go build -trimpath \
-        -ldflags="-s -w -X github.com/towertail/server/internal/version.Version=$VERSION -X github.com/towertail/server/internal/version.SHA=$SHA" \
+        -ldflags="-s -w -X github.com/towertail/towertail/server/internal/version.Version=$VERSION -X github.com/towertail/towertail/server/internal/version.SHA=$SHA" \
         -o "$dest" ./cmd/towertail-server
   )
 

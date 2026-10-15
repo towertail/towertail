@@ -8,9 +8,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/towertail/server/internal/clickhouse"
-	"github.com/towertail/server/internal/store"
-	"github.com/towertail/server/internal/wire"
+	"github.com/towertail/towertail/server/internal/clickhouse"
+	"github.com/towertail/towertail/server/internal/store"
+	"github.com/towertail/towertail/server/internal/wire"
 )
 
 type testClock struct {

@@ -1,4 +1,4 @@
-module github.com/towertail/server
+module github.com/towertail/towertail/server
 
 go 1.25.0
 

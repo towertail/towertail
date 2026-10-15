@@ -5,7 +5,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/towertail/server/internal/store"
+	"github.com/towertail/towertail/server/internal/store"
 )
 
 // Queue wraps the ConfigStore's control helpers with a thin,

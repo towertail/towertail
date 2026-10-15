@@ -13,17 +13,17 @@ import (
 	"github.com/google/uuid"
 	"github.com/urfave/cli/v3"
 
-	"github.com/towertail/server/internal/alerter"
-	"github.com/towertail/server/internal/api"
-	"github.com/towertail/server/internal/auth"
-	"github.com/towertail/server/internal/clickhouse"
-	"github.com/towertail/server/internal/config"
-	"github.com/towertail/server/internal/control"
-	"github.com/towertail/server/internal/hub"
-	"github.com/towertail/server/internal/postgres"
-	pkgruntime "github.com/towertail/server/internal/runtime"
-	"github.com/towertail/server/internal/store"
-	"github.com/towertail/server/internal/version"
+	"github.com/towertail/towertail/server/internal/alerter"
+	"github.com/towertail/towertail/server/internal/api"
+	"github.com/towertail/towertail/server/internal/auth"
+	"github.com/towertail/towertail/server/internal/clickhouse"
+	"github.com/towertail/towertail/server/internal/config"
+	"github.com/towertail/towertail/server/internal/control"
+	"github.com/towertail/towertail/server/internal/hub"
+	"github.com/towertail/towertail/server/internal/postgres"
+	pkgruntime "github.com/towertail/towertail/server/internal/runtime"
+	"github.com/towertail/towertail/server/internal/store"
+	"github.com/towertail/towertail/server/internal/version"
 )
 
 func main() {

@@ -14,7 +14,7 @@ Source of truth for product decisions: [`docs/PLAN.md`](docs/PLAN.md). Sampler w
 apps/mac/       SwiftUI menu-bar app (v1 shipping target)
 apps/windows/   WinUI 3 / .NET 9 client (Phase 2, in progress)
 sampler/        Go collector binary, 5 target triples
-server/         stub (Phase 3)
+server/         Go control plane (Phase 3), module github.com/towertail/towertail/server, tags server/vX.Y.Z
 scripts/        build.sh / build.app.sh / build.sampler.sh / build.windows.ps1 / winvm-*.sh
 docs/           PLAN.md, sampler.md, research-*.md, design.pen, screenshots/
 dist/samplers/  build output: <triple>/towertail-sampler + manifest.json

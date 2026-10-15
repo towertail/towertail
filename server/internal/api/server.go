@@ -14,14 +14,14 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/time/rate"
 
-	"github.com/towertail/server/internal/alerter"
-	"github.com/towertail/server/internal/auth"
-	"github.com/towertail/server/internal/clickhouse"
-	"github.com/towertail/server/internal/config"
-	"github.com/towertail/server/internal/control"
-	"github.com/towertail/server/internal/hub"
-	"github.com/towertail/server/internal/runtime"
-	"github.com/towertail/server/internal/store"
+	"github.com/towertail/towertail/server/internal/alerter"
+	"github.com/towertail/towertail/server/internal/auth"
+	"github.com/towertail/towertail/server/internal/clickhouse"
+	"github.com/towertail/towertail/server/internal/config"
+	"github.com/towertail/towertail/server/internal/control"
+	"github.com/towertail/towertail/server/internal/hub"
+	"github.com/towertail/towertail/server/internal/runtime"
+	"github.com/towertail/towertail/server/internal/store"
 )
 
 // Server assembles the Echo instance and wires every dependency.

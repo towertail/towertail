@@ -713,6 +713,8 @@ server/
 
 ### Server (`server/go.mod`)
 
+Module path: `github.com/towertail/towertail/server`. Release tags: `server/vX.Y.Z`.
+
 | Module | Purpose |
 |---|---|
 | `github.com/labstack/echo/v4` | HTTP framework (router, middleware, binding/validation) |

@@ -8,8 +8,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
-	"github.com/towertail/server/internal/store"
-	"github.com/towertail/server/internal/wire"
+	"github.com/towertail/towertail/server/internal/store"
+	"github.com/towertail/towertail/server/internal/wire"
 )
 
 // httpErrorHandler is installed as Echo's global error handler. It

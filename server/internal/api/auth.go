@@ -6,9 +6,9 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"github.com/towertail/server/internal/auth"
-	"github.com/towertail/server/internal/store"
-	"github.com/towertail/server/internal/wire"
+	"github.com/towertail/towertail/server/internal/auth"
+	"github.com/towertail/towertail/server/internal/store"
+	"github.com/towertail/towertail/server/internal/wire"
 )
 
 // tokenKey is the Echo context key used to store the authenticated

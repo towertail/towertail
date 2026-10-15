@@ -7,8 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/towertail/server/internal/config"
-	"github.com/towertail/server/internal/runtime"
+	"github.com/towertail/towertail/server/internal/config"
+	"github.com/towertail/towertail/server/internal/runtime"
 )
 
 // Client wraps the pgx pool as a lazy runtime.Component. In self-hosted
