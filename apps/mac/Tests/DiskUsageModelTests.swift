@@ -146,4 +146,81 @@ final class DiskUsageModelTests: XCTestCase {
         m.setScope("~")
         XCTAssertNotNil(m.record)
     }
+
+    func testAddRemoveAndToggleTiles() throws {
+        let r = try ScanFixtures.result("darwin")
+        store.save(nodeID: node.id, scope: "~", result: r)
+        let m = DiskUsageModel(node: node, store: store, scanner: FakeDiskScanner(), scope: "~")
+        let base = m.selectedBytes
+
+        XCTAssertEqual(m.mark(["Movies"]), .none)
+        m.add(["Movies"])
+        XCTAssertEqual(m.mark(["Movies"]), .mine(on: true))
+        XCTAssertEqual(m.mineItems.map(\.label), ["Movies/"])
+        XCTAssertEqual(m.mineItems.first?.displayPath, "~/Movies")
+        XCTAssertEqual(m.selectedBytes, base + 5_000_000_000)
+        XCTAssertTrue(m.script()?.text.contains(#"rm -rf -- "$HOME"/'Movies'"#) ?? false)
+        XCTAssertTrue(m.holdsSelection(["Movies"]))
+
+        m.toggleTile(["Movies"])
+        XCTAssertEqual(m.mark(["Movies"]), .mine(on: false))
+        XCTAssertEqual(m.selectedBytes, base)
+        XCTAssertEqual(m.mineItems.count, 1)
+
+        // A parent takes in the items below it, and covers its tiles.
+        m.add(["Projects", "api"])
+        m.add(["Projects"])
+        XCTAssertEqual(m.mineItems.map(\.displayPath), ["~/Movies", "~/Projects"])
+        XCTAssertEqual(m.mark(["Projects", "web"]), .covered(by: "Projects"))
+        m.add(["Projects", "web"])
+        XCTAssertEqual(m.mineItems.count, 2)
+        m.remove(["Projects"])
+        XCTAssertEqual(m.mineItems.map(\.displayPath), ["~/Movies"])
+
+        // A tile with a recommendation uses the recommendation.
+        let installers = try XCTUnwrap(r.recs.first { $0.id == "installers" })
+        XCTAssertEqual(m.mark(["Downloads"]), .rule(installers, on: m.selected.contains("installers")))
+        m.remove(["Downloads"])
+        XCTAssertTrue(m.isHidden(installers))
+        XCTAssertEqual(m.hiddenRecs, [installers])
+        XCTAssertFalse(m.visibleRecs.contains(installers))
+        XCTAssertEqual(m.mark(["Downloads"]), .none)
+        m.add(["Downloads"])
+        XCTAssertFalse(m.isHidden(installers))
+        XCTAssertTrue(m.selected.contains("installers"))
+        XCTAssertEqual(m.mark(["Downloads", "Docker.dmg"]), .covered(by: "Downloads"))
+
+        m.add(["Movies"])
+        m.clearSelection()
+        XCTAssertEqual(m.selectedCount, 0)
+        XCTAssertEqual(m.mineItems.map(\.on), [false])
+    }
+
+    func testPicksStayAcrossRescanAndGoneItemsLeave() async throws {
+        let r = try ScanFixtures.result("darwin")
+        store.save(nodeID: node.id, scope: "~", result: r)
+        let fake = FakeDiskScanner()
+        let m = DiskUsageModel(node: node, store: store, scanner: fake, scope: "~")
+        let go = try XCTUnwrap(r.recs.first { $0.id == "go-build-cache" })
+        m.hide(go)
+        m.add(["Movies"])
+        m.add([".Trash"])
+
+        var next = r
+        next.tree.c?.removeAll { $0.name == ".Trash" }
+        m.start()
+        try await waitFor { fake.current != nil }
+        fake.send(.result(next))
+        try await waitFor { m.phase == .done }
+        XCTAssertEqual(m.notice, "~/.Trash is gone, so it left the cleanup list.")
+        XCTAssertEqual(m.mineItems.map(\.displayPath), ["~/Movies"])
+        XCTAssertTrue(m.isHidden(go))
+        XCTAssertFalse(m.selected.contains(go.id))
+
+        let again = DiskUsageModel(node: node, store: store, scanner: fake, scope: "~")
+        XCTAssertEqual(again.mineItems.map(\.displayPath), ["~/Movies"])
+        XCTAssertTrue(again.isHidden(go))
+        XCTAssertNil(again.notice)
+        XCTAssertTrue(DiskUsageModel(node: node, store: store, scanner: fake, scope: "/").picks.isEmpty)
+    }
 }

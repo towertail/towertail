@@ -78,6 +78,42 @@ final class CleanupScriptTests: XCTestCase {
         try assertBashParses(text)
     }
 
+    private func home(os: String) -> DiskScanResult {
+        let win = os == "windows"
+        let root = win ? "C:\\Users\\dev" : "/home/dev"
+        return DiskScanResult(
+            root: win ? "C:\\" : "/", os: os, hostname: "web-1", home: root, startedTs: "2026-10-15T09:12:00Z",
+            scannedBytes: 3_000,
+            tree: DiskNode(n: win ? "C:\\" : "/", b: 3_000, c: [
+                DiskNode(n: win ? "Users\\dev" : "home/dev", b: 2_000, c: [
+                    DiskNode(n: "it's mine", b: 2_000, f: true),
+                ]),
+                DiskNode(n: "opt", b: 1_000),
+            ])
+        )
+    }
+
+    func testUserItemsInBash() throws {
+        let s = CleanupScript(result: home(os: "linux"), selected: [],
+                              mine: ["/home/dev/it's mine", "/opt", "/gone"], now: now)
+        XCTAssertEqual(s.mine.map(\.path), ["/home/dev/it's mine", "/opt"])
+        XCTAssertEqual(s.count, 2)
+        XCTAssertEqual(s.totalBytes, 3_000)
+        let text = s.text
+        XCTAssertTrue(text.contains("# 2 items · "))
+        XCTAssertTrue(text.contains(#"rm -rf -- "$HOME"/'it'\''s mine'"#))
+        XCTAssertTrue(text.contains("# Added by you · 1 KB · may need sudo\nrm -rf -- '/opt'"))
+        XCTAssertTrue(text.contains("# sudo lines ask for your password."))
+        try assertBashParses(text)
+    }
+
+    func testUserItemsInPowerShell() {
+        let text = CleanupScript(result: home(os: "windows"), selected: [],
+                                 mine: ["C:\\Users\\dev\\it's mine"], now: now).text
+        XCTAssertTrue(text.contains("  Remove-Item -LiteralPath 'C:\\Users\\dev\\it''s mine' -Recurse -Force"))
+        XCTAssertFalse(text.contains("admin"))
+    }
+
     private func assertBashParses(_ script: String, file: StaticString = #filePath, line: UInt = #line) throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("tt-cleanup-\(UUID().uuidString).sh")
         try script.write(to: url, atomically: true, encoding: .utf8)

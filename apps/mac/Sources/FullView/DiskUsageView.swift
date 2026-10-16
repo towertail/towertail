@@ -182,7 +182,7 @@ struct DiskUsageView<Leading: View>: View {
             let rest = max(0, fs.used - r.scannedBytes - (r.noAccess.bytesEst ?? 0))
             fourth = Stat(label: "Not scanned", dot: blue, value: DiskSize.text(rest), sub: "outside ~ · system & apps")
         }
-        let n = model.selectedRecs.count
+        let n = model.selectedCount
         return [
             Stat(label: "Scanned", dot: gray, value: DiskSize.text(r.scannedBytes), sub: "\(DiskSize.count(r.files)) files"),
             Stat(label: "Selected", dot: TreemapView.selectedGreen, value: DiskSize.text(model.selectedBytes),

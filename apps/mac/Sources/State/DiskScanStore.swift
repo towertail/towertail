@@ -12,9 +12,28 @@ struct DiskScanRecord: Sendable, Equatable {
     var result: DiskScanResult
 }
 
+/// A change of the user to the cleanup list, kept per node and scope.
+struct CleanupPick: Sendable, Equatable {
+    enum Kind: String, Sendable {
+        /// A folder or file that the user added. The key is the absolute path.
+        case mine
+        /// A hidden recommendation. The key is `<rule id>|<rec path>`.
+        case hidden
+    }
+
+    var kind: Kind
+    var key: String
+    /// Mine: the item is in the script.
+    var on: Bool = true
+    var addedAt: Date
+
+    static func hiddenKey(_ rec: DiskRec) -> String { rec.ruleID + "|" + rec.path }
+}
+
 /// Keeps the last scan results in the SQLite file of `HistoryStore`
 /// (table `disk_scan`, gzip JSON). It keeps `keepPerScope` results for
-/// each node and scope.
+/// each node and scope. It also keeps the cleanup picks of the user
+/// (table `disk_cleanup_pick`).
 @Observable
 @MainActor
 final class DiskScanStore {
@@ -61,6 +80,19 @@ final class DiskScanStore {
         records(nodeID: nodeID, scope: scope).first
     }
 
+    /// Oldest first.
+    func picks(nodeID: UUID, scope: String) -> [CleanupPick] {
+        db.picks(nodeID: nodeID, scope: scope)
+    }
+
+    func savePick(_ p: CleanupPick, nodeID: UUID, scope: String) {
+        db.savePick(p, nodeID: nodeID, scope: scope)
+    }
+
+    func removePick(_ kind: CleanupPick.Kind, key: String, nodeID: UUID, scope: String) {
+        db.removePick(kind, key: key, nodeID: nodeID, scope: scope)
+    }
+
     func removeAll(nodeID: UUID) {
         db.delete(nodeID: nodeID)
         cache.removeAll()
@@ -93,6 +125,15 @@ final class DiskScanDB: @unchecked Sendable {
                 result_gz BLOB NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_disk_scan_node_scope ON disk_scan(node_id, scope, finished_at);
+            CREATE TABLE IF NOT EXISTS disk_cleanup_pick (
+                node_id TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                key TEXT NOT NULL,
+                on_flag INTEGER NOT NULL,
+                added_at REAL NOT NULL,
+                PRIMARY KEY (node_id, scope, kind, key)
+            );
             """, nil, nil, nil)
         }
     }
@@ -192,10 +233,69 @@ final class DiskScanDB: @unchecked Sendable {
     func delete(nodeID: UUID) {
         queue.sync {
             guard let db else { return }
+            for table in ["disk_scan", "disk_cleanup_pick"] {
+                var stmt: OpaquePointer?
+                guard sqlite3_prepare_v2(db, "DELETE FROM \(table) WHERE node_id = ?;", -1, &stmt, nil) == SQLITE_OK else { continue }
+                sqlite3_bind_text(stmt, 1, nodeID.uuidString, -1, Self.transient)
+                sqlite3_step(stmt)
+                sqlite3_finalize(stmt)
+            }
+        }
+    }
+
+    func picks(nodeID: UUID, scope: String) -> [CleanupPick] {
+        queue.sync {
+            guard let db else { return [] }
             var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, "DELETE FROM disk_scan WHERE node_id = ?;", -1, &stmt, nil) == SQLITE_OK else { return }
+            let sql = "SELECT kind, key, on_flag, added_at FROM disk_cleanup_pick WHERE node_id = ? AND scope = ? ORDER BY added_at, rowid;"
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
             defer { sqlite3_finalize(stmt) }
             sqlite3_bind_text(stmt, 1, nodeID.uuidString, -1, Self.transient)
+            sqlite3_bind_text(stmt, 2, scope, -1, Self.transient)
+            var out: [CleanupPick] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                guard let kind = CleanupPick.Kind(rawValue: String(cString: sqlite3_column_text(stmt, 0))) else { continue }
+                out.append(CleanupPick(
+                    kind: kind, key: String(cString: sqlite3_column_text(stmt, 1)),
+                    on: sqlite3_column_int(stmt, 2) != 0,
+                    addedAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 3))
+                ))
+            }
+            return out
+        }
+    }
+
+    func savePick(_ p: CleanupPick, nodeID: UUID, scope: String) {
+        queue.sync {
+            guard let db else { return }
+            var stmt: OpaquePointer?
+            let sql = """
+            INSERT INTO disk_cleanup_pick (node_id, scope, kind, key, on_flag, added_at) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT (node_id, scope, kind, key) DO UPDATE SET on_flag = excluded.on_flag;
+            """
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, nodeID.uuidString, -1, Self.transient)
+            sqlite3_bind_text(stmt, 2, scope, -1, Self.transient)
+            sqlite3_bind_text(stmt, 3, p.kind.rawValue, -1, Self.transient)
+            sqlite3_bind_text(stmt, 4, p.key, -1, Self.transient)
+            sqlite3_bind_int(stmt, 5, p.on ? 1 : 0)
+            sqlite3_bind_double(stmt, 6, p.addedAt.timeIntervalSince1970)
+            sqlite3_step(stmt)
+        }
+    }
+
+    func removePick(_ kind: CleanupPick.Kind, key: String, nodeID: UUID, scope: String) {
+        queue.sync {
+            guard let db else { return }
+            var stmt: OpaquePointer?
+            let sql = "DELETE FROM disk_cleanup_pick WHERE node_id = ? AND scope = ? AND kind = ? AND key = ?;"
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, nodeID.uuidString, -1, Self.transient)
+            sqlite3_bind_text(stmt, 2, scope, -1, Self.transient)
+            sqlite3_bind_text(stmt, 3, kind.rawValue, -1, Self.transient)
+            sqlite3_bind_text(stmt, 4, key, -1, Self.transient)
             sqlite3_step(stmt)
         }
     }

@@ -136,12 +136,12 @@ struct CleanupPanel: View {
     }
 
     private func footer(_ result: DiskScanResult) -> some View {
-        let script = CleanupScript(result: result, selected: model.selected)
+        let script = model.script() ?? CleanupScript(result: result, selected: [])
         let text = script.text
         return VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
                 Text(DiskSize.text(script.totalBytes)).font(.system(size: 13, weight: .bold, design: .monospaced))
-                    + Text(" selected · \(script.chosen.count) \(script.chosen.count == 1 ? "item" : "items")")
+                    + Text(" selected · \(script.count) \(script.count == 1 ? "item" : "items")")
                     .font(.system(size: 13)).foregroundColor(.secondary)
                 Spacer()
                 Text(script.shellLabel)
@@ -173,7 +173,7 @@ struct CleanupPanel: View {
                 }
                 Button(copied ? "Copied ✓" : "Copy script") { copy(text) }
                     .buttonStyle(UsagePrimaryButtonStyle())
-                    .disabled(script.chosen.isEmpty)
+                    .disabled(script.count == 0)
             }
             Text(isLocal
                  ? "Paste into Terminal on this Mac. Towertail never runs the script."

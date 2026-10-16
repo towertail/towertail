@@ -73,4 +73,25 @@ final class DiskScanStoreTests: XCTestCase {
         XCTAssertEqual(rows.first?.finishedAt, t0.addingTimeInterval(60))
         XCTAssertEqual(store.latest(nodeID: node, scope: "/")?.result.scannedBytes, 3)
     }
+
+    func testPicksPerNodeAndScope() {
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = DiskScanStore(url: url)
+        let node = UUID()
+        let t0 = Date(timeIntervalSince1970: 1_790_000_000)
+        store.savePick(CleanupPick(kind: .mine, key: "/a", addedAt: t0), nodeID: node, scope: "~")
+        store.savePick(CleanupPick(kind: .hidden, key: "npm|~/.npm", addedAt: t0.addingTimeInterval(1)), nodeID: node, scope: "~")
+        store.savePick(CleanupPick(kind: .mine, key: "/a", on: false, addedAt: t0.addingTimeInterval(9)), nodeID: node, scope: "~")
+        store.savePick(CleanupPick(kind: .mine, key: "/b", addedAt: t0), nodeID: node, scope: "/")
+
+        XCTAssertEqual(store.picks(nodeID: node, scope: "~"), [
+            CleanupPick(kind: .mine, key: "/a", on: false, addedAt: t0),
+            CleanupPick(kind: .hidden, key: "npm|~/.npm", addedAt: t0.addingTimeInterval(1)),
+        ])
+        store.removePick(.mine, key: "/a", nodeID: node, scope: "~")
+        XCTAssertEqual(store.picks(nodeID: node, scope: "~").map(\.key), ["npm|~/.npm"])
+        store.removeAll(nodeID: node)
+        XCTAssertTrue(store.picks(nodeID: node, scope: "/").isEmpty)
+    }
 }

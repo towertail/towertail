@@ -32,6 +32,10 @@ final class DiskUsageModel {
     private(set) var scansOff: String?
     /// During a scan: show the previous result in place of the progress.
     var showPrevious = false
+    /// The cleanup picks of the scope, oldest first.
+    private(set) var picks: [CleanupPick] = []
+    /// A short message for the toast.
+    var notice: String?
 
     @ObservationIgnored private let store: DiskScanStore
     @ObservationIgnored private let scanner: any DiskScanner
@@ -75,6 +79,8 @@ final class DiskUsageModel {
     /// Reloads the last stored result of the scope.
     func load() {
         record = store.latest(nodeID: node.id, scope: scope)
+        picks = store.picks(nodeID: node.id, scope: scope)
+        prunePicks()
         selected = defaultSelection
         focus = []
     }
@@ -171,12 +177,37 @@ final class DiskUsageModel {
     // MARK: Selection
 
     var defaultSelection: Set<String> {
-        Set(result?.recs.filter { $0.group == .safe }.map(\.id) ?? [])
+        Set(visibleRecs.filter { $0.group == .safe }.map(\.id))
     }
 
-    var selectedRecs: [DiskRec] { result?.recs.filter { selected.contains($0.id) } ?? [] }
+    /// The recommendations that the user did not hide.
+    var visibleRecs: [DiskRec] { result?.recs.filter { !isHidden($0) } ?? [] }
 
-    var selectedBytes: Int64 { selectedRecs.reduce(0) { $0 + $1.bytes } }
+    var hiddenRecs: [DiskRec] { result?.recs.filter(isHidden) ?? [] }
+
+    func isHidden(_ r: DiskRec) -> Bool {
+        picks.contains { $0.kind == .hidden && $0.key == CleanupPick.hiddenKey(r) }
+    }
+
+    var selectedRecs: [DiskRec] { visibleRecs.filter { selected.contains($0.id) } }
+
+    /// The items that the user added, with their nodes in the tree.
+    var mineItems: [MineItem] {
+        guard let result else { return [] }
+        return picks.compactMap { p in
+            guard p.kind == .mine, let names = result.names(of: p.key),
+                  let n = result.tree.node(at: names[...]) else { return nil }
+            return MineItem(path: p.key, displayPath: result.displayPath(p.key), names: names, node: n, on: p.on)
+        }
+    }
+
+    var selectedMine: [MineItem] { mineItems.filter(\.on) }
+
+    var selectedCount: Int { selectedRecs.count + selectedMine.count }
+
+    var selectedBytes: Int64 {
+        selectedRecs.reduce(0) { $0 + $1.bytes } + selectedMine.reduce(0) { $0 + $1.node.bytes }
+    }
 
     /// Tree node ids of the selected recommendations.
     var selectedNodeIDs: Set<String> { Set(selectedRecs.flatMap(\.nodeIDs)) }
@@ -187,10 +218,157 @@ final class DiskUsageModel {
 
     func selectSafe() { selected = defaultSelection }
 
-    func clearSelection() { selected = [] }
+    func clearSelection() {
+        selected = []
+        for p in picks where p.kind == .mine && p.on { setMine(p.key, on: false) }
+    }
 
     func script(now: Date = Date()) -> CleanupScript? {
-        result.map { CleanupScript(result: $0, selected: selected, now: now) }
+        result.map {
+            CleanupScript(result: $0, selected: Set(selectedRecs.map(\.id)), mine: selectedMine.map(\.path), now: now)
+        }
+    }
+
+    // MARK: Cleanup list
+
+    struct MineItem: Equatable, Identifiable {
+        var path: String
+        var displayPath: String
+        var names: [String]
+        var node: DiskNode
+        var on: Bool
+
+        var id: String { path }
+        var label: String {
+            let last = node.name.split(whereSeparator: { $0 == "/" || $0 == "\\" }).last.map(String.init) ?? node.name
+            return node.isFile ? last : last + "/"
+        }
+    }
+
+    /// The state of a map tile in the cleanup list.
+    enum TileMark: Equatable {
+        case none
+        /// A recommendation points to the tile.
+        case rule(DiskRec, on: Bool)
+        /// The user added the tile.
+        case mine(on: Bool)
+        /// A folder above the tile is in the list and checked.
+        case covered(by: String)
+    }
+
+    func mark(_ names: [String]) -> TileMark {
+        guard let result, !names.isEmpty else { return .none }
+        if let by = coveredBy(names) { return .covered(by: by) }
+        if let r = rec(at: names), !isHidden(r) { return .rule(r, on: selected.contains(r.id)) }
+        let path = result.absolutePath(of: names)
+        if let p = picks.first(where: { $0.kind == .mine && $0.key == path }) { return .mine(on: p.on) }
+        return .none
+    }
+
+    /// True when a checked item is at or below the tile.
+    func holdsSelection(_ names: [String]) -> Bool {
+        guard let result, let n = result.tree.node(at: names[...]) else { return false }
+        if !n.subtreeIDs.isDisjoint(with: selectedNodeIDs) { return true }
+        let path = result.absolutePath(of: names)
+        return selectedMine.contains { DiskScanResult.path($0.path, isIn: path, separator: result.separator) }
+    }
+
+    /// The name of the checked folder above `names`, if there is one.
+    func coveredBy(_ names: [String]) -> String? {
+        guard let result, names.count > 1 else { return nil }
+        let ids = selectedNodeIDs
+        let on = Set(selectedMine.map(\.path))
+        for k in stride(from: names.count - 1, through: 1, by: -1) {
+            let up = Array(names.prefix(k))
+            if let id = result.tree.node(at: up[...])?.id, ids.contains(id) { return up.last }
+            if on.contains(result.absolutePath(of: up)) { return up.last }
+        }
+        return nil
+    }
+
+    /// Puts the tile in the list, checked. A recommendation of the tile is
+    /// shown again and selected. Items of the user below it leave the list.
+    func add(_ names: [String]) {
+        guard let result, !names.isEmpty, coveredBy(names) == nil else { return }
+        if let r = rec(at: names) {
+            if isHidden(r) { unhide(r) }
+            selected.insert(r.id)
+            return
+        }
+        let path = result.absolutePath(of: names)
+        for p in picks where p.kind == .mine && p.key != path
+            && DiskScanResult.path(p.key, isIn: path, separator: result.separator) {
+            removeMine(p.key)
+        }
+        setMine(path, on: true)
+    }
+
+    /// Takes the tile out of the list. A recommendation becomes hidden.
+    func remove(_ names: [String]) {
+        switch mark(names) {
+        case .rule(let r, _): hide(r)
+        case .mine: if let result { removeMine(result.absolutePath(of: names)) }
+        case .none, .covered: break
+        }
+    }
+
+    /// The box on a tile: adds the tile, or checks or clears it.
+    func toggleTile(_ names: [String]) {
+        switch mark(names) {
+        case .none: add(names)
+        case .rule(let r, _): toggle(r.id)
+        case .mine(let on): if let result { setMine(result.absolutePath(of: names), on: !on) }
+        case .covered: break
+        }
+    }
+
+    func setMine(_ path: String, on: Bool) {
+        var p = picks.first { $0.kind == .mine && $0.key == path } ?? CleanupPick(kind: .mine, key: path, addedAt: now())
+        p.on = on
+        savePick(p)
+    }
+
+    func removeMine(_ path: String) {
+        store.removePick(.mine, key: path, nodeID: node.id, scope: scope)
+        picks.removeAll { $0.kind == .mine && $0.key == path }
+    }
+
+    func hide(_ r: DiskRec) {
+        savePick(CleanupPick(kind: .hidden, key: CleanupPick.hiddenKey(r), addedAt: now()))
+        selected.remove(r.id)
+    }
+
+    func unhide(_ r: DiskRec) {
+        let key = CleanupPick.hiddenKey(r)
+        store.removePick(.hidden, key: key, nodeID: node.id, scope: scope)
+        picks.removeAll { $0.kind == .hidden && $0.key == key }
+    }
+
+    private func savePick(_ p: CleanupPick) {
+        store.savePick(p, nodeID: node.id, scope: scope)
+        if let i = picks.firstIndex(where: { $0.kind == p.kind && $0.key == p.key }) {
+            picks[i] = p
+        } else {
+            picks.append(p)
+        }
+    }
+
+    /// The recommendation that points to the node at `names`.
+    private func rec(at names: [String]) -> DiskRec? {
+        guard let id = result?.tree.node(at: names[...])?.id else { return nil }
+        return result?.recs.first { $0.nodeIDs.contains(id) }
+    }
+
+    /// Drops the items of the user that are not in the tree, and tells the user.
+    private func prunePicks() {
+        guard let result else { return }
+        let gone = picks.filter { $0.kind == .mine && result.names(of: $0.key) == nil }
+        guard !gone.isEmpty else { return }
+        for p in gone { removeMine(p.key) }
+        let names = gone.map { result.displayPath($0.key) }
+        notice = names.count == 1
+            ? "\(names[0]) is gone, so it left the cleanup list."
+            : "\(names.joined(separator: ", ")) are gone, so they left the cleanup list."
     }
 
     // MARK: Explorer
