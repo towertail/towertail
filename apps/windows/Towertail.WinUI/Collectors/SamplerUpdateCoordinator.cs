@@ -98,6 +98,53 @@ public sealed class SamplerUpdateCoordinator
         return PushAsync(node, expected);
     }
 
+    /// <summary>
+    /// Before a disk scan: push the bundled sampler now when the host has another version,
+    /// so that the host knows <c>scan</c>. No cooldown, because the user asked for the scan.
+    /// Throws when the push fails.
+    /// </summary>
+    public async Task EnsureCurrentAsync(Node node, string reportedSampler, CancellationToken ct = default)
+    {
+        if (node.Kind != NodeKind.Ssh || _manifest is null) return;
+        var expected = _manifest.ExpectedSamplerField;
+        if (reportedSampler == expected) return;
+
+        var waited = false;
+        while (true)
+        {
+            lock (_lock)
+            {
+                // A push that was in progress and did not fail made the host current.
+                if (waited && !_updating.Contains(node.Id) && !_lastError.ContainsKey(node.Id)) return;
+                if (!_updating.Contains(node.Id))
+                {
+                    _updating.Add(node.Id);
+                    _lastAttempt[node.Id] = _now();
+                    break;
+                }
+            }
+            waited = true;
+            await Task.Delay(500, ct).ConfigureAwait(false);
+        }
+
+        _logger?.Info($"scan-update[{node.DisplayName}]: push starting from={reportedSampler} to={expected}");
+        try
+        {
+            await _pusher.PushAsync(node, ct).ConfigureAwait(false);
+            lock (_lock) _lastError.Remove(node.Id);
+        }
+        catch (Exception ex)
+        {
+            lock (_lock) _lastError[node.Id] = ex.Message;
+            _logger?.Warning($"scan-update[{node.DisplayName}]: push failed: {ex.Message}");
+            throw;
+        }
+        finally
+        {
+            lock (_lock) _updating.Remove(node.Id);
+        }
+    }
+
     private async Task PushAsync(Node node, string expected)
     {
         try

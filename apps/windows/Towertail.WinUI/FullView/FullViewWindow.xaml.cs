@@ -10,6 +10,9 @@ public sealed partial class FullViewWindow : Window
     private FullViewModel _fvm = new();
     private bool _paused;
     private readonly List<MetricChart> _charts = new();
+    // Kept while the window is open, so that a scan continues when the user changes tabs.
+    private DiskUsageView? _usage;
+    private string _diskSubTab = "capacity";
 
     public FullViewWindow()
     {
@@ -17,6 +20,7 @@ public sealed partial class FullViewWindow : Window
         Title = "Towertail — Full View";
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
+        Closed += (_, _) => _usage?.Stop();
     }
 
     public void Bind(ServerViewModel vm)
@@ -59,7 +63,7 @@ public sealed partial class FullViewWindow : Window
         {
             "cpu"   => MakeChart(_vm.CpuSeries, "CPU %"),
             "mem"   => MakeChart(_vm.MemSeries, "MEM %"),
-            "disk"  => MakeChart(_vm.DiskSeries, "DISK %"),
+            "disk"  => MakeDisk(),
             "net"   => MakeNet(),
             "procs" => MakeProcs(),
             "health" => MakeHealth(),
@@ -75,6 +79,42 @@ public sealed partial class FullViewWindow : Window
         chart.SetPaused(_paused);
         _charts.Add(chart);
         return chart;
+    }
+
+    private UIElement MakeDisk()
+    {
+        if (_vm is null) return new TextBlock();
+        var grid = new Grid { RowSpacing = 8 };
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+        var selector = new SelectorBar();
+        var capacityItem = new SelectorBarItem { Text = "Capacity & I/O", Tag = "capacity" };
+        var usageItem = new SelectorBarItem { Text = "Usage", Tag = "usage" };
+        selector.Items.Add(capacityItem);
+        selector.Items.Add(usageItem);
+        grid.Children.Add(selector);
+
+        var slot = new ContentControl
+        {
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            VerticalContentAlignment = VerticalAlignment.Stretch,
+        };
+        Grid.SetRow(slot, 1);
+        grid.Children.Add(slot);
+
+        var capacity = MakeChart(_vm.DiskSeries, "DISK %");
+        void Show(string tag)
+        {
+            _diskSubTab = tag;
+            slot.Content = tag == "usage"
+                ? _usage ??= new DiskUsageView(_vm, App.Current.Environment)
+                : capacity;
+        }
+        selector.SelectedItem = _diskSubTab == "usage" ? usageItem : capacityItem;
+        Show(_diskSubTab);
+        selector.SelectionChanged += (_, _) => Show(selector.SelectedItem?.Tag as string ?? "capacity");
+        return grid;
     }
 
     private UIElement MakeNet()

@@ -102,4 +102,29 @@ public sealed class SamplerUpdateCoordinatorTests
         await c.MaybeUpdateAsync(Ssh, "1.0.0+a5a3c8f", enabled: true);
         c.LastError(Ssh.Id).Should().BeNull();
     }
+    [Fact]
+    public async Task EnsureCurrentPushesWithoutCooldownAndThrowsOnFailure()
+    {
+        var pusher = new FakePusher();
+        var c = Make(pusher);
+        await c.EnsureCurrentAsync(Ssh, "1.0.0+a5a3c8f");
+        pusher.Calls.Should().Be(0);
+
+        await c.EnsureCurrentAsync(Ssh, "0.1.0+abc1234");
+        await c.EnsureCurrentAsync(Ssh, "0.1.0+abc1234");
+        pusher.Calls.Should().Be(2, "a scan asks for the sampler now, so there is no cooldown");
+
+        pusher.Fail = true;
+        var act = () => c.EnsureCurrentAsync(Ssh, "0.1.0+abc1234");
+        await act.Should().ThrowAsync<InvalidOperationException>();
+        c.LastError(Ssh.Id).Should().Be("boom");
+    }
+
+    [Fact]
+    public async Task EnsureCurrentSkipsLocalNodes()
+    {
+        var pusher = new FakePusher();
+        await Make(pusher).EnsureCurrentAsync(Node.LocalWindows("pc"), "0.0.1+old");
+        pusher.Calls.Should().Be(0);
+    }
 }

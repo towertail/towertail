@@ -1,8 +1,10 @@
+using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Towertail.WinUI.State;
 
 namespace Towertail.WinUI.Backend;
 
@@ -52,6 +54,62 @@ public sealed class RemoteClient : IAsyncDisposable
 
     public Task<EnrollResponse> EnrollSamplerAsync(EnrollRequest req, CancellationToken ct = default)
         => SendJsonAsync<EnrollRequest, EnrollResponse>(HttpMethod.Post, "/v1/sampler/enroll", req, ct);
+
+    /// <summary>
+    /// Start a disk scan. When a job of the node is queued or running (409), returns that
+    /// job, so that the caller follows it. A 403 means that disk scans are off for the node.
+    /// </summary>
+    public async Task<DiskScanJob> StartDiskScanAsync(Guid nodeId, DiskScanRequest request, CancellationToken ct = default)
+    {
+        try
+        {
+            return await SendJsonAsync<DiskScanRequest, DiskScanJob>(
+                HttpMethod.Post, $"/v1/nodes/{nodeId}/disk-scans", request, ct).ConfigureAwait(false);
+        }
+        catch (RemoteException ex) when (ex.Status == 409)
+        {
+            DiskScanConflict? conflict = null;
+            try { conflict = JsonSerializer.Deserialize<DiskScanConflict>(ex.Body, _json); } catch { }
+            if (conflict?.Job is { } job) return job;
+            throw;
+        }
+    }
+
+    /// <summary>The disk-scan jobs of a node, the newest first.</summary>
+    public async Task<IReadOnlyList<DiskScanJob>> ListDiskScansAsync(Guid nodeId, CancellationToken ct = default)
+        => (await GetJsonAsync<DiskScanJobList>($"/v1/nodes/{nodeId}/disk-scans", ct).ConfigureAwait(false))?.Jobs
+           ?? Array.Empty<DiskScanJob>();
+
+    public async Task<DiskScanJob> GetDiskScanAsync(Guid jobId, CancellationToken ct = default)
+        => (await GetJsonAsync<DiskScanJob>($"/v1/disk-scans/{jobId}", ct).ConfigureAwait(false))
+           ?? throw new RemoteException(200, "empty job");
+
+    public async Task<DiskScanJob> CancelDiskScanAsync(Guid jobId, CancellationToken ct = default)
+    {
+        using var req = Build(HttpMethod.Post, $"/v1/disk-scans/{jobId}/cancel");
+        using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+        await EnsureOkAsync(resp, ct).ConfigureAwait(false);
+        var text = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        return JsonSerializer.Deserialize<DiskScanJob>(text, _json)!;
+    }
+
+    /// <summary>The result line of a done job. The server sends it gzip.</summary>
+    public async Task<DiskScanResult> GetDiskScanResultAsync(Guid jobId, CancellationToken ct = default)
+    {
+        using var req = Build(HttpMethod.Get, $"/v1/disk-scans/{jobId}/result");
+        using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+        await EnsureOkAsync(resp, ct).ConfigureAwait(false);
+        var bytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+        // The handler can decode the gzip already; look at the magic bytes, not the header.
+        if (bytes.Length >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b)
+        {
+            using var gz = new GZipStream(new MemoryStream(bytes), CompressionMode.Decompress);
+            using var ms = new MemoryStream();
+            await gz.CopyToAsync(ms, ct).ConfigureAwait(false);
+            bytes = ms.ToArray();
+        }
+        return DiskScanCodec.DecodeResult(Encoding.UTF8.GetString(bytes));
+    }
 
     public async IAsyncEnumerable<RemoteStreamFrame> StreamAsync(
         [global::System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)

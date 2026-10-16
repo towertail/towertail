@@ -19,7 +19,9 @@ public sealed record RemoteNode(
     [property: JsonPropertyName("sshHost")] string? SshHost,
     [property: JsonPropertyName("tags")] IReadOnlyList<string>? Tags,
     [property: JsonPropertyName("enabled")] bool Enabled,
-    [property: JsonPropertyName("favorite")] bool Favorite);
+    [property: JsonPropertyName("favorite")] bool Favorite,
+    // Opt-in for disk scans through the server. Default off.
+    [property: JsonPropertyName("allowDiskScan")] bool AllowDiskScan = false);
 
 public sealed record RemoteServerSettings(
     [property: JsonPropertyName("thresholds")] RemoteThresholds Thresholds,
@@ -49,7 +51,17 @@ public sealed record RemoteClientSettings(
 public sealed record RemoteStreamFrame(
     [property: JsonPropertyName("type")] string Type,
     [property: JsonPropertyName("nodeId")] Guid? NodeId,
-    [property: JsonPropertyName("sample")] Towertail.WinUI.State.Sample? Sample);
+    [property: JsonPropertyName("sample")] Towertail.WinUI.State.Sample? Sample,
+    // Set on disk_scan_updated frames. The job keys are snake_case (docs/wire.md §3.1).
+    [property: JsonPropertyName("job")] Towertail.WinUI.State.DiskScanJob? Job = null);
+
+/// <summary>Body of <c>GET /v1/nodes/{id}/disk-scans</c>.</summary>
+public sealed record DiskScanJobList(
+    [property: JsonPropertyName("jobs")] IReadOnlyList<Towertail.WinUI.State.DiskScanJob>? Jobs);
+
+/// <summary>Body of a 409 on <c>POST …/disk-scans</c>: the job that runs now.</summary>
+public sealed record DiskScanConflict(
+    [property: JsonPropertyName("job")] Towertail.WinUI.State.DiskScanJob? Job);
 
 // Enroll request/response. Server uses snake_case for the sampler-enroll
 // path (wire.go) so this stays snake.

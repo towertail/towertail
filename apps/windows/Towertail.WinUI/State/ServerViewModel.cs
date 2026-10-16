@@ -17,6 +17,8 @@ public sealed partial class ServerViewModel : ObservableObject
     [ObservableProperty] private double? _txMBps;
     [ObservableProperty] private DateTime? _lastSeen;
     [ObservableProperty] private string? _samplerVersion;
+    /// <summary><c>host.os</c> of the latest sample: linux, darwin or windows.</summary>
+    [ObservableProperty] private string? _hostOs;
     [ObservableProperty] private string? _offlineReason;
     [ObservableProperty] private int _errorCount;
     [ObservableProperty] private HealthStatus _health = HealthStatus.Nominal;
@@ -78,6 +80,7 @@ public sealed partial class ServerViewModel : ObservableObject
         var now = s.Ts;
         LastSeen = now;
         SamplerVersion = s.Host.Sampler;
+        HostOs = s.Host.Os;
         ErrorCount = s.Errors.Count;
 
         CpuPct = Math.Clamp(s.Cpu.Pct, 0, 100);

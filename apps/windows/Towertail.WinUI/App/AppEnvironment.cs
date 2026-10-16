@@ -21,6 +21,8 @@ public sealed class AppEnvironment
     public required ThresholdNotifier Notifier { get; init; }
     public required RealCollector Collector { get; init; }
     public required Logger Logger { get; init; }
+    public required DiskScannerFactory DiskScanners { get; init; }
+    public required DiskScanStore DiskScans { get; init; }
 
     /// <summary>Optional TOFU prompter shared by collector + bulk-import Test path.</summary>
     public HostKeyPrompt? HostKeyPrompt { get; init; }
@@ -40,7 +42,7 @@ public sealed class AppEnvironment
         var nodes = new NodeStore(settingsPath);
         var servers = new ServerStore(nodes, serverSettings, history);
 
-        var backend = new LocalBackend(nodes, servers, clientSettings, serverSettings);
+        IBackend backend = new LocalBackend(nodes, servers, clientSettings, serverSettings);
         var notifier = new ThresholdNotifier(serverSettings, nodes);
         servers.AttachNotifier(notifier);
         servers.AttachLogger(logger);
@@ -85,6 +87,13 @@ public sealed class AppEnvironment
         }
         collector.Start();
 
+        // Disk scans go through the server only in remote mode.
+        var remote = backend as RemoteBackend;
+        var diskScanners = new DiskScannerFactory(
+            hostKeyPrompt: hostKeyPrompt, onTrust: onTrust, updater: updater,
+            remote: remote?.Client, updates: remote);
+        var diskScans = new DiskScanStore(TowertailApp.AppDataPath(DiskScanStore.FileName));
+
         return new AppEnvironment
         {
             Backend = backend,
@@ -96,6 +105,8 @@ public sealed class AppEnvironment
             Notifier = notifier,
             Collector = collector,
             Logger = logger,
+            DiskScanners = diskScanners,
+            DiskScans = diskScans,
             HostKeyPrompt = hostKeyPrompt,
             OnHostKeyTrust = onTrust,
         };

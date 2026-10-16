@@ -1,3 +1,4 @@
+using Towertail.WinUI.Collectors;
 using Towertail.WinUI.State;
 
 namespace Towertail.WinUI.Backend;
@@ -6,7 +7,7 @@ namespace Towertail.WinUI.Backend;
 /// Backend for Remote mode — REST for initial load + mutations, WebSocket for stream frames.
 /// Mirrors RemoteBackend.swift.
 /// </summary>
-public sealed class RemoteBackend : IBackend
+public sealed class RemoteBackend : IBackend, IDiskScanUpdates
 {
     public NodeStore Nodes { get; }
     public ServerStore Servers { get; }
@@ -14,7 +15,19 @@ public sealed class RemoteBackend : IBackend
     public ServerSettings ServerSettings { get; }
 
     private readonly RemoteClient _client;
+    private readonly Dictionary<Guid, bool> _allowDiskScan = new();
     private CancellationTokenSource? _streamCts;
+
+    public RemoteClient Client => _client;
+
+    /// <summary>Raised on the stream thread for each <c>disk_scan_updated</c> frame.</summary>
+    public event Action<Guid, DiskScanJob>? DiskScanUpdated;
+
+    /// <summary>The server opt-in of the node (<c>allowDiskScan</c>).</summary>
+    public bool AllowsDiskScan(Guid nodeId)
+    {
+        lock (_allowDiskScan) return _allowDiskScan.GetValueOrDefault(nodeId);
+    }
     private Task? _streamTask;
 
     public RemoteBackend(
@@ -118,6 +131,8 @@ public sealed class RemoteBackend : IBackend
                 {
                     if (frame.Type == "sample" && frame.NodeId is Guid nid && frame.Sample is Sample s)
                         Servers.Ingest(nid, s);
+                    else if (frame.Type == "disk_scan_updated" && frame.Job is DiskScanJob job)
+                        DiskScanUpdated?.Invoke(frame.NodeId ?? job.NodeId, job);
                 }
             }
             catch (OperationCanceledException) { return; }
@@ -146,7 +161,13 @@ public sealed class RemoteBackend : IBackend
         ServerSettings.PostWakeGraceSeconds = s.PostWakeGraceSeconds;
     }
 
-    private static Node ToNode(RemoteNode rn) => new()
+    private Node ToNode(RemoteNode rn)
+    {
+        lock (_allowDiskScan) _allowDiskScan[rn.Id] = rn.AllowDiskScan;
+        return ToLocalNode(rn);
+    }
+
+    private static Node ToLocalNode(RemoteNode rn) => new()
     {
         Id = rn.Id,
         DisplayName = rn.DisplayName,
@@ -158,7 +179,7 @@ public sealed class RemoteBackend : IBackend
         Favorite = rn.Favorite,
     };
 
-    private static RemoteNode ToRemote(Node n) => new(
+    private RemoteNode ToRemote(Node n) => new(
         Id: n.Id,
         DisplayName: n.DisplayName,
         Kind: n.Kind == NodeKind.Ssh ? "ssh" : "local",
@@ -166,7 +187,8 @@ public sealed class RemoteBackend : IBackend
         SshHost: n.SshHost,
         Tags: n.Tags,
         Enabled: n.Enabled,
-        Favorite: n.Favorite);
+        Favorite: n.Favorite,
+        AllowDiskScan: AllowsDiskScan(n.Id));
 
     public async ValueTask DisposeAsync()
     {

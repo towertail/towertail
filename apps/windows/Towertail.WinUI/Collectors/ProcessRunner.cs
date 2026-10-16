@@ -35,6 +35,12 @@ public interface IStreamingProcess : IAsyncDisposable
     StreamReader StdOut { get; }
     bool HasExited { get; }
     Task<int> WaitAsync(CancellationToken ct = default);
+
+    /// <summary>Close stdin. The sampler <c>scan</c> stops on stdin EOF.</summary>
+    void CloseStdIn() { }
+
+    /// <summary>The stderr text so far.</summary>
+    string StdErrText => "";
 }
 
 public sealed class DefaultProcessRunner : IProcessRunner
@@ -97,9 +103,30 @@ public sealed class DefaultProcessRunner : IProcessRunner
     private sealed class StreamingProcess : IStreamingProcess
     {
         private readonly Process _p;
-        public StreamingProcess(Process p) { _p = p; StdOut = p.StandardOutput; }
+        private readonly StringBuilder _stdErr = new();
+        public StreamingProcess(Process p)
+        {
+            _p = p;
+            StdOut = p.StandardOutput;
+            // Drain stderr so that a full pipe cannot block the child.
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    string? line;
+                    while ((line = await p.StandardError.ReadLineAsync().ConfigureAwait(false)) != null)
+                        lock (_stdErr) if (_stdErr.Length < 8192) _stdErr.AppendLine(line);
+                }
+                catch { }
+            });
+        }
         public StreamReader StdOut { get; }
         public bool HasExited => _p.HasExited;
+        public string StdErrText { get { lock (_stdErr) return _stdErr.ToString(); } }
+        public void CloseStdIn()
+        {
+            try { _p.StandardInput.Close(); } catch { }
+        }
         public Task<int> WaitAsync(CancellationToken ct = default)
         {
             var tcs = new TaskCompletionSource<int>();
