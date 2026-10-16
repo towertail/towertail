@@ -120,9 +120,33 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
+        # Hand-written notes in apps/mac/release-notes/v<version>.md win over generated notes.
         run: |
+          notes="apps/mac/release-notes/v$VERSION.md"
+          if [ -f "$notes" ]; then notes_args=(--notes-file "$notes"); else notes_args=(--generate-notes); fi
           gh release create "v$VERSION" Towertail.zip --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "v$VERSION" --generate-notes --latest
+            --title "v$VERSION" "${notes_args[@]}" --latest
+
+      - name: Update Homebrew cask
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+        # Pushes version and sha256 to Casks/towertail.rb in towertail/homebrew-tap with a write deploy key.
+        run: |
+          sha=$(shasum -a 256 Towertail.zip | cut -d' ' -f1)
+          key="$RUNNER_TEMP/tap_key"
+          trap 'rm -f "$key"' EXIT
+          (umask 077 && printf '%s\n' "$TAP_DEPLOY_KEY" > "$key")
+          echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" > "$RUNNER_TEMP/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts"
+          git clone --depth 1 git@github.com:towertail/homebrew-tap.git "$RUNNER_TEMP/tap"
+          cd "$RUNNER_TEMP/tap"
+          sed -i '' -E "s/^  version \".*\"/  version \"$VERSION\"/; s/^  sha256 \".*\"/  sha256 \"$sha\"/" Casks/towertail.rb
+          if git diff --quiet; then echo "The cask is current."; exit 0; fi
+          git diff
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -am "Update towertail to $VERSION"
+          git push origin HEAD:main
 
       - name: Remove keychain
         if: always()

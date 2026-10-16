@@ -558,8 +558,8 @@ Storage: scalars → `@AppStorage`. Structured data (`servers.json`, `thresholds
 
 - **Signing**: Developer ID Application cert, hardened runtime, no sandbox. Entitlements: `com.apple.security.network.client`. Local builds use the Developer ID cert when it is in the keychain, else ad-hoc signing.
 - **Notarization**: `xcrun notarytool submit` → `xcrun stapler staple`. CI does this in `.github/workflows/release.yml`.
-- **Download**: the release asset is `Towertail.zip` on GitHub Releases. There is no DMG. A Homebrew cask (`towertail/tap/towertail`) comes with the first public release.
-- **Release**: each push to `main` that changes the Mac app makes a release. The tag is the last `v*` tag with the patch number plus one. A higher `MARKETING_VERSION` in `project.yml` wins, for minor or major bumps. Local builds are `-dev`.
+- **Download**: the release asset is `Towertail.zip` on GitHub Releases. There is no DMG. The Homebrew cask `towertail/tap/towertail` ([towertail/homebrew-tap](https://github.com/towertail/homebrew-tap)) installs the same zip. The release workflow updates the cask.
+- **Release**: each push to `main` that changes the Mac app makes a release. The tag is the last `v*` tag with the patch number plus one. A higher `MARKETING_VERSION` in `project.yml` wins, for minor or major bumps. Local builds are `-dev`. Hand-written notes in `apps/mac/release-notes/v<version>.md` replace the generated notes.
 - **Auto-update**: no dependency. `System/Updater.swift` reads the recent GitHub releases and picks the newest `vX.Y.Z` release that is not a draft or pre-release and has `Towertail.zip`. Server releases (`server/v*`) do not match. It downloads `Towertail.zip`, and checks the code signature against our team ID (`Q56WK6TB88`) and notarization. It swaps the bundle when the app is not in use, and restores the old bundle if the new one does not start. Dev builds only report new releases.
 - **Launch at login**: `SMAppService.mainApp.register()`.
 - **Crash reports**: opt-in in General pane, ships minidumps to a Cloudflare Workers endpoint or just `os_log` to Console — decide in Milestone 5.
