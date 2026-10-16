@@ -8,17 +8,26 @@ struct DiskScanRequest: Codable, Sendable, Equatable {
     var root: String?
     var maxDepth: Int?
     var minBytes: Int64?
+    /// nil keeps the sampler default. A refresh sends 0 (no fraction floor).
+    var minFrac: Double?
+    /// Server mode: the scope that this scan refreshes.
+    var refreshOf: String?
 
-    init(root: String? = nil, maxDepth: Int? = nil, minBytes: Int64? = nil) {
+    init(root: String? = nil, maxDepth: Int? = nil, minBytes: Int64? = nil,
+         minFrac: Double? = nil, refreshOf: String? = nil) {
         self.root = root
         self.maxDepth = maxDepth
         self.minBytes = minBytes
+        self.minFrac = minFrac
+        self.refreshOf = refreshOf
     }
 
     enum CodingKeys: String, CodingKey {
         case root
         case maxDepth = "max_depth"
         case minBytes = "min_bytes"
+        case minFrac = "min_frac"
+        case refreshOf = "refresh_of"
     }
 
     /// Key for the store: "~" for the home folder, else the root path.
@@ -33,6 +42,7 @@ struct DiskScanRequest: Codable, Sendable, Equatable {
         if let root, !root.isEmpty, root != "~" { args += ["--root", root] }
         if let maxDepth { args += ["--max-depth", String(maxDepth)] }
         if let minBytes { args += ["--min-bytes", "\(minBytes)B"] }
+        if let minFrac { args += ["--min-frac", minFrac == 0 ? "0" : String(minFrac)] }
         return args
     }
 
@@ -255,6 +265,24 @@ struct DiskRec: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+/// The prune limits of a result (sampler §3.4). Older samplers leave them out.
+struct DiskScanLimits: Codable, Sendable, Equatable {
+    var maxDepth: Int
+    /// The effective floor: min(min-bytes, min-frac × root bytes).
+    var minBytes: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case maxDepth = "max_depth"
+        case minBytes = "min_bytes"
+    }
+}
+
+/// A folder that the app scanned again and merged into the result.
+struct DiskScanRefresh: Codable, Sendable, Equatable {
+    var path: String
+    var at: Date
+}
+
 /// The result line. It is the last line of a scan that did not fail
 /// and was not cancelled.
 struct DiskScanResult: Codable, Sendable, Equatable {
@@ -273,9 +301,12 @@ struct DiskScanResult: Codable, Sendable, Equatable {
     var tree: DiskNode
     var recs: [DiskRec]
     var errors: [String]
+    var limits: DiskScanLimits?
+    /// App side: the folders that were refreshed after the scan.
+    var refreshed: [DiskScanRefresh]
 
     enum CodingKeys: String, CodingKey {
-        case root, os, user, hostname, home, files, dirs, fs, tree, recs, errors
+        case root, os, user, hostname, home, files, dirs, fs, tree, recs, errors, limits, refreshed
         case startedTs = "started_ts"
         case durationMs = "duration_ms"
         case scannedBytes = "scanned_bytes"
@@ -285,7 +316,8 @@ struct DiskScanResult: Codable, Sendable, Equatable {
     init(root: String, os: String, user: String = "", hostname: String, home: String = "",
          startedTs: String, durationMs: Int64 = 0, files: Int64 = 0, dirs: Int64 = 0,
          scannedBytes: Int64, fs: DiskScanFS? = nil, noAccess: DiskScanNoAccess = DiskScanNoAccess(),
-         tree: DiskNode, recs: [DiskRec] = [], errors: [String] = []) {
+         tree: DiskNode, recs: [DiskRec] = [], errors: [String] = [],
+         limits: DiskScanLimits? = nil, refreshed: [DiskScanRefresh] = []) {
         self.root = root
         self.os = os
         self.user = user
@@ -301,6 +333,8 @@ struct DiskScanResult: Codable, Sendable, Equatable {
         self.tree = tree
         self.recs = recs
         self.errors = errors
+        self.limits = limits
+        self.refreshed = refreshed
     }
 
     init(from decoder: Decoder) throws {
@@ -320,6 +354,8 @@ struct DiskScanResult: Codable, Sendable, Equatable {
         tree = try c.decode(DiskNode.self, forKey: .tree)
         recs = try c.decodeIfPresent([DiskRec].self, forKey: .recs) ?? []
         errors = try c.decodeIfPresent([String].self, forKey: .errors) ?? []
+        limits = try c.decodeIfPresent(DiskScanLimits.self, forKey: .limits)
+        refreshed = try c.decodeIfPresent([DiskScanRefresh].self, forKey: .refreshed) ?? []
     }
 
     var isWindows: Bool { os == "windows" }
@@ -363,6 +399,9 @@ struct DiskScanJob: Codable, Sendable, Equatable, Identifiable {
     var root: String
     var maxDepth: Int?
     var minBytes: Int64?
+    var minFrac: Double?
+    /// Set on a refresh job: the scope that it refreshes.
+    var refreshOf: String?
     var progress: DiskScanProgress?
     var error: String
     var cancelRequested: Bool
@@ -376,6 +415,8 @@ struct DiskScanJob: Codable, Sendable, Equatable, Identifiable {
         case nodeId = "node_id"
         case maxDepth = "max_depth"
         case minBytes = "min_bytes"
+        case minFrac = "min_frac"
+        case refreshOf = "refresh_of"
         case cancelRequested = "cancel_requested"
         case createdTs = "created_ts"
         case startedTs = "started_ts"
@@ -384,7 +425,8 @@ struct DiskScanJob: Codable, Sendable, Equatable, Identifiable {
     }
 
     init(id: String, nodeId: String, state: State, root: String = "", maxDepth: Int? = nil,
-         minBytes: Int64? = nil, progress: DiskScanProgress? = nil, error: String = "",
+         minBytes: Int64? = nil, minFrac: Double? = nil, refreshOf: String? = nil,
+         progress: DiskScanProgress? = nil, error: String = "",
          cancelRequested: Bool = false, createdTs: Date? = nil, startedTs: Date? = nil,
          finishedTs: Date? = nil, resultBytes: Int64 = 0) {
         self.id = id
@@ -393,6 +435,8 @@ struct DiskScanJob: Codable, Sendable, Equatable, Identifiable {
         self.root = root
         self.maxDepth = maxDepth
         self.minBytes = minBytes
+        self.minFrac = minFrac
+        self.refreshOf = refreshOf
         self.progress = progress
         self.error = error
         self.cancelRequested = cancelRequested
@@ -410,6 +454,8 @@ struct DiskScanJob: Codable, Sendable, Equatable, Identifiable {
         root = try c.decodeIfPresent(String.self, forKey: .root) ?? ""
         maxDepth = try c.decodeIfPresent(Int.self, forKey: .maxDepth)
         minBytes = try c.decodeIfPresent(Int64.self, forKey: .minBytes)
+        minFrac = try c.decodeIfPresent(Double.self, forKey: .minFrac)
+        refreshOf = try c.decodeIfPresent(String.self, forKey: .refreshOf).flatMap { $0.isEmpty ? nil : $0 }
         progress = try c.decodeIfPresent(DiskScanProgress.self, forKey: .progress)
         error = try c.decodeIfPresent(String.self, forKey: .error) ?? ""
         cancelRequested = try c.decodeIfPresent(Bool.self, forKey: .cancelRequested) ?? false
@@ -427,6 +473,8 @@ struct DiskScanJob: Codable, Sendable, Equatable, Identifiable {
         try c.encode(root, forKey: .root)
         try c.encodeIfPresent(maxDepth, forKey: .maxDepth)
         try c.encodeIfPresent(minBytes, forKey: .minBytes)
+        try c.encodeIfPresent(minFrac, forKey: .minFrac)
+        try c.encodeIfPresent(refreshOf, forKey: .refreshOf)
         try c.encodeIfPresent(progress, forKey: .progress)
         try c.encode(error, forKey: .error)
         try c.encode(cancelRequested, forKey: .cancelRequested)
@@ -435,6 +483,9 @@ struct DiskScanJob: Codable, Sendable, Equatable, Identifiable {
         try c.encodeIfPresent(finishedTs.map(SampleCodec.formatRFC3339UTC), forKey: .finishedTs)
         try c.encode(resultBytes, forKey: .resultBytes)
     }
+
+    /// The store scope of the job: `refresh_of` for a refresh, else the root.
+    var scope: String { refreshOf ?? DiskScanRequest(root: root).scope }
 
     /// Accepts RFC 3339 with and without fractional seconds, and null.
     private static func date(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> Date? {

@@ -56,4 +56,21 @@ final class DiskScanStoreTests: XCTestCase {
         XCTAssertGreaterThan(store.revision, rev)
         XCTAssertEqual(store.latest(nodeID: node)?.result, r)
     }
+
+    func testReplaceLatestKeepsTimeAndHistory() {
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = DiskScanStore(url: url)
+        let node = UUID()
+        let t0 = Date(timeIntervalSince1970: 1_790_000_000)
+        store.save(nodeID: node, scope: "~", result: result(1), finishedAt: t0)
+        store.save(nodeID: node, scope: "~", result: result(2), finishedAt: t0.addingTimeInterval(60))
+        store.save(nodeID: node, scope: "/", result: result(3), finishedAt: t0.addingTimeInterval(120))
+
+        store.replaceLatest(nodeID: node, scope: "~", result: result(9))
+        let rows = store.records(nodeID: node, scope: "~")
+        XCTAssertEqual(rows.map(\.result.scannedBytes), [9, 1])
+        XCTAssertEqual(rows.first?.finishedAt, t0.addingTimeInterval(60))
+        XCTAssertEqual(store.latest(nodeID: node, scope: "/")?.result.scannedBytes, 3)
+    }
 }

@@ -39,6 +39,14 @@ final class DiskScanStore {
         revision += 1
     }
 
+    /// Puts `result` in place of the latest result of the scope. A refresh
+    /// uses it, so that the merged result keeps the time of the full scan.
+    func replaceLatest(nodeID: UUID, scope: String, result: DiskScanResult) {
+        db.replaceLatest(nodeID: nodeID, scope: scope, result: result)
+        cache.removeAll()
+        revision += 1
+    }
+
     /// Newest first.
     func records(nodeID: UUID, scope: String? = nil) -> [DiskScanRecord] {
         _ = revision
@@ -126,6 +134,29 @@ final class DiskScanDB: @unchecked Sendable {
             sqlite3_bind_text(prune, 2, r.scope, -1, Self.transient)
             sqlite3_bind_int(prune, 3, Int32(keep))
             sqlite3_step(prune)
+        }
+    }
+
+    func replaceLatest(nodeID: UUID, scope: String, result: DiskScanResult) {
+        guard let json = try? JSONEncoder().encode(result) else { return }
+        let blob = GzipEncoder.encode(json) ?? json
+        queue.sync {
+            guard let db else { return }
+            var stmt: OpaquePointer?
+            let sql = """
+            UPDATE disk_scan SET result_gz = ?3 WHERE rowid = (
+                SELECT rowid FROM disk_scan WHERE node_id = ?1 AND scope = ?2
+                ORDER BY finished_at DESC LIMIT 1
+            );
+            """
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, nodeID.uuidString, -1, Self.transient)
+            sqlite3_bind_text(stmt, 2, scope, -1, Self.transient)
+            _ = blob.withUnsafeBytes { raw in
+                sqlite3_bind_blob(stmt, 3, raw.baseAddress, Int32(blob.count), Self.transient)
+            }
+            sqlite3_step(stmt)
         }
     }
 

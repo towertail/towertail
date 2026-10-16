@@ -21,6 +21,8 @@ final class DiskScanDecodingTests: XCTestCase {
         XCTAssertFalse(r.recs.contains { $0.cmd.sh.isEmpty })
         XCTAssertTrue(r.recs.allSatisfy { $0.cmd.pwsh.isEmpty })
         XCTAssertNotNil(r.startedAt)
+        XCTAssertEqual(r.limits, DiskScanLimits(maxDepth: 6, minBytes: 50_000_000))
+        XCTAssertTrue(r.refreshed.isEmpty)
     }
 
     func testDecodesLinuxFixture() throws {
@@ -52,7 +54,8 @@ final class DiskScanDecodingTests: XCTestCase {
     }
 
     func testResultRoundTripsThroughJSON() throws {
-        let r = try ScanFixtures.result("linux")
+        var r = try ScanFixtures.result("linux")
+        r.refreshed = [DiskScanRefresh(path: "/var", at: Date(timeIntervalSince1970: 1_790_000_000))]
         let back = try JSONDecoder().decode(DiskScanResult.self, from: JSONEncoder().encode(r))
         XCTAssertEqual(back, r)
     }
@@ -95,6 +98,12 @@ final class DiskScanDecodingTests: XCTestCase {
             #"~/.towertail/towertail-sampler scan --root '/var/My '\''data'\''' --max-depth 4 --min-bytes 1000B"#
         )
         XCTAssertEqual(DiskScanRequest(root: "/").shellCommand(binary: "s"), "s scan --root /")
+        XCTAssertEqual(DiskScanRequest(root: "/a", minFrac: 0).samplerArguments, ["scan", "--root", "/a", "--min-frac", "0"])
+        let refresh = try? JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(DiskScanRequest(root: "/a", minFrac: 0, refreshOf: "~"))
+        ) as? [String: Any]
+        XCTAssertEqual(refresh?["refresh_of"] as? String, "~")
+        XCTAssertEqual(refresh?["min_frac"] as? Double, 0)
     }
 
     func testDecodesJob() throws {
