@@ -78,6 +78,13 @@ final class DiskScanDecodingTests: XCTestCase {
         XCTAssertThrowsError(try DiskScanEvent.decodeLine(Data("not json".utf8)))
     }
 
+    func testSampleLineMeansNoScanCommand() {
+        let sample = Data(#"{"v":1,"ts":"2026-10-16T03:37:13.941Z","host":{"name":"mbp"}}"#.utf8)
+        XCTAssertThrowsError(try DiskScanEvent.decodeLine(sample)) { err in
+            XCTAssertEqual(err as? DiskScanError, .noScanCommand)
+        }
+    }
+
     func testRequestArgumentsAndQuoting() {
         XCTAssertEqual(DiskScanRequest().samplerArguments, ["scan"])
         XCTAssertEqual(DiskScanRequest().scope, "~")

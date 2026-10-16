@@ -71,6 +71,7 @@ struct TowertailApp: App {
                         .environment(env.clientSettings)
                         .environment(env.serverSettings)
                         .environment(env.nodeStore)
+                        .environment(\.backend, env.backend)
                 } else {
                     ContentUnavailableView("No host", systemImage: "server.rack")
                 }

@@ -59,6 +59,11 @@ final class ServerViewModel: Identifiable {
     var netRxMBps: Double = 0
     var netTxMBps: Double = 0
 
+    /// Raw `host.os` of the last sample ("darwin", "linux", "windows").
+    var hostOS: String = ""
+    /// Mounts of the last sample that had disks.
+    var latestDisks: [DiskSample] = []
+
     /// Sampler version+sha string reported in the most recent sample's
     /// `host.sampler` field. Empty until the first successful sample
     /// arrives. Surfaced in the Servers table so users can see which
@@ -171,6 +176,7 @@ final class ServerViewModel: Identifiable {
         if !s.host.sampler.isEmpty {
             samplerVersion = s.host.sampler
         }
+        if !s.host.os.isEmpty, hostOS != s.host.os { hostOS = s.host.os }
         let cpuFrac = computeCPUFraction(from: s.cpu)
         let cpuV = min(max(cpuFrac, 0), 1)
         cpu.append(MetricPoint(t: s.ts, v: cpuV))
@@ -180,6 +186,7 @@ final class ServerViewModel: Identifiable {
         mem.append(MetricPoint(t: s.ts, v: memV))
 
         if let disks = s.disks, !disks.isEmpty {
+            latestDisks = disks
             disksPerMount.append(disks, at: s.ts)
         }
         // The scalar "worst mount" stream — fed by the DiskSeries.max

@@ -466,9 +466,12 @@ enum DiskScanEvent: Sendable, Equatable {
 
     /// Decodes one NDJSON scan line.
     static func decodeLine(_ data: Data) throws -> DiskScanEvent {
-        struct Head: Decodable { let t: String; let v: Int? }
+        struct Head: Decodable { let t: String?; let v: Int? }
         let decoder = JSONDecoder()
-        let head = try decoder.decode(Head.self, from: data)
+        let raw = try decoder.decode(Head.self, from: data)
+        // An old sampler ignores "scan" and prints a sample without "t".
+        guard let t = raw.t else { throw DiskScanError.noScanCommand }
+        let head = (t: t, v: raw.v)
         if let v = head.v, v > DiskScanEvent.supportedVersion {
             throw DiskScanError.unsupportedVersion(v)
         }
@@ -492,6 +495,7 @@ enum DiskScanEvent: Sendable, Equatable {
 
 enum DiskScanError: LocalizedError, Equatable {
     case binaryMissing
+    case noScanCommand
     case unsupportedVersion(Int)
     case unknownLine(String)
     case failed(String)
@@ -505,6 +509,7 @@ enum DiskScanError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .binaryMissing: return "The bundled sampler was not found."
+        case .noScanCommand: return "The sampler on this host has no scan command. Update the sampler."
         case .unsupportedVersion(let v): return "The sampler sent scan version \(v). Update Towertail."
         case .unknownLine(let t): return "The sampler sent an unknown line \"\(t)\"."
         case .failed(let msg): return msg

@@ -26,10 +26,10 @@ final class DiskScannerTests: XCTestCase {
         )
     }
 
-    private func collect(_ s: some DiskScanner, request: DiskScanRequest = DiskScanRequest()) async -> ([DiskScanEvent], Error?) {
+    private func collect(_ s: some DiskScanner, request: DiskScanRequest = DiskScanRequest(), node: Node? = nil) async -> ([DiskScanEvent], Error?) {
         var events: [DiskScanEvent] = []
         do {
-            for try await e in s.scan(node: node, request: request) { events.append(e) }
+            for try await e in s.scan(node: node ?? self.node, request: request) { events.append(e) }
             return (events, nil)
         } catch {
             return (events, error)
@@ -56,6 +56,7 @@ final class DiskScannerTests: XCTestCase {
         echo '{"t":"cancelled","v":1}'
         """)
         let first = expectation(description: "first progress")
+        let node = self.node
         let task = Task {
             var n = 0
             do {
@@ -80,6 +81,7 @@ final class DiskScannerTests: XCTestCase {
         exec sleep 30
         """)
         let first = expectation(description: "first progress")
+        let node = self.node
         let task = Task {
             do {
                 for try await _ in s.scan(node: node, request: DiskScanRequest()) { first.fulfill() }
@@ -132,6 +134,33 @@ final class DiskScannerTests: XCTestCase {
         let s = try scanner("echo 'hello'\nsleep 5\n")
         let (_, error) = await collect(s)
         XCTAssertNotNil(error)
+    }
+
+    func testOldSamplerWithoutScan() async throws {
+        let s = try scanner(#"echo '{"v":1,"ts":"2026-10-16T03:37:13.941Z","host":{"name":"h"}}'"# + "\n")
+        let (_, error) = await collect(s)
+        XCTAssertEqual(error as? DiskScanError, .noScanCommand)
+    }
+
+    /// Runs only when TT_SSH_SCAN_HOST is set, for example "localhost"
+    /// with key login for the current user.
+    func testSSHScanAgainstRealHost() async throws {
+        guard let host = ProcessInfo.processInfo.environment["TT_SSH_SCAN_HOST"], !host.isEmpty else {
+            throw XCTSkip("TT_SSH_SCAN_HOST is not set")
+        }
+        let node = Node(displayName: host, kind: .ssh, sshUser: NSUserName(), sshHost: host)
+        let s = SSHDiskScanner(hostKeyPrompt: { _, _ in true }, watchdog: 30)
+        let (events, error) = await collect(s, request: DiskScanRequest(root: dir.path, minBytes: 1), node: node)
+        if case .failed(let msg)? = error as? DiskScanError, msg.contains("rejected") || msg.contains("connect") {
+            throw XCTSkip("SSH login to \(host) failed: \(msg)")
+        }
+        if let error {
+            // A host with an old sampler must give the clear message.
+            XCTAssertEqual(error as? DiskScanError, .noScanCommand, "\(error)")
+        } else {
+            guard case .result(let r)? = events.last else { return XCTFail("no result: \(events)") }
+            XCTAssertEqual(r.root, dir.path)
+        }
     }
 
     func testRealSamplerScansTempFolder() async throws {

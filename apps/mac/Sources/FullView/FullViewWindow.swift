@@ -12,6 +12,7 @@ struct FullViewWindow: View {
     @Environment(ServerStore.self) private var store
     @Environment(ServerSettings.self) private var settings
     @Environment(NodeStore.self) private var nodeStore
+    @Environment(\.backend) private var backend
     /// SwiftUI's WindowGroup retains scene state after the user closes the
     /// window (ordered-out, not destroyed) so a re-open is fast. AppKit
     /// still includes the offscreen NSWindow in its layout cycle, which
@@ -287,7 +288,9 @@ struct FullViewWindow: View {
                     HealthDetails(health: vm.health, thresholds: vm.thresholds)
                         .padding(.horizontal, 16)
                 }
-                bottomTable(vm: vm)
+                if !(model.metric == .disk && model.diskSubTab == .usage) {
+                    bottomTable(vm: vm)
+                }
             } else {
                 ContentUnavailableView("No data", systemImage: "questionmark.circle")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -301,10 +304,44 @@ struct FullViewWindow: View {
     /// "worst mount" default so opening DISK looks the same as before.
     @ViewBuilder
     private func diskArea(vm: ServerViewModel) -> some View {
-        VStack(spacing: 12) {
-            capacityChart(vm: vm)
-            Divider().padding(.horizontal, 16)
-            ioChart(vm: vm)
+        if model.diskSubTab == .usage, let backend, let node = nodeStore.node(withId: activeHostId) {
+            let m = model.usageModel(for: node, backend: backend, defaultScope: vm.hostOS == "linux" ? "/" : "~")
+            DiskUsageView(
+                model: m, vm: vm, via: scanVia(node: node, backend: backend),
+                scopeChoices: ["~"] + vm.disksPerMount.mounts.sorted()
+            ) {
+                diskSubTabPicker
+            }
+        } else {
+            VStack(spacing: 12) {
+                HStack {
+                    diskSubTabPicker
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                capacityChart(vm: vm)
+                Divider().padding(.horizontal, 16)
+                ioChart(vm: vm)
+            }
+        }
+    }
+
+    private var diskSubTabPicker: some View {
+        Picker("Disk view", selection: $model.diskSubTab) {
+            ForEach(DiskSubTab.allCases) { t in
+                Text(t.displayName).tag(t)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+    }
+
+    private func scanVia(node: Node, backend: any Backend) -> ScanVia {
+        if backend is RemoteBackend { return .server }
+        switch node.kind {
+        case .local: return .local
+        case .ssh: return .ssh(user: node.sshUser ?? "")
         }
     }
 

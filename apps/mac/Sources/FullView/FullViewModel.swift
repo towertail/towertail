@@ -33,6 +33,19 @@ enum NetSubTab: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// DISK tab: the charts, or the folder scan with cleanup ideas.
+enum DiskSubTab: String, CaseIterable, Identifiable, Sendable {
+    case capacity
+    case usage
+    var id: String { rawValue }
+    var displayName: String {
+        switch self {
+        case .capacity: return "Capacity & I/O"
+        case .usage: return "Usage"
+        }
+    }
+}
+
 @Observable
 @MainActor
 final class FullViewModel {
@@ -52,6 +65,23 @@ final class FullViewModel {
     /// Persisted only in memory; resets to `.processes` each time the
     /// window opens so the default state is the familiar one.
     var netSubTab: NetSubTab = .processes
+
+    /// DISK tab: Capacity & I/O charts or the Usage scan.
+    var diskSubTab: DiskSubTab = .capacity
+
+    /// One Usage model per node, so that a scan continues when the
+    /// window shows another host.
+    @ObservationIgnored private var usageModels: [UUID: DiskUsageModel] = [:]
+
+    func usageModel(for node: Node, backend: any Backend, defaultScope: String) -> DiskUsageModel {
+        if let m = usageModels[node.id] { return m }
+        let m = DiskUsageModel(
+            node: node, store: backend.diskScans,
+            scanner: backend.diskScanner(for: node), scope: defaultScope
+        )
+        usageModels[node.id] = m
+        return m
+    }
 
     /// Committed zoom range. When set, charts render only samples within
     /// it and the x-axis is bounded to this window. Stacking zoom levels
