@@ -122,7 +122,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           gh release create "v$VERSION" Towertail.zip --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "v$VERSION" --generate-notes
+            --title "v$VERSION" --generate-notes --latest
 
       - name: Remove keychain
         if: always()

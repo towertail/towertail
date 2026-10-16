@@ -85,26 +85,28 @@ final class Updater {
     }
 
     private func runCheck(manual: Bool) async {
-        var req = URLRequest(url: URL(string: "https://api.github.com/repos/\(Self.repo)/releases/latest")!)
+        // Not /releases/latest: server/v* releases share this repo.
+        var req = URLRequest(url: URL(string: "https://api.github.com/repos/\(Self.repo)/releases?per_page=20")!)
         req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         req.setValue("Towertail/\(current)", forHTTPHeaderField: "User-Agent")
-        let rel: Release
+        let releases: [Release]
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
             let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
             guard code == 200 else { return fail("GitHub returned \(code)") }
-            rel = try JSONDecoder().decode(Release.self, from: data)
+            releases = try JSONDecoder().decode([Release].self, from: data)
         } catch {
             return fail(error.localizedDescription)
         }
-        let latest = rel.version
-        guard Self.isNewer(latest, than: current) else { state = .upToDate; return }
-        guard !isDev, autoInstall || manual,
-              let asset = rel.assets.first(where: { $0.name == Self.assetName }) else {
-            state = .available(latest)
+        guard let (rel, asset) = Self.pick(releases), Self.isNewer(rel.version, than: current) else {
+            state = .upToDate
             return
         }
-        await download(asset.browserDownloadURL, version: latest)
+        guard !isDev, autoInstall || manual else {
+            state = .available(rel.version)
+            return
+        }
+        await download(asset.browserDownloadURL, version: rel.version)
     }
 
     private func download(_ url: URL, version: String) async {
@@ -202,6 +204,16 @@ final class Updater {
         state = .failed(msg)
     }
 
+    /// The newest published app release: tag vX.Y.Z, not a draft or pre-release, with the app zip.
+    nonisolated static func pick(_ releases: [Release]) -> (Release, Asset)? {
+        var best: (Release, Asset)?
+        for rel in releases where !rel.draft && !rel.prerelease && rel.isAppTag {
+            guard let asset = rel.assets.first(where: { $0.name == assetName }) else { continue }
+            if best == nil || isNewer(rel.version, than: best!.0.version) { best = (rel, asset) }
+        }
+        return best
+    }
+
     nonisolated static func isNewer(_ a: String, than b: String) -> Bool {
         let parts = { (s: String) in s.split(separator: "-")[0].split(separator: ".").map { Int($0) ?? 0 } }
         let x = parts(a), y = parts(b)
@@ -227,9 +239,12 @@ final class Updater {
 
     struct Release: Decodable {
         let tagName: String
+        let draft: Bool
+        let prerelease: Bool
         let assets: [Asset]
         var version: String { tagName.hasPrefix("v") ? String(tagName.dropFirst()) : tagName }
-        enum CodingKeys: String, CodingKey { case tagName = "tag_name", assets }
+        var isAppTag: Bool { tagName.wholeMatch(of: /v\d+\.\d+\.\d+/) != nil }
+        enum CodingKeys: String, CodingKey { case tagName = "tag_name", draft, prerelease, assets }
     }
 
     struct Asset: Decodable {
