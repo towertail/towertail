@@ -11,6 +11,7 @@ final class RemoteBackend: Backend {
     let clientSettings: ClientSettings
     let serverSettings: ServerSettings
     let samplerUpdater: SamplerUpdateCoordinator
+    let diskScans: DiskScanStore
 
     private let client: RemoteClient
     private var streamTask: Task<Void, Never>?
@@ -24,6 +25,7 @@ final class RemoteBackend: Backend {
         // client only shows status. Keep the updater idle.
         self.samplerUpdater = SamplerUpdateCoordinator(manifest: nil)
         self.client = RemoteClient(config: .init(endpoint: endpoint, token: token))
+        self.diskScans = DiskScanStore(url: HistoryStore.defaultURL())
     }
 
     func start() {
@@ -184,6 +186,10 @@ final class RemoteBackend: Backend {
         // there. Until then this is a no-op.
     }
 
+    func diskScanner(for node: Node) -> any DiskScanner {
+        UnsupportedDiskScanner()
+    }
+
     func updateServerSettings(_ settings: ServerSettings) async throws {
         let rs = RemoteServerSettings(
             thresholds: settings.thresholds,
@@ -198,5 +204,12 @@ final class RemoteBackend: Backend {
         )
         let saved = try await client.putSettings(rs)
         applyRemoteSettings(saved)
+    }
+}
+
+/// Placeholder until remote scans go through the server.
+struct UnsupportedDiskScanner: DiskScanner {
+    func scan(node: Node, request: DiskScanRequest) -> AsyncThrowingStream<DiskScanEvent, Error> {
+        AsyncThrowingStream { $0.finish(throwing: DiskScanError.misconfigured("Disk scans are not available in remote mode yet.")) }
     }
 }

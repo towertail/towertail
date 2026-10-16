@@ -75,6 +75,12 @@ protocol Backend: AnyObject {
     /// having to disable+re-enable the node. Remote mode forwards this
     /// to the server; Local mode pokes the in-process collector.
     func respawnPacer(id: UUID) async
+
+    /// Last disk scan results of each node.
+    var diskScans: DiskScanStore { get }
+
+    /// Scanner for the Usage sub-tab of DISK.
+    func diskScanner(for node: Node) -> any DiskScanner
 }
 
 /// SwiftUI environment key for the active backend. Views that mutate

@@ -37,6 +37,36 @@ final class SamplerUpdateCoordinator {
         updatingNodeIDs.contains(id)
     }
 
+    /// Called before a disk scan with the output of `--version` from the
+    /// host. When the host sampler is not the bundled one, it uploads the
+    /// bundled one and waits, so that the host knows `scan`.
+    func prepareForScan(node: Node, versionOutput: String, enabled: Bool) async throws {
+        guard enabled, node.kind == .ssh, let manifest else { return }
+        let reported = versionOutput
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: " ").last.map(String.init) ?? ""
+        if reported == manifest.expectedSamplerField { return }
+        let nodeID = node.id
+        guard !updatingNodeIDs.contains(nodeID) else { return }
+        updatingNodeIDs.insert(nodeID)
+        lastAttempt[nodeID] = Date()
+        Logger.shared.info(
+            "auto-update: push before scan", hostID: nodeID, host: node.displayName,
+            kv: ["from": reported.isEmpty ? "-" : reported, "to": manifest.expectedSamplerField]
+        )
+        defer { updatingNodeIDs.remove(nodeID) }
+        let nodeCopy = node
+        do {
+            _ = try await Task.detached(priority: .utility) {
+                try await SSHBootstrap.pushUpdate(node: nodeCopy)
+            }.value
+            lastUpdateError.removeValue(forKey: nodeID)
+        } catch {
+            lastUpdateError[nodeID] = SamplerInvokeError.shortDescription(for: error)
+            throw error
+        }
+    }
+
     /// Called from the collector pacer after each successful sample. The
     /// caller is responsible for checking `settings.autoUpdateSamplersEnabled`
     /// and passing `enabled: true` only when the user has opted in — keeping

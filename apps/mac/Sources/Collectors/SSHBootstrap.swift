@@ -341,3 +341,65 @@ extension SSHBootstrap {
         return triple
     }
 }
+
+/// Minimal gzip decoder for the counterpart of `GzipEncoder`: it skips
+/// the header fields, then inflates the raw DEFLATE body.
+enum GzipDecoder {
+    static func isGzip(_ data: Data) -> Bool {
+        data.count >= 18 && data[data.startIndex] == 0x1f && data[data.startIndex + 1] == 0x8b
+    }
+
+    /// Returns nil when the data is not valid gzip.
+    static func decode(_ data: Data) -> Data? {
+        let bytes = [UInt8](data)
+        guard bytes.count >= 18, bytes[0] == 0x1f, bytes[1] == 0x8b, bytes[2] == 8 else { return nil }
+        let flags = bytes[3]
+        var i = 10
+        if flags & 0x04 != 0 {
+            guard i + 2 <= bytes.count else { return nil }
+            i += 2 + Int(bytes[i]) + Int(bytes[i + 1]) << 8
+        }
+        if flags & 0x08 != 0 {
+            while i < bytes.count, bytes[i] != 0 { i += 1 }
+            i += 1
+        }
+        if flags & 0x10 != 0 {
+            while i < bytes.count, bytes[i] != 0 { i += 1 }
+            i += 1
+        }
+        if flags & 0x02 != 0 { i += 2 }
+        let end = bytes.count - 8
+        guard i <= end else { return nil }
+        let n = bytes.count
+        let isize = Int(bytes[n - 4]) | Int(bytes[n - 3]) << 8 | Int(bytes[n - 2]) << 16 | Int(bytes[n - 1]) << 24
+        let body = Data(bytes[i..<end])
+        return inflate(body, sizeHint: isize)
+    }
+
+    private static func inflate(_ source: Data, sizeHint: Int) -> Data? {
+        // ISIZE is the size mod 2^32; grow the buffer when it is too small.
+        var capacity = max(sizeHint, source.count * 4, 1024)
+        for _ in 0..<6 {
+            var out = Data(count: capacity)
+            let written = source.withUnsafeBytes { (src: UnsafeRawBufferPointer) -> Int in
+                guard let srcBase = src.baseAddress else { return 0 }
+                return out.withUnsafeMutableBytes { (dst: UnsafeMutableRawBufferPointer) -> Int in
+                    guard let dstBase = dst.baseAddress else { return 0 }
+                    return compression_decode_buffer(
+                        dstBase.assumingMemoryBound(to: UInt8.self), capacity,
+                        srcBase.assumingMemoryBound(to: UInt8.self), source.count,
+                        nil, COMPRESSION_ZLIB
+                    )
+                }
+            }
+            if written > 0 && written < capacity {
+                out.removeSubrange(written..<out.count)
+                return out
+            }
+            if written == 0 && sizeHint == 0 && source.count <= 2 { return Data() }
+            if written == 0 && capacity >= sizeHint * 2 && sizeHint > 0 { return nil }
+            capacity *= 4
+        }
+        return nil
+    }
+}

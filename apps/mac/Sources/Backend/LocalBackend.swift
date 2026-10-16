@@ -12,6 +12,7 @@ final class LocalBackend: Backend {
     let clientSettings: ClientSettings
     let serverSettings: ServerSettings
     let samplerUpdater: SamplerUpdateCoordinator
+    let diskScans: DiskScanStore
 
     let history: HistoryStore
     let collector: any Collector
@@ -29,6 +30,7 @@ final class LocalBackend: Backend {
         self.serverSettings = serverSettings
         self.nodes = nodeStore
         self.history = history
+        self.diskScans = DiskScanStore(url: HistoryStore.defaultURL())
         HostKeyTrustPersister.bind(store: nodeStore)
 
         let servers = ServerStore(
@@ -118,6 +120,15 @@ final class LocalBackend: Backend {
 
     func respawnPacer(id: UUID) async {
         collector.respawnPacer(id: id)
+    }
+
+    func diskScanner(for node: Node) -> any DiskScanner {
+        let updater = samplerUpdater
+        let settings = serverSettings
+        return makeDiskScanner(for: node, prepareSSH: { node, versionOutput in
+            let enabled = await settings.autoUpdateSamplersEnabled
+            try await updater.prepareForScan(node: node, versionOutput: versionOutput, enabled: enabled)
+        })
     }
 
     func updateServerSettings(_ settings: ServerSettings) async throws {
