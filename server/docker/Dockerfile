@@ -14,9 +14,12 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
       -trimpath \
       -ldflags="-s -w -X github.com/towertail/towertail/server/internal/version.Version=${VERSION} -X github.com/towertail/towertail/server/internal/version.SHA=${SHA}" \
       -o /out/towertail-server ./cmd/towertail-server
+# Empty data dir, so a new volume on /var/lib/towertail belongs to nonroot.
+RUN mkdir -p /out/data
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/towertail-server /usr/local/bin/towertail-server
+COPY --from=build --chown=nonroot:nonroot /out/data /var/lib/towertail
 USER nonroot:nonroot
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/towertail-server"]

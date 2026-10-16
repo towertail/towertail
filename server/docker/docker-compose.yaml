@@ -4,8 +4,8 @@ services:
     restart: unless-stopped
     volumes:
       - ch-data:/var/lib/clickhouse
-      - ./clickhouse/config.d:/etc/clickhouse-server/config.d:ro
-      - ./clickhouse/users.d:/etc/clickhouse-server/users.d:ro
+      - ./clickhouse/config.d/01-logging.xml:/etc/clickhouse-server/config.d/01-logging.xml:ro
+      - ./clickhouse/users.d/01-default.xml:/etc/clickhouse-server/users.d/01-default.xml:ro
     environment:
       CLICKHOUSE_DB: towertail
       CLICKHOUSE_USER: towertail
@@ -47,15 +47,15 @@ services:
     depends_on:
       clickhouse: { condition: service_healthy }
     environment:
-      TT_HTTP_ADDR: ":8080"
-      TT_CLICKHOUSE_ADDR: clickhouse:9000
-      TT_CLICKHOUSE_DATABASE: towertail
-      TT_CLICKHOUSE_USER: towertail
-      TT_CLICKHOUSE_PASSWORD_FILE: /run/secrets/ch_password
-      TT_STORAGE_PATH: /var/lib/towertail
-      TT_CLOUD_MANAGED: "false"
-      TT_LOG_FORMAT: json
-      TT_LOG_LEVEL: info
+      TT_HTTP__ADDR: ":8080"
+      TT_CLICKHOUSE__ADDR: clickhouse:9000
+      TT_CLICKHOUSE__DATABASE: towertail
+      TT_CLICKHOUSE__USER: towertail
+      TT_CLICKHOUSE__PASSWORD_FILE: /run/secrets/ch_password
+      TT_STORAGE__PATH: /var/lib/towertail
+      TT_CLOUD__MANAGED: "false"
+      TT_LOG__FORMAT: json
+      TT_LOG__LEVEL: info
     volumes:
       - server-data:/var/lib/towertail
     secrets: [ch_password]
