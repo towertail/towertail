@@ -5,11 +5,12 @@
 #   No triple gets all triples in the release manifest.
 #
 # Output: dist/samplers/<triple>/towertail-sampler[.exe], dist/samplers/manifest.json,
-# dist/samplers/sample-v1.json.
+# dist/samplers/sample-v1.json, dist/samplers/scan-<os>.ndjson.
 #
-# The script checks manifest.json and sample-v1.json against the sha256 values in
-# samplers.lock, and each binary against the manifest. It does not download a
-# file again when its sha256 is correct. On a mismatch after a download, it
+# The script checks manifest.json, sample-v1.json and the scan fixtures against the
+# sha256 values in samplers.lock, and each binary against the manifest. When the
+# lock has no sha256 for a scan fixture, the script skips that fixture with a
+# warning. It does not download a file again when its sha256 is correct. On a mismatch after a download, it
 # deletes the file and exits with code 1.
 #
 # Env:
@@ -93,3 +94,12 @@ for triple in "${TRIPLES[@]}"; do
 done
 
 fetch sample-v1.json "$OUT_DIR/sample-v1.json" "$SAMPLER_FIXTURE_SHA256"
+
+for os in linux darwin windows; do
+  var="SAMPLER_SCAN_$(echo "$os" | tr '[:lower:]' '[:upper:]')_SHA256"
+  if [[ -z "${!var:-}" ]]; then
+    echo "  warning: $var is not in samplers.lock; skip scan-$os.ndjson" >&2
+    continue
+  fi
+  fetch "scan-$os.ndjson" "$OUT_DIR/scan-$os.ndjson" "${!var}"
+done

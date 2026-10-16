@@ -36,7 +36,7 @@ Three token kinds, all opaque strings with a `tt_` prefix. Raw tokens are only e
 |---|---|---|
 | `user` | `POST /v1/auth/login` | `/v1/*` except ingest + control |
 | `admin` | `towertail-server token issue --kind=admin` (CLI) | everything in `user` + token management |
-| `sampler` | `POST /v1/sampler/enroll` | `/v1/ingest/*`, `/v1/control/next` |
+| `sampler` | `POST /v1/sampler/enroll` | `/v1/ingest/*`, `/v1/control/next`, `/v1/disk-scans/{job}/progress`, `/v1/disk-scans/{job}/result` |
 
 Sampler tokens are bound to one `node_id`. Ingest/control endpoints reject tokens without a binding.
 
@@ -74,6 +74,11 @@ Base path `/v1`. Authed unless otherwise marked.
 | POST | `/v1/alerts/{id}/snooze?until=RFC3339` | — | 200 |
 | POST | `/v1/sampler/enroll` | `EnrollRequest` | `EnrollResponse` |
 | GET | `/v1/sampler/versions` | — | `{ "linux-amd64": "sha256:…", … }` |
+| POST | `/v1/nodes/{id}/disk-scans` | `DiskScanRequest` | `DiskScanJob` (202) |
+| GET | `/v1/nodes/{id}/disk-scans` | — | `{ "jobs": [DiskScanJob] }`, the newest first |
+| GET | `/v1/disk-scans/{job}` | — | `DiskScanJob` |
+| GET | `/v1/disk-scans/{job}/result` | — | the scan result line, gzip (see §3.1) |
+| POST | `/v1/disk-scans/{job}/cancel` | — | `DiskScanJob` |
 
 ### Sampler-only
 
@@ -81,6 +86,90 @@ Base path `/v1`. Authed unless otherwise marked.
 |---|---|---|---|
 | POST | `/v1/ingest/samples` | NDJSON of `Sample` lines (optionally gzipped) | `{ accepted, rejected, error }` |
 | GET | `/v1/control/next` | — | `ControlNextResponse` or 204 |
+| POST | `/v1/disk-scans/{job}/progress` | one scan line: `progress`, `error` or `cancelled` | `{ "cancel": bool }` |
+| PUT | `/v1/disk-scans/{job}/result` | the scan `result` line, gzip, 16 MiB at most | 204 |
+
+A sampler token can use the disk-scan endpoints only for jobs of its own node. Other jobs give 403.
+
+### 3.1 Disk scans
+
+A disk scan finds what uses the disk space below a folder of a node. The sampler of the node runs it (`towertail-sampler scan`, see [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) §3.4). The scan is read-only. The server keeps the job and the result. It never runs a cleanup command.
+
+**Opt-in on two sides.** A scan runs only when both are true:
+
+- The node has `allowDiskScan: true` (a `Node` field, default `false`). Else `POST /v1/nodes/{id}/disk-scans` gives 403 `forbidden` with the message `disk scans are off for this node`.
+- The sampler runs with `--allow-disk-scan` (`towertail-sampler push` and `service install`). Else the sampler posts an `error` line with the message `disk scans are off on this host: run the sampler with --allow-disk-scan`, and the job becomes `failed`.
+
+**Request.**
+
+```json
+{ "root": "/", "max_depth": 6, "min_bytes": 50000000 }
+```
+
+All keys are optional. An empty `root` is the home folder of the user that runs the sampler. `max_depth` and `min_bytes` default to the sampler defaults.
+
+**Job.**
+
+```json
+{
+  "id": "uuid",
+  "node_id": "uuid",
+  "state": "running",
+  "root": "/",
+  "max_depth": 6,
+  "min_bytes": 50000000,
+  "progress": { "t": "progress", "v": 1, "files": 412318, "dirs": 30211, "bytes": 90412000000,
+                "no_access_dirs": 7, "current": "/var/lib", "elapsed_ms": 37000,
+                "used_bytes": 195400000000, "top": [] },
+  "error": "",
+  "cancel_requested": false,
+  "created_ts": "2026-10-15T09:12:00Z",
+  "started_ts": "2026-10-15T09:12:04Z",
+  "finished_ts": null,
+  "result_bytes": 0
+}
+```
+
+| Key | Meaning |
+|---|---|
+| `state` | `queued`, `running`, `done`, `failed`, `cancelled` or `expired`. |
+| `progress` | The last progress line from the sampler, or `null`. |
+| `error` | The reason for `failed` or `expired`. Else empty. |
+| `cancel_requested` | A user asked to cancel a running job. The sampler gets `cancel: true` on its next progress post. |
+| `started_ts` | Time of the first progress line, or `null`. |
+| `finished_ts` | Time of the final state, or `null`. |
+| `result_bytes` | Size of the gzip result. `0` until the job is `done`. |
+
+**States.**
+
+```
+queued ──first progress──▶ running ──result PUT──▶ done
+  │                          │ └──error line or no progress for 2 min──▶ failed
+  │                          └──cancelled line──▶ cancelled
+  ├──cancel──▶ cancelled
+  └──no sampler in 10 min──▶ expired
+```
+
+`done`, `failed`, `cancelled` and `expired` are final. A job in a final state does not change.
+
+**Rules.**
+
+- One job in `queued` or `running` state for each node. A second request gives 409 `conflict`. The error envelope then has the current job in a `job` key: `{ "error": {…}, "job": DiskScanJob }`.
+- `POST …/cancel` on a `queued` job makes it `cancelled`. On a `running` job it sets `cancel_requested`. On a job in a final state it changes nothing and returns the job.
+- Progress post on a job in a final state: the response is `{ "cancel": true }`, so that the sampler stops.
+- The result PUT body is gzip (`Content-Encoding: gzip`, `Content-Type: application/json`). It is 16 MiB at most, else 413. The server decodes it as a scan `result` line before it keeps it, else 400.
+- `GET …/result` returns the gzip bytes with `Content-Encoding: gzip` and `Content-Type: application/json`. It gives 404 when the job has no result.
+- The server keeps the last 3 jobs with a result for each node, and deletes results older than 7 days.
+- The audit log has an entry for each scan request and each cancel.
+
+**Control message.** `POST …/disk-scans` puts a `disk_scan` message on the control queue of the node:
+
+```json
+{ "id": "uuid", "kind": "disk_scan",
+  "payload": { "job_id": "uuid", "root": "/", "max_depth": 6, "min_bytes": 50000000 } }
+```
+
+The sampler runs one scan at a time. It posts a progress line each 2 s, and the final `error` or `cancelled` line, or it PUTs the result.
 
 ---
 
@@ -106,8 +195,11 @@ Every frame is a `WSMessage` with a `type` discriminator:
 { "type": "event",            "event":  { ... } }
 { "type": "node_updated",     "node":   { ... } }
 { "type": "settings_updated", "settings": { ... } }
+{ "type": "disk_scan_updated", "nodeId": "uuid", "job": { DiskScanJob } }
 { "type": "pong" }
 ```
+
+`disk_scan_updated` goes to the clients that see the node. The server sends it on each state change, and for progress at most once each 2 s for each job.
 
 On connect the server immediately replays the most recent `sample` for every node the client can see, then begins streaming new frames as they arrive. Event replays are not implemented today (clients refetch `/v1/alerts` at connect).
 
@@ -123,7 +215,8 @@ The server's [`internal/wire`](../server/internal/wire/wire.go) package is the s
 - `ServerSettings` — camelCase mirror of the Swift `ServerSettings` class.
 - `LoginRequest`, `LoginResponse`.
 - `EnrollRequest`, `EnrollResponse`.
-- `ControlNextResponse`, `KillProcessPayload`.
+- `ControlNextResponse`, `KillProcessPayload`, `DiskScanPayload`.
+- `DiskScanRequest`, `DiskScanJob`, `DiskScanProgressResponse`. The scan lines are `pkg/schema/scan.go` in [towertail/sampler](https://github.com/towertail/sampler).
 - `NodeHistoryPoint`, `NodeHistoryResponse`.
 
 ---
