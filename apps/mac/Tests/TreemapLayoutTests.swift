@@ -59,6 +59,7 @@ final class TreemapLayoutTests: XCTestCase {
         }
     }
 
+    @MainActor
     func testFixtureTilesMarkSelection() throws {
         let r = try ScanFixtures.result("darwin")
         guard let rec = r.recs.first, let id = rec.nodeIDs.first else { throw XCTSkip("no rec") }

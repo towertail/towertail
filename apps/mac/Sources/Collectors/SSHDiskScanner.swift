@@ -45,7 +45,7 @@ struct SSHDiskScanner: DiskScanner {
                     client = try await SSHConnectionFactory.connect(
                         node: node,
                         hostKeyPrompt: prompt,
-                        onTrust: onTrust.map { cb in { fp in cb(nodeId, fp) } }
+                        onTrust: onTrust.map { cb in { @Sendable (fp: String) in cb(nodeId, fp) } }
                     )
                 } catch {
                     feed.fail(DiskScanError.failed(SSHErrorRenderer.describe(error)))
@@ -61,9 +61,8 @@ struct SSHDiskScanner: DiskScanner {
                     try Task.checkCancellation()
                     let command = request.shellCommand(binary: SSHSamplerInvoker.remoteSamplerPath)
                     let stream = try await client.executeCommandStream(command)
-                    let dog = feed.startWatchdog(timeout: watchdog) {
-                        Task.detached { try? await client.close() }
-                    }
+                    let closer = ClientCloser(client)
+                    let dog = feed.startWatchdog(timeout: watchdog) { closer.close() }
                     defer { dog.cancel() }
                     for try await chunk in stream {
                         switch chunk {
@@ -85,5 +84,17 @@ struct SSHDiskScanner: DiskScanner {
                 if case .cancelled = reason { task.cancel() }
             }
         }
+    }
+}
+
+/// Lets the watchdog close the connection from another task. SSHClient
+/// is not Sendable, but `close()` is safe to call from any task.
+private final class ClientCloser: @unchecked Sendable {
+    private let client: SSHClient
+
+    init(_ client: SSHClient) { self.client = client }
+
+    func close() {
+        Task.detached { [self] in try? await self.client.close() }
     }
 }
