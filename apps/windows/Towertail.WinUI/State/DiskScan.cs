@@ -11,15 +11,18 @@ namespace Towertail.WinUI.State;
 public sealed record DiskScanRequest(
     [property: JsonPropertyName("root")] string? Root = null,
     [property: JsonPropertyName("max_depth")] int? MaxDepth = null,
-    [property: JsonPropertyName("min_bytes")] long? MinBytes = null)
+    [property: JsonPropertyName("min_bytes")] long? MinBytes = null,
+    [property: JsonPropertyName("min_frac")] double? MinFrac = null,
+    [property: JsonPropertyName("refresh_of")] string? RefreshOf = null)
 {
-    /// <summary>The argv after the sampler path.</summary>
+    /// <summary>The argv after the sampler path. <c>RefreshOf</c> is for the server only.</summary>
     public IReadOnlyList<string> Arguments()
     {
         var args = new List<string> { "scan" };
         if (!string.IsNullOrEmpty(Root)) { args.Add("--root"); args.Add(Root); }
         if (MaxDepth is int d) { args.Add("--max-depth"); args.Add(d.ToString(CultureInfo.InvariantCulture)); }
         if (MinBytes is long b) { args.Add("--min-bytes"); args.Add(b.ToString(CultureInfo.InvariantCulture)); }
+        if (MinFrac is double f) { args.Add("--min-frac"); args.Add(f.ToString(CultureInfo.InvariantCulture)); }
         return args;
     }
 }
@@ -52,7 +55,7 @@ public sealed record DiskScanNoAccess(
     [property: JsonPropertyName("bytes_est")] long? BytesEst);
 
 /// <summary>One node of the pruned tree. <c>F</c>: file, <c>O</c>: the "other" node.</summary>
-public sealed record DiskNode(
+public sealed partial record DiskNode(
     [property: JsonPropertyName("n")] string N,
     [property: JsonPropertyName("b")] long B,
     [property: JsonPropertyName("cat")] string Cat,
@@ -69,7 +72,7 @@ public sealed record DiskRecCmd(
     [property: JsonPropertyName("sh")] IReadOnlyList<string>? Sh,
     [property: JsonPropertyName("pwsh")] IReadOnlyList<string>? Pwsh);
 
-public sealed record DiskRec(
+public sealed partial record DiskRec(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("group")] string Group,
     [property: JsonPropertyName("label")] string Label,
@@ -86,7 +89,17 @@ public sealed record DiskRec(
     public bool IsSafe => Group == SafeGroup;
 }
 
-public sealed record DiskScanResult(
+/// <summary>The prune limits of a result (sampler §3.4). Older samplers leave them out.</summary>
+public sealed record DiskScanLimits(
+    [property: JsonPropertyName("max_depth")] int MaxDepth,
+    [property: JsonPropertyName("min_bytes")] long MinBytes);
+
+/// <summary>App side: a folder that the app scanned again and merged into the result.</summary>
+public sealed record DiskScanRefresh(
+    [property: JsonPropertyName("path")] string Path,
+    [property: JsonPropertyName("at")] DateTime At);
+
+public sealed partial record DiskScanResult(
     [property: JsonPropertyName("t")] string T,
     [property: JsonPropertyName("v")] int V,
     [property: JsonPropertyName("root")] string Root,
@@ -103,10 +116,15 @@ public sealed record DiskScanResult(
     [property: JsonPropertyName("no_access")] DiskScanNoAccess NoAccess,
     [property: JsonPropertyName("tree")] DiskNode Tree,
     [property: JsonPropertyName("recs")] IReadOnlyList<DiskRec>? Recs,
-    [property: JsonPropertyName("errors")] IReadOnlyList<string>? Errors)
+    [property: JsonPropertyName("errors")] IReadOnlyList<string>? Errors,
+    [property: JsonPropertyName("limits")] DiskScanLimits? Limits = null,
+    [property: JsonPropertyName("refreshed")] IReadOnlyList<DiskScanRefresh>? Refreshed = null)
 {
     [JsonIgnore]
     public IReadOnlyList<DiskRec> Recommendations => Recs ?? Array.Empty<DiskRec>();
+
+    [JsonIgnore]
+    public IReadOnlyList<DiskScanRefresh> RefreshedFolders => Refreshed ?? Array.Empty<DiskScanRefresh>();
 
     [JsonIgnore]
     public bool IsWindows => Os == "windows";
@@ -137,6 +155,8 @@ public sealed record DiskScanJob(
     [property: JsonPropertyName("root")] string? Root = null,
     [property: JsonPropertyName("max_depth")] int? MaxDepth = null,
     [property: JsonPropertyName("min_bytes")] long? MinBytes = null,
+    [property: JsonPropertyName("min_frac")] double? MinFrac = null,
+    [property: JsonPropertyName("refresh_of")] string? RefreshOf = null,
     [property: JsonPropertyName("progress")] DiskScanProgress? Progress = null,
     [property: JsonPropertyName("error")] string? Error = null,
     [property: JsonPropertyName("cancel_requested")] bool CancelRequested = false,
@@ -150,6 +170,10 @@ public sealed record DiskScanJob(
 
     [JsonIgnore]
     public bool IsFinal => State is Done or Failed or CancelledState or Expired;
+
+    /// <summary>True for the scan of one folder. The server sends an empty string for a full scan.</summary>
+    [JsonIgnore]
+    public bool IsRefresh => !string.IsNullOrEmpty(RefreshOf);
 }
 
 /// <summary>Decodes the NDJSON lines of <c>towertail-sampler scan</c>.</summary>

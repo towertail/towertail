@@ -95,6 +95,38 @@ public sealed class CleanupScriptTests
         new CleanupScript(win, new HashSet<string>(), Now).Text.Should().Contain("-ne 'o''brien')");
     }
 
+    [Fact]
+    public void UserItemsInPowerShell()
+    {
+        var result = ScanFixture.Result("windows");
+        var script = new CleanupScript(result, new HashSet<string>(), Now,
+            new[] { "C:\\Users\\dev\\Videos\\Captures", "C:\\Users\\dev\\Gone", "C:\\Users\\dev" });
+        script.Mine.Select(i => i.Path).Should().Equal("C:\\Users\\dev\\Videos\\Captures", "C:\\Users\\dev");
+        script.Count.Should().Be(2);
+        script.TotalBytes.Should().Be(3_000_000_000 + result.Tree.B);
+        var text = script.Text;
+        text.Should().Contain("# Lines marked admin need an elevated PowerShell.");
+        text.Should().Contain("# Added by you · 3.0 GB\nRemove-Item -LiteralPath 'C:\\Users\\dev\\Videos\\Captures' -Recurse -Force\n");
+        text.Should().Contain("· admin\nRemove-Item -LiteralPath 'C:\\Users\\dev' -Recurse -Force\n");
+        text.IndexOf("Remove-Item", StringComparison.Ordinal).Should().BeLessThan(text.LastIndexOf("}\n", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void UserItemsInBash()
+    {
+        var result = ScanFixture.Result("linux");
+        var script = new CleanupScript(result, new HashSet<string>(), Now,
+            new[] { "/home/dev/My Project's \"data\"", "/var/log" });
+        script.Mine.Should().HaveCount(2);
+        var text = script.Text;
+        text.Should().Contain("# Added by you · 100 MB\nrm -rf -- \"$HOME\"/'My Project'\\''s \"data\"'\n");
+        text.Should().Contain("# Added by you · 321 MB · may need sudo\nrm -rf -- '/var/log'\n");
+        text.Should().Contain("# sudo lines ask for your password.");
+        text.Should().EndWith(")\n");
+        var (code, _, err) = Run("bash", new[] { "-n" }, text);
+        code.Should().Be(0, err);
+    }
+
     // The shells, when this machine has them, check the syntax and the host guard.
 
     [Theory]

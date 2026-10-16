@@ -50,4 +50,39 @@ public sealed class DiskScanStoreTests : IDisposable
         back.Recommendations.Select(r => r.Id).Should().Equal(result.Recommendations.Select(r => r.Id));
         back.Tree.B.Should().Be(result.Tree.B);
     }
+
+    [Fact]
+    public void ReplaceLatestKeepsTimeAndHistory()
+    {
+        var node = Guid.NewGuid();
+        var r = ScanFixture.Result("windows");
+        _store.Save(node, "~", r with { Hostname = "old" });
+        _store.Save(node, "~", r with { StartedTs = r.StartedTs.AddHours(1), Hostname = "new" });
+        var before = _store.Latest(node, "~")!.FinishedAt;
+        _store.ReplaceLatest(node, "~", r with { Hostname = "merged" });
+        _store.List(node, "~").Select(e => e.Result.Hostname).Should().Equal("merged", "old");
+        _store.Latest(node, "~")!.FinishedAt.Should().Be(before);
+    }
+
+    [Fact]
+    public void PicksPerNodeAndScope()
+    {
+        var node = Guid.NewGuid();
+        var at = new DateTime(2026, 10, 16, 9, 0, 0, DateTimeKind.Utc);
+        _store.SavePick(node, "~", new CleanupPick(CleanupPickKind.Mine, "C:\\a", at));
+        _store.SavePick(node, "~", new CleanupPick(CleanupPickKind.Hidden, "temp|p", at.AddSeconds(1)));
+        _store.SavePick(node, "C:\\", new CleanupPick(CleanupPickKind.Mine, "C:\\b", at));
+        _store.SavePick(node, "~", new CleanupPick(CleanupPickKind.Mine, "C:\\a", at.AddHours(1), On: false));
+
+        var picks = _store.Picks(node, "~");
+        picks.Should().Equal(
+            new CleanupPick(CleanupPickKind.Mine, "C:\\a", at, On: false),
+            new CleanupPick(CleanupPickKind.Hidden, "temp|p", at.AddSeconds(1)));
+        _store.Picks(node, "C:\\").Should().ContainSingle();
+        _store.Picks(Guid.NewGuid(), "~").Should().BeEmpty();
+
+        _store.RemovePick(node, "~", CleanupPickKind.Mine, "C:\\a");
+        using var again = new DiskScanStore(_path);
+        again.Picks(node, "~").Select(p => p.Key).Should().Equal("temp|p");
+    }
 }

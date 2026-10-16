@@ -199,4 +199,148 @@ public sealed class DiskUsageModelTests : IDisposable
         DiskUsageModel.Elapsed(TimeSpan.FromSeconds(37)).Should().Be("0:37");
         DiskUsageModel.Ago(TimeSpan.FromDays(1.5)).Should().Be("1 day ago");
     }
+
+    private static readonly string[] Temp = { "AppData\\Local", "Temp" };
+    private static readonly string[] Captures = { "Videos\\Captures" };
+
+    private async Task<(DiskUsageModel Model, ScriptedScanner Scanner)> Scanned()
+    {
+        var scanner = new ScriptedScanner();
+        scanner.Events.Add(new DiskScanEvent.Result(ScanFixture.Result("windows")));
+        var model = Make(scanner);
+        await model.StartAsync();
+        return (model, scanner);
+    }
+
+    [Fact]
+    public async Task AddRemoveAndToggleTiles()
+    {
+        var (model, _) = await Scanned();
+        model.Mark(Captures).Should().Be(new TileMark.None());
+
+        model.Add(Captures);
+        model.Mark(Captures).Should().Be(new TileMark.Mine(true));
+        model.MineItems.Should().ContainSingle().Which.Label.Should().Be("Captures/");
+        model.SelectedCount.Should().Be(model.SelectedRecs.Count + 1);
+        model.Script!.Text.Should().Contain("Remove-Item -LiteralPath 'C:\\Users\\dev\\Videos\\Captures' -Recurse -Force");
+        var bytes = model.SelectedBytes;
+        model.ToggleTile(Captures);
+        model.Mark(Captures).Should().Be(new TileMark.Mine(false));
+        model.SelectedBytes.Should().Be(bytes - 3_000_000_000);
+        model.Remove(Captures);
+        model.MineItems.Should().BeEmpty();
+
+        // A rule tile: the box checks the rec, Remove hides it, Add shows it again.
+        var temp = model.Result!.Recommendations.Single(r => r.Id == "temp");
+        model.Mark(Temp).Should().Be(new TileMark.Rule(temp, true));
+        model.ToggleTile(Temp);
+        model.Selected.Should().NotContain("temp");
+        model.Remove(Temp);
+        model.IsHidden(temp).Should().BeTrue();
+        model.HiddenRecs.Should().ContainSingle();
+        model.Mark(Temp).Should().Be(new TileMark.None());
+        model.Add(Temp);
+        model.IsHidden(temp).Should().BeFalse();
+        model.Selected.Should().Contain("temp");
+
+        // A checked folder covers the tiles below it, and Add takes the items below out.
+        model.Add(Captures);
+        model.Add(new[] { "AppData\\Local" });
+        model.Mark(Temp).Should().Be(new TileMark.Covered("AppData\\Local"));
+        model.HoldsSelection(new[] { "AppData\\Local" }).Should().BeTrue();
+        model.ClearSelection();
+        model.MineItems.Should().OnlyContain(i => !i.On);
+        model.SelectedCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task PicksStayAcrossRescanAndGoneItemsLeave()
+    {
+        var (model, scanner) = await Scanned();
+        model.Add(Captures);
+        model.Remove(Temp);
+        _store.SavePick(_node.Id, "~", new CleanupPick(CleanupPickKind.Mine, "C:\\Users\\dev\\Old", _now));
+
+        await model.StartAsync();
+        model.Notice.Should().Be("%USERPROFILE%\\Old is gone, so it left the cleanup list.");
+        model.MineItems.Select(i => i.Path).Should().Equal("C:\\Users\\dev\\Videos\\Captures");
+        model.Selected.Should().NotContain("temp");
+        _store.Picks(_node.Id, "~").Should().HaveCount(2);
+
+        var again = Make(scanner);
+        again.LoadLatest();
+        again.IsHidden(again.Result!.Recommendations.Single(r => r.Id == "temp")).Should().BeTrue();
+        again.MineItems.Should().ContainSingle();
+        Make(scanner, scope: "C:\\").Picks.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task RefreshMergesTheFolder()
+    {
+        var (model, scanner) = await Scanned();
+        model.Add(Captures);
+        var full = model.Result!;
+        var sub = full with
+        {
+            Root = "C:\\Users\\dev\\AppData\\Local\\Temp",
+            Tree = new DiskNode("C:\\Users\\dev\\AppData\\Local\\Temp", 500_000_000, "cache",
+                C: new[] { new DiskNode("setup-log.txt", 500_000_000, "cache", F: true) }),
+            Recs = Array.Empty<DiskRec>(),
+        };
+        scanner.Events.Clear();
+        scanner.Events.Add(new DiskScanEvent.Result(sub));
+        _now = _now.AddMinutes(5);
+
+        await model.RefreshAsync(Temp.Append("setup-log.txt").ToList());
+
+        scanner.Request.Should().Be(new DiskScanRequest("C:\\Users\\dev\\AppData\\Local\\Temp", 3, 50_000_000, 0, "~"));
+        model.Refreshing.Should().BeNull();
+        model.Notice.Should().Be("Temp refreshed. 1.0 GB less than before.");
+        model.Result!.Tree.B.Should().Be(full.Tree.B - 1_000_000_000);
+        model.Result.RefreshedFolders.Should().Equal(new DiskScanRefresh("C:\\Users\\dev\\AppData\\Local\\Temp", _now));
+        model.MineItems.Should().ContainSingle();
+        model.Selected.Should().Contain("temp");
+        var stored = _store.Latest(_node.Id, "~")!;
+        stored.Result.Tree.B.Should().Be(model.Result.Tree.B);
+        _store.List(_node.Id, "~").Should().HaveCount(1);
+
+        // The root starts a full scan.
+        scanner.Events.Clear();
+        scanner.Events.Add(new DiskScanEvent.Result(full));
+        await model.RefreshAsync(Array.Empty<string>());
+        scanner.Request!.RefreshOf.Should().BeNull();
+        model.Result.Tree.B.Should().Be(full.Tree.B);
+    }
+
+    [Fact]
+    public async Task FailedRefreshKeepsTheResult()
+    {
+        var (model, scanner) = await Scanned();
+        var before = model.Result;
+        scanner.Events.Clear();
+        scanner.Events.Add(new DiskScanEvent.Error("boom"));
+        await model.RefreshAsync(Temp);
+        model.Notice.Should().Be("The refresh failed: boom. The map shows the previous result.");
+        model.Result.Should().BeSameAs(before);
+        model.IsBusy.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task RefreshShowsAFullScanThatRunsOnTheServer()
+    {
+        var (model, scanner) = await Scanned();
+        var job = new DiskScanJob(Guid.NewGuid(), _node.Id, DiskScanJob.Running, Root: "~");
+        scanner.Events.Clear();
+        scanner.Events.Add(new DiskScanEvent.Job(job));
+        scanner.Events.Add(new DiskScanEvent.Result(ScanFixture.Result("windows") with { Hostname = "full" }));
+        var phases = new List<DiskUsagePhase>();
+        model.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(DiskUsageModel.Phase)) phases.Add(model.Phase); };
+
+        await model.RefreshAsync(Temp);
+
+        phases.Should().Equal(DiskUsagePhase.Running, DiskUsagePhase.Done);
+        model.Result!.Hostname.Should().Be("full");
+        model.Notice.Should().BeNull();
+        model.Refreshing.Should().BeNull();
+    }
 }

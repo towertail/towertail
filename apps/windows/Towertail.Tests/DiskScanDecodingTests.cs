@@ -75,6 +75,22 @@ public sealed class DiskScanDecodingTests
         new DiskScanRequest().Arguments().Should().Equal("scan");
         new DiskScanRequest("~", 4, 1000).Arguments()
             .Should().Equal("scan", "--root", "~", "--max-depth", "4", "--min-bytes", "1000");
+        new DiskScanRequest("C:\\x", MinFrac: 0, RefreshOf: "~").Arguments()
+            .Should().Equal("scan", "--root", "C:\\x", "--min-frac", "0");
+        JsonSerializer.Serialize(new DiskScanRequest("/x", RefreshOf: "/"), DiskScanCodec.Options)
+            .Should().Be("""{"root":"/x","refresh_of":"/"}""");
+    }
+
+    [Fact]
+    public void DecodesLimitsAndRefreshed()
+    {
+        var result = ScanFixture.Result("windows");
+        result.Limits.Should().Be(new DiskScanLimits(6, 50_000_000));
+        result.RefreshedFolders.Should().BeEmpty();
+        var at = new DateTime(2026, 10, 16, 9, 0, 0, DateTimeKind.Utc);
+        var again = DiskScanCodec.DecodeResult(DiskScanCodec.Encode(result with { Refreshed = new[] { new DiskScanRefresh("C:\\x", at) } }));
+        again.RefreshedFolders.Should().Equal(new DiskScanRefresh("C:\\x", at));
+        again.Limits.Should().Be(result.Limits);
     }
 
     [Theory]
@@ -96,6 +112,9 @@ public sealed class DiskScanDecodingTests
             """, DiskScanCodec.Options)!;
         job.State.Should().Be(DiskScanJob.Running);
         job.IsFinal.Should().BeFalse();
+        job.IsRefresh.Should().BeFalse();
+        (job with { RefreshOf = "" }).IsRefresh.Should().BeFalse();
+        (job with { RefreshOf = "~" }).IsRefresh.Should().BeTrue();
         job.Progress!.Files.Should().Be(5);
     }
 }

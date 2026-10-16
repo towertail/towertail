@@ -4,9 +4,26 @@ using Microsoft.Data.Sqlite;
 
 namespace Towertail.WinUI.State;
 
+public enum CleanupPickKind
+{
+    /// <summary>A folder or file that the user added. The key is the absolute path.</summary>
+    Mine,
+    /// <summary>A hidden recommendation. The key is <c>&lt;rule id&gt;|&lt;rec path&gt;</c>.</summary>
+    Hidden,
+}
+
+/// <summary>A change of the user to the cleanup list, kept per node and scope.</summary>
+public sealed record CleanupPick(CleanupPickKind Kind, string Key, DateTime AddedAt, bool On = true)
+{
+    public static string HiddenKey(DiskRec rec) => rec.RuleId + "|" + rec.Path;
+
+    internal static string KindText(CleanupPickKind kind) => kind == CleanupPickKind.Mine ? "mine" : "hidden";
+}
+
 /// <summary>
 /// Keeps the last <see cref="KeepPerScope"/> scan results for each node and scope in SQLite.
-/// Same table as the Mac DiskScanStore: <c>disk_scan(node_id, scope, finished_at, duration_ms, result_gz)</c>.
+/// Same tables as the Mac DiskScanStore: <c>disk_scan(node_id, scope, finished_at, duration_ms, result_gz)</c>
+/// and <c>disk_cleanup_pick</c> for the cleanup picks of the user.
 /// One connection behind a lock: scans are rare and the rows are few.
 /// </summary>
 public sealed class DiskScanStore : IDisposable
@@ -36,7 +53,16 @@ public sealed class DiskScanStore : IDisposable
                 duration_ms INTEGER NOT NULL,
                 result_gz BLOB NOT NULL
             );
-            CREATE INDEX IF NOT EXISTS idx_disk_scan_node_scope ON disk_scan(node_id, scope, finished_at);";
+            CREATE INDEX IF NOT EXISTS idx_disk_scan_node_scope ON disk_scan(node_id, scope, finished_at);
+            CREATE TABLE IF NOT EXISTS disk_cleanup_pick (
+                node_id TEXT NOT NULL,
+                scope TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                key TEXT NOT NULL,
+                on_flag INTEGER NOT NULL,
+                added_at REAL NOT NULL,
+                PRIMARY KEY (node_id, scope, kind, key)
+            );";
         cmd.ExecuteNonQuery();
     }
 
@@ -68,6 +94,84 @@ public sealed class DiskScanStore : IDisposable
                 prune.ExecuteNonQuery();
             }
             tx.Commit();
+        }
+    }
+
+    /// <summary>Puts <paramref name="result"/> in the newest row of the scope. The time and the older rows stay.</summary>
+    public void ReplaceLatest(Guid nodeId, string scope, DiskScanResult result)
+    {
+        var gz = Gzip(DiskScanCodec.Encode(result));
+        lock (_lock)
+        {
+            using var cmd = _conn.CreateCommand();
+            cmd.CommandText = @"
+                UPDATE disk_scan SET result_gz = $gz WHERE rowid = (
+                    SELECT rowid FROM disk_scan WHERE node_id = $id AND scope = $scope
+                    ORDER BY finished_at DESC, rowid DESC LIMIT 1)";
+            cmd.Parameters.AddWithValue("$id", nodeId.ToString());
+            cmd.Parameters.AddWithValue("$scope", scope);
+            cmd.Parameters.AddWithValue("$gz", gz);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>The cleanup picks of the scope, the oldest first.</summary>
+    public IReadOnlyList<CleanupPick> Picks(Guid nodeId, string scope)
+    {
+        var list = new List<CleanupPick>();
+        lock (_lock)
+        {
+            using var cmd = _conn.CreateCommand();
+            cmd.CommandText = "SELECT kind, key, on_flag, added_at FROM disk_cleanup_pick WHERE node_id = $id AND scope = $scope ORDER BY added_at, rowid";
+            cmd.Parameters.AddWithValue("$id", nodeId.ToString());
+            cmd.Parameters.AddWithValue("$scope", scope);
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                CleanupPickKind? kind = reader.GetString(0) switch
+                {
+                    "mine" => CleanupPickKind.Mine,
+                    "hidden" => CleanupPickKind.Hidden,
+                    _ => null,
+                };
+                if (kind is null) continue;
+                list.Add(new CleanupPick(kind.Value, reader.GetString(1),
+                    DateTime.UnixEpoch.AddSeconds(reader.GetDouble(3)), reader.GetInt64(2) != 0));
+            }
+        }
+        return list;
+    }
+
+    /// <summary>Adds the pick, or sets its on flag when it is there.</summary>
+    public void SavePick(Guid nodeId, string scope, CleanupPick pick)
+    {
+        lock (_lock)
+        {
+            using var cmd = _conn.CreateCommand();
+            cmd.CommandText = @"
+                INSERT INTO disk_cleanup_pick (node_id, scope, kind, key, on_flag, added_at) VALUES ($id, $scope, $kind, $key, $on, $at)
+                ON CONFLICT (node_id, scope, kind, key) DO UPDATE SET on_flag = excluded.on_flag";
+            cmd.Parameters.AddWithValue("$id", nodeId.ToString());
+            cmd.Parameters.AddWithValue("$scope", scope);
+            cmd.Parameters.AddWithValue("$kind", CleanupPick.KindText(pick.Kind));
+            cmd.Parameters.AddWithValue("$key", pick.Key);
+            cmd.Parameters.AddWithValue("$on", pick.On ? 1 : 0);
+            cmd.Parameters.AddWithValue("$at", (pick.AddedAt.ToUniversalTime() - DateTime.UnixEpoch).TotalSeconds);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    public void RemovePick(Guid nodeId, string scope, CleanupPickKind kind, string key)
+    {
+        lock (_lock)
+        {
+            using var cmd = _conn.CreateCommand();
+            cmd.CommandText = "DELETE FROM disk_cleanup_pick WHERE node_id = $id AND scope = $scope AND kind = $kind AND key = $key";
+            cmd.Parameters.AddWithValue("$id", nodeId.ToString());
+            cmd.Parameters.AddWithValue("$scope", scope);
+            cmd.Parameters.AddWithValue("$kind", CleanupPick.KindText(kind));
+            cmd.Parameters.AddWithValue("$key", key);
+            cmd.ExecuteNonQuery();
         }
     }
 
