@@ -42,7 +42,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: ghcr.io/towertail/server:latest
+    image: ghcr.io/towertail/server:${TOWERTAIL_VERSION:-latest}
     restart: unless-stopped
     depends_on:
       clickhouse: { condition: service_healthy }

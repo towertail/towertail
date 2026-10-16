@@ -1,13 +1,16 @@
 # syntax=docker/dockerfile:1.7
 # Build context is server/ (see server/docker/docker-compose.yaml).
-FROM golang:1.25-alpine AS build
+# The build stage runs on the host arch and cross-compiles (no emulation).
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 ARG VERSION=dev
 ARG SHA=unknown
-RUN CGO_ENABLED=0 go build \
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build \
       -trimpath \
       -ldflags="-s -w -X github.com/towertail/towertail/server/internal/version.Version=${VERSION} -X github.com/towertail/towertail/server/internal/version.SHA=${SHA}" \
       -o /out/towertail-server ./cmd/towertail-server

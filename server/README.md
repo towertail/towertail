@@ -41,6 +41,23 @@ testdata/                # fixtures, load, e2e
 
 See [`docs/server-plan.md`](../docs/server-plan.md) for the full design, [`docs/wire.md`](../docs/wire.md) for the authoritative wire contract, and [`docs/server-runbook.md`](../docs/server-runbook.md) for operating notes (first boot, failure modes, upgrades, audit log).
 
+## Run with Docker
+
+Each `server/vX.Y.Z` tag publishes a multi-arch image (`linux/amd64`, `linux/arm64`) and a GitHub release with Linux binaries and `checksums.txt`.
+
+```bash
+docker run --rm ghcr.io/towertail/server:0.1.0 --version
+```
+
+Image tags: `X.Y.Z`, `X.Y` and `latest` (final versions only; a pre-release gets only `X.Y.Z-rc.N`). In `docker/docker-compose.yaml`, set `TOWERTAIL_VERSION` to pin a version:
+
+```bash
+cd server/docker
+TOWERTAIL_VERSION=0.1.0 docker compose up -d
+```
+
+Without `TOWERTAIL_VERSION`, compose uses `latest`. `docker compose build` builds the image from source.
+
 ## Config
 
 Defaults ship in code; override via `TT_CONFIG_FILE=/path/to/towertail-server.yaml` or env vars like `TT_HTTP_ADDR`, `TT_CLICKHOUSE_ADDR`, `TT_CLOUD_MANAGED`. See [`internal/config/config.go`](internal/config/config.go) for the full list.
