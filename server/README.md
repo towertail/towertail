@@ -20,7 +20,7 @@ Each `server/vX.Y.Z` tag publishes a multi-arch image (`linux/amd64`, `linux/arm
 docker run --rm ghcr.io/towertail/server:<version> --version
 ```
 
-The versions are on the [releases page](https://github.com/towertail/towertail/releases) (tags `server/v*`). The image of `0.1.0-rc.1` cannot write to a new data volume. With compose, use a later version or build from source (`docker compose up -d --build`).
+The versions are on the [releases page](https://github.com/towertail/towertail/releases) (tags `server/v*`).
 
 Image tags: `X.Y.Z`, `X.Y`, and `latest`, for final versions only. A pre-release gets only `X.Y.Z-rc.N`. In `docker/docker-compose.yaml`, set `TOWERTAIL_VERSION` to pin a version:
 
