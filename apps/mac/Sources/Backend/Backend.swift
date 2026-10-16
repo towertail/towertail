@@ -26,7 +26,7 @@ enum BackendError: Error, LocalizedError {
 /// Server-originated events the UI may observe without owning the
 /// transport. Placeholder for now — the Local backend will route
 /// threshold crossings / reachability / sampler version changes through
-/// here in a follow-up (Leak L2 / L4 in docs/backend-split.md).
+/// here in a follow-up (Leak L2 / L4 in docs/archive/backend-split.md).
 enum BackendEvent: Sendable {
     case thresholdCrossed(nodeID: UUID, metric: Metric, tint: ThresholdTint)
     case samplerVersionChanged(nodeID: UUID, version: String)

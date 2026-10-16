@@ -27,11 +27,18 @@ The optional self-hosted server (`server/`) receives samples from the hosts, kee
 
 Requires macOS 14 Sonoma or later (Apple silicon or Intel).
 
+With Homebrew:
+
+```bash
+brew install --cask towertail/tap/towertail
+```
+
+Or install it manually:
+
 1. Download `Towertail.zip` from the latest release on [GitHub Releases](https://github.com/towertail/towertail/releases/latest).
 2. Unzip it and move `Towertail.app` to `/Applications`.
-3. Open it. Look for the `server.rack` icon in the menu bar.
 
-The app installs new releases automatically. A Homebrew cask (`brew install --cask towertail/tap/towertail`) comes with the first public release.
+Open the app. Look for the `server.rack` icon in the menu bar. The app installs new releases automatically.
 
 ### Windows
 
@@ -39,7 +46,7 @@ There is no release yet. Build the app from source. Refer to [`apps/windows/READ
 
 ### Server
 
-Refer to [`server/README.md`](server/README.md). The image is `ghcr.io/towertail/server`.
+Run the server with Docker Compose. Refer to [`server/README.md`](server/README.md). The image is `ghcr.io/towertail/server` (`linux/amd64`, `linux/arm64`).
 
 ## Repository layout
 

@@ -3,7 +3,7 @@ import Foundation
 /// Phase 3 remote backend. Implements the `Backend` protocol against a
 /// Towertail server: REST for CRUD / settings / kill-process, WebSocket
 /// for live samples and events. The seam was laid down in
-/// `docs/backend-split.md`; the wire contract is in `docs/wire.md`.
+/// `docs/archive/backend-split.md`; the wire contract is in `docs/wire.md`.
 @MainActor
 final class RemoteBackend: Backend {
     let servers: ServerStore
