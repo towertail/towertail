@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -59,9 +60,23 @@ func (s *Server) handleUpdateNode(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "bad id")
 	}
-	var n store.Node
-	if err := c.Bind(&n); err != nil {
+	body, err := io.ReadAll(c.Request().Body)
+	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	var n store.Node
+	if err := json.Unmarshal(body, &n); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	// A client that does not know allowDiskScan keeps the stored value.
+	var opt struct {
+		AllowDiskScan *bool `json:"allowDiskScan"`
+	}
+	_ = json.Unmarshal(body, &opt)
+	if opt.AllowDiskScan == nil {
+		if old, err := s.store.GetNode(c.Request().Context(), t.OrgID, id); err == nil {
+			n.AllowDiskScan = old.AllowDiskScan
+		}
 	}
 	n.ID = id
 	if err := s.store.PutNode(c.Request().Context(), t.OrgID, n); err != nil {

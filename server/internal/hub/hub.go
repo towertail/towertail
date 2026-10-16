@@ -109,6 +109,19 @@ func (h *Hub) Publish(orgID uuid.UUID, e wire.Event) {
 	h.broadcast(orgID, data, &e.NodeID)
 }
 
+// PublishDiskScan sends disk_scan_updated to the clients of the org
+// that see the node of the job.
+func (h *Hub) PublishDiskScan(orgID uuid.UUID, job wire.DiskScanJob) {
+	nodeID := job.NodeID
+	msg := wire.WSMessage{Type: "disk_scan_updated", NodeID: &nodeID, Job: &job}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		h.log.Error("hub: marshal disk scan", "err", err)
+		return
+	}
+	h.broadcast(orgID, data, &nodeID)
+}
+
 // BroadcastOrg sends a pre-serialised frame to every client in the
 // given org. Used by the API layer for node_updated / settings_updated.
 func (h *Hub) BroadcastOrg(orgID uuid.UUID, msg wire.WSMessage) {

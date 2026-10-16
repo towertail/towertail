@@ -61,6 +61,7 @@ type WSMessage struct {
 	Node    json.RawMessage `json:"node,omitempty"`
 	Nodes   json.RawMessage `json:"nodes,omitempty"`
 	Setting json.RawMessage `json:"settings,omitempty"`
+	Job     *DiskScanJob    `json:"job,omitempty"`
 }
 
 // SubscribeMessage is sent client → server to narrow the subscription
@@ -79,6 +80,8 @@ type APIError struct {
 
 type APIErrorEnvelope struct {
 	Error APIError `json:"error"`
+	// Job is the active disk scan of the node on a 409 for a second scan.
+	Job *DiskScanJob `json:"job,omitempty"`
 }
 
 // LoginRequest / LoginResponse for /v1/auth/login.
@@ -131,4 +134,49 @@ type NodeHistoryResponse struct {
 	Metric     string             `json:"metric"`
 	Resolution string             `json:"resolution"`
 	Points     []NodeHistoryPoint `json:"points"`
+}
+
+// DiskScanRequest is the body of POST /v1/nodes/{id}/disk-scans. All
+// keys are optional. Zero values tell the sampler to use its defaults.
+type DiskScanRequest struct {
+	Root     string `json:"root"`
+	MaxDepth int    `json:"max_depth"`
+	MinBytes int64  `json:"min_bytes"`
+}
+
+// DiskScanJob is a disk scan as the app sees it (docs/wire.md §3.1).
+type DiskScanJob struct {
+	ID              uuid.UUID            `json:"id"`
+	NodeID          uuid.UUID            `json:"node_id"`
+	State           string               `json:"state"`
+	Root            string               `json:"root"`
+	MaxDepth        int                  `json:"max_depth"`
+	MinBytes        int64                `json:"min_bytes"`
+	Progress        *schema.ScanProgress `json:"progress"`
+	Error           string               `json:"error"`
+	CancelRequested bool                 `json:"cancel_requested"`
+	CreatedTS       time.Time            `json:"created_ts"`
+	StartedTS       *time.Time           `json:"started_ts"`
+	FinishedTS      *time.Time           `json:"finished_ts"`
+	ResultBytes     int64                `json:"result_bytes"`
+}
+
+// DiskScanJobList is the body of GET /v1/nodes/{id}/disk-scans.
+type DiskScanJobList struct {
+	Jobs []DiskScanJob `json:"jobs"`
+}
+
+// DiskScanPayload is the JSON body of a disk_scan control message. The
+// sampler uses its defaults for keys that are not there.
+type DiskScanPayload struct {
+	JobID    uuid.UUID `json:"job_id"`
+	Root     string    `json:"root"`
+	MaxDepth int       `json:"max_depth,omitempty"`
+	MinBytes int64     `json:"min_bytes,omitempty"`
+}
+
+// DiskScanProgressResponse is the reply to a progress post. Cancel
+// tells the sampler to stop the scan.
+type DiskScanProgressResponse struct {
+	Cancel bool `json:"cancel"`
 }

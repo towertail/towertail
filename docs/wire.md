@@ -97,7 +97,7 @@ A disk scan finds what uses the disk space below a folder of a node. The sampler
 
 **Opt-in on two sides.** A scan runs only when both are true:
 
-- The node has `allowDiskScan: true` (a `Node` field, default `false`). Else `POST /v1/nodes/{id}/disk-scans` gives 403 `forbidden` with the message `disk scans are off for this node`.
+- The node has `allowDiskScan: true` (a `Node` field, default `false`). Else `POST /v1/nodes/{id}/disk-scans` gives 403 `forbidden` with the message `disk scans are off for this node`. A `PUT /v1/nodes/{id}` body without the `allowDiskScan` key keeps the stored value.
 - The sampler runs with `--allow-disk-scan` (`towertail-sampler push` and `service install`). Else the sampler posts an `error` line with the message `disk scans are off on this host: run the sampler with --allow-disk-scan`, and the job becomes `failed`.
 
 **Request.**
@@ -152,12 +152,14 @@ queued ──first progress──▶ running ──result PUT──▶ done
 
 `done`, `failed`, `cancelled` and `expired` are final. A job in a final state does not change.
 
+The sampler can post the `error` or `cancelled` line, or PUT the result, before its first progress line. Then a `queued` job goes directly to `failed`, `cancelled` or `done`.
+
 **Rules.**
 
 - One job in `queued` or `running` state for each node. A second request gives 409 `conflict`. The error envelope then has the current job in a `job` key: `{ "error": {…}, "job": DiskScanJob }`.
 - `POST …/cancel` on a `queued` job makes it `cancelled`. On a `running` job it sets `cancel_requested`. On a job in a final state it changes nothing and returns the job.
 - Progress post on a job in a final state: the response is `{ "cancel": true }`, so that the sampler stops.
-- The result PUT body is gzip (`Content-Encoding: gzip`, `Content-Type: application/json`). It is 16 MiB at most, else 413. The server decodes it as a scan `result` line before it keeps it, else 400.
+- The result PUT body is gzip (`Content-Encoding: gzip`, `Content-Type: application/json`). It is 16 MiB at most, else 413. The server decodes it as a scan `result` line before it keeps it, else 400. A result PUT for a job in a final state gives 409.
 - `GET …/result` returns the gzip bytes with `Content-Encoding: gzip` and `Content-Type: application/json`. It gives 404 when the job has no result.
 - The server keeps the last 3 jobs with a result for each node, and deletes results older than 7 days.
 - The audit log has an entry for each scan request and each cancel.
@@ -168,6 +170,8 @@ queued ──first progress──▶ running ──result PUT──▶ done
 { "id": "uuid", "kind": "disk_scan",
   "payload": { "job_id": "uuid", "root": "/", "max_depth": 6, "min_bytes": 50000000 } }
 ```
+
+The payload has no `max_depth` or `min_bytes` key when the request did not set it. Then the sampler uses its default.
 
 The sampler runs one scan at a time. It posts a progress line each 2 s, and the final `error` or `cancelled` line, or it PUTs the result.
 

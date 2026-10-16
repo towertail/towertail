@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/urfave/cli/v3"
@@ -22,9 +23,14 @@ import (
 	"github.com/towertail/towertail/server/internal/hub"
 	"github.com/towertail/towertail/server/internal/postgres"
 	pkgruntime "github.com/towertail/towertail/server/internal/runtime"
+	"github.com/towertail/towertail/server/internal/scan"
 	"github.com/towertail/towertail/server/internal/store"
 	"github.com/towertail/towertail/server/internal/version"
 )
+
+// scanSweepInterval is the time between two checks for disk scans that
+// expired or have no progress.
+const scanSweepInterval = 30 * time.Second
 
 func main() {
 	app := &cli.Command{
@@ -148,6 +154,11 @@ func runServe(ctx context.Context, c *cli.Command) error {
 	}
 	alerterEngine := alerter.New(log, nil, h, chStoreShim{ch: ch}, settings)
 	ctrl := control.New(st)
+	scanStore, err := scan.NewStore(st.DB())
+	if err != nil {
+		return fmt.Errorf("open scan store: %w", err)
+	}
+	scans := scan.NewManager(scanStore, ctrl, h, log, nil)
 
 	if ch != nil {
 		rt.Register(ch)
@@ -166,6 +177,7 @@ func runServe(ctx context.Context, c *cli.Command) error {
 		Hub:     h,
 		Alerter: alerterEngine,
 		Control: ctrl,
+		Scans:   scans,
 	})
 
 	// Trigger lazy start of ClickHouse on boot so migrations apply and
@@ -189,6 +201,8 @@ func runServe(ctx context.Context, c *cli.Command) error {
 
 	sigCtx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	go scans.Run(sigCtx, scanSweepInterval)
 
 	var wg sync.WaitGroup
 	wg.Add(1)

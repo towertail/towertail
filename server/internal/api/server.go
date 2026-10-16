@@ -21,6 +21,7 @@ import (
 	"github.com/towertail/towertail/server/internal/control"
 	"github.com/towertail/towertail/server/internal/hub"
 	"github.com/towertail/towertail/server/internal/runtime"
+	"github.com/towertail/towertail/server/internal/scan"
 	"github.com/towertail/towertail/server/internal/store"
 )
 
@@ -36,6 +37,7 @@ type Server struct {
 	hub     *hub.Hub
 	alerter *alerter.Engine
 	control *control.Queue
+	scans   *scan.Manager
 }
 
 // Deps is the dependency bundle supplied by main.
@@ -49,6 +51,7 @@ type Deps struct {
 	Hub     *hub.Hub
 	Alerter *alerter.Engine
 	Control *control.Queue
+	Scans   *scan.Manager
 }
 
 // New wires the handlers and middleware onto a fresh Echo instance.
@@ -67,9 +70,12 @@ func New(d Deps) *Server {
 	// raw-TCP hijack completes, corrupting the client's view of the
 	// stream. Mac clients don't send `Accept-Encoding: gzip` on /v1/stream,
 	// but echo's middleware doesn't check that before wrapping.
+	// Also skip the disk scan result: it is gzip bytes already.
 	e.Use(middleware.GzipWithConfig(middleware.GzipConfig{
 		Skipper: func(c echo.Context) bool {
-			return strings.HasPrefix(c.Request().URL.Path, "/v1/stream")
+			p := c.Request().URL.Path
+			return strings.HasPrefix(p, "/v1/stream") ||
+				(strings.HasPrefix(p, "/v1/disk-scans/") && strings.HasSuffix(p, "/result"))
 		},
 	}))
 	origins := d.Config.HTTP.CORSAllowOrigins
@@ -106,6 +112,7 @@ func New(d Deps) *Server {
 		hub:     d.Hub,
 		alerter: d.Alerter,
 		control: d.Control,
+		scans:   d.Scans,
 	}
 	s.registerRoutes()
 	return s
@@ -168,6 +175,11 @@ func (s *Server) registerRoutes() {
 	userGroup.POST("/alerts/:id/snooze", s.handleSnoozeAlert)
 	userGroup.POST("/sampler/enroll", s.handleSamplerEnroll)
 	userGroup.GET("/sampler/versions", s.handleSamplerVersions)
+	userGroup.POST("/nodes/:id/disk-scans", s.handleRequestDiskScan)
+	userGroup.GET("/nodes/:id/disk-scans", s.handleListDiskScans)
+	userGroup.GET("/disk-scans/:job", s.handleGetDiskScan)
+	userGroup.GET("/disk-scans/:job/result", s.handleGetDiskScanResult)
+	userGroup.POST("/disk-scans/:job/cancel", s.handleCancelDiskScan)
 
 	// Sampler-authenticated group. Ingest gets its own (higher) budget
 	// since a fleet of samplers pushing 1/s can easily exceed the
@@ -184,6 +196,8 @@ func (s *Server) registerRoutes() {
 	)
 	samplerGroup.POST("/ingest/samples", s.handleIngest)
 	samplerGroup.GET("/control/next", s.handleControlNext)
+	samplerGroup.POST("/disk-scans/:job/progress", s.handleDiskScanProgress)
+	samplerGroup.PUT("/disk-scans/:job/result", s.handlePutDiskScanResult)
 
 	// Stream group: user tokens only, attached directly (no nested group
 	// so the WS upgrade can use the original ResponseWriter cleanly).

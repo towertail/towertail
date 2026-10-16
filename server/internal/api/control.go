@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/towertail/towertail/server/internal/control"
 	"github.com/towertail/towertail/server/internal/store"
 	"github.com/towertail/towertail/server/internal/wire"
 )
@@ -48,7 +49,7 @@ func (s *Server) handleKillProcess(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "pid required")
 	}
 	payload, _ := json.Marshal(wire.KillProcessPayload{PID: int32(pid64)})
-	if err := s.control.Enqueue(c.Request().Context(), id, "kill_process", payload); err != nil {
+	if err := s.control.Enqueue(c.Request().Context(), id, control.KindKillProcess, payload); err != nil {
 		return err
 	}
 	s.audit(c, "kill_process", "node", id, "pid", pid64)

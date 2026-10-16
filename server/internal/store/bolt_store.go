@@ -61,6 +61,10 @@ func (s *BoltStore) init() error {
 
 func (s *BoltStore) Close() error { return s.db.Close() }
 
+// DB gives the Bolt database to stores that keep their own buckets in
+// the same file.
+func (s *BoltStore) DB() *bolt.DB { return s.db }
+
 // nodes bucket layout: key = orgID-bytes | nodeID-bytes, value = JSON.
 func nodeKey(orgID, nodeID uuid.UUID) []byte {
 	k := make([]byte, 32)

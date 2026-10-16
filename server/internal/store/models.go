@@ -27,6 +27,8 @@ type Node struct {
 	CustomThresholds *MetricThresholds `json:"customThresholds,omitempty"`
 	SnoozedUntil     *time.Time        `json:"snoozedUntil,omitempty"`
 	Favorite         bool              `json:"favorite"`
+	// AllowDiskScan lets a user start a disk scan on the node. It is off by default.
+	AllowDiskScan bool `json:"allowDiskScan"`
 }
 
 // MarshalJSON ensures Tags is always an array on the wire — never
@@ -124,7 +126,7 @@ type User struct {
 type ControlMessage struct {
 	ID        uuid.UUID  `json:"id"`
 	NodeID    uuid.UUID  `json:"nodeId"`
-	Kind      string     `json:"kind"` // "kill_process"
+	Kind      string     `json:"kind"` // "kill_process" | "disk_scan"
 	Payload   []byte     `json:"payload"`
 	CreatedAt time.Time  `json:"createdAt"`
 	ClaimedAt *time.Time `json:"claimedAt,omitempty"`

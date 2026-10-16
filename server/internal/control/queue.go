@@ -8,6 +8,12 @@ import (
 	"github.com/towertail/towertail/server/internal/store"
 )
 
+// Kinds of control messages.
+const (
+	KindKillProcess = "kill_process"
+	KindDiskScan    = "disk_scan"
+)
+
 // Queue wraps the ConfigStore's control helpers with a thin,
 // typed surface so callers don't have to carry a generic ConfigStore
 // reference just for enqueue/claim.

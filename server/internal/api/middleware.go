@@ -36,7 +36,7 @@ func httpErrorHandler(log *slog.Logger) echo.HTTPErrorHandler {
 				code = "forbidden"
 			case http.StatusNotFound:
 				code = "not_found"
-			case http.StatusBadRequest:
+			case http.StatusBadRequest, http.StatusRequestEntityTooLarge:
 				code = "bad_request"
 			case http.StatusConflict:
 				code = "conflict"
