@@ -1,11 +1,10 @@
 # The towertail-sampler release that the apps bundle. scripts/fetch-samplers.sh reads it.
 # To bump: set SAMPLER_VERSION, then set each sha256 from the release assets
 # (shasum -a 256 manifest.json sample-v1.json scan-*.ndjson). The manifest pins each binary.
-# The SAMPLER_SCAN_* values are empty until a release has the scan fixtures.
-SAMPLER_VERSION=v1.0.0
+SAMPLER_VERSION=v1.1.0
 SAMPLER_REPO=towertail/sampler
-SAMPLER_MANIFEST_SHA256=ffc67518321179b2c170b9c28589eae5f16ef496946eeda0ca0bdaab5547c264
+SAMPLER_MANIFEST_SHA256=6e2432f03745233303350293df335f00476d3c9185fed8bcc8e9553518ab6c2b
 SAMPLER_FIXTURE_SHA256=49ad5ee38a39648001be0e8cde580543aabf3a615ed9a13d59e5373f2e37caa7
-SAMPLER_SCAN_LINUX_SHA256=
-SAMPLER_SCAN_DARWIN_SHA256=
-SAMPLER_SCAN_WINDOWS_SHA256=
+SAMPLER_SCAN_LINUX_SHA256=da2e02d7cd1362dea6d8a74fbb7ec478616a45f3abc09e88be8ef7e7bf4690e9
+SAMPLER_SCAN_DARWIN_SHA256=4a857861ce5e6fd6ba7e87ef3678d2fb242fdd2c192be20f13347c0a2e374176
+SAMPLER_SCAN_WINDOWS_SHA256=eb9c468f579e3826eee394b5d7ddad4c547b04ed68a8839859d3e9a250cac685

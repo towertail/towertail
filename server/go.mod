@@ -17,7 +17,7 @@ require (
 	github.com/prometheus/client_golang v1.23.2
 	github.com/testcontainers/testcontainers-go v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/clickhouse v0.42.0
-	github.com/towertail/sampler v1.0.0
+	github.com/towertail/sampler v1.1.0
 	github.com/urfave/cli/v3 v3.8.0
 	go.etcd.io/bbolt v1.4.3
 	golang.org/x/crypto v0.50.0
