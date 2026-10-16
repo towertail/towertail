@@ -223,4 +223,80 @@ final class DiskUsageModelTests: XCTestCase {
         XCTAssertNil(again.notice)
         XCTAssertTrue(DiskUsageModel(node: node, store: store, scanner: fake, scope: "/").picks.isEmpty)
     }
+
+    func testRefreshMergesKeepsFocusAndDropsGoneItems() async throws {
+        let r = try ScanFixtures.result("darwin")
+        let t0 = Date(timeIntervalSince1970: 1_790_000_000)
+        store.save(nodeID: node.id, scope: "~", result: r, finishedAt: t0)
+        let fake = FakeDiskScanner()
+        let m = DiskUsageModel(node: node, store: store, scanner: fake, scope: "~")
+        let slack = ["Library", "Application Support/Slack/Cache"]
+        m.add(slack + ["data_1"])
+        m.open("Library")
+
+        m.refresh(slack)
+        XCTAssertEqual(m.refreshing, slack)
+        XCTAssertTrue(m.isBusy)
+        XCTAssertFalse(m.isRunning)
+        try await waitFor { fake.current != nil }
+        let root = "/Users/dev/Library/Application Support/Slack/Cache"
+        XCTAssertEqual(fake.requestList, [DiskScanRequest(root: root, maxDepth: 2, minBytes: 50_000_000, minFrac: 0, refreshOf: "~")])
+        m.refresh(["Movies"])
+        XCTAssertEqual(fake.requestList.count, 1)
+
+        fake.send(.progress(DiskScanProgress(files: 1)))
+        fake.send(.result(DiskScanResult(root: root, os: "darwin", hostname: "mac", home: "/Users/dev",
+                                         startedTs: "", scannedBytes: 100_000_000,
+                                         tree: DiskNode(n: root, b: 100_000_000))))
+        try await waitFor { m.refreshing == nil }
+        XCTAssertEqual(m.notice, "Cache refreshed. 600 MB less than before. "
+            + "~/Library/Application Support/Slack/Cache/data_1 is gone, so it left the cleanup list.")
+        XCTAssertEqual(m.focus, ["Library"])
+        XCTAssertEqual(m.result?.tree.bytes, r.tree.bytes - 600_000_000)
+        XCTAssertEqual(m.record?.finishedAt, t0)
+        XCTAssertEqual(m.result?.refreshed.map(\.path), [root])
+        XCTAssertTrue(m.mineItems.isEmpty)
+        XCTAssertEqual(store.records(nodeID: node.id, scope: "~").count, 1)
+        XCTAssertEqual(m.phase, .idle)
+    }
+
+    func testRefreshOfFileUsesFolderAndFailureKeepsResult() async throws {
+        let r = try ScanFixtures.result("darwin")
+        store.save(nodeID: node.id, scope: "~", result: r)
+        let fake = FakeDiskScanner()
+        let m = DiskUsageModel(node: node, store: store, scanner: fake, scope: "~")
+        m.refresh(["Movies", "clip.mov"])
+        try await waitFor { fake.current != nil }
+        XCTAssertEqual(fake.requestList.first?.root, "/Users/dev/Movies")
+        XCTAssertEqual(m.refreshing, ["Movies"])
+        fake.send(.error("boom"))
+        try await waitFor { m.refreshing == nil }
+        XCTAssertEqual(m.notice, "The refresh failed: boom. The map shows the previous result.")
+        XCTAssertEqual(m.result, r)
+
+        m.refresh([])
+        XCTAssertTrue(m.isRunning)
+        XCTAssertNil(m.refreshing)
+        try await waitFor { fake.requestList.count == 2 }
+        XCTAssertEqual(fake.requestList.last, DiskScanRequest())
+    }
+
+    func testRefreshHandsOverToRunningFullScan() async throws {
+        let r = try ScanFixtures.result("darwin")
+        store.save(nodeID: node.id, scope: "~", result: r)
+        let fake = FakeDiskScanner()
+        let m = DiskUsageModel(node: node, store: store, scanner: fake, scope: "~")
+        m.refresh(["Movies"])
+        try await waitFor { fake.current != nil }
+        fake.send(.job(DiskScanJob(id: "j", nodeId: node.id.uuidString, state: .running, progress: DiskScanProgress(files: 4))))
+        try await waitFor { m.isRunning }
+        XCTAssertNil(m.refreshing)
+        XCTAssertEqual(m.progress?.files, 4)
+        var next = r
+        next.hostname = "next"
+        fake.send(.result(next))
+        try await waitFor { m.phase == .done }
+        XCTAssertEqual(m.result?.hostname, "next")
+        XCTAssertEqual(store.records(nodeID: node.id, scope: "~").count, 2)
+    }
 }

@@ -62,10 +62,15 @@ final class TreemapLayoutTests: XCTestCase {
     @MainActor
     func testFixtureTilesMarkSelection() throws {
         let r = try ScanFixtures.result("darwin")
-        guard let rec = r.recs.first, let id = rec.nodeIDs.first else { throw XCTSkip("no rec") }
-        let tiles = TreemapView.tiles(nodes: r.tree.children, selectedIDs: [id], size: CGSize(width: 804, height: 470))
+        guard let rec = r.recs.first(where: { $0.id == "ollama-models" }), let id = rec.nodeIDs.first else { throw XCTSkip("no rec") }
+        let tiles = TreemapView.tiles(nodes: r.tree.children, size: CGSize(width: 804, height: 470)) { names in
+            r.tree.node(at: names[...])?.id == id ? .on : .plain
+        }
         XCTAssertEqual(tiles.count, r.tree.children.filter { $0.bytes > 0 }.count)
-        let marked = tiles.contains { $0.selected || $0.kids.contains { $0.selected } }
+        let marked = tiles.contains { $0.state == .on || $0.kids.contains { $0.state == .on } }
         XCTAssertTrue(marked)
+        // "other" tiles get no state.
+        let other = TreemapView.tiles(nodes: r.tree.children, size: CGSize(width: 804, height: 470)) { _ in .on }
+        XCTAssertTrue(other.filter { $0.node.isOther }.allSatisfy { $0.state == .plain })
     }
 }

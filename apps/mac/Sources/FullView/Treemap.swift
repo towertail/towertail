@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Squarified treemap layout (Bruls, Huizing, van Wijk). Pure, so tests
@@ -96,77 +97,182 @@ extension DiskCategory {
     }
 }
 
+/// How a tile shows in the cleanup list.
+enum TreemapTileState: Equatable {
+    case plain
+    /// In the list and checked: green stripes and a checked box.
+    case on
+    /// In the list, not checked.
+    case off
+    /// A folder above it is in the list: a green edge, no box.
+    case covered
+    /// A checked item is below it: green stripes, an empty box.
+    case holds
+}
+
 /// Two-level treemap of one folder: its children, and inside each large
 /// child the grandchildren. Click a tile that has children to open it.
+/// The box on a tile, or ⌘-click, adds the tile to the cleanup list.
 struct TreemapView: View {
     let nodes: [DiskNode]
-    /// Node ids that the selected recommendations point to.
-    let selectedIDs: Set<String>
+    /// Names from the root to the open folder.
+    var path: [String] = []
+    var state: ([String]) -> TreemapTileState = { _ in .plain }
+    /// Names of the folder that a refresh scans now.
+    var refreshing: [String]?
     var onOpen: (Int) -> Void = { _ in }
+    var onToggle: ([String]) -> Void = { _ in }
+    var menu: ([String], DiskNode) -> AnyView = { _, _ in AnyView(EmptyView()) }
+
+    @State private var hover: [String]?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     static let selectedGreen = Color(.sRGB, red: 52 / 255, green: 199 / 255, blue: 89 / 255, opacity: 1)
+
+    struct Kid {
+        var rect: CGRect
+        var node: DiskNode
+        var names: [String]
+        var state: TreemapTileState
+    }
 
     struct Tile {
         var index: Int
         var rect: CGRect
         var node: DiskNode
+        var names: [String]
         var isParent: Bool
-        var selected: Bool
-        var kids: [(rect: CGRect, node: DiskNode, selected: Bool)]
+        var state: TreemapTileState
+        var kids: [Kid]
     }
 
-    static func tiles(nodes: [DiskNode], selectedIDs: Set<String>, size: CGSize) -> [Tile] {
+    static func tiles(nodes: [DiskNode], path: [String] = [], size: CGSize,
+                      state: ([String]) -> TreemapTileState) -> [Tile] {
         let items = nodes.enumerated().map { TreemapLayout.Item(id: $0.offset, value: Double($0.element.bytes)) }
         return TreemapLayout.squarify(items, in: CGRect(origin: .zero, size: size)).map { p in
             let node = nodes[p.id]
             let r = p.rect.insetBy(dx: 2, dy: 2)
             let isParent = !node.children.isEmpty && r.width > 110 && r.height > 80
-            let own = node.id.map(selectedIDs.contains) ?? false
-            let sel = own || (!isParent && !node.subtreeIDs.isDisjoint(with: selectedIDs))
-            var kids: [(CGRect, DiskNode, Bool)] = []
+            let names = path + [node.name]
+            var st = selectable(node) ? state(names) : .plain
+            if st == .holds && isParent { st = .plain }
+            var kids: [Kid] = []
             if isParent {
                 let inner = CGRect(x: r.minX + 6, y: r.minY + 26, width: r.width - 12, height: r.height - 32)
                 let kitems = node.children.enumerated().map { TreemapLayout.Item(id: $0.offset, value: Double($0.element.bytes)) }
                 for k in TreemapLayout.squarify(kitems, in: inner) {
                     let kn = node.children[k.id]
-                    let ksel = sel || !kn.subtreeIDs.isDisjoint(with: selectedIDs)
-                    kids.append((k.rect.insetBy(dx: 1.5, dy: 1.5), kn, ksel))
+                    let kNames = names + [kn.name]
+                    kids.append(Kid(rect: k.rect.insetBy(dx: 1.5, dy: 1.5), node: kn, names: kNames,
+                                    state: selectable(kn) ? state(kNames) : .plain))
                 }
             }
-            return Tile(index: p.id, rect: r, node: node, isParent: isParent, selected: sel, kids: kids)
+            return Tile(index: p.id, rect: r, node: node, names: names, isParent: isParent, state: st, kids: kids)
         }
+    }
+
+    /// "other" groups and the "No access" tile cannot go in the list.
+    static func selectable(_ n: DiskNode) -> Bool { !n.isOther && n.cat != .none }
+
+    /// The box at the top right of a tile, when the tile has room for it.
+    static func box(_ r: CGRect, kid: Bool) -> CGRect? {
+        guard r.width > 40, r.height > 26 else { return nil }
+        let side: CGFloat = kid ? 15 : 17
+        let inset: CGFloat = kid ? 4 : 6
+        return CGRect(x: r.maxX - inset - side, y: r.minY + (kid ? 4 : 5), width: side, height: side)
+    }
+
+    /// The tile or kid under `pt`: (tile, kid index).
+    static func hit(_ tiles: [Tile], _ pt: CGPoint) -> (Tile, Int?)? {
+        guard let t = tiles.first(where: { $0.rect.contains(pt) }) else { return nil }
+        return (t, t.kids.firstIndex { $0.rect.contains(pt) })
     }
 
     var body: some View {
         GeometryReader { geo in
-            let tiles = Self.tiles(nodes: nodes, selectedIDs: selectedIDs, size: geo.size)
-            Canvas { ctx, _ in
-                for t in tiles { draw(t, in: &ctx) }
+            let tiles = Self.tiles(nodes: nodes, path: path, size: geo.size, state: state)
+            let hovered = hover.flatMap { h in Self.find(h, in: tiles) }
+            Group {
+                if refreshing != nil && !reduceMotion {
+                    TimelineView(.animation) { tl in
+                        canvas(tiles, phase: tl.date.timeIntervalSinceReferenceDate)
+                    }
+                } else {
+                    canvas(tiles, phase: 0)
+                }
             }
             .contentShape(Rectangle())
-            .onTapGesture(coordinateSpace: .local) { pt in
-                if let t = tiles.first(where: { $0.rect.contains(pt) }), !t.node.children.isEmpty {
-                    onOpen(t.index)
+            .onContinuousHover(coordinateSpace: .local) { phase in
+                switch phase {
+                case .active(let pt):
+                    guard let (t, k) = Self.hit(tiles, pt) else { hover = nil; return }
+                    hover = k.map { t.kids[$0].names } ?? t.names
+                case .ended:
+                    hover = nil
                 }
+            }
+            .onTapGesture(coordinateSpace: .local) { pt in tap(pt, tiles) }
+            .contextMenu {
+                if let (names, node) = hovered { menu(names, node) }
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(nodes.map { "\($0.name), \(DiskSize.text($0.bytes))" }.joined(separator: "; "))
         }
     }
 
+    private static func find(_ names: [String], in tiles: [Tile]) -> ([String], DiskNode)? {
+        for t in tiles {
+            if t.names == names { return (names, t.node) }
+            if let k = t.kids.first(where: { $0.names == names }) { return (names, k.node) }
+        }
+        return nil
+    }
+
+    private func tap(_ pt: CGPoint, _ tiles: [Tile]) {
+        guard let (t, k) = Self.hit(tiles, pt) else { return }
+        let kid = k.map { t.kids[$0] }
+        let names = kid?.names ?? t.names
+        let node = kid?.node ?? t.node
+        let st = kid?.state ?? t.state
+        let canToggle = Self.selectable(node) && st != .covered
+        if canToggle, NSEvent.modifierFlags.contains(.command) { return onToggle(names) }
+        if canToggle, let b = Self.box(kid?.rect ?? t.rect, kid: kid != nil), b.insetBy(dx: -3, dy: -3).contains(pt) {
+            return onToggle(names)
+        }
+        if !t.node.children.isEmpty { onOpen(t.index) }
+    }
+
+    private func canvas(_ tiles: [Tile], phase: Double) -> some View {
+        Canvas { ctx, size in
+            for t in tiles { draw(t, in: &ctx) }
+            if let refreshing {
+                if refreshing.count <= path.count, Array(path.prefix(refreshing.count)) == refreshing {
+                    busy(CGRect(origin: .zero, size: size), radius: 7, phase: phase, in: &ctx)
+                } else {
+                    for t in tiles {
+                        if t.names == refreshing { busy(t.rect, radius: 7, phase: phase, in: &ctx) }
+                        for k in t.kids where k.names == refreshing { busy(k.rect, radius: 5, phase: phase, in: &ctx) }
+                    }
+                }
+            }
+        }
+    }
+
     private func draw(_ t: Tile, in ctx: inout GraphicsContext) {
         let alpha = t.isParent ? 0.14 : 0.3
-        fill(t.rect, radius: 7, cat: t.node.cat, alpha: alpha, selected: t.selected, in: &ctx)
+        fill(t.rect, radius: 7, cat: t.node.cat, alpha: alpha, state: t.state, in: &ctx)
         let r = t.rect
+        let box = Self.selectable(t.node) && t.state != .covered ? Self.box(r, kid: false) : nil
+        let showBox = box != nil && (hover == t.names || t.state == .on)
         let big = !t.isParent && r.height > 64 && r.width > 80
         if r.width > 46 && r.height > 22 {
             let small = t.isParent || (!big && r.width > 120)
-            var nameRect = CGRect(x: r.minX + 8, y: r.minY + 5, width: r.width - 16, height: 16)
+            var nameRect = CGRect(x: r.minX + 8, y: r.minY + 5, width: r.width - 16 - (showBox ? 22 : 0), height: 16)
             if small {
                 let size = ctx.resolve(Text(DiskSize.text(t.node.bytes))
                     .font(.system(size: 11, design: .monospaced)).foregroundColor(Color(white: 0.78)))
                 let w = size.measure(in: CGSize(width: 200, height: 20)).width
-                ctx.draw(size, at: CGPoint(x: r.maxX - 8, y: r.minY + 13), anchor: .trailing)
+                ctx.draw(size, at: CGPoint(x: r.maxX - 8 - (showBox ? 22 : 0), y: r.minY + 13), anchor: .trailing)
                 nameRect.size.width = max(0, nameRect.width - w - 6)
             }
             ctx.draw(Text(t.node.name).font(.system(size: 12, weight: .semibold)).foregroundColor(Color(white: 0.95)),
@@ -178,12 +284,15 @@ struct TreemapView: View {
                         .foregroundColor(Color(white: 0.95)),
                      at: CGPoint(x: r.minX + 8, y: r.maxY - 6), anchor: .bottomLeading)
         }
+        if showBox, let box { drawBox(box, on: t.state == .on, in: &ctx) }
         for k in t.kids {
-            fill(k.rect, radius: 5, cat: k.node.cat, alpha: 0.3, selected: k.selected, in: &ctx)
+            fill(k.rect, radius: 5, cat: k.node.cat, alpha: 0.3, state: k.state, in: &ctx)
             let kr = k.rect
+            let kbox = Self.selectable(k.node) && k.state != .covered ? Self.box(kr, kid: true) : nil
+            let showK = kbox != nil && (hover == k.names || k.state == .on)
             if kr.width > 44 && kr.height > 20 {
                 ctx.draw(Text(k.node.name).font(.system(size: 11)).foregroundColor(Color(white: 0.95)),
-                         in: CGRect(x: kr.minX + 6, y: kr.minY + 4, width: kr.width - 12, height: 14))
+                         in: CGRect(x: kr.minX + 6, y: kr.minY + 4, width: kr.width - 12 - (showK ? 19 : 0), height: 14))
             }
             if kr.height > 50 && kr.width > 70 {
                 let fs: CGFloat = kr.width * kr.height > 22_000 ? 18 : 13
@@ -191,23 +300,53 @@ struct TreemapView: View {
                             .foregroundColor(Color(white: 0.95)),
                          at: CGPoint(x: kr.minX + 6, y: kr.maxY - 4), anchor: .bottomLeading)
             }
+            if showK, let kbox { drawBox(kbox, on: k.state == .on, in: &ctx) }
         }
     }
 
-    private func fill(_ r: CGRect, radius: CGFloat, cat: DiskCategory, alpha: Double, selected: Bool,
+    private func drawBox(_ r: CGRect, on: Bool, in ctx: inout GraphicsContext) {
+        let shape = Path(roundedRect: r, cornerRadius: 4)
+        if on {
+            ctx.fill(shape, with: .color(Self.selectedGreen))
+            ctx.draw(Text("✓").font(.system(size: r.height - 5, weight: .bold)).foregroundColor(.white),
+                     at: CGPoint(x: r.midX, y: r.midY))
+        } else {
+            ctx.fill(shape, with: .color(UsagePalette.card))
+            ctx.stroke(shape, with: .color(Color(white: 0.78)), lineWidth: 1.5)
+        }
+    }
+
+    private func busy(_ r: CGRect, radius: CGFloat, phase: Double, in ctx: inout GraphicsContext) {
+        guard r.width > 0, r.height > 0 else { return }
+        let shape = Path(roundedRect: r, cornerRadius: radius)
+        let gray = Color(.sRGB, red: 128 / 255, green: 128 / 255, blue: 140 / 255, opacity: 1)
+        let shift = CGFloat((phase * 45).truncatingRemainder(dividingBy: 22.6))
+        Self.stripes(r.offsetBy(dx: -shift, dy: 0).insetBy(dx: -12, dy: 0), shape: shape, angle: 45,
+                     a: gray.opacity(0.35), b: gray.opacity(0.12), band: 8, in: &ctx)
+        ctx.draw(Text("Refreshing…").font(.system(size: 13, weight: .semibold)).foregroundColor(Color(white: 0.95)),
+                 at: CGPoint(x: r.midX, y: r.midY))
+    }
+
+    private func fill(_ r: CGRect, radius: CGFloat, cat: DiskCategory, alpha: Double, state: TreemapTileState,
                       in ctx: inout GraphicsContext) {
         guard r.width > 0, r.height > 0 else { return }
         let shape = Path(roundedRect: r, cornerRadius: radius)
-        if selected {
+        switch state {
+        case .on, .holds:
             Self.stripes(r, shape: shape, angle: 135, a: Self.selectedGreen.opacity(0.42),
                          b: Self.selectedGreen.opacity(0.14), band: 6, in: &ctx)
             ctx.stroke(shape, with: .color(Self.selectedGreen), lineWidth: 1)
-        } else if cat == .none {
-            Self.stripes(r, shape: shape, angle: 45, a: cat.color(0.28), b: cat.color(0.08), band: 5, in: &ctx)
-            ctx.stroke(shape, with: .color(cat.color(0.6)), lineWidth: 1)
-        } else {
+        case .covered:
             ctx.fill(shape, with: .color(cat.color(alpha)))
-            ctx.stroke(shape, with: .color(cat.color(0.6)), lineWidth: 1)
+            ctx.stroke(shape, with: .color(Self.selectedGreen.opacity(0.7)), lineWidth: 1)
+        case .plain, .off:
+            if cat == .none {
+                Self.stripes(r, shape: shape, angle: 45, a: cat.color(0.28), b: cat.color(0.08), band: 5, in: &ctx)
+                ctx.stroke(shape, with: .color(cat.color(0.6)), lineWidth: 1)
+            } else {
+                ctx.fill(shape, with: .color(cat.color(alpha)))
+                ctx.stroke(shape, with: .color(cat.color(0.6)), lineWidth: 1)
+            }
         }
     }
 

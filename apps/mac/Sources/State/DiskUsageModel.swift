@@ -36,11 +36,14 @@ final class DiskUsageModel {
     private(set) var picks: [CleanupPick] = []
     /// A short message for the toast.
     var notice: String?
+    /// Names of the folder that a refresh scans now.
+    private(set) var refreshing: [String]?
 
     @ObservationIgnored private let store: DiskScanStore
     @ObservationIgnored private let scanner: any DiskScanner
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private var task: Task<Void, Never>?
+    @ObservationIgnored private var refreshTask: Task<Void, Never>?
 
     init(node: Node, store: DiskScanStore, scanner: any DiskScanner, scope: String,
          now: @escaping () -> Date = Date.init) {
@@ -59,6 +62,9 @@ final class DiskUsageModel {
         return false
     }
 
+    /// A scan or a refresh runs.
+    var isBusy: Bool { isRunning || refreshing != nil }
+
     var progress: DiskScanProgress? {
         if case .running(let p) = phase { return p }
         return nil
@@ -70,7 +76,7 @@ final class DiskUsageModel {
     }
 
     func setScope(_ s: String) {
-        guard s != scope, !isRunning else { return }
+        guard s != scope, !isBusy else { return }
         scope = s
         if case .failed = phase { phase = .idle }
         load()
@@ -86,7 +92,7 @@ final class DiskUsageModel {
     }
 
     func start() {
-        guard !isRunning else { return }
+        guard !isBusy else { return }
         let request = DiskScanRequest(root: scope == "~" ? nil : scope)
         job = nil
         scansOff = nil
@@ -142,17 +148,141 @@ final class DiskUsageModel {
     /// not final, and gets the result of a done job that is newer than
     /// the stored result.
     func follow(job j: DiskScanJob) {
-        guard !isRunning else { return }
+        guard !isBusy else { return }
         job = j
         guard let follower = scanner as? any DiskScanFollower else { return }
-        let jobScope = DiskScanRequest(root: j.root).scope
-        if !j.state.isFinal {
-            setScope(jobScope)
+        if j.refreshOf != nil {
+            // A refresh from another device: merge it when it is done.
+            guard j.state == .done, j.scope == scope, let done = j.finishedTs, done > lastChange,
+                  let names = result?.names(of: j.root), !names.isEmpty else { return }
+            runRefresh(follower.follow(node: node, job: j), names: names)
+        } else if !j.state.isFinal {
+            setScope(j.scope)
             run(follower.follow(node: node, job: j), progress: j.progress, startedAt: j.createdTs ?? now())
-        } else if j.state == .done, jobScope == scope,
+        } else if j.state == .done, j.scope == scope,
                   let done = j.finishedTs, done > (record?.finishedAt ?? .distantPast) {
             run(follower.follow(node: node, job: j), progress: nil, startedAt: j.createdTs ?? now())
         }
+    }
+
+    /// The time of the last scan or refresh of the shown result.
+    private var lastChange: Date {
+        max(record?.finishedAt ?? .distantPast, result?.refreshed.map(\.at).max() ?? .distantPast)
+    }
+
+    // MARK: Refresh
+
+    /// Scans the folder at `names` again and merges the result. A file
+    /// refreshes its folder. The root starts a full scan.
+    func refresh(_ names: [String]) {
+        guard !isBusy, let result else { return }
+        var names = names
+        if result.tree.node(at: names[...])?.isFile == true { names.removeLast() }
+        guard !names.isEmpty else { return start() }
+        var request = result.refreshRequest(for: names)
+        request.refreshOf = scope
+        notice = nil
+        runRefresh(scanner.scan(node: node, request: request), names: names)
+    }
+
+    private func runRefresh(_ events: AsyncThrowingStream<DiskScanEvent, Error>, names: [String]) {
+        let scope = self.scope
+        refreshing = names
+        refreshTask = Task { [weak self] in
+            var full = false
+            do {
+                for try await event in events {
+                    guard let self, !Task.isCancelled else { return }
+                    if full {
+                        self.handle(event, scope: scope)
+                        continue
+                    }
+                    switch event {
+                    case .job(let j) where j.refreshOf == nil:
+                        // The server runs a full scan already. Show it.
+                        full = true
+                        self.refreshing = nil
+                        self.task = self.refreshTask
+                        self.refreshTask = nil
+                        self.job = j
+                        self.startedAt = j.createdTs ?? self.now()
+                        self.phase = j.state.isFinal ? .running(nil) : .running(j.progress)
+                    case .job(let j):
+                        self.job = j
+                    case .progress:
+                        break
+                    case .result(let sub):
+                        self.endRefresh(sub, names: names, scope: scope)
+                        return
+                    case .error(let msg):
+                        self.endRefresh(failed: msg)
+                        return
+                    case .cancelled:
+                        self.endRefresh(failed: nil)
+                        return
+                    }
+                }
+                guard let self, !Task.isCancelled else { return }
+                if full {
+                    if self.isRunning { self.phase = .failed("The scan stopped without a result.") }
+                } else {
+                    self.endRefresh(failed: "The refresh stopped without a result.")
+                }
+            } catch {
+                guard let self, !Task.isCancelled else { return }
+                if full {
+                    if self.isRunning { self.phase = .failed(error.localizedDescription) }
+                } else {
+                    self.endRefresh(failed: error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    /// Stops a refresh. The shown result stays.
+    func cancelRefresh() {
+        guard refreshing != nil else { return }
+        refreshTask?.cancel()
+        refreshTask = nil
+        refreshing = nil
+    }
+
+    private func endRefresh(failed msg: String?) {
+        refreshing = nil
+        refreshTask = nil
+        if let msg { notice = "The refresh failed: \(msg). The map shows the previous result." }
+    }
+
+    private func endRefresh(_ sub: DiskScanResult, names: [String], scope: String) {
+        refreshing = nil
+        refreshTask = nil
+        guard scope == self.scope, let old = result else { return }
+        guard let merged = old.merging(sub, at: names, now: now()) else {
+            notice = "The folder is no longer in the scan."
+            return
+        }
+        let before = old.tree.node(at: names[...])?.bytes ?? 0
+        let oldIDs = Set(old.recs.map(\.id))
+        store.replaceLatest(nodeID: node.id, scope: scope, result: merged)
+        record = store.latest(nodeID: node.id, scope: scope)
+        let ids = Set(merged.recs.map(\.id))
+        selected = selected.intersection(ids)
+            .union(visibleRecs.filter { $0.group == .safe && !oldIDs.contains($0.id) }.map(\.id))
+        while !focus.isEmpty, merged.tree.node(at: focus[...]) == nil { focus.removeLast() }
+
+        let name = names.last.map { $0.split(whereSeparator: { $0 == "/" || $0 == "\\" }).last.map(String.init) ?? $0 } ?? ""
+        let diff = before - sub.tree.bytes
+        var text = "\(name) refreshed. "
+        if diff > 0 {
+            text += "\(DiskSize.text(diff)) less than before."
+        } else if diff < 0 {
+            text += "\(DiskSize.text(-diff)) more than before."
+        } else {
+            text += "No change in size."
+        }
+        notice = nil
+        prunePicks()
+        notice = [text, notice].compactMap { $0 }.joined(separator: " ")
     }
 
     func handle(_ event: DiskScanEvent, scope: String) {

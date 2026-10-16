@@ -126,6 +126,38 @@ final class UsageScreenshotTests: XCTestCase {
         try render(m, vm: vm, via: .ssh(user: "fritz"), scopes: ["~", "C:\\"], name: "usage-result-windows")
     }
 
+    func testCleanupListMac() throws {
+        let node = Node.localMac()
+        let r = try ScanFixtures.result("darwin")
+        store.save(nodeID: node.id, scope: "~", result: r, finishedAt: Date().addingTimeInterval(-7_200))
+        let m = DiskUsageModel(node: node, store: store, scanner: FakeDiskScanner(), scope: "~")
+        m.add(["Movies"])
+        m.add([".Trash"])
+        m.setMine("/Users/dev/.Trash", on: false)
+        for rec in r.recs where ["go-build-cache", "xcode-device-support", "homebrew-cache", "npm-cache"].contains(rec.id) {
+            m.hide(rec)
+        }
+        m.add(["Downloads"])
+        m.notice = "Cache refreshed. 600 MB less than before."
+        let vm = ServerViewModel(id: node.id, hostname: "mba", dnsName: "", osArch: "macOS")
+        try render(m, vm: vm, via: .local, scopes: ["~", "/"], name: "usage-cleanup-list")
+    }
+
+    func testRefreshingFolder() async throws {
+        let node = Node.localMac()
+        store.save(nodeID: node.id, scope: "~", result: try ScanFixtures.result("darwin"),
+                   finishedAt: Date().addingTimeInterval(-7_200))
+        let fake = FakeDiskScanner()
+        let m = DiskUsageModel(node: node, store: store, scanner: fake, scope: "~")
+        m.open("Projects")
+        m.add(["Projects", "web"])
+        m.refresh(["Projects", "api"])
+        try await waitFor { fake.current != nil }
+        let vm = ServerViewModel(id: node.id, hostname: "mba", dnsName: "", osArch: "macOS")
+        try render(m, vm: vm, via: .local, scopes: ["~", "/"], name: "usage-refreshing")
+        m.cancelRefresh()
+    }
+
     private func serverJob(_ node: Node, _ state: DiskScanJob.State, progress: DiskScanProgress? = nil) -> DiskScanJob {
         let created = Date().addingTimeInterval(-60)
         return DiskScanJob(

@@ -36,7 +36,28 @@ struct DiskUsageView<Leading: View>: View {
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 6)
+        .overlay(alignment: .bottom) { toast }
         .task(id: ObjectIdentifier(model)) { await model.attach() }
+    }
+
+    @ViewBuilder
+    private var toast: some View {
+        if let text = model.notice {
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundStyle(UsagePalette.primaryFG)
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                .frame(maxWidth: 560)
+                .background(UsagePalette.primaryBG, in: RoundedRectangle(cornerRadius: 9))
+                .shadow(color: .black.opacity(0.25), radius: 12, y: 8)
+                .padding(.bottom, 24)
+                .accessibilityAddTraits(.updatesFrequently)
+                .onTapGesture { model.notice = nil }
+                .task(id: text) {
+                    try? await Task.sleep(nanoseconds: 4_200_000_000)
+                    if model.notice == text { model.notice = nil }
+                }
+        }
     }
 
     /// Remote mode: the server or the sampler does not allow scans.
@@ -58,7 +79,7 @@ struct DiskUsageView<Leading: View>: View {
             } else {
                 Button(model.record == nil ? "Scan" : "Rescan") { model.start() }
                     .buttonStyle(UsagePrimaryButtonStyle())
-                    .disabled(via == .server && !allowScan)
+                    .disabled(via == .server && !allowScan || model.refreshing != nil)
             }
         }
         .frame(height: 36)
@@ -79,7 +100,7 @@ struct DiskUsageView<Leading: View>: View {
         }
         .menuStyle(.button)
         .fixedSize()
-        .disabled(model.isRunning)
+        .disabled(model.isBusy)
         .help("The folder to scan")
     }
 
@@ -283,7 +304,8 @@ struct DiskUsageView<Leading: View>: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Text("Explorer").font(.system(size: 15, weight: .bold))
-                Text("Click a folder to open it.").font(.system(size: 13)).foregroundStyle(.secondary)
+                Text("Click a folder to open it. Right-click for more.").font(.system(size: 13)).foregroundStyle(.secondary)
+                    .lineLimit(1)
                 Spacer()
                 if model.isRunning {
                     Button("Show progress") { model.showPrevious = false }
@@ -293,15 +315,80 @@ struct DiskUsageView<Leading: View>: View {
                 Text(DiskSize.text(model.mapTotal))
                     .font(.system(size: 13, design: .monospaced)).foregroundStyle(.secondary)
                     .padding(.leading, 8)
+                refreshButton
             }
             .frame(height: 26)
-            TreemapView(nodes: model.mapNodes, selectedIDs: model.selectedNodeIDs) { i in
-                let nodes = model.mapNodes
-                if nodes.indices.contains(i) { model.open(nodes[i].name) }
-            }
+            TreemapView(
+                nodes: model.mapNodes, path: model.focus, state: tileState, refreshing: model.refreshing,
+                onOpen: { i in
+                    let nodes = model.mapNodes
+                    if nodes.indices.contains(i) { model.open(nodes[i].name) }
+                },
+                onToggle: { model.toggleTile($0) },
+                menu: { names, node in AnyView(tileMenu(names, node)) }
+            )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             ScrollView(.horizontal, showsIndicators: false) { legend }
         }
+    }
+
+    private func tileState(_ names: [String]) -> TreemapTileState {
+        switch model.mark(names) {
+        case .covered: return .covered
+        case .rule(_, let on), .mine(let on):
+            if on { return .on }
+            return model.holdsSelection(names) ? .holds : .off
+        case .none:
+            return model.holdsSelection(names) ? .holds : .plain
+        }
+    }
+
+    @ViewBuilder
+    private func tileMenu(_ names: [String], _ node: DiskNode) -> some View {
+        let path = model.result?.absolutePath(of: names) ?? ""
+        Text("\(model.result?.displayPath(path) ?? path) · \(DiskSize.text(node.bytes))")
+        if !node.children.isEmpty {
+            Button("Open") { for n in names.dropFirst(model.focus.count) { model.open(n) } }
+        }
+        if TreemapView.selectable(node) {
+            switch model.mark(names) {
+            case .covered(let by):
+                Button("In the list through \(by)") {}.disabled(true)
+            case .rule:
+                Button("Hide suggestion") { model.remove(names) }
+            case .mine:
+                Button("Remove from cleanup list") { model.remove(names) }
+            case .none:
+                Button("Add to cleanup list  (⌘-click)") { model.add(names) }
+            }
+        }
+        Divider()
+        Button(node.isFile ? "Refresh \(names.dropLast().last ?? scopeLabel(model.scope))" : "Refresh folder") {
+            model.refresh(names)
+        }
+        .disabled(model.isBusy)
+        Divider()
+        if via == .local {
+            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
+        }
+        Button("Copy path") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(path, forType: .string)
+        }
+    }
+
+    @ViewBuilder
+    private var refreshButton: some View {
+        let here = model.result.map { $0.absolutePath(of: model.focus) }
+        if let at = model.result?.refreshed.last(where: { $0.path == here })?.at {
+            Text("Refreshed \(UsageText.ago(at))")
+                .font(.system(size: 11)).foregroundStyle(UsagePalette.safeChipFG)
+                .lineLimit(1).fixedSize()
+        }
+        Button(model.focus.isEmpty ? "Rescan" : "Refresh folder") { model.refresh(model.focus) }
+            .controlSize(.small)
+            .disabled(model.isBusy)
+            .help(model.focus.isEmpty ? "Scan the whole scope again" : "Scan only this folder again")
     }
 
     private var breadcrumb: some View {
