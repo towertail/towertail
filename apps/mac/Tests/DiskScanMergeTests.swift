@@ -90,6 +90,14 @@ final class DiskScanMergeTests: XCTestCase {
         XCTAssertEqual(again.tree.node(at: xcode[...])?.children.map(\.id), ["r2-n1", "r2-n2"])
         XCTAssertEqual(again.refreshed.count, 1)
         XCTAssertEqual(again.tree.bytes, m.tree.bytes)
+
+        // A refresh above drops the entry below. The next tag must still be new.
+        let libScan = sub(root: "/Users/dev/Library", bytes: 1_000, kids: [DiskNode(n: "Caches", b: 1_000, cat: .cache, id: "n1")])
+        let up = try XCTUnwrap(again.merging(libScan, at: ["Library"], now: now))
+        let other = try XCTUnwrap(up.tree.children.first { !$0.isOther && $0.name != "Library" && !$0.isFile })
+        let s2 = sub(root: "/Users/dev/" + other.name, bytes: 1_000, kids: [DiskNode(n: "k", b: 1_000, cat: .docs, id: "n1")])
+        let next = try XCTUnwrap(up.merging(s2, at: [other.name], now: now))
+        XCTAssertEqual(next.tree.node(at: [other.name])?.children.map(\.id), ["r4-n1"])
     }
 
     func testMergeKeepsRecOfTheFolder() throws {

@@ -60,7 +60,12 @@ extension DiskScanResult {
     /// counts of the old folder are not known.
     func merging(_ sub: DiskScanResult, at names: [String], now: Date) -> DiskScanResult? {
         guard let old = tree.node(at: names[...]) else { return nil }
-        let tag = "r\(refreshed.count + 1)-"
+        // A count of `refreshed` can repeat, because a refresh drops the entries below it.
+        let used = tree.subtreeIDs.compactMap { id -> Int? in
+            guard id.hasPrefix("r"), let dash = id.firstIndex(of: "-") else { return nil }
+            return Int(id[id.index(after: id.startIndex)..<dash])
+        }
+        let tag = "r\((used.max() ?? 0) + 1)-"
         let delta = sub.tree.bytes - old.bytes
         let kids = sub.tree.c.map { $0.map { $0.retagged(tag, otherAs: old.cat) } }
         let target = displayPath(absolutePath(of: names))
