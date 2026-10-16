@@ -52,6 +52,8 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
     var snoozedUntil: Date?
     /// User-pinned favorite. Favorites sort to the top of the popover list.
     var favorite: Bool
+    /// Remote mode: the server runs disk scans on this node only when true.
+    var allowDiskScan: Bool
     /// Timestamp of the most recent successful sample. Persisted so a host
     /// that worked yesterday but is unreachable today still escalates the
     /// menu-bar icon to red on relaunch — without this, every restart
@@ -78,6 +80,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         customAlerts: AlertRules? = nil,
         snoozedUntil: Date? = nil,
         favorite: Bool = false,
+        allowDiskScan: Bool = false,
         lastSuccessfulConnect: Date? = nil
     ) {
         self.id = id
@@ -98,6 +101,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         self.customAlerts = customAlerts
         self.snoozedUntil = snoozedUntil
         self.favorite = favorite
+        self.allowDiskScan = allowDiskScan
         self.lastSuccessfulConnect = lastSuccessfulConnect
     }
 
@@ -107,6 +111,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         case tags, enabled
         case iconOnWarn, iconOnCritical, notifyOnWarn, notifyOnCritical
         case thresholdOverrides, customAlerts, snoozedUntil, favorite
+        case allowDiskScan
         case customThresholds
         case lastSuccessfulConnect
         // Legacy single-toggle flag from the first pass. If present it
@@ -136,6 +141,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         try c.encodeIfPresent(customAlerts, forKey: .customAlerts)
         try c.encodeIfPresent(snoozedUntil, forKey: .snoozedUntil)
         try c.encode(favorite, forKey: .favorite)
+        try c.encode(allowDiskScan, forKey: .allowDiskScan)
         try c.encodeIfPresent(lastSuccessfulConnect, forKey: .lastSuccessfulConnect)
     }
 
@@ -171,6 +177,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         self.customAlerts = try c.decodeIfPresent(AlertRules.self, forKey: .customAlerts)
         self.snoozedUntil = try c.decodeIfPresent(Date.self, forKey: .snoozedUntil)
         self.favorite = try c.decodeIfPresent(Bool.self, forKey: .favorite) ?? false
+        self.allowDiskScan = try c.decodeIfPresent(Bool.self, forKey: .allowDiskScan) ?? false
         self.lastSuccessfulConnect = try c.decodeIfPresent(Date.self, forKey: .lastSuccessfulConnect)
     }
 
@@ -200,6 +207,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
             && lhs.customAlerts == rhs.customAlerts
             && lhs.snoozedUntil == rhs.snoozedUntil
             && lhs.favorite == rhs.favorite
+            && lhs.allowDiskScan == rhs.allowDiskScan
     }
 
     /// True only when snoozedUntil is set and still in the future.

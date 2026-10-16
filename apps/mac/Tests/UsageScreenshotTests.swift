@@ -26,9 +26,11 @@ final class UsageScreenshotTests: XCTestCase {
         if let dbURL { try? FileManager.default.removeItem(at: dbURL) }
     }
 
-    func render(_ model: DiskUsageModel, vm: ServerViewModel, via: ScanVia, scopes: [String], name: String) throws {
+    func render(_ model: DiskUsageModel, vm: ServerViewModel, via: ScanVia, scopes: [String], name: String,
+                allowScan: Bool = true) throws {
         let view = VStack(spacing: 14) {
-            DiskUsageView(model: model, vm: vm, via: via, scopeChoices: scopes) {
+            DiskUsageView(model: model, vm: vm, via: via, scopeChoices: scopes, allowScan: allowScan,
+                          onAllowScans: via == .server ? {} : nil) {
                 Picker("Disk view", selection: .constant(DiskSubTab.usage)) {
                     ForEach(DiskSubTab.allCases) { Text($0.displayName).tag($0) }
                 }
@@ -122,5 +124,62 @@ final class UsageScreenshotTests: XCTestCase {
         let m = DiskUsageModel(node: node, store: store, scanner: FakeDiskScanner(), scope: "~")
         let vm = ServerViewModel(id: node.id, hostname: "win-dev", dnsName: "", osArch: "Windows", kind: .ssh)
         try render(m, vm: vm, via: .ssh(user: "fritz"), scopes: ["~", "C:\\"], name: "usage-result-windows")
+    }
+
+    private func serverJob(_ node: Node, _ state: DiskScanJob.State, progress: DiskScanProgress? = nil) -> DiskScanJob {
+        let created = Date().addingTimeInterval(-60)
+        return DiskScanJob(
+            id: "job-1", nodeId: node.id.uuidString, state: state, root: "/", progress: progress,
+            createdTs: created, startedTs: created.addingTimeInterval(3),
+            finishedTs: state.isFinal ? created.addingTimeInterval(51) : nil,
+            resultBytes: state == .done ? 1_800_000 : 0
+        )
+    }
+
+    func testRemoteStripDone() throws {
+        let node = Node(displayName: "web-1", kind: .ssh, sshUser: "deploy", sshHost: "web-1", allowDiskScan: true)
+        store.save(nodeID: node.id, scope: "/", result: try ScanFixtures.result("linux"), finishedAt: Date().addingTimeInterval(-5))
+        let m = DiskUsageModel(node: node, store: store, scanner: FakeDiskScanner(), scope: "/")
+        m.follow(job: serverJob(node, .done))
+        let vm = ServerViewModel(id: node.id, hostname: "web-1", dnsName: "", osArch: "Ubuntu", kind: .ssh)
+        try render(m, vm: vm, via: .server, scopes: ["~", "/"], name: "usage-remote-strip")
+    }
+
+    func testRemoteStripRunning() async throws {
+        let node = Node(displayName: "web-1", kind: .ssh, sshUser: "deploy", sshHost: "web-1", allowDiskScan: true)
+        let fake = FakeDiskScanner()
+        let m = DiskUsageModel(node: node, store: store, scanner: fake, scope: "/")
+        m.start()
+        try await waitFor { fake.current != nil }
+        let p = DiskScanProgress(files: 212_004, dirs: 18_311, bytes: 41_000_000_000, current: "/var/lib/docker/overlay2",
+                                 elapsedMs: 21_000, usedBytes: 182_000_000_000,
+                                 top: [DiskScanTop(path: "/var", b: 30_000_000_000), DiskScanTop(path: "/home", b: 9_000_000_000)])
+        fake.send(.job(serverJob(node, .running, progress: p)))
+        try await waitFor { m.job != nil && m.progress != nil }
+        let vm = ServerViewModel(id: node.id, hostname: "web-1", dnsName: "", osArch: "Ubuntu", kind: .ssh)
+        try render(m, vm: vm, via: .server, scopes: ["~", "/"], name: "usage-remote-running")
+        m.cancel()
+    }
+
+    func testOptInOff() throws {
+        let node = Node(displayName: "web-1", kind: .ssh, sshUser: "deploy", sshHost: "web-1")
+        let m = DiskUsageModel(node: node, store: store, scanner: FakeDiskScanner(), scope: "/")
+        let vm = ServerViewModel(id: node.id, hostname: "web-1", dnsName: "", osArch: "Ubuntu", kind: .ssh)
+        try render(m, vm: vm, via: .server, scopes: ["~", "/"], name: "usage-optin-off", allowScan: false)
+    }
+
+    func testOptInSamplerOff() async throws {
+        let node = Node(displayName: "web-1", kind: .ssh, sshUser: "deploy", sshHost: "web-1", allowDiskScan: true)
+        let fake = FakeDiskScanner()
+        let m = DiskUsageModel(node: node, store: store, scanner: fake, scope: "/")
+        m.start()
+        try await waitFor { fake.current != nil }
+        var j = serverJob(node, .failed)
+        j.error = "disk scans are off on this host: run the sampler with --allow-disk-scan"
+        fake.send(.job(j))
+        fake.send(.error(j.error))
+        try await waitFor { m.scansOff != nil }
+        let vm = ServerViewModel(id: node.id, hostname: "web-1", dnsName: "", osArch: "Ubuntu", kind: .ssh)
+        try render(m, vm: vm, via: .server, scopes: ["~", "/"], name: "usage-optin-sampler-off")
     }
 }

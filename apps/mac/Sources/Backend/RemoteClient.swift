@@ -73,7 +73,84 @@ final class RemoteClient {
         _ = try await raw("POST", "/v1/nodes/\(nodeID.uuidString)/kill-process?pid=\(pid)")
     }
 
+    // MARK: - Disk scans (docs/wire.md §3.1)
+
+    /// Starts a scan job. 403 gives `scansOff`, 409 gives `alreadyRunning`
+    /// with the job that runs.
+    func startDiskScan(nodeId: UUID, request: DiskScanRequest) async throws -> DiskScanJob {
+        let (data, http) = try await response("POST", "/v1/nodes/\(nodeId.uuidString)/disk-scans",
+                                              body: try encoder.encode(request))
+        switch http.statusCode {
+        case 200..<300:
+            return try decode(DiskScanJob.self, data)
+        case 403:
+            let msg = Self.errorMessage(data) ?? "disk scans are off for this node"
+            throw DiskScanError.scansOff(Self.sentence(msg))
+        case 409:
+            struct Conflict: Decodable { let job: DiskScanJob? }
+            throw DiskScanError.alreadyRunning(try? decoder.decode(Conflict.self, from: data).job)
+        default:
+            throw RemoteError.http(http.statusCode, String(decoding: data, as: UTF8.self))
+        }
+    }
+
+    /// Jobs of a node, newest first.
+    func diskScans(nodeId: UUID) async throws -> [DiskScanJob] {
+        struct List: Decodable { let jobs: [DiskScanJob] }
+        let list: List = try await get("/v1/nodes/\(nodeId.uuidString)/disk-scans")
+        return list.jobs
+    }
+
+    func diskScan(jobId: String) async throws -> DiskScanJob {
+        try await get("/v1/disk-scans/\(jobId)")
+    }
+
+    func cancelDiskScan(jobId: String) async throws -> DiskScanJob {
+        try decode(DiskScanJob.self, try await raw("POST", "/v1/disk-scans/\(jobId)/cancel"))
+    }
+
+    /// The result of a done job, or nil when the server has none (404).
+    func diskScanResult(jobId: String) async throws -> DiskScanResult? {
+        let (data, http) = try await response("GET", "/v1/disk-scans/\(jobId)/result")
+        if http.statusCode == 404 { return nil }
+        guard http.statusCode < 400 else {
+            throw RemoteError.http(http.statusCode, String(decoding: data, as: UTF8.self))
+        }
+        // URLSession decodes gzip when it sees Content-Encoding. Decode here
+        // when a proxy removed the header.
+        var body = data
+        if GzipDecoder.isGzip(body) {
+            guard let plain = GzipDecoder.decode(body) else { throw RemoteError.decode("bad gzip result") }
+            body = plain
+        }
+        guard case .result(let r) = try DiskScanEvent.decodeLine(body) else {
+            throw RemoteError.decode("the result is not a scan result line")
+        }
+        return r
+    }
+
+    /// The message of a wire.md error envelope.
+    static func errorMessage(_ data: Data) -> String? {
+        struct Envelope: Decodable {
+            struct Err: Decodable { let message: String? }
+            let error: Err
+        }
+        return (try? JSONDecoder().decode(Envelope.self, from: data))?.error.message
+    }
+
+    /// "disk scans are off" → "Disk scans are off."
+    private static func sentence(_ s: String) -> String {
+        guard let first = s.first else { return s }
+        let t = first.uppercased() + s.dropFirst()
+        return t.hasSuffix(".") ? t : t + "."
+    }
+
     // MARK: - Transport helpers
+
+    private func decode<T: Decodable>(_ type: T.Type, _ data: Data) throws -> T {
+        do { return try decoder.decode(T.self, from: data) }
+        catch { throw RemoteError.decode(String(describing: error)) }
+    }
 
     private func get<T: Decodable>(_ path: String) async throws -> T {
         let data = try await raw("GET", path)
@@ -88,6 +165,15 @@ final class RemoteClient {
     }
 
     private func raw(_ method: String, _ path: String, body: Data? = nil) async throws -> Data {
+        let (data, http) = try await response(method, path, body: body)
+        if http.statusCode >= 400 {
+            throw RemoteError.http(http.statusCode, String(data: data, encoding: .utf8) ?? "")
+        }
+        return data
+    }
+
+    /// Sends a request and returns the response for any status code.
+    private func response(_ method: String, _ path: String, body: Data? = nil) async throws -> (Data, HTTPURLResponse) {
         var req = URLRequest(url: config.endpoint.appendingPathComponent(path))
         // URLComponents for ?query handling in callers that already
         // embedded them.
@@ -105,11 +191,7 @@ final class RemoteClient {
             guard let http = resp as? HTTPURLResponse else {
                 throw RemoteError.transport(URLError(.badServerResponse))
             }
-            if http.statusCode >= 400 {
-                let msg = String(data: data, encoding: .utf8) ?? ""
-                throw RemoteError.http(http.statusCode, msg)
-            }
-            return data
+            return (data, http)
         } catch let err as RemoteError {
             throw err
         } catch {
@@ -120,13 +202,16 @@ final class RemoteClient {
     // MARK: - WebSocket
 
     /// Opens a WS connection and invokes `onMessage` for each received
-    /// text frame. The returned task runs until cancelled.
-    func openStream(onMessage: @escaping @Sendable (String) -> Void) -> Task<Void, Never> {
+    /// text frame. `onConnect` runs at the first frame of each connection,
+    /// so callers can refetch state that they missed. The returned task
+    /// runs until cancelled.
+    func openStream(onConnect: (@Sendable () -> Void)? = nil,
+                    onMessage: @escaping @Sendable (String) -> Void) -> Task<Void, Never> {
         return Task.detached { [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
                 do {
-                    try await self.streamOnce(onMessage: onMessage)
+                    try await self.streamOnce(onConnect: onConnect, onMessage: onMessage)
                 } catch {
                     // transient; backoff and retry.
                 }
@@ -136,7 +221,8 @@ final class RemoteClient {
         }
     }
 
-    private func streamOnce(onMessage: @escaping @Sendable (String) -> Void) async throws {
+    private func streamOnce(onConnect: (@Sendable () -> Void)?,
+                            onMessage: @escaping @Sendable (String) -> Void) async throws {
         var components = URLComponents(url: config.endpoint.appendingPathComponent("/v1/stream"), resolvingAgainstBaseURL: false)!
         if components.scheme == "https" {
             components.scheme = "wss"
@@ -149,8 +235,13 @@ final class RemoteClient {
         task.resume()
         defer { task.cancel(with: .normalClosure, reason: nil) }
 
+        var first = true
         while !Task.isCancelled {
             let message = try await task.receive()
+            if first {
+                first = false
+                onConnect?()
+            }
             switch message {
             case .string(let s):
                 onMessage(s)
@@ -180,6 +271,8 @@ struct RemoteNode: Codable, Sendable, Identifiable {
     var customThresholds: MetricThresholds?
     var snoozedUntil: Date?
     var favorite: Bool
+    /// Nil when the server is older than disk scans.
+    var allowDiskScan: Bool?
 }
 
 struct RemoteServerSettings: Codable, Sendable {
@@ -210,7 +303,8 @@ extension Node {
             notifyOnCritical: r.notifyOnCritical,
             thresholdOverrides: r.customThresholds.map(ThresholdOverrides.init(legacy:)),
             snoozedUntil: r.snoozedUntil,
-            favorite: r.favorite
+            favorite: r.favorite,
+            allowDiskScan: r.allowDiskScan ?? false
         )
     }
 
@@ -231,7 +325,8 @@ extension Node {
             notifyOnCritical: notifyOnCritical,
             customThresholds: thresholdOverrides?.applied(to: global),
             snoozedUntil: snoozedUntil,
-            favorite: favorite
+            favorite: favorite,
+            allowDiskScan: allowDiskScan
         )
     }
 }

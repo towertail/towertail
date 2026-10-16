@@ -15,6 +15,10 @@ struct DiskUsageView<Leading: View>: View {
     let via: ScanVia
     /// "~" and the mounts of the host.
     let scopeChoices: [String]
+    /// Remote mode: the `allowDiskScan` flag of the node.
+    var allowScan = true
+    /// Remote mode: sets `allowDiskScan` on the node.
+    var onAllowScans: (() async throws -> Void)?
     /// The sub-tab picker, at the start of the toolbar row.
     @ViewBuilder var leading: () -> Leading
 
@@ -22,6 +26,7 @@ struct DiskUsageView<Leading: View>: View {
         VStack(spacing: 14) {
             toolbar
             if showFDABanner { fdaBanner }
+            if via == .server, let job = model.job, !showOptIn { RemoteJobStrip(job: job) }
             stats
             HStack(alignment: .top, spacing: 16) {
                 leftCard
@@ -31,6 +36,12 @@ struct DiskUsageView<Leading: View>: View {
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 6)
+        .task(id: ObjectIdentifier(model)) { await model.attach() }
+    }
+
+    /// Remote mode: the server or the sampler does not allow scans.
+    private var showOptIn: Bool {
+        via == .server && !model.isRunning && (!allowScan || model.scansOff != nil)
     }
 
     // MARK: Toolbar
@@ -47,6 +58,7 @@ struct DiskUsageView<Leading: View>: View {
             } else {
                 Button(model.record == nil ? "Scan" : "Rescan") { model.start() }
                     .buttonStyle(UsagePrimaryButtonStyle())
+                    .disabled(via == .server && !allowScan)
             }
         }
         .frame(height: 36)
@@ -229,6 +241,9 @@ struct DiskUsageView<Leading: View>: View {
         VStack(alignment: .leading, spacing: 10) {
             if model.isRunning && !model.showPrevious {
                 ScanningPanel(model: model, host: vm.hostname, via: via, scopeLabel: scopeLabel(model.scope))
+            } else if showOptIn {
+                ScanOptInPanel(nodeAllows: allowScan, message: model.scansOff,
+                               onAllow: onAllowScans, onScan: { model.start() })
             } else if case .failed(let msg) = model.phase {
                 message(title: "The scan failed", text: msg, danger: true)
             } else if model.result != nil {
@@ -534,6 +549,8 @@ enum UsagePalette {
     static let infoFG = dyn(light: hex(0x1F4E7A), dark: hex(0xB9D4F1))
     static let infoStrong = dyn(light: hex(0x123A60), dark: hex(0xD7E7F8))
     static let infoMuted = dyn(light: hex(0x4A6F95), dark: hex(0x8FB2D6))
+    static let infoArrow = dyn(light: hex(0x7D9CBC), dark: hex(0x4D6F92))
+    static let okGreen = dyn(light: hex(0x1E8A3E), dark: hex(0x6FD08C))
     static let dangerBG = dyn(light: hex(0xFDE3E1), dark: hex(0x3A1D1D))
     static let dangerBorder = dyn(light: hex(0xE8A6A1), dark: hex(0x6E2B2B))
     static let dangerFG = dyn(light: hex(0xB3261E), dark: hex(0xFF9B94))

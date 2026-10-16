@@ -82,17 +82,19 @@ final class DiskUsageModel {
     func start() {
         guard !isRunning else { return }
         let request = DiskScanRequest(root: scope == "~" ? nil : scope)
-        let scope = self.scope
-        let scanner = self.scanner
-        let node = self.node
-        phase = .running(nil)
-        startedAt = now()
         job = nil
         scansOff = nil
+        run(scanner.scan(node: node, request: request), progress: nil, startedAt: now())
+    }
+
+    private func run(_ events: AsyncThrowingStream<DiskScanEvent, Error>, progress: DiskScanProgress?, startedAt: Date) {
+        let scope = self.scope
+        phase = .running(progress)
+        self.startedAt = startedAt
         showPrevious = false
         task = Task { [weak self] in
             do {
-                for try await event in scanner.scan(node: node, request: request) {
+                for try await event in events {
                     guard let self else { return }
                     self.handle(event, scope: scope)
                 }
@@ -120,12 +122,30 @@ final class DiskUsageModel {
         if case .failed = phase { phase = record == nil ? .idle : .done }
     }
 
-    /// Shows a job that runs or ran on the server, for example one that
-    /// another device started.
-    func follow(job: DiskScanJob) {
-        self.job = job
-        if !job.state.isFinal, !isRunning {
-            phase = .running(job.progress)
+    /// Remote mode: loads the last server job of the node, then follows
+    /// new jobs, for example ones that another device starts. Runs until
+    /// the calling task is cancelled.
+    func attach() async {
+        guard let follower = scanner as? any DiskScanFollower else { return }
+        let updates = follower.jobs(node: node)
+        if let j = await follower.lastJob(node: node) { follow(job: j) }
+        for await j in updates { follow(job: j) }
+    }
+
+    /// Shows a job that runs or ran on the server. Follows a job that is
+    /// not final, and gets the result of a done job that is newer than
+    /// the stored result.
+    func follow(job j: DiskScanJob) {
+        guard !isRunning else { return }
+        job = j
+        guard let follower = scanner as? any DiskScanFollower else { return }
+        let jobScope = DiskScanRequest(root: j.root).scope
+        if !j.state.isFinal {
+            setScope(jobScope)
+            run(follower.follow(node: node, job: j), progress: j.progress, startedAt: j.createdTs ?? now())
+        } else if j.state == .done, jobScope == scope,
+                  let done = j.finishedTs, done > (record?.finishedAt ?? .distantPast) {
+            run(follower.follow(node: node, job: j), progress: nil, startedAt: j.createdTs ?? now())
         }
     }
 
@@ -141,6 +161,7 @@ final class DiskUsageModel {
             if scope == self.scope { load() }
             phase = .done
         case .error(let msg):
+            if msg.contains("--allow-disk-scan") { scansOff = msg }
             phase = .failed(msg)
         case .cancelled:
             phase = .idle

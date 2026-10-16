@@ -308,7 +308,13 @@ struct FullViewWindow: View {
             let m = model.usageModel(for: node, backend: backend, defaultScope: vm.hostOS == "linux" ? "/" : "~")
             DiskUsageView(
                 model: m, vm: vm, via: scanVia(node: node, backend: backend),
-                scopeChoices: ["~"] + vm.disksPerMount.mounts.sorted()
+                scopeChoices: ["~"] + vm.disksPerMount.mounts.sorted(),
+                allowScan: !(backend is RemoteBackend) || node.allowDiskScan,
+                onAllowScans: backend is RemoteBackend ? {
+                    guard var n = nodeStore.node(withId: node.id) else { return }
+                    n.allowDiskScan = true
+                    try await backend.updateNode(n)
+                } : nil
             ) {
                 diskSubTabPicker
             }

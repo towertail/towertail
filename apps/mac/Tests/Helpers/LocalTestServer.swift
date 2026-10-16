@@ -32,6 +32,8 @@ final class LocalTestServer: @unchecked Sendable {
         var status: Int
         var body: Data
         var contentType: String = "application/json"
+        /// Extra response headers, for example Content-Encoding.
+        var headers: [String: String] = [:]
 
         static func json(_ status: Int, _ data: Data) -> Response {
             Response(status: status, body: data)
@@ -52,7 +54,12 @@ final class LocalTestServer: @unchecked Sendable {
     private var handlers: [String: Handler] = [:]
 
     /// Captured REST requests in receipt order.
-    private(set) var captured: [CapturedRequest] = []
+    private var _captured: [CapturedRequest] = []
+    var captured: [CapturedRequest] {
+        capturedLock.lock()
+        defer { capturedLock.unlock() }
+        return _captured
+    }
     private let capturedLock = NSLock()
 
     /// Active WS connections — tests push frames via `sendToAllWebSockets`.
@@ -205,7 +212,7 @@ final class LocalTestServer: @unchecked Sendable {
 
         let cap = CapturedRequest(method: method, path: path, headers: headers, body: body)
         capturedLock.lock()
-        captured.append(cap)
+        _captured.append(cap)
         capturedLock.unlock()
 
         // Exact match first, then prefix match (for /v1/nodes/<id>-style paths).
@@ -221,13 +228,15 @@ final class LocalTestServer: @unchecked Sendable {
         }
         let response = handler?(cap) ?? Response(status: 404, body: Data("{\"error\":\"not found\"}".utf8))
         writeHTTP(connection: connection, status: response.status, body: response.body,
-                  contentType: response.contentType, closeAfter: true)
+                  contentType: response.contentType, headers: response.headers, closeAfter: true)
     }
 
-    private func writeHTTP(connection: NWConnection, status: Int, body: Data, contentType: String, closeAfter: Bool) {
+    private func writeHTTP(connection: NWConnection, status: Int, body: Data, contentType: String,
+                           headers: [String: String] = [:], closeAfter: Bool) {
         let reason = Self.reasonPhrase(status)
         var head = "HTTP/1.1 \(status) \(reason)\r\n"
         head += "Content-Type: \(contentType)\r\n"
+        for (k, v) in headers { head += "\(k): \(v)\r\n" }
         head += "Content-Length: \(body.count)\r\n"
         if closeAfter { head += "Connection: close\r\n" }
         head += "\r\n"
@@ -288,6 +297,15 @@ final class LocalTestServer: @unchecked Sendable {
         return !wsConnections.isEmpty
     }
 
+    /// Closes every WebSocket connection, as a lost network does.
+    func closeAllWebSockets() {
+        wsLock.lock()
+        let conns = wsConnections
+        wsConnections.removeAll()
+        wsLock.unlock()
+        for c in conns { c.cancel() }
+    }
+
     /// Broadcasts a text frame to every connected WebSocket client.
     func sendToAllWebSockets(text: String) {
         let frame = Self.encodeTextFrame(text)
@@ -313,10 +331,13 @@ final class LocalTestServer: @unchecked Sendable {
         switch status {
         case 200: return "OK"
         case 201: return "Created"
+        case 202: return "Accepted"
         case 204: return "No Content"
         case 400: return "Bad Request"
         case 401: return "Unauthorized"
+        case 403: return "Forbidden"
         case 404: return "Not Found"
+        case 409: return "Conflict"
         case 500: return "Internal Server Error"
         default: return "Status"
         }

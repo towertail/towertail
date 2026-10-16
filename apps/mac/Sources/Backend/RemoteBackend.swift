@@ -12,6 +12,8 @@ final class RemoteBackend: Backend {
     let serverSettings: ServerSettings
     let samplerUpdater: SamplerUpdateCoordinator
     let diskScans: DiskScanStore
+    /// Changes of server scan jobs, for `RemoteDiskScanner`.
+    let scanJobs = DiskScanJobFeed()
 
     private let client: RemoteClient
     private var streamTask: Task<Void, Never>?
@@ -75,7 +77,13 @@ final class RemoteBackend: Backend {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let sampleDecoder = SampleCodec.decoder()
-        streamTask = client.openStream { [weak self] raw in
+        let onConnect: @Sendable () -> Void = { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                await self.scanJobs.refetch(using: self.client)
+            }
+        }
+        streamTask = client.openStream(onConnect: onConnect) { [weak self] raw in
             guard let self else { return }
             Task { @MainActor in
                 self.handleStreamMessage(raw, decoder: decoder, sampleDecoder: sampleDecoder)
@@ -118,6 +126,11 @@ final class RemoteBackend: Backend {
             struct SettingsWrap: Decodable { let settings: RemoteServerSettings }
             if let wrap = try? decoder.decode(SettingsWrap.self, from: data) {
                 applyRemoteSettings(wrap.settings)
+            }
+        case "disk_scan_updated":
+            struct JobWrap: Decodable { let job: DiskScanJob }
+            if let wrap = try? decoder.decode(JobWrap.self, from: data) {
+                scanJobs.publish(wrap.job)
             }
         case "event":
             // Phase H: thread BackendEvents into the notifier once the
@@ -187,7 +200,7 @@ final class RemoteBackend: Backend {
     }
 
     func diskScanner(for node: Node) -> any DiskScanner {
-        UnsupportedDiskScanner()
+        RemoteDiskScanner(service: client, feed: scanJobs)
     }
 
     func updateServerSettings(_ settings: ServerSettings) async throws {
@@ -204,12 +217,5 @@ final class RemoteBackend: Backend {
         )
         let saved = try await client.putSettings(rs)
         applyRemoteSettings(saved)
-    }
-}
-
-/// Placeholder until remote scans go through the server.
-struct UnsupportedDiskScanner: DiskScanner {
-    func scan(node: Node, request: DiskScanRequest) -> AsyncThrowingStream<DiskScanEvent, Error> {
-        AsyncThrowingStream { $0.finish(throwing: DiskScanError.misconfigured("Disk scans are not available in remote mode yet.")) }
     }
 }
