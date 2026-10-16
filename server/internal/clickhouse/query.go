@@ -22,7 +22,7 @@ type HistoryPoint struct {
 type HistoryQuery struct {
 	OrgID      uuid.UUID
 	NodeID     uuid.UUID
-	Metric     string        // "cpu" | "mem" | "net_rx" | "net_tx" | "disk_read" | "disk_write"
+	Metric     string // "cpu" | "mem" | "net_rx" | "net_tx" | "disk_read" | "disk_write"
 	From, To   time.Time
 	Resolution time.Duration // 1m or 5m align with samples_1m / samples_5m
 }

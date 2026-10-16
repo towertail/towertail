@@ -149,7 +149,9 @@ func (s *BoltStore) PutSettings(_ context.Context, orgID uuid.UUID, settings Ser
 }
 
 // token bucket layout:
-//   hash-bytes → JSON token (primary index used by auth middleware)
+//
+//	hash-bytes → JSON token (primary index used by auth middleware)
+//
 // plus a parallel bucket "tokens_index" keyed by token UUID? Kept simple
 // for v1 — ListTokens scans all entries.
 func (s *BoltStore) PutToken(_ context.Context, t Token) error {

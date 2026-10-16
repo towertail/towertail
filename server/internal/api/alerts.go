@@ -39,7 +39,7 @@ func (s *Server) handleSnoozeAlert(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "bad id")
 	}
 	return c.JSON(http.StatusOK, map[string]any{
-		"id":             c.Param("id"),
-		"snoozed_until":  c.QueryParam("until"),
+		"id":            c.Param("id"),
+		"snoozed_until": c.QueryParam("until"),
 	})
 }

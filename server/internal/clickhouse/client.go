@@ -32,8 +32,8 @@ func New(cfg config.ClickHouseConfig, log *slog.Logger) *Client {
 	return &Client{cfg: cfg, log: log}
 }
 
-func (c *Client) Name() string  { return "clickhouse" }
-func (c *Client) Ready() bool   { return c.ready.Load() }
+func (c *Client) Name() string      { return "clickhouse" }
+func (c *Client) Ready() bool       { return c.ready.Load() }
 func (c *Client) Conn() driver.Conn { return c.conn }
 
 func (c *Client) Start(ctx context.Context) error {

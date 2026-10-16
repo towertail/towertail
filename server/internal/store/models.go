@@ -10,23 +10,23 @@ import (
 // Node mirrors the Swift-side Node struct in apps/mac/Sources/State/Node.swift.
 // Keys are camelCase to match the existing on-disk and wire shape.
 type Node struct {
-	ID                uuid.UUID         `json:"id"`
-	DisplayName       string            `json:"displayName"`
-	Kind              string            `json:"kind"` // "local" | "ssh"
-	SSHUser           *string           `json:"sshUser,omitempty"`
-	SSHHost           *string           `json:"sshHost,omitempty"`
+	ID          uuid.UUID `json:"id"`
+	DisplayName string    `json:"displayName"`
+	Kind        string    `json:"kind"` // "local" | "ssh"
+	SSHUser     *string   `json:"sshUser,omitempty"`
+	SSHHost     *string   `json:"sshHost,omitempty"`
 	// Tags is serialized via MarshalJSON so nil → `[]` (not `null`).
 	// Swift's RemoteNode decodes `tags` as non-optional `[String]` and a
 	// bare `null` breaks the whole node list decode.
-	Tags              []string          `json:"tags"`
-	Enabled           bool              `json:"enabled"`
-	IconOnWarn        bool              `json:"iconOnWarn"`
-	IconOnCritical    bool              `json:"iconOnCritical"`
-	NotifyOnWarn      bool              `json:"notifyOnWarn"`
-	NotifyOnCritical  bool              `json:"notifyOnCritical"`
-	CustomThresholds  *MetricThresholds `json:"customThresholds,omitempty"`
-	SnoozedUntil      *time.Time        `json:"snoozedUntil,omitempty"`
-	Favorite          bool              `json:"favorite"`
+	Tags             []string          `json:"tags"`
+	Enabled          bool              `json:"enabled"`
+	IconOnWarn       bool              `json:"iconOnWarn"`
+	IconOnCritical   bool              `json:"iconOnCritical"`
+	NotifyOnWarn     bool              `json:"notifyOnWarn"`
+	NotifyOnCritical bool              `json:"notifyOnCritical"`
+	CustomThresholds *MetricThresholds `json:"customThresholds,omitempty"`
+	SnoozedUntil     *time.Time        `json:"snoozedUntil,omitempty"`
+	Favorite         bool              `json:"favorite"`
 }
 
 // MarshalJSON ensures Tags is always an array on the wire — never
@@ -45,26 +45,26 @@ func (n Node) MarshalJSON() ([]byte, error) {
 // 0..1 ratios except for raw-percent fields that stay percents on the
 // Swift side — keep that contract identical.
 type MetricThresholds struct {
-	CPUWarn     float64 `json:"cpuWarn"`
-	CPUCritical float64 `json:"cpuCritical"`
-	MemWarn     float64 `json:"memWarn"`
-	MemCritical float64 `json:"memCritical"`
-	DiskWarn    float64 `json:"diskWarn"`
+	CPUWarn      float64 `json:"cpuWarn"`
+	CPUCritical  float64 `json:"cpuCritical"`
+	MemWarn      float64 `json:"memWarn"`
+	MemCritical  float64 `json:"memCritical"`
+	DiskWarn     float64 `json:"diskWarn"`
 	DiskCritical float64 `json:"diskCritical"`
 }
 
 // ServerSettings mirrors Swift ServerSettings. Units: ratios for
 // thresholds, seconds for intervals/debounce/grace.
 type ServerSettings struct {
-	Thresholds                    MetricThresholds `json:"thresholds"`
-	LocalPollingIntervalSeconds   int              `json:"localPollingIntervalSeconds"`
-	SSHPollingIntervalSeconds     int              `json:"sshPollingIntervalSeconds"`
-	NotificationsEnabled          bool             `json:"notificationsEnabled"`
-	NotifyWarn                    bool             `json:"notifyWarn"`
-	NotifyCritical                bool             `json:"notifyCritical"`
-	NotifyDebounceSeconds         int              `json:"notifyDebounceSeconds"`
-	AutoUpdateSamplersEnabled     bool             `json:"autoUpdateSamplersEnabled"`
-	PostWakeGraceSeconds          int              `json:"postWakeGraceSeconds"`
+	Thresholds                  MetricThresholds `json:"thresholds"`
+	LocalPollingIntervalSeconds int              `json:"localPollingIntervalSeconds"`
+	SSHPollingIntervalSeconds   int              `json:"sshPollingIntervalSeconds"`
+	NotificationsEnabled        bool             `json:"notificationsEnabled"`
+	NotifyWarn                  bool             `json:"notifyWarn"`
+	NotifyCritical              bool             `json:"notifyCritical"`
+	NotifyDebounceSeconds       int              `json:"notifyDebounceSeconds"`
+	AutoUpdateSamplersEnabled   bool             `json:"autoUpdateSamplersEnabled"`
+	PostWakeGraceSeconds        int              `json:"postWakeGraceSeconds"`
 }
 
 // DefaultServerSettings returns the factory defaults documented in

@@ -59,7 +59,7 @@ func (s *PostgresStore) PutToken(context.Context, Token) error { return ErrNotIm
 func (s *PostgresStore) GetTokenByHash(context.Context, []byte) (Token, error) {
 	return Token{}, ErrNotImplemented
 }
-func (s *PostgresStore) DeleteToken(context.Context, uuid.UUID) error       { return ErrNotImplemented }
+func (s *PostgresStore) DeleteToken(context.Context, uuid.UUID) error { return ErrNotImplemented }
 func (s *PostgresStore) ListTokens(context.Context, uuid.UUID) ([]Token, error) {
 	return nil, ErrNotImplemented
 }

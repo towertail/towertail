@@ -8,38 +8,38 @@ import (
 
 // SampleRow is the denormalised wide row written into samples_raw.
 type SampleRow struct {
-	TS             time.Time
-	OrgID          uuid.UUID
-	NodeID         uuid.UUID
-	SchemaV        uint8
-	HostName       string
-	HostOS         string
-	HostArch       string
-	HostKernel     string
-	HostUptimeS    uint64
-	HostSampler    string
-	HostMachineID  string
-	CPUPct         float32
-	CPULoad1       float32
-	CPULoad5       float32
-	CPULoad15      float32
-	CPUCores       uint16
-	MemUsed        uint64
-	MemTotal       uint64
-	SwapUsed       uint64
-	SwapTotal      uint64
-	DiskReadBps    uint64
-	DiskWriteBps   uint64
-	DiskReadCum    uint64
-	DiskWriteCum   uint64
-	NetRxBps       uint64
-	NetTxBps       uint64
-	NetRxCum       uint64
-	NetTxCum       uint64
-	ProcsTotal     uint32
-	ProcsVisible   uint32
-	ProcsRoot      uint8
-	Errors         []string
+	TS            time.Time
+	OrgID         uuid.UUID
+	NodeID        uuid.UUID
+	SchemaV       uint8
+	HostName      string
+	HostOS        string
+	HostArch      string
+	HostKernel    string
+	HostUptimeS   uint64
+	HostSampler   string
+	HostMachineID string
+	CPUPct        float32
+	CPULoad1      float32
+	CPULoad5      float32
+	CPULoad15     float32
+	CPUCores      uint16
+	MemUsed       uint64
+	MemTotal      uint64
+	SwapUsed      uint64
+	SwapTotal     uint64
+	DiskReadBps   uint64
+	DiskWriteBps  uint64
+	DiskReadCum   uint64
+	DiskWriteCum  uint64
+	NetRxBps      uint64
+	NetTxBps      uint64
+	NetRxCum      uint64
+	NetTxCum      uint64
+	ProcsTotal    uint32
+	ProcsVisible  uint32
+	ProcsRoot     uint8
+	Errors        []string
 }
 
 // DiskRow is one row per mount per sample.
@@ -102,8 +102,8 @@ type EventRow struct {
 // IngestBundle carries every row set derived from one Sample. Ingest
 // handlers build this once and hand it off to the batcher.
 type IngestBundle struct {
-	Sample  SampleRow
-	Disks   []DiskRow
-	DiskIO  []DiskIORow
-	Procs   []ProcRow
+	Sample SampleRow
+	Disks  []DiskRow
+	DiskIO []DiskIORow
+	Procs  []ProcRow
 }

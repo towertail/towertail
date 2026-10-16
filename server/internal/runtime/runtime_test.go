@@ -8,10 +8,10 @@ import (
 )
 
 type fakeComponent struct {
-	name    string
-	started atomic.Int32
-	stopped atomic.Int32
-	ready   atomic.Bool
+	name     string
+	started  atomic.Int32
+	stopped  atomic.Int32
+	ready    atomic.Bool
 	startErr error
 }
 
