@@ -5,10 +5,32 @@
 Source of truth companion docs:
 
 - [`PLAN.md`](PLAN.md) — overall phase roadmap; this plan is Phase 3.
-- [`backend-split.md`](backend-split.md) — Swift-side `Backend` seam already landed. `RemoteBackend` is the client this server must satisfy.
+- [`backend-split.md`](archive/backend-split.md) (historical) — Swift-side `Backend` seam already landed. `RemoteBackend` is the client this server must satisfy.
 - [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) — existing sampler JSON schema. This plan extends the sampler with **push mode** and a `service` subcommand without breaking the schema.
 
 **Non-goals for this plan.** Full multi-tenant SaaS, billing, SSO, managed cloud operations, Windows client — out of scope; the Postgres "cloud-managed" schema is stubbed so the seam is in place.
+
+<a id="status"></a>
+## Status
+
+Status on 2026-10-15. The phases are in [§10](#10-phased-delivery). Phases B, E and F are in [towertail/sampler](https://github.com/towertail/sampler).
+
+| Phase | Status | Notes |
+|---|---|---|
+| A — Scaffolding and contracts | Done | `server/go.mod`, [`wire.md`](wire.md). |
+| B — Sampler CLI migration | Done | `urfave/cli/v3` with `once`, `stream`, `push`, `service` and the old flags. |
+| C — Server skeleton | Done | Config, runtime, `/healthz`, `/readyz`, `/metrics`, Docker image. |
+| D — ClickHouse ingest | Done | `POST /v1/ingest/samples`, batcher, embedded migrations, rollups. |
+| E — Sampler push mode | Done | `internal/push` in the sampler. |
+| F — Sampler `service` subcommand | Done | `internal/svc` (systemd, launchd) in the sampler. |
+| G — Auth and node CRUD | Done | Tokens, BoltStore, `/v1/auth/*`, `/v1/nodes*`, `/v1/settings`, `/v1/sampler/enroll`, `token issue`. |
+| H — Alerter, events, WS stream | Done | `internal/alerter`, `internal/hub`, `/v1/stream`, `/v1/alerts*`. |
+| I — `RemoteBackend` in Swift | Partial | `RemoteBackend` works. The app selects it only with `TOWERTAIL_REMOTE_URL` and `TOWERTAIL_REMOTE_TOKEN`. There is no mode setting in Preferences and no Keychain storage. |
+| J — History and kill process | Done | `/v1/nodes/{id}/history`, `/v1/control/next`, `/v1/nodes/{id}/kill-process`. |
+| K — Postgres stub | Partial | Migrations and `migrate postgres` work. `postgres_store.go` returns `ErrNotImplemented`. |
+| L — Hardening | Partial | Rate limits, CORS, audit log, load generator, [runbook](server-runbook.md). No nightly load test in CI. |
+| Relay (`cmd/towertail-relay`) | Not started | SSH pull in the tailnet, push to a server. |
+| Alert delivery (`internal/notify`) | Not started | Slack, Discord, PagerDuty, webhooks, SMTP. |
 
 ---
 
@@ -594,13 +616,13 @@ services:
     depends_on:
       clickhouse: { condition: service_healthy }
     environment:
-      TT_CLICKHOUSE_ADDR: clickhouse:9000
-      TT_CLICKHOUSE_DB:   towertail
-      TT_CLICKHOUSE_USER: towertail
-      TT_CLICKHOUSE_PASSWORD_FILE: /run/secrets/ch_password
-      TT_HTTP_ADDR:       :8080
-      TT_CONFIG_PATH:     /var/lib/towertail
-      TT_CLOUD_MANAGED:   "false"
+      TT_CLICKHOUSE__ADDR: clickhouse:9000
+      TT_CLICKHOUSE__DATABASE: towertail
+      TT_CLICKHOUSE__USER: towertail
+      TT_CLICKHOUSE__PASSWORD_FILE: /run/secrets/ch_password
+      TT_HTTP__ADDR:       :8080
+      TT_STORAGE__PATH:    /var/lib/towertail
+      TT_CLOUD__MANAGED:   "false"
     volumes:
       - server-data:/var/lib/towertail
     secrets: [ch_password]
@@ -821,7 +843,7 @@ Runs in CI on every `main` push, time-budgeted to < 3 minutes:
 7. Open WS at `/v1/stream`; assert at least one `sample` frame arrives within 3s.
 8. Tear down compose.
 
-Lives at `server/testdata/e2e/smoke.sh`, invoked by a `make e2e` target.
+Planned at `server/testdata/e2e/smoke.sh`. Not built yet: today `scripts/tests.sh --swift-integration` and `scripts/test.ps1 --remote-integration` run against `server/docker/docker-compose.test.yaml`.
 
 ### 9.6 Swift side (`apps/mac/Tests/`)
 
@@ -950,7 +972,7 @@ Each phase is an independently reviewable, shippable increment. Later phases do 
 ### Phase K — Postgres stub (cloud-managed seam) (≈ 0.5 day)
 
 - `postgres_store.go` compiles; goose migrations for Postgres schema in §3.
-- `TT_CLOUD_MANAGED=true` boots Postgres component; `token issue` etc. mirror to Postgres (but tests can be skipped behind an integration tag).
+- `TT_CLOUD__MANAGED=true` boots Postgres component; `token issue` etc. mirror to Postgres (but tests can be skipped behind an integration tag).
 - `docker-compose --profile cloud up` brings Postgres online.
 
 **DoD:** schema applies cleanly; self-hosted path unchanged and unaware of Postgres.

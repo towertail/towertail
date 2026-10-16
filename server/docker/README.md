@@ -1,43 +1,52 @@
 # server/docker
 
-Self-hosted deployment for the Towertail server. Brings up ClickHouse + the server + Caddy (TLS reverse proxy) with one command.
+Self-hosted deployment for the Towertail server. One command starts ClickHouse, the server, and Caddy (a TLS reverse proxy).
 
 ## Quick start
 
-```bash
-cp secrets/ch_password.example secrets/ch_password
-echo 'a-strong-random-string' > secrets/ch_password
-docker compose up -d --build
-```
-
-Server will be reachable at `http://localhost:8080` (direct) and `https://towertail.local` (Caddy, edit your `/etc/hosts` to point at 127.0.0.1). Issue a first user token:
+Run these commands in `server/docker`:
 
 ```bash
-docker compose exec server towertail-server token issue --kind=user --label=me
+openssl rand -hex 24 > secrets/ch_password
+docker compose up -d
 ```
 
-The raw token is printed on stdout — hand it to the Mac client.
+Compose pulls `ghcr.io/towertail/server:${TOWERTAIL_VERSION:-latest}`. To build the image from source, add `--build`.
+
+The server is at `http://localhost:8080` (direct). Caddy also serves it on port 80 and at `https://towertail.local`. For `towertail.local`, add `127.0.0.1 towertail.local` to `/etc/hosts`. Caddy signs that certificate with its own local CA.
+
+Make the first user token. The server keeps its config database open, so stop it first:
+
+```bash
+docker compose stop server
+docker compose run --rm server token issue --kind=user --label=me
+docker compose start server
+```
+
+The command writes the raw token to stdout. Give it to the desktop app (refer to [`../README.md`](../README.md#connect-the-mac-app)).
 
 ## Cloud-managed profile
 
 ```bash
-cp secrets/pg_password.example secrets/pg_password
+openssl rand -hex 24 > secrets/pg_password
 docker compose --profile cloud up -d
 ```
 
-This starts Postgres alongside the rest and flips `TT_CLOUD_MANAGED=true` so the server's Postgres component activates.
+This profile also starts Postgres. It does not enable cloud-managed mode in the server. To enable it, set `TT_CLOUD__MANAGED=true` and `TT_POSTGRES__DSN` on the `server` service (for example in a `docker-compose.override.yaml`).
 
 ## Directory layout
 
-- `Dockerfile` — builds the `towertail-server` distroless image.
-- `docker-compose.yaml` — stack definition. Postgres is behind the `cloud` profile.
-- `clickhouse/` — ClickHouse server-side config snippets.
-- `postgres/init.sql` — runs once on Postgres first boot (cloud-managed).
-- `caddy/Caddyfile` — TLS reverse proxy.
-- `secrets/` — password files. `.gitignore`d; ship only `.example` variants.
+- `Dockerfile`: builds the distroless `towertail-server` image. The build context is `server/`.
+- `docker-compose.yaml`: the stack. Postgres is in the `cloud` profile.
+- `docker-compose.test.yaml`: the stack for the integration tests (`scripts/tests.sh --docker-up`).
+- `clickhouse/`: ClickHouse config files.
+- `postgres/init.sql`: runs one time, when Postgres starts on an empty volume (cloud-managed).
+- `caddy/Caddyfile`: the TLS reverse proxy.
+- `secrets/`: password files. Git ignores them. Only the `.example` files are in the repository.
 
 ## Troubleshooting
 
-- `towertail-server` logs: `docker compose logs -f server`.
-- ClickHouse not ready: `docker compose exec clickhouse clickhouse-client -q "SELECT 1"`.
-- Rebuild after code change: `docker compose up -d --build server`.
+- Server logs: `docker compose logs -f server`.
+- Check ClickHouse: `docker compose exec clickhouse sh -c 'clickhouse-client --password "$(cat /run/secrets/ch_password)" -q "SELECT 1"'`.
+- Check the server: `curl http://localhost:8080/readyz` returns `ready` when ClickHouse is connected.
+- Build again after a code change: `docker compose up -d --build server`.

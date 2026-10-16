@@ -1,5 +1,7 @@
 # Towertail — Frontend Architecture (Swift/SwiftUI)
 
+> Historical. Not kept up to date.
+
 A focused UI blueprint for the macOS 14+ menu bar app. The product is a single popover panel that stacks compact **server cards**, each showing CPU / memory / disk / network with sparklines and threshold-tinted numbers. It must feel as tight and native as exelban/Stats or iStat Menus.
 
 ---

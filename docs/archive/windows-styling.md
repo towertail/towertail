@@ -1,5 +1,7 @@
 # Towertail WinUI — Styling & Polish Plan
 
+> Historical. Not kept up to date.
+
 Status: proposal. Captures the research done 2026-04-23 on bringing the WinUI 3 client closer to the Mac SwiftUI version's visual quality. Nothing in here is committed yet; pick what's worth doing and in what order.
 
 Target stack (unchanged): WinUI 3 + .NET 9 + Windows App SDK 1.6 on Windows 10 1809+ / Windows 11.
@@ -318,6 +320,6 @@ Everything else (LiveCharts rc5, H.NotifyIcon, CommunityToolkit.Mvvm, Serilog) i
 - [Fluent 2 design guidelines — Mica](https://learn.microsoft.com/en-us/windows/apps/design/style/mica)
 - [Fluent 2 design guidelines — Typography](https://learn.microsoft.com/en-us/windows/apps/design/signature-experiences/typography)
 - [LiveCharts2 WinUI docs](https://livecharts.dev/docs/winui/2.0.0-rc4/gallery)
-- [Windows Community Toolkit — SettingsControls](https://learn.microsoft.com/en-us/dotnet/communitytoolkit/windows/settingscontrols/)
+- [Windows Community Toolkit — SettingsControls](https://learn.microsoft.com/en-us/dotnet/communitytoolkit/windows/settingscontrols/settingscard)
 - [WinUI.TableView GitHub](https://github.com/w-ahmad/WinUI.TableView)
 - [Segoe Fluent Icons full catalog](https://learn.microsoft.com/en-us/windows/apps/design/style/segoe-fluent-icons-font)

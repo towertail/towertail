@@ -41,18 +41,23 @@ comes up, then heals when CH returns.
 ## 2. First-boot bootstrap
 
 ```bash
-docker compose -f server/docker/docker-compose.yaml up -d
-docker compose exec server towertail-server migrate     # Postgres only
-docker compose exec server towertail-server token issue --kind=admin --label=ops
+cd server/docker
+docker compose up -d
+docker compose stop server        # serve keeps the Bolt file locked
+docker compose run --rm server token issue --kind=admin --label=ops
+docker compose run --rm server migrate postgres   # cloud-managed mode only
+docker compose start server
 ```
 
 Save the printed token — it's shown **once**, not stored in plaintext.
 Subsequent Mac clients get `kind=user` tokens via the same command.
+`token issue` cannot run while `serve` runs: it waits 3 s for the Bolt
+lock and then fails with `timeout`.
 
 Sampler tokens are bound to a node; mint them with:
 
 ```bash
-towertail-server token issue --kind=sampler --node-id=<uuid> --label=host-xyz
+docker compose run --rm server token issue --kind=sampler --node-id=<uuid> --label=host-xyz
 ```
 
 ---
@@ -91,7 +96,7 @@ common cause is the `ch_password` secret file mismatching the
 
 Symptom: sampler push logs flood with HTTP 413 / 400 from the server.
 
-Cause 1 — body over `TT_INGEST_MAX_BODY_BYTES` (default 16 MiB). Lower
+Cause 1 — body over `TT_INGEST__MAX_BODY_BYTES` (default 16 MiB). Lower
 the sampler `--batch` size or raise the server limit.
 
 Cause 2 — sampler version mismatch broke schema. Check `wire.v` in the
@@ -108,8 +113,8 @@ app `Logger` output.
 
 ### Rate-limit 429s
 
-The generic limiter is per-IP at `TT_HTTP_RATE_LIMIT_RPS` (default 100).
-The ingest limiter is separate at `TT_HTTP_INGEST_RATE_LIMIT_RPS`
+The generic limiter is per-IP at `TT_HTTP__RATE_LIMIT_RPS` (default 100).
+The ingest limiter is separate at `TT_HTTP__INGEST_RATE_LIMIT_RPS`
 (default 1000). If the Mac app gets 429s, raise the generic; if samplers
 get them, raise ingest.
 
@@ -178,7 +183,7 @@ is the only record of *who killed PID 1337 on prod-db-3*.
 - Passwords use argon2id via `auth.HashPassword` — no cost-of-living
   fallback, bump `argon2Time` if you need to harden further.
 - CORS defaults to `*`. In production set
-  `TT_HTTP_CORS_ALLOW_ORIGINS='["https://app.towertail.com"]'` so
+  `TT_HTTP__CORS_ALLOW_ORIGINS='["https://app.towertail.com"]'` so
   browsers can't call the API from anywhere.
 - Bearer tokens are required on *every* route except `/v1/auth/login`,
   `/healthz`, `/readyz`, `/metrics`.

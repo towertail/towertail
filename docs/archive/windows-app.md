@@ -1,3 +1,5 @@
+> Historical. Not kept up to date.
+
 Towertail Windows Port — Implementation Plan
 
 1. Context

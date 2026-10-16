@@ -1,6 +1,6 @@
 # apps/windows
 
-Windows WinUI 3 client, functional parity with the Mac client.
+Windows WinUI 3 client, functional parity with the Mac client. There is no release yet. Build it from source.
 
 ## Prerequisites
 
@@ -25,7 +25,7 @@ dotnet run --project apps\windows\Towertail.WinUI -c Debug
 
 ## Project layout
 
-See `docs/windows-app.md` §3 — directory structure mirrors `apps/mac/Sources/` file-for-file.
+See [`docs/archive/windows-app.md`](../../docs/archive/windows-app.md) §3 (historical) — directory structure mirrors `apps/mac/Sources/` file-for-file.
 
 ## Where things live
 
@@ -56,4 +56,4 @@ Contract-test fixture shared with Swift + Go: `sample-v1.json` from the sampler 
 
 The schema carries a top-level `platform.{darwin,windows,...}` envelope so a `settings.json`
 copied between Mac and Windows round-trips cleanly. Mac v1.1 reads/writes the same form.
-See `docs/windows-app.md` §4.
+See [`docs/archive/windows-app.md`](../../docs/archive/windows-app.md) §4 (historical).

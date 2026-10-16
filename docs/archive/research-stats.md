@@ -1,5 +1,7 @@
 # Stats (exelban) — Research for Towertail Design
 
+> Historical. Not kept up to date.
+
 Source code observed in `github.com/exelban/stats` (Swift/Cocoa, AppKit-based, ~38k stars). Primary references: the README screenshots `menus?v2.3.2.png` and `popups?v2.3.2.png` hosted on the author's S3, the marketing page at `mac-stats.com`, and the actual implementation in `Kit/extensions.swift`, `Kit/types.swift`, `Kit/constants.swift`, `Kit/Widgets/*.swift`, and `Modules/*/popup.swift`.
 
 ## 1. Visual language

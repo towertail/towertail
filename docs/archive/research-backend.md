@@ -1,5 +1,7 @@
 # Towertail Backend Research: Data Collection & Storage
 
+> Historical. Not kept up to date.
+
 Blueprint for the backend layer of Towertail — a SwiftUI menu-bar app polling remote servers over Tailscale SSH at 10-second cadence, rendering per-server cards with CPU / memory / disk / network and sparklines over a rolling 24-hour window.
 
 ## 1. Remote metrics collection via SSH

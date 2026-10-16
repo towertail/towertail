@@ -2,28 +2,31 @@
 
 > **Elevator pitch.** A beautiful, Stats-style macOS menu bar app — but instead of watching your own Mac's CPU/GPU/SSD, it watches a set of **remote servers** over your Tailscale network via SSH. One icon, one compact panel, a stack of server cards showing CPU / Memory / Disk / Network with live sparklines, threshold-tinted numbers, color-adaptive menu bar glyph, and 7 days of history retained per host. Native SwiftUI, Developer-ID signed, launch-at-login, notifications on threshold breach.
 
-This document is the single source of truth for building v1. It consolidates the research reports in `docs/`:
+This document is the single source of truth for building v1. It consolidates the research reports in `docs/archive/` (historical, not kept up to date):
 
-- [`research-stats.md`](research-stats.md) — visual language analysis of exelban/Stats and mac-stats.com, palette derivation.
-- [`research-backend.md`](research-backend.md) — SSH transport, Tailscale, SQLite schema, cadence, notifications. *(The host-side probe design in that doc is superseded by [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) — see §4 below.)*
-- [`research-frontend.md`](research-frontend.md) — MenuBarExtra scaffolding, SwiftUI Charts sparklines, `@Observable` state, preferences.
+- [`research-stats.md`](archive/research-stats.md) — visual language analysis of exelban/Stats and mac-stats.com, palette derivation.
+- [`research-backend.md`](archive/research-backend.md) — SSH transport, Tailscale, SQLite schema, cadence, notifications. *(The host-side probe design in that doc is superseded by [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) — see §4 below.)*
+- [`research-frontend.md`](archive/research-frontend.md) — MenuBarExtra scaffolding, SwiftUI Charts sparklines, `@Observable` state, preferences.
 - [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) — Go sampler binary spec: JSON schema, build matrix, bootstrap handshake, permissions.
+
+The product direction (open source, cloud, pricing, repositories) is in the [Towertail Vision](https://claude.ai/code/artifact/df9188d0-6e5b-4abf-8962-791c9df5086a) doc (private).
 
 Reference imagery: see the screenshots on the [Stats GitHub page](https://github.com/exelban/stats) and the [mac-stats.com](https://mac-stats.com) site.
 
 ### Repository layout
 
-Top-level folders, one per build target + shared contract + docs:
+Top-level folders, one per build target, plus docs:
 
 ```
 towertail/
 ├── apps/
-│   ├── mac/       # Phase 1 — SwiftUI macOS menu-bar app (Xcode project, v1 shipping target)
-│   ├── windows/   # Phase 2 — WinUI 3 / .NET 9 port (see docs/windows-app.md); Tier 1+2 tests green
+│   ├── mac/       # Phase 1 — SwiftUI macOS menu-bar app (released)
+│   ├── windows/   # Phase 2 — WinUI 3 / .NET 9 app (build from source)
 │   └── (shared/)  # speculative; create only when something is truly shared
 ├── samplers.lock  # pins the towertail/sampler release (7 target triples) that the apps bundle
-├── server/        # Phase 3 — Go control-plane service (ingest, store, alert), Dockerised, self-hostable
-└── docs/          # this doc, research notes, design.pen, screenshots/
+├── server/        # Phases 3 and 4 — Go server (ingest, store, alert), Docker image on GHCR, self-hostable
+├── scripts/       # build, fetch-samplers, test and winvm scripts
+└── docs/          # this doc, server-plan.md, wire.md, design.pen, screenshots/, archive/
 ```
 
 Each folder has its own toolchain and CI pipeline; they never share a build graph. The sampler (the Go collector) is in its own repo, [towertail/sampler](https://github.com/towertail/sampler). The apps get its binaries from the release that `samplers.lock` pins. See [Roadmap: phases](#roadmap-phases) for when each turns on.
@@ -37,10 +40,12 @@ The lines between these phases are deliberately sharp — each is a separately s
 
 | Phase | Scope | Components |
 |---|---|---|
-| **Phase 1 — Local Mac client** *(shipping)* | A single user watches their own fleet from a menu bar, all state local. No server, no account, no cloud. | `apps/mac`, [towertail/sampler](https://github.com/towertail/sampler) |
-| **Phase 2 — Windows client** *(active; feature-complete, polish + MSIX pending)* | Same product on Windows. Shared wire format with the sampler and the self-hosted server; UI is a WinUI 3 / .NET 9 / C# 13 build. See [`windows-app.md`](windows-app.md). | + `apps/windows` (WinUI app, xUnit Tier 1 + Tier 2 integration tests against the real Go server with `TT_CLICKHOUSE__DISABLED=true` for the no-Docker dev loop) |
-| **Phase 3 — Self-hosted server** | A company runs a Go service in their own network. Samplers ship samples to the server (not to a desktop). Desktop clients become read-only consoles talking to the server. Alert rules live on the server. | + `server/` |
-| **Phase 4 — Managed cloud** | We run the server. Multi-tenant, auth, billing. Same desktop client, a URL+key away from either a customer's self-hosted server or ours. | infrastructure repo (separate), no new top-level folder |
+| **Phase 1 — Local Mac client** *(released)* | A single user watches their own fleet from a menu bar, all state local. No server, no account, no cloud. | `apps/mac`, [towertail/sampler](https://github.com/towertail/sampler) |
+| **Phase 2 — Windows client** *(feature-complete; build from source, release later)* | Same product on Windows. Shared wire format with the sampler and the self-hosted server; UI is a WinUI 3 / .NET 9 / C# 13 build. See [`windows-app.md`](archive/windows-app.md) (historical). | + `apps/windows` (WinUI app, xUnit Tier 1 + Tier 2 integration tests against the real Go server with `TT_CLICKHOUSE__DISABLED=true` for the no-Docker dev loop) |
+| **Phase 3 — Self-hosted server** *(in progress; see [status](server-plan.md#status))* | A company runs a Go service in their own network. Samplers ship samples to the server (not to a desktop). Desktop clients become read-only consoles talking to the server. Alert rules live on the server. | + `server/` |
+| **Phase 4 — Managed cloud** | We run the server. Multi-tenant, auth, billing. Same desktop client, a URL+key away from either a customer's self-hosted server or ours. | same `server/` + private add-ons in `towertail/cloud`, no new top-level folder |
+
+Phases 3 and 4 share one code base. The cloud runs the same Go server with private add-ons (push, SMS, billing, status pages). Thus we finish the server once, then host it. This order comes from the Vision doc.
 
 **Guardrails.**
 
@@ -137,7 +142,7 @@ Implemented as the same `ServerCardView` with a `@Environment(\.cardDensity)` sw
 
 ### 2.4 Color palette (semantic, auto light/dark)
 
-Mapped to `NSColor.system*` for free HIG conformance (see research-stats.md §5 for provenance).
+Mapped to `NSColor.system*` for free HIG conformance (see archive/research-stats.md §5 for provenance).
 
 | Token             | Light     | Dark       | Used for                                     |
 | ----------------- | --------- | ---------- | -------------------------------------------- |
@@ -236,7 +241,7 @@ All numbers use `.monospacedDigit()` so columns don't jitter across ticks.
 
 ### 3.2 Module layout
 
-Two sibling trees at the repo root. The Swift app consumes the Go sampler as a build artifact, never as source.
+Two sibling trees at the repo root. The Swift app consumes the Go sampler as a build artifact, never as source. The tree below is the v1 design. For the current tree, refer to `apps/mac/` and [`CLAUDE.md`](../CLAUDE.md).
 
 ```
 towertail/
@@ -290,17 +295,16 @@ towertail/
 │   │   ├── StoreTests/
 │   │   └── ThresholdTests/
 │   ├── Resources/
-│   │   └── samplers/                          # populated by Packaging/build-samplers.sh
+│   │   └── samplers/                          # copied from dist/samplers/ (scripts/fetch-samplers.sh)
 │   │       ├── manifest.json                # sha256 per triple, sampler semver
 │   │       ├── linux-amd64/towertail-sampler
 │   │       ├── linux-arm64/towertail-sampler
 │   │       ├── linux-armv7/towertail-sampler
 │   │       ├── darwin-arm64/towertail-sampler
-│   │       └── darwin-amd64/towertail-sampler
-│   └── Packaging/
-│       ├── build-samplers.sh                  # gets the pinned sampler release, writes Resources/samplers/
-│       ├── create-dmg.sh
-│       └── entitlements.plist
+│   │       ├── darwin-amd64/towertail-sampler
+│   │       ├── windows-amd64/towertail-sampler.exe
+│   │       └── windows-arm64/towertail-sampler.exe
+│   └── project.yml                          # XcodeGen spec
 ```
 
 The sampler (Go, the remote collector) is in its own repo, [towertail/sampler](https://github.com/towertail/sampler). See [wire-format.md](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) §9 for its source tree.
@@ -552,11 +556,11 @@ Storage: scalars → `@AppStorage`. Structured data (`servers.json`, `thresholds
 
 ## 8. Packaging & distribution
 
-- **Signing**: Developer ID Application cert, hardened runtime, no sandbox. Entitlements: `com.apple.security.network.client`.
+- **Signing**: Developer ID Application cert, hardened runtime, no sandbox. Entitlements: `com.apple.security.network.client`. Local builds use the Developer ID cert when it is in the keychain, else ad-hoc signing.
 - **Notarization**: `xcrun notarytool submit` → `xcrun stapler staple`. CI does this in `.github/workflows/release.yml`.
-- **DMG**: `create-dmg` with a background image showing drag-to-Applications.
+- **Download**: the release asset is `Towertail.zip` on GitHub Releases. There is no DMG. A Homebrew cask (`towertail/tap/towertail`) comes with the first public release.
 - **Release**: each push to `main` that changes the Mac app makes a release. The tag is the last `v*` tag with the patch number plus one. A higher `MARKETING_VERSION` in `project.yml` wins, for minor or major bumps. Local builds are `-dev`.
-- **Auto-update**: no dependency. `System/Updater.swift` reads the latest GitHub release, downloads `Towertail.zip`, and checks the code signature against our team ID (`Q56WK6TB88`) and notarization. It swaps the bundle when the app is not in use, and restores the old bundle if the new one does not start. Dev builds only report new releases.
+- **Auto-update**: no dependency. `System/Updater.swift` reads the recent GitHub releases and picks the newest `vX.Y.Z` release that is not a draft or pre-release and has `Towertail.zip`. Server releases (`server/v*`) do not match. It downloads `Towertail.zip`, and checks the code signature against our team ID (`Q56WK6TB88`) and notarization. It swaps the bundle when the app is not in use, and restores the old bundle if the new one does not start. Dev builds only report new releases.
 - **Launch at login**: `SMAppService.mainApp.register()`.
 - **Crash reports**: opt-in in General pane, ships minidumps to a Cloudflare Workers endpoint or just `os_log` to Console — decide in Milestone 5.
 

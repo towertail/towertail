@@ -1,45 +1,74 @@
 # towertail
 
-A compact macOS menu-bar app for keeping an eye on a handful of remote servers — typically over a Tailscale network. One panel, one card per host, live CPU / memory / disk / network with sparklines and threshold-tinted numbers. Stats.app vibes, but for your fleet instead of your laptop.
+Towertail monitors a small fleet of remote servers from your menu bar (macOS) or system tray (Windows). It usually connects over a Tailscale network. One panel shows one card for each host, with live CPU, memory, disk, and network values, sparklines, and threshold colors. It is like Stats.app, but for your servers instead of your laptop.
 
 Inspired by [exelban/Stats](https://github.com/exelban/stats) and [mac-stats.com](https://mac-stats.com/).
 
 ## How it works
 
-The Mac app bundles a small Go collector (`towertail-sampler`) for five target triples. On first connect to a server it uploads the right binary to `~/.towertail/towertail-sampler`, then polls it over SSH on a configurable cadence (default 30s) and reads back one JSON sample per poll. Samples land in a local SQLite store; the popover and per-host Full View render directly from there.
+The app bundles a small Go collector, `towertail-sampler`, for 7 target triples. On the first connection to a host, the app uploads the correct binary to `~/.towertail/towertail-sampler`. Then it runs the sampler over SSH at a configurable interval (default 30 s) and reads one JSON sample for each poll. The app keeps the samples in a local SQLite database. The popover and the Full View of each host read from it.
 
-Hosts are discovered from `tailscale status --json` and/or added manually. Credentials come from your existing `~/.ssh/config`; the app shells out to `/usr/bin/ssh` with `ControlMaster=auto`, so Tailscale MagicDNS and your normal SSH setup "just work". No daemon, no agent, no listening socket on the host.
+The app finds hosts with `tailscale status --json`, or you add them manually. It uses your `~/.ssh/config` and runs `/usr/bin/ssh` with `ControlMaster=auto`, so Tailscale MagicDNS and your usual SSH setup work. The host needs no daemon, no agent, and no open port.
+
+The optional self-hosted server (`server/`) receives samples from the hosts, keeps the history in ClickHouse, and checks alerts. The apps can show its data instead of their local data.
+
+## Status
+
+| Component | Folder | Status |
+|---|---|---|
+| Mac app | [`apps/mac`](apps/mac/) | Released. Signed, notarized, and updates automatically. |
+| Windows app | [`apps/windows`](apps/windows/) | Build from source. No release yet. |
+| Server | [`server`](server/) | Self-host with Docker. Work in progress (refer to the [status](docs/server-plan.md#status)). |
+| Sampler | [towertail/sampler](https://github.com/towertail/sampler) | Released. The apps bundle the release that [`samplers.lock`](samplers.lock) pins. |
+
+## Install
+
+### Mac
+
+Requires macOS 14 Sonoma or later (Apple silicon or Intel).
+
+1. Download `Towertail.zip` from the latest release on [GitHub Releases](https://github.com/towertail/towertail/releases/latest).
+2. Unzip it and move `Towertail.app` to `/Applications`.
+3. Open it. Look for the `server.rack` icon in the menu bar.
+
+The app installs new releases automatically. A Homebrew cask (`brew install --cask towertail/tap/towertail`) comes with the first public release.
+
+### Windows
+
+There is no release yet. Build the app from source. Refer to [`apps/windows/README.md`](apps/windows/README.md).
+
+### Server
+
+Refer to [`server/README.md`](server/README.md). The image is `ghcr.io/towertail/server`.
 
 ## Repository layout
 
 ```
 towertail/
 ├── apps/
-│   ├── mac/      # Phase 1 — SwiftUI macOS menu-bar app (v1 shipping target)
-│   └── windows/  # Phase 2 — WinUI 3 / .NET 9 client
-├── server/       # Phase 3 — self-hostable Go control-plane service
-├── scripts/      # build.sh, build.app.sh, fetch-samplers.sh
+│   ├── mac/      # Phase 1 — SwiftUI macOS menu-bar app
+│   └── windows/  # Phase 2 — WinUI 3 / .NET 9 tray app
+├── server/       # Phases 3 and 4 — Go server, Docker deployment
+├── scripts/      # build, fetch-samplers, test, and winvm scripts
 ├── samplers.lock # the towertail/sampler release that the apps bundle
-└── docs/         # PLAN.md (source of truth), research notes, design.pen, screenshots/
+└── docs/         # PLAN.md, server-plan.md, wire.md, screenshots/, archive/
 ```
 
-The sampler (the Go collector on each host) is in its own repository: [towertail/sampler](https://github.com/towertail/sampler). The apps bundle the binaries of the release that `samplers.lock` pins. See [PLAN.md § Roadmap: phases](docs/PLAN.md#roadmap-phases) for the phases.
+See [PLAN.md § Roadmap: phases](docs/PLAN.md#roadmap-phases) for the phases.
 
-## Requirements
+## Build the Mac app
 
-- macOS 14 Sonoma or later (Apple silicon or Intel)
-- Xcode 15+ with command-line tools
-- [XcodeGen](https://github.com/yonaskolb/XcodeGen) — `brew install xcodegen`
-- Go 1.24+ (for building the sampler)
-- Remote hosts reachable over SSH; Tailscale recommended but not required
+Requirements:
 
-## Build
+- macOS 14 or later, Xcode 15 or later with the command-line tools
+- [XcodeGen](https://github.com/yonaskolb/XcodeGen): `brew install xcodegen`
+- Go 1.25 or later, only for the server or for a sampler build from a local clone
 
-From the repo root:
+From the repository root:
 
 ```bash
-scripts/build.sh                # get samplers + signed Debug app, install to /Applications, restart
-scripts/build.sh Release        # same, Release build
+scripts/build.sh                # get the samplers, build the Debug app, install it in /Applications, restart it
+scripts/build.sh Release        # the same, Release build
 ```
 
 Individual steps:
@@ -48,150 +77,44 @@ Individual steps:
 scripts/fetch-samplers.sh               # all 7 triples → dist/samplers/<triple>/
 scripts/fetch-samplers.sh darwin-arm64  # one triple
 SAMPLER_DIR=../sampler scripts/fetch-samplers.sh darwin-arm64  # build from a local sampler clone
-scripts/build.app.sh                    # app; runs fetch-samplers.sh first
+scripts/build.app.sh                    # the app only; runs fetch-samplers.sh first
+scripts/build.app.sh Debug --open       # build and open the app
 ```
 
 The sampler binaries come from the [towertail/sampler](https://github.com/towertail/sampler) release that `samplers.lock` pins. The script checks each sha256.
 
-The app bundle ends up at `apps/mac/build/Build/Products/<Configuration>/Towertail.app`. Builds sign with the Developer ID cert when it is in the keychain, else ad-hoc.
+The app is at `apps/mac/build/Build/Products/<Configuration>/Towertail.app`. A build signs with the Developer ID certificate when it is in the keychain. Otherwise, it uses ad-hoc signing. `scripts/build.sh` also installs the app in `/Applications`.
 
-## Run
-
-```bash
-open apps/mac/build/Debug/Towertail.app
-```
-
-It runs as a menu-bar only app (`LSUIElement`) — look for the `server.rack` glyph in the status bar. Click to open the popover; ⌘, opens Preferences to add servers, tune thresholds, pick a sampling cadence, and manage launch-at-login.
+The app runs in the menu bar only (`LSUIElement`). Click the icon to open the popover. Press ⌘, to open Preferences, where you add servers, set thresholds, select the sample interval, and set launch at login.
 
 ## Test
 
 ```bash
-# Swift tests
-xcodebuild -project apps/mac/Towertail.xcodeproj -scheme Towertail test
+scripts/tests.sh                    # Swift unit tests and Go server unit tests
+scripts/tests.sh --help             # all flags (integration tests, Docker stack, sampler)
 
-# Go server tests
+# The same, one at a time
+xcodebuild -project apps/mac/Towertail.xcodeproj -scheme Towertail test
 cd server && go test ./...
 ```
 
-## Sampler — standalone
+The Windows tests run with `scripts/test.ps1` (refer to [`apps/windows/README.md`](apps/windows/README.md#tests)).
 
-The sampler runs fine on its own if you want to see what a sample looks like. In a clone of [towertail/sampler](https://github.com/towertail/sampler):
+## Sampler
 
-```bash
-go run ./cmd/sampler --once          # one JSON sample
-go run ./cmd/sampler --interval 1s   # NDJSON stream
-go run ./cmd/sampler --version
-go run ./cmd/sampler --self-check
-```
-
-Schema and flags are documented in [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md).
-
-### Sample output
-
-One JSON object per sample. Newline-delimited in streaming mode. Fields are stable and versioned via the top-level `v` — bump on breaking changes.
-
-```json
-{
-  "v": 1,
-  "ts": "2026-04-20T19:42:07.103Z",
-  "host": {
-    "name": "db-primary",
-    "os": "linux",
-    "arch": "arm64",
-    "kernel": "6.6.22-1-arm64",
-    "uptime_s": 1048273,
-    "sampler": "0.1.0+abc1234",
-    "machine_id": "24c63e84-ed40-5734-bf08-72572b9bea7d"
-  },
-  "cpu": {
-    "pct": 42.3,
-    "load_1": 1.24,
-    "load_5": 0.98,
-    "load_15": 0.81,
-    "cores": 8
-  },
-  "mem": {
-    "used": 5814763520,
-    "total": 16777216000
-  },
-  "swap": {
-    "used": 0,
-    "total": 0
-  },
-  "disks": [
-    { "mount": "/",     "fs": "ext4", "used": 42949672960, "total": 107374182400 },
-    { "mount": "/data", "fs": "xfs",  "used": 17179869184, "total": 53687091200 }
-  ],
-  "disk_io": {
-    "read_bps":   4194304,
-    "write_bps":  1048576,
-    "read_cum":   2800479338496,
-    "write_cum":  1525421113344
-  },
-  "net": {
-    "rx_bps": 3355443,
-    "tx_bps": 838860,
-    "rx_cum": 198723849203,
-    "tx_cum":  48239874321
-  },
-  "procs": {
-    "root": false,
-    "top_n": 20,
-    "total": 312,
-    "visible": 311,
-    "items": [
-      { "pid": 812, "ppid": 1, "name": "postgres", "cmd": "postgres: main", "user": "postgres", "cpu_pct": 42.7, "rss": 536870912, "threads": 6, "state": "S", "read_bytes": 58720256, "write_bytes": 12582912 },
-      { "pid": 914, "ppid": 1, "name": "node",     "cmd": "node /app/server.js", "user": "app", "cpu_pct": 18.3, "rss": 430080000, "threads": 12, "state": "S" }
-    ]
-  },
-  "errors": []
-}
-```
-
-### Schema
-
-| Field | Type | Notes |
-|---|---|---|
-| `v` | int | Schema version. App refuses samples with `v > appKnownV`. |
-| `ts` | string | RFC 3339, millisecond precision, UTC (`Z`). Set by the host. |
-| `host.name` | string | Hostname. |
-| `host.os` | string | `linux`, `darwin`, etc. |
-| `host.arch` | string | `amd64`, `arm64`, `arm`. |
-| `host.kernel` | string | `uname -r`. |
-| `host.uptime_s` | int | Seconds since boot. |
-| `host.sampler` | string | `<semver>+<short-sha>`. |
-| `host.machine_id` | string? | `/etc/machine-id` (Linux) or `IOPlatformUUID` (Darwin). Omitted when unavailable. |
-| `cpu.pct` | float | Aggregate across cores, 0–100. |
-| `cpu.load_1` / `load_5` / `load_15` | float | Load averages. |
-| `cpu.cores` | int | Logical core count. |
-| `mem.used` / `mem.total` | int | Bytes. `used` excludes cached/inactive. |
-| `swap.used` / `swap.total` | int | Bytes. Both `0` when no swap. |
-| `disks[]` | array? | Per-mount `{mount, fs, used, total}` in bytes. Omitted entirely when `--no-disk`. |
-| `disk_io.read_bps` / `write_bps` | int | System-wide, short-window rate. |
-| `disk_io.read_cum` / `write_cum` | int | Lifetime byte counters. |
-| `net.rx_bps` / `tx_bps` | int | Sum across non-loopback interfaces, short-window delta. |
-| `net.rx_cum` / `tx_cum` | int | Lifetime counters; decrement signals a reboot. |
-| `procs.root` | bool | `true` when sampler ran as euid 0 (full cross-user visibility). |
-| `procs.top_n` | int | Requested cap. `0` = unlimited. |
-| `procs.total` | int | Full process count on the host. |
-| `procs.visible` | int | Processes the sampler could inspect. |
-| `procs.items[]` | array | Union of top-N by `cpu_pct` and top-N by `rss`, deduped, CPU-desc. |
-| `procs.items[].pid` / `ppid` | int | |
-| `procs.items[].name` / `cmd` / `user` / `state` | string | Best-effort; omitted if kernel denies. |
-| `procs.items[].cpu_pct` | float | `top(1)` convention — 0..100×cores. |
-| `procs.items[].rss` | int | Resident set size in bytes. |
-| `procs.items[].threads` | int | |
-| `procs.items[].read_bytes` / `write_bytes` | int? | Lifetime per-proc disk I/O. Linux only, SSH user's own procs without `CAP_SYS_PTRACE`; always omitted on macOS. |
-| `errors[]` | string[] | Non-fatal collector errors. |
-
-See [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) §4 for full field semantics, permission notes, and degradation rules.
+The sampler (the Go collector on each host) is in its own repository: [towertail/sampler](https://github.com/towertail/sampler). Its README shows how to run it alone. The JSON schema and the flags are in [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md).
 
 ## Docs
 
 - [`docs/PLAN.md`](docs/PLAN.md) — product decisions, visual design, architecture, milestones.
-- [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) (towertail/sampler) — Go sampler spec: JSON schema, build matrix, bootstrap handshake.
-- [`docs/research-stats.md`](docs/research-stats.md), [`research-backend.md`](docs/research-backend.md), [`research-frontend.md`](docs/research-frontend.md) — background research.
-- [`docs/screenshots/`](docs/screenshots/) — current Pencil design exports.
+- [`docs/server-plan.md`](docs/server-plan.md) — server design and status. [`docs/wire.md`](docs/wire.md) — server API contract. [`docs/server-runbook.md`](docs/server-runbook.md) — server operation.
+- [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) (towertail/sampler) — sampler spec: JSON schema, build matrix, bootstrap handshake.
+- [`docs/archive/`](docs/archive/) — historical research and plans. Not kept up to date.
+- [`docs/screenshots/`](docs/screenshots/) — Pencil design exports.
+
+## Contributing
+
+Refer to [CONTRIBUTING.md](https://github.com/towertail/.github/blob/main/CONTRIBUTING.md). Before we can merge your first pull request, you must sign the [CLA](https://github.com/towertail/.github/blob/main/CLA.md). A bot asks you on the pull request.
 
 ## License
 
