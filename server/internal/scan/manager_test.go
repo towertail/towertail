@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"sync"
@@ -123,6 +124,58 @@ func TestManagerRequestConflict(t *testing.T) {
 	}
 	if _, err := f.m.Request(ctx, f.org, f.node, wire.DiskScanRequest{MaxDepth: -1}); !errors.Is(err, ErrBadInput) {
 		t.Fatalf("want ErrBadInput, got %v", err)
+	}
+}
+
+func TestRefreshes(t *testing.T) {
+	for _, tc := range []struct {
+		scope, root string
+		want        bool
+	}{
+		{"~", "/Users/dev/Library", true},
+		{"~", "~/Library", true},
+		{"~", `C:\Users\dev\AppData`, true},
+		{"~", "", false},
+		{"~", "Library", false},
+		{"/", "/var", true},
+		{"/home/dev", "/home/dev/x", true},
+		{"/home/dev/", "/home/dev/x", true},
+		{"/home/dev", "/home/devx", false},
+		{"/home/dev", "/home/dev", false},
+		{"/home/dev", "/srv", false},
+		{`C:\Users\dev`, `c:\users\dev\Downloads`, true},
+		{`C:\`, `C:\Users`, true},
+		{"relative", "relative/x", false},
+	} {
+		if got := refreshes(tc.scope, tc.root); got != tc.want {
+			t.Errorf("refreshes(%q, %q) = %v, want %v", tc.scope, tc.root, got, tc.want)
+		}
+	}
+}
+
+func TestStoreRefreshFields(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	zero := 0.0
+	j, err := f.m.Request(ctx, f.org, f.node, wire.DiskScanRequest{Root: "/home/dev/x", MinBytes: 1000, MinFrac: &zero, RefreshOf: "~"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := f.get(t, j.ID)
+	if got.RefreshOf != "~" || got.MinFrac == nil || *got.MinFrac != 0 {
+		t.Fatalf("job = %+v", got)
+	}
+	if w := got.Wire(); w.RefreshOf != "~" || w.MinFrac == nil {
+		t.Fatalf("wire = %+v", w)
+	}
+
+	// A record from before the fields decodes with empty values.
+	old := Job{}
+	if err := json.Unmarshal([]byte(`{"id":"`+uuid.NewString()+`","state":"done","root":"/","max_depth":6,"min_bytes":0}`), &old); err != nil {
+		t.Fatal(err)
+	}
+	if old.RefreshOf != "" || old.MinFrac != nil {
+		t.Fatalf("old job = %+v", old)
 	}
 }
 

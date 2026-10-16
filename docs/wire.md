@@ -108,6 +108,19 @@ A disk scan finds what uses the disk space below a folder of a node. The sampler
 
 All keys are optional. An empty `root` is the home folder of the user that runs the sampler. `max_depth` and `min_bytes` default to the sampler defaults.
 
+**Refresh of a folder.** A refresh scans one folder again and the apps put the result into an earlier scan. It is a normal job with two more keys:
+
+```json
+{ "root": "/home/dev/Downloads", "max_depth": 5, "min_bytes": 50000000, "min_frac": 0, "refresh_of": "~" }
+```
+
+| Key | Meaning |
+|---|---|
+| `min_frac` | Passed to the sampler as `--min-frac`. A refresh sends `0`, so that the floor is `min_bytes` (the `limits.min_bytes` of the earlier result). Must be in [0, 1). Left out: the sampler default. |
+| `refresh_of` | The scope of the earlier scan: `~` or an absolute path. `root` must be below it, else 400. With `~`, `root` must be absolute or start with `~`. |
+
+The job has the same keys. An app that follows the node merges a `done` job with `refresh_of` into the stored result of that scope. It does not show the job as a separate scope. The one-active-job rule applies to a refresh too.
+
 **Job.**
 
 ```json
@@ -171,7 +184,7 @@ The sampler can post the `error` or `cancelled` line, or PUT the result, before 
   "payload": { "job_id": "uuid", "root": "/", "max_depth": 6, "min_bytes": 50000000 } }
 ```
 
-The payload has no `max_depth` or `min_bytes` key when the request did not set it. Then the sampler uses its default.
+The payload has no `max_depth`, `min_bytes` or `min_frac` key when the request did not set it. Then the sampler uses its default. A `min_frac` of `0` is sent.
 
 The sampler runs one scan at a time. It posts a progress line each 2 s, and the final `error` or `cancelled` line, or it PUTs the result.
 

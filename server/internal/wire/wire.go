@@ -142,6 +142,11 @@ type DiskScanRequest struct {
 	Root     string `json:"root"`
 	MaxDepth int    `json:"max_depth"`
 	MinBytes int64  `json:"min_bytes"`
+	// MinFrac is nil for the sampler default. A refresh sends 0.
+	MinFrac *float64 `json:"min_frac,omitempty"`
+	// RefreshOf is the scope that this scan refreshes, for example ~.
+	// The apps merge the result into that scope.
+	RefreshOf string `json:"refresh_of,omitempty"`
 }
 
 // DiskScanJob is a disk scan as the app sees it (docs/wire.md §3.1).
@@ -152,6 +157,8 @@ type DiskScanJob struct {
 	Root            string               `json:"root"`
 	MaxDepth        int                  `json:"max_depth"`
 	MinBytes        int64                `json:"min_bytes"`
+	MinFrac         *float64             `json:"min_frac,omitempty"`
+	RefreshOf       string               `json:"refresh_of,omitempty"`
 	Progress        *schema.ScanProgress `json:"progress"`
 	Error           string               `json:"error"`
 	CancelRequested bool                 `json:"cancel_requested"`
@@ -173,6 +180,7 @@ type DiskScanPayload struct {
 	Root     string    `json:"root"`
 	MaxDepth int       `json:"max_depth,omitempty"`
 	MinBytes int64     `json:"min_bytes,omitempty"`
+	MinFrac  *float64  `json:"min_frac,omitempty"`
 }
 
 // DiskScanProgressResponse is the reply to a progress post. Cancel

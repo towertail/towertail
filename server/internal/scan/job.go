@@ -50,6 +50,8 @@ type Job struct {
 	Root            string               `json:"root"`
 	MaxDepth        int                  `json:"max_depth"`
 	MinBytes        int64                `json:"min_bytes"`
+	MinFrac         *float64             `json:"min_frac,omitempty"`
+	RefreshOf       string               `json:"refresh_of,omitempty"`
 	Progress        *schema.ScanProgress `json:"progress"`
 	Error           string               `json:"error"`
 	CancelRequested bool                 `json:"cancel_requested"`
@@ -90,6 +92,8 @@ func (j Job) Wire() wire.DiskScanJob {
 		Root:            j.Root,
 		MaxDepth:        j.MaxDepth,
 		MinBytes:        j.MinBytes,
+		MinFrac:         j.MinFrac,
+		RefreshOf:       j.RefreshOf,
 		Progress:        j.Progress,
 		Error:           j.Error,
 		CancelRequested: j.CancelRequested,

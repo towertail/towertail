@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -106,8 +107,14 @@ func (m *Manager) Result(ctx context.Context, id uuid.UUID) ([]byte, error) {
 // control queue of the node. If the node has an active job, Request
 // gives that job and ErrActive.
 func (m *Manager) Request(ctx context.Context, orgID, nodeID uuid.UUID, req wire.DiskScanRequest) (Job, error) {
-	if req.MaxDepth < 0 || req.MinBytes < 0 || len(req.Root) > MaxRootLen {
-		return Job{}, fmt.Errorf("%w: max_depth and min_bytes must not be negative, root must be %d bytes at most", ErrBadInput, MaxRootLen)
+	if req.MaxDepth < 0 || req.MinBytes < 0 || len(req.Root) > MaxRootLen || len(req.RefreshOf) > MaxRootLen {
+		return Job{}, fmt.Errorf("%w: max_depth and min_bytes must not be negative, root and refresh_of must be %d bytes at most", ErrBadInput, MaxRootLen)
+	}
+	if f := req.MinFrac; f != nil && (*f < 0 || *f >= 1) {
+		return Job{}, fmt.Errorf("%w: min_frac must be in [0, 1)", ErrBadInput)
+	}
+	if req.RefreshOf != "" && !refreshes(req.RefreshOf, req.Root) {
+		return Job{}, fmt.Errorf("%w: refresh_of must be ~ or an absolute path, and root must be below it", ErrBadInput)
 	}
 	j := Job{
 		ID:        uuid.New(),
@@ -117,13 +124,15 @@ func (m *Manager) Request(ctx context.Context, orgID, nodeID uuid.UUID, req wire
 		Root:      req.Root,
 		MaxDepth:  req.MaxDepth,
 		MinBytes:  req.MinBytes,
+		MinFrac:   req.MinFrac,
+		RefreshOf: req.RefreshOf,
 		CreatedTS: m.now(),
 	}
 	j, err := m.store.Create(ctx, j)
 	if err != nil {
 		return j, err
 	}
-	payload, err := json.Marshal(wire.DiskScanPayload{JobID: j.ID, Root: j.Root, MaxDepth: j.MaxDepth, MinBytes: j.MinBytes})
+	payload, err := json.Marshal(wire.DiskScanPayload{JobID: j.ID, Root: j.Root, MaxDepth: j.MaxDepth, MinBytes: j.MinBytes, MinFrac: j.MinFrac})
 	if err == nil {
 		err = m.queue.Enqueue(ctx, nodeID, control.KindDiskScan, payload)
 	}
@@ -372,4 +381,25 @@ func (m *Manager) publish(j Job, stateChanged bool) {
 	if send {
 		m.notify.PublishDiskScan(j.OrgID, j.Wire())
 	}
+}
+
+// refreshes is true when scope is ~ or an absolute path and root is a
+// folder below it. With scope ~, the server does not know the home
+// folder, so root must only be absolute or start with ~.
+func refreshes(scope, root string) bool {
+	abs := func(p string) bool {
+		return strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\\`) ||
+			len(p) >= 3 && p[1] == ':' && (p[2] == '\\' || p[2] == '/')
+	}
+	if scope == "~" {
+		return abs(root) || strings.HasPrefix(root, "~/") || strings.HasPrefix(root, `~\`)
+	}
+	if !abs(scope) || !abs(root) {
+		return false
+	}
+	base := strings.TrimRight(scope, `/\`)
+	if len(root) <= len(base)+1 || !strings.EqualFold(root[:len(base)], base) {
+		return false
+	}
+	return root[len(base)] == '/' || root[len(base)] == '\\'
 }

@@ -182,6 +182,48 @@ func TestDiskScanRequestEndpoint(t *testing.T) {
 	wantCode(t, e.do(http.MethodPost, "/v1/nodes/"+e.on.String()+"/disk-scans", e.samplerOn, nil), http.StatusForbidden)
 }
 
+func TestDiskScanRefreshRequest(t *testing.T) {
+	e := newScanEnv(t)
+	path := "/v1/nodes/" + e.on.String() + "/disk-scans"
+	for _, body := range []string{
+		`{"root":"/home/dev/x","refresh_of":"relative"}`,
+		`{"root":"/srv/x","refresh_of":"/home/dev"}`,
+		`{"root":"/home/dev","refresh_of":"/home/dev"}`,
+		`{"root":"","refresh_of":"~"}`,
+		`{"root":"/home/dev/x","min_frac":1}`,
+		`{"root":"/home/dev/x","min_frac":-0.1}`,
+	} {
+		rec := e.do(http.MethodPost, path, e.user, []byte(body))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: code %d, want 400", body, rec.Code)
+		}
+	}
+
+	rec := e.do(http.MethodPost, path, e.user, []byte(`{"root":"/home/dev/Downloads","max_depth":5,"min_bytes":50000000,"min_frac":0,"refresh_of":"~"}`))
+	wantCode(t, rec, http.StatusAccepted)
+	var j wire.DiskScanJob
+	decode(t, rec.Body.Bytes(), &j)
+	if j.RefreshOf != "~" || j.MinFrac == nil || *j.MinFrac != 0 {
+		t.Fatalf("job: %+v", j)
+	}
+
+	rec = e.do(http.MethodGet, "/v1/disk-scans/"+j.ID.String(), e.user, nil)
+	wantCode(t, rec, http.StatusOK)
+	var got wire.DiskScanJob
+	decode(t, rec.Body.Bytes(), &got)
+	if got.RefreshOf != "~" || got.MinFrac == nil || *got.MinFrac != 0 || got.Root != "/home/dev/Downloads" {
+		t.Fatalf("GET job: %+v", got)
+	}
+
+	rec = e.do(http.MethodGet, "/v1/control/next", e.samplerOn, nil)
+	wantCode(t, rec, http.StatusOK)
+	var msg wire.ControlNextResponse
+	decode(t, rec.Body.Bytes(), &msg)
+	if !strings.Contains(string(msg.Payload), `"min_frac":0`) {
+		t.Fatalf("payload %s has no min_frac 0", msg.Payload)
+	}
+}
+
 func TestDiskScanReadEndpoints(t *testing.T) {
 	e := newScanEnv(t)
 	j := e.request(e.on)
