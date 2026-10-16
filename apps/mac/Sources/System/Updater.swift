@@ -26,6 +26,7 @@ final class Updater {
     private(set) var state: State = .idle
     private(set) var lastCheck: Date?
     private var staged: URL?
+    private var installNow = false
     private var timer: Timer?
 
     var autoInstall: Bool {
@@ -54,9 +55,25 @@ final class Updater {
         case .upToDate: return "Up to date"
         case .available(let v): return "v\(v) is available"
         case .downloading(let v): return "Downloading v\(v)…"
-        case .ready(let v): return "v\(v) installs when Towertail is not in use"
+        case .ready(let v): return "v\(v) installs when no Towertail window is open"
         case .failed(let e): return "Update failed: \(e)"
         }
+    }
+
+    var canUpdateNow: Bool {
+        switch state {
+        case .ready: return true
+        case .available: return !isDev
+        default: return false
+        }
+    }
+
+    /// Installs and restarts now, even when a window is open. Downloads first if necessary.
+    func updateNow() {
+        guard canUpdateNow else { return }
+        if case .ready = state { return install() }
+        installNow = true
+        check(manual: true)
     }
 
     func start() {
@@ -122,7 +139,7 @@ final class Updater {
             staged = app
             state = .ready(version)
             Logger.shared.info("updater: verified and staged", category: "update", kv: ["version": version])
-            installIfIdle()
+            if installNow { install() } else { installIfIdle() }
         } catch {
             fail("\(error)")
         }
@@ -201,6 +218,7 @@ final class Updater {
 
     private func fail(_ msg: String) {
         Logger.shared.error("updater: \(msg)", category: "update")
+        installNow = false
         state = .failed(msg)
     }
 

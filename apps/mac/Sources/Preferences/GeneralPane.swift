@@ -136,6 +136,10 @@ struct GeneralPane: View {
                 HStack(spacing: 8) {
                     Button("Check for Updates") { updater.check(manual: true) }
                         .disabled(updater.busy)
+                    if updater.canUpdateNow {
+                        Button("Update Now") { updater.updateNow() }
+                            .buttonStyle(.borderedProminent)
+                    }
                     Text(updater.statusText)
                         .font(.callout)
                         .foregroundStyle(.secondary)
