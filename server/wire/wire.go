@@ -145,6 +145,26 @@ type NodeHistoryResponse struct {
 	Points     []NodeHistoryPoint `json:"points"`
 }
 
+// Alert is an open alert: the last event of a (node, metric) when its
+// tint is not ok. ID is the event id.
+type Alert struct {
+	ID           uuid.UUID  `json:"id"`
+	NodeID       uuid.UUID  `json:"node_id"`
+	Kind         string     `json:"kind"`
+	Metric       string     `json:"metric"`
+	Tint         Tint       `json:"tint"`
+	TS           time.Time  `json:"ts"`
+	Value        float64    `json:"value"`
+	AckedBy      *uuid.UUID `json:"acked_by,omitempty"`
+	AckedAt      *time.Time `json:"acked_at,omitempty"`
+	SnoozedUntil *time.Time `json:"snoozed_until,omitempty"`
+}
+
+// AlertList is the body of GET /v1/alerts.
+type AlertList struct {
+	Alerts []Alert `json:"alerts"`
+}
+
 // DiskScanRequest is the body of POST /v1/nodes/{id}/disk-scans. All
 // keys are optional. Zero values tell the sampler to use its defaults.
 type DiskScanRequest struct {

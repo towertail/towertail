@@ -32,7 +32,7 @@ func (s *Server) handlePutSettings(c echo.Context) error {
 	}
 	s.audit(c, "update", "settings", uuid.Nil)
 	if s.alerter != nil {
-		s.alerter.UpdateSettings(cfg)
+		s.alerter.InvalidateSettings(t.OrgID)
 	}
 	if s.hub != nil {
 		if raw, err := json.Marshal(cfg); err == nil {

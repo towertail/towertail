@@ -40,9 +40,14 @@ func (s *Server) handleControlNext(c echo.Context) error {
 
 // handleKillProcess enqueues a kill_process control message.
 func (s *Server) handleKillProcess(c echo.Context) error {
+	t, _ := authctx.TokenFrom(c)
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "bad id")
+	}
+	// The node must belong to the org of the caller.
+	if _, err := s.store.GetNode(c.Request().Context(), t.OrgID, id); err != nil {
+		return err
 	}
 	pidStr := c.QueryParam("pid")
 	pid64, err := strconv.ParseInt(pidStr, 10, 32)

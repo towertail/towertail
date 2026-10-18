@@ -69,9 +69,9 @@ Base path `/v1`. Authed unless otherwise marked.
 | GET | `/v1/nodes/{id}/history?metric=cpu&from=…&to=…&step=1m` | — | `NodeHistoryResponse` |
 | GET | `/v1/settings` | — | `ServerSettings` |
 | PUT | `/v1/settings` | `ServerSettings` | `ServerSettings` |
-| GET | `/v1/alerts?state=active` | — | `{ alerts: [...] }` |
-| POST | `/v1/alerts/{id}/ack` | — | 200 |
-| POST | `/v1/alerts/{id}/snooze?until=RFC3339` | — | 200 |
+| GET | `/v1/alerts` | — | `AlertList`: the open alerts of the org, the newest first |
+| POST | `/v1/alerts/{id}/ack` | — | `Alert` (404 if the alert is not open) |
+| POST | `/v1/alerts/{id}/snooze?until=RFC3339` | — | `Alert` (404 if the alert is not open) |
 | POST | `/v1/sampler/enroll` | `EnrollRequest` | `EnrollResponse` |
 | GET | `/v1/sampler/versions` | — | `{ "linux-amd64": "sha256:…", … }` |
 | POST | `/v1/nodes/{id}/disk-scans` | `DiskScanRequest` | `DiskScanJob` (202) |
@@ -229,7 +229,8 @@ The server's [`wire`](../server/wire/wire.go) package is the source of truth. No
 - `Sample` — identical to `pkg/schema/sample.go` Sample in [towertail/sampler](https://github.com/towertail/sampler), just relaxed around optional fields.
 - `Event` — `{ id, ts, kind, nodeId, metric?, tint? }` where `kind` ∈ `threshold_crossed | reachability_changed | sampler_version` and `tint` ∈ `ok | warn | critical`.
 - `Node` — camelCase mirror of the Swift `Node` struct (`apps/mac/Sources/State/Node.swift`).
-- `ServerSettings` — camelCase mirror of the Swift `ServerSettings` class.
+- `ServerSettings` — camelCase mirror of the Swift `ServerSettings` class. The server adds `notifyCooldownSeconds`: the minimum time between two alerts with the same node, metric and tint (0 means 600).
+- `Alert` — `{ id, node_id, kind, metric, tint, ts, value, acked_by?, acked_at?, snoozed_until? }`. `id` is the event id. An alert is open while the last event of its node and metric has a tint other than `ok`. `metric` is `reachability` when a node sends no sample for 3 intervals. `AlertList` is `{ alerts: [Alert] }`.
 - `LoginRequest`, `LoginResponse`.
 - `EnrollRequest`, `EnrollResponse`.
 - `ControlNextResponse`, `KillProcessPayload`, `DiskScanPayload`.

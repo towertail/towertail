@@ -31,6 +31,10 @@ import (
 // expired or have no progress.
 const scanSweepInterval = 30 * time.Second
 
+// reachabilitySweepInterval is the time between two checks for nodes
+// with no recent sample.
+const reachabilitySweepInterval = 10 * time.Second
+
 // App is one server: config, runtime, store, ClickHouse, hub, alerter
 // and API.
 type App struct {
@@ -102,11 +106,7 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 	}
 
 	a.hub = hub.New(a.log)
-	settings, err := a.store.GetSettings(ctx, store.ZeroOrg)
-	if err != nil {
-		return nil, err
-	}
-	a.alerter = alerter.New(a.log, nil, a.hub, chEvents{ch: a.ch}, settings)
+	a.alerter = alerter.New(a.log, nil, a.hub, chEvents{ch: a.ch}, a.store, b.notifiers...)
 	ctrl := control.New(a.store)
 	scanDB, err := a.scanDB()
 	if err != nil {
@@ -156,6 +156,7 @@ func (a *App) Run(ctx context.Context) error {
 		}()
 	}
 	go a.scans.Run(ctx, scanSweepInterval)
+	go a.alerter.Run(ctx, reachabilitySweepInterval)
 
 	err := a.api.Start(ctx)
 	if stopErr := a.rt.StopAll(context.Background()); stopErr != nil {
@@ -207,8 +208,10 @@ func (a *App) installBootstrapToken(ctx context.Context, issuer *auth.TokenIssue
 	return err
 }
 
-// chEvents gives the alerter the events table of ClickHouse. It drops
-// events when ClickHouse is off or not ready.
+var errCHNotReady = errors.New("clickhouse not ready")
+
+// chEvents gives the alerter the events of ClickHouse. It drops events
+// when ClickHouse is off or not ready.
 type chEvents struct{ ch *clickhouse.Client }
 
 func (s chEvents) WriteEvent(ctx context.Context, e clickhouse.EventRow) error {
@@ -216,4 +219,24 @@ func (s chEvents) WriteEvent(ctx context.Context, e clickhouse.EventRow) error {
 		return nil
 	}
 	return s.ch.WriteEvent(ctx, e)
+}
+
+func (s chEvents) LastTints(ctx context.Context, since time.Time) ([]clickhouse.TintRow, error) {
+	if s.ch == nil {
+		return nil, nil
+	}
+	if !s.ch.Ready() {
+		return nil, errCHNotReady
+	}
+	return s.ch.LastTints(ctx, since)
+}
+
+func (s chEvents) LastSeen(ctx context.Context, since time.Time) ([]clickhouse.NodeSeen, error) {
+	if s.ch == nil {
+		return nil, nil
+	}
+	if !s.ch.Ready() {
+		return nil, errCHNotReady
+	}
+	return s.ch.LastSeen(ctx, since)
 }

@@ -2,19 +2,24 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/towertail/towertail/server/config"
 	"github.com/towertail/towertail/server/internal/auth"
+	"github.com/towertail/towertail/server/notify"
 	"github.com/towertail/towertail/server/store"
+	"github.com/towertail/towertail/server/wire"
 )
 
 func testConfig(t *testing.T) config.Config {
@@ -156,5 +161,56 @@ func TestWithStoreNotBolt(t *testing.T) {
 	// The App does not close a store that the caller gave.
 	if _, err := bs.ListNodes(context.Background(), store.ZeroOrg); err != nil {
 		t.Fatalf("store closed by app: %v", err)
+	}
+}
+
+// chanNotifier sends each alert on a channel.
+type chanNotifier chan notify.Alert
+
+func (n chanNotifier) Name() string { return "chan" }
+
+func (n chanNotifier) Notify(_ context.Context, a notify.Alert) error {
+	n <- a
+	return nil
+}
+
+func TestWithNotifier(t *testing.T) {
+	n := make(chanNotifier, 4)
+	a, err := New(testConfig(t), quietLog(), WithNotifier(n))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(a.close)
+	ctx := context.Background()
+	node := store.Node{ID: uuid.New(), DisplayName: "web-1", Kind: "ssh", Enabled: true, NotifyOnWarn: true, NotifyOnCritical: true}
+	if err := a.store.PutNode(ctx, store.ZeroOrg, node); err != nil {
+		t.Fatal(err)
+	}
+	raw, _, err := auth.NewIssuer(a.store).Issue(ctx, store.ZeroOrg, store.TokenKindSampler, "test", &node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ingest := func(cpuPct float64) {
+		t.Helper()
+		line := fmt.Sprintf(`{"v":1,"ts":%q,"host":{"name":"web-1","os":"linux","arch":"amd64"},"cpu":{"pct":%g,"cores":4},"mem":{"used":1,"total":100},"swap":{"used":0,"total":0},"errors":[]}`,
+			time.Now().UTC().Format(time.RFC3339Nano), cpuPct)
+		req := httptest.NewRequest(http.MethodPost, "/v1/ingest/samples", strings.NewReader(line+"\n"))
+		req.Header.Set("Authorization", "Bearer "+raw)
+		req.Header.Set("Content-Type", "application/x-ndjson")
+		rec := httptest.NewRecorder()
+		a.Handler().ServeHTTP(rec, req)
+		if rec.Code >= 300 {
+			t.Fatalf("ingest: %d %s", rec.Code, rec.Body)
+		}
+	}
+	ingest(10)
+	ingest(95)
+	select {
+	case got := <-n:
+		if got.NodeID != node.ID || got.Metric != "cpu" || got.To != wire.TintCritical {
+			t.Fatalf("alert = %+v", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no alert")
 	}
 }

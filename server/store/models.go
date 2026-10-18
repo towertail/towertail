@@ -65,8 +65,11 @@ type ServerSettings struct {
 	NotifyWarn                  bool             `json:"notifyWarn"`
 	NotifyCritical              bool             `json:"notifyCritical"`
 	NotifyDebounceSeconds       int              `json:"notifyDebounceSeconds"`
-	AutoUpdateSamplersEnabled   bool             `json:"autoUpdateSamplersEnabled"`
-	PostWakeGraceSeconds        int              `json:"postWakeGraceSeconds"`
+	// NotifyCooldownSeconds is the minimum time between two alerts with
+	// the same node, metric and tint. 0 means the default (10 min).
+	NotifyCooldownSeconds     int  `json:"notifyCooldownSeconds"`
+	AutoUpdateSamplersEnabled bool `json:"autoUpdateSamplersEnabled"`
+	PostWakeGraceSeconds      int  `json:"postWakeGraceSeconds"`
 }
 
 // DefaultServerSettings returns the factory defaults documented in
@@ -84,6 +87,7 @@ func DefaultServerSettings() ServerSettings {
 		NotifyWarn:                  true,
 		NotifyCritical:              true,
 		NotifyDebounceSeconds:       60,
+		NotifyCooldownSeconds:       600,
 		AutoUpdateSamplersEnabled:   true,
 		PostWakeGraceSeconds:        30,
 	}

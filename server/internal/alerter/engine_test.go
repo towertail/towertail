@@ -50,6 +50,44 @@ func (s *capturingSink) snapshot() []wire.Event {
 type nopStore struct{}
 
 func (nopStore) WriteEvent(context.Context, clickhouse.EventRow) error { return nil }
+func (nopStore) LastTints(context.Context, time.Time) ([]clickhouse.TintRow, error) {
+	return nil, nil
+}
+func (nopStore) LastSeen(context.Context, time.Time) ([]clickhouse.NodeSeen, error) {
+	return nil, nil
+}
+
+// fakeConfig gives the settings of each org (def otherwise) and the
+// nodes.
+type fakeConfig struct {
+	mu       sync.Mutex
+	def      store.ServerSettings
+	settings map[uuid.UUID]store.ServerSettings
+	nodes    map[uuid.UUID]store.Node
+}
+
+func newFakeConfig(def store.ServerSettings) *fakeConfig {
+	return &fakeConfig{def: def, settings: map[uuid.UUID]store.ServerSettings{}, nodes: map[uuid.UUID]store.Node{}}
+}
+
+func (f *fakeConfig) GetSettings(_ context.Context, org uuid.UUID) (store.ServerSettings, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if s, ok := f.settings[org]; ok {
+		return s, nil
+	}
+	return f.def, nil
+}
+
+func (f *fakeConfig) GetNode(_ context.Context, _, id uuid.UUID) (store.Node, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n, ok := f.nodes[id]
+	if !ok {
+		return store.Node{}, store.ErrNotFound
+	}
+	return n, nil
+}
 
 func TestAlerter_EscalatesImmediately(t *testing.T) {
 	clock := &testClock{t: time.Unix(1700000000, 0).UTC()}
@@ -57,7 +95,7 @@ func TestAlerter_EscalatesImmediately(t *testing.T) {
 	cfg := store.DefaultServerSettings()
 	cfg.NotifyDebounceSeconds = 60
 
-	e := New(nil, clock, sink, nopStore{}, cfg)
+	e := New(nil, clock, sink, nopStore{}, newFakeConfig(cfg))
 	org, node := uuid.New(), uuid.New()
 
 	// Baseline OK sample.
@@ -83,7 +121,7 @@ func TestAlerter_DebouncesReturnToOK(t *testing.T) {
 	sink := &capturingSink{}
 	cfg := store.DefaultServerSettings()
 	cfg.NotifyDebounceSeconds = 60
-	e := New(nil, clock, sink, nopStore{}, cfg)
+	e := New(nil, clock, sink, nopStore{}, newFakeConfig(cfg))
 	org, node := uuid.New(), uuid.New()
 
 	// warn → critical transitions are immediate.
@@ -117,7 +155,7 @@ func TestAlerter_PerNodeThresholdsOverrideGlobal(t *testing.T) {
 	sink := &capturingSink{}
 	cfg := store.DefaultServerSettings()
 	cfg.NotifyDebounceSeconds = 60
-	e := New(nil, clock, sink, nopStore{}, cfg)
+	e := New(nil, clock, sink, nopStore{}, newFakeConfig(cfg))
 	org, nodeID := uuid.New(), uuid.New()
 
 	stricter := store.MetricThresholds{CPUWarn: 0.30, CPUCritical: 0.50, MemWarn: 0.90, MemCritical: 0.99, DiskWarn: 0.90, DiskCritical: 0.99}
