@@ -45,7 +45,14 @@ cd server/docker
 docker compose up -d
 docker compose stop server        # serve keeps the Bolt file locked
 docker compose run --rm server token issue --kind=admin --label=ops
-docker compose run --rm server migrate postgres   # cloud-managed mode only
+docker compose start server
+```
+
+To log in with email and password (`POST /v1/auth/login`), make a user. Give the password (12 characters or more) on stdin. Run the command again to set a new password:
+
+```bash
+docker compose stop server
+echo 'a long password' | docker compose run --rm -T server user create --email=ops@example.com
 docker compose start server
 ```
 
@@ -151,16 +158,16 @@ backup tool. Losing it loses node/user/settings config but does *not*
 lose metrics.
 
 **Postgres** (cloud only) — goose migrations embedded from
-`server/internal/postgres/migrations/`. Standard `pg_dump` for backup.
+`server/internal/postgres/migrations/`. The server applies them at boot.
+Standard `pg_dump` for backup.
 
 ---
 
 ## 6. Upgrading
 
 1. `docker compose pull server`
-2. `docker compose exec server towertail-server migrate` (Postgres only —
-   ClickHouse migrations auto-apply on dial).
-3. `docker compose up -d server`
+2. `docker compose up -d server`. The server applies the ClickHouse
+   migrations and, in cloud-managed mode, the Postgres migrations at boot.
 
 Mac clients and samplers reconnect automatically. The wire version
 (`wire.v = 1`) is pinned; a server rolling to `v = 2` without sampler

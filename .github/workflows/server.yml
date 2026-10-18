@@ -63,9 +63,9 @@ jobs:
       - name: Unit tests
         working-directory: server
         run: go test ./...
-      - name: ClickHouse integration tests (testcontainers)
+      - name: ClickHouse and Postgres integration tests (testcontainers)
         working-directory: server
-        run: go test -tags=integration -timeout=400s ./internal/clickhouse/...
+        run: go test -tags=integration -timeout=400s ./internal/clickhouse/... ./store/...
 
   build:
     name: server / build

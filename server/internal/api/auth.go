@@ -60,7 +60,7 @@ func (s *Server) handleLogin(c echo.Context) error {
 	if err := c.Validate(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
-	u, err := s.store.GetUserByEmail(c.Request().Context(), req.Email)
+	u, err := s.store.GetUserByEmail(c.Request().Context(), strings.ToLower(strings.TrimSpace(req.Email)))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "invalid credentials")
 	}

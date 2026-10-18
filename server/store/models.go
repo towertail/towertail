@@ -115,8 +115,9 @@ const (
 	TokenKindAdmin   TokenKind = "admin"
 )
 
-// User is the stubbed cloud-managed user record. Self-hosted mode
-// uses a single synthetic user with ZeroUUID.
+// User logs in with email and password. In the cloud, PasswordHash is
+// empty, because users log in with a magic link or OAuth. Self-hosted
+// users are in ZeroOrg.
 type User struct {
 	ID           uuid.UUID `json:"id"`
 	OrgID        uuid.UUID `json:"orgId"`

@@ -81,7 +81,9 @@ type ClickHouseConfig struct {
 }
 
 type PostgresConfig struct {
-	DSN          string `koanf:"dsn"`
+	DSN string `koanf:"dsn"`
+	// Password wins over a password in DSN.
+	Password     string `koanf:"password"`
 	PasswordFile string `koanf:"password_file"`
 	MaxConns     int    `koanf:"max_conns"`
 }
@@ -204,10 +206,12 @@ func (c *Config) resolveSecrets() error {
 		}
 		c.ClickHouse.Password = strings.TrimSpace(string(b))
 	}
-	if c.Postgres.DSN == "" && c.Postgres.PasswordFile != "" {
-		// Caller can assemble DSN from parts; password file alone is not
-		// enough. We accept the field for symmetry and leave assembly to
-		// future work.
+	if c.Postgres.Password == "" && c.Postgres.PasswordFile != "" {
+		b, err := os.ReadFile(c.Postgres.PasswordFile)
+		if err != nil {
+			return fmt.Errorf("read postgres password file: %w", err)
+		}
+		c.Postgres.Password = strings.TrimSpace(string(b))
 	}
 	return nil
 }

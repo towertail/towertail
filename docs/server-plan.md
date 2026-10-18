@@ -27,7 +27,7 @@ Status on 2026-10-15. The phases are in [§10](#10-phased-delivery). Phases B, E
 | H — Alerter, events, WS stream | Done | `internal/alerter`, `internal/hub`, `/v1/stream`, `/v1/alerts*`. |
 | I — `RemoteBackend` in Swift | Partial | `RemoteBackend` works. The app selects it only with `TOWERTAIL_REMOTE_URL` and `TOWERTAIL_REMOTE_TOKEN`. There is no mode setting in Preferences and no Keychain storage. |
 | J — History and kill process | Done | `/v1/nodes/{id}/history`, `/v1/control/next`, `/v1/nodes/{id}/kill-process`. |
-| K — Postgres stub | Partial | Migrations and `migrate postgres` work. `postgres_store.go` returns `ErrNotImplemented`. |
+| K — Postgres store | Done | `PostgresStore` implements `ConfigStore` for many orgs. `cloud.managed=true` selects it and runs the migrations at boot. Bolt and Postgres pass the same contract tests. `towertail-server user create` makes a user for login. |
 | L — Hardening | Partial | Rate limits, CORS, audit log, load generator, [runbook](server-runbook.md). No nightly load test in CI. |
 | Relay (`cmd/towertail-relay`) | Not started | SSH pull in the tailnet, push to a server. |
 | Alert delivery (`internal/notify`) | Not started | Slack, Discord, PagerDuty, webhooks, SMTP. |
@@ -288,11 +288,11 @@ Retention is a server config knob (`CH_RETENTION_RAW_DAYS` etc.); boot-time `ALT
 
 ---
 
-## 3. Postgres stub (cloud-managed)
+## 3. Postgres store (cloud-managed)
 
 **All cloud-managed tables live in Postgres.** Migrations are embedded from `server/internal/postgres/migrations/` and applied by goose. The self-hosted binary does not dial Postgres unless `cloud_managed: true`.
 
-### 3.1 Schema (stubbed)
+### 3.1 Schema
 
 ```sql
 CREATE TABLE orgs (
@@ -335,9 +335,16 @@ CREATE TABLE audit_log (
 CREATE INDEX ON users (org_id);
 CREATE INDEX ON api_tokens (org_id);
 CREATE INDEX ON audit_log (org_id, created_at DESC);
+
+-- 00005_config.sql: the ConfigStore tables. Nodes and settings are JSONB
+-- with the same JSON as Bolt.
+INSERT INTO orgs (id, name) VALUES ('00000000-0000-0000-0000-000000000000', 'default');
+CREATE TABLE nodes (org_id UUID REFERENCES orgs(id), id UUID, data JSONB, ..., PRIMARY KEY (org_id, id));
+CREATE TABLE settings (org_id UUID PRIMARY KEY REFERENCES orgs(id), data JSONB, ...);
+CREATE TABLE control_messages (id UUID PRIMARY KEY, node_id UUID, kind TEXT, payload BYTEA, created_at TIMESTAMPTZ);
 ```
 
-In self-hosted v1 the server synthesises a single zero-UUID org + a "local" user at boot and stores the hash of the bearer token in BoltDB; when `cloud_managed: true` flips, migration mirrors those into Postgres.
+The zero-UUID org is the org of the bootstrap token and of the self-hosted users. Each token, user, node and settings row must belong to an org in `orgs`. The cloud makes the orgs. `ClaimControl` uses `FOR UPDATE SKIP LOCKED`, so two servers never get the same message. There is no tool that copies a Bolt file into Postgres.
 
 ---
 

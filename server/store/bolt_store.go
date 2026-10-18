@@ -228,8 +228,20 @@ func (s *BoltStore) ListTokens(_ context.Context, orgID uuid.UUID) ([]Token, err
 	return out, err
 }
 
+// boltUser keeps the password hash, which the JSON of User leaves out.
+type boltUser struct {
+	User
+	PasswordHash string `json:"passwordHash,omitempty"`
+}
+
 func (s *BoltStore) PutUser(_ context.Context, u User) error {
-	data, err := json.Marshal(u)
+	if u.ID == uuid.Nil {
+		u.ID = uuid.New()
+	}
+	if u.CreatedAt.IsZero() {
+		u.CreatedAt = time.Now().UTC()
+	}
+	data, err := json.Marshal(boltUser{User: u, PasswordHash: u.PasswordHash})
 	if err != nil {
 		return err
 	}
@@ -239,7 +251,7 @@ func (s *BoltStore) PutUser(_ context.Context, u User) error {
 }
 
 func (s *BoltStore) GetUserByEmail(_ context.Context, email string) (User, error) {
-	var u User
+	var u boltUser
 	err := s.db.View(func(tx *bolt.Tx) error {
 		v := tx.Bucket(bucketUsers).Get([]byte(email))
 		if v == nil {
@@ -247,7 +259,8 @@ func (s *BoltStore) GetUserByEmail(_ context.Context, email string) (User, error
 		}
 		return json.Unmarshal(v, &u)
 	})
-	return u, err
+	u.User.PasswordHash = u.PasswordHash
+	return u.User, err
 }
 
 // control bucket layout: key = nodeID | createdAt-nanos | msgID, value = JSON.

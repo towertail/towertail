@@ -10,14 +10,13 @@ import (
 // ErrNotFound is returned when a lookup misses.
 var ErrNotFound = errors.New("store: not found")
 
-// ErrNotImplemented is returned by the Postgres stub for operations
-// that the self-hosted path does not exercise.
+// ErrNotImplemented is returned by a store for an operation that it does
+// not support. The API maps it to 501.
 var ErrNotImplemented = errors.New("store: not implemented")
 
-// ConfigStore is the persistence seam that BoltStore implements for
-// self-hosted deployments and PostgresStore stubs for future
-// cloud-managed mode. Methods take a context so long-running network
-// calls can be cancelled.
+// ConfigStore is the persistence seam. BoltStore is the self-hosted
+// store, and PostgresStore is the cloud-managed store. Methods take a
+// context so long-running network calls can be cancelled.
 type ConfigStore interface {
 	// Lifecycle
 	Close() error
@@ -38,7 +37,7 @@ type ConfigStore interface {
 	DeleteToken(ctx context.Context, id uuid.UUID) error
 	ListTokens(ctx context.Context, orgID uuid.UUID) ([]Token, error)
 
-	// Users (stub surface; self-hosted keeps a single synthetic user)
+	// Users. PutUser inserts or updates by email.
 	PutUser(ctx context.Context, u User) error
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 

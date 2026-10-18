@@ -2,32 +2,39 @@ package postgres
 
 import (
 	"context"
-	"database/sql"
 	"embed"
 	"fmt"
+	"io/fs"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 )
 
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
-// ApplyMigrations runs every goose migration in migrations/*.sql
-// against the given DSN. No-op when DSN is empty.
-func ApplyMigrations(ctx context.Context, dsn string) error {
-	if dsn == "" {
-		return nil
-	}
-	db, err := sql.Open("pgx", dsn)
+// Migrate runs the core migrations. The goose version table is
+// goose_db_version.
+func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
+	sub, err := fs.Sub(migrationsFS, "migrations")
 	if err != nil {
-		return fmt.Errorf("postgres open: %w", err)
-	}
-	defer db.Close()
-
-	goose.SetBaseFS(migrationsFS)
-	if err := goose.SetDialect("postgres"); err != nil {
 		return err
 	}
-	return goose.UpContext(ctx, db, "migrations")
+	return MigrateFS(ctx, pool, sub, goose.DefaultTablename)
+}
+
+// MigrateFS runs the goose SQL files at the root of fsys, with table as
+// the version table. The cloud uses it for its own sets.
+func MigrateFS(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS, table string) error {
+	db := stdlib.OpenDBFromPool(pool)
+	defer db.Close()
+	p, err := goose.NewProvider(goose.DialectPostgres, db, fsys, goose.WithTableName(table))
+	if err != nil {
+		return fmt.Errorf("postgres migrations: %w", err)
+	}
+	if _, err := p.Up(ctx); err != nil {
+		return fmt.Errorf("postgres migrations: %w", err)
+	}
+	return nil
 }

@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/google/uuid"
@@ -17,7 +20,6 @@ import (
 	"github.com/towertail/towertail/server/config"
 	"github.com/towertail/towertail/server/internal/auth"
 	"github.com/towertail/towertail/server/internal/clickhouse"
-	"github.com/towertail/towertail/server/internal/postgres"
 	"github.com/towertail/towertail/server/internal/version"
 	"github.com/towertail/towertail/server/store"
 )
@@ -72,6 +74,21 @@ func main() {
 					},
 				},
 			},
+			{
+				Name:  "user",
+				Usage: "manage users",
+				Commands: []*cli.Command{
+					{
+						Name:  "create",
+						Usage: "make a user, or set a new password. Give the password on stdin",
+						Flags: []cli.Flag{
+							&cli.StringFlag{Name: "email", Required: true},
+							&cli.StringFlag{Name: "org", Usage: "org UUID (default: the self-hosted org)"},
+						},
+						Action: runUserCreate,
+					},
+				},
+			},
 		},
 	}
 	if err := cmd.Run(context.Background(), os.Args); err != nil {
@@ -121,9 +138,11 @@ func runMigratePostgres(ctx context.Context, c *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	if err := postgres.ApplyMigrations(ctx, cfg.Postgres.DSN); err != nil {
+	st, err := store.OpenPostgres(ctx, cfg.Postgres)
+	if err != nil {
 		return err
 	}
+	defer st.Close()
 	log.Info("postgres migrations complete")
 	return nil
 }
@@ -133,7 +152,7 @@ func runTokenIssue(ctx context.Context, c *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	st, err := store.OpenBolt(cfg.Storage.Path)
+	st, err := app.OpenStore(ctx, *cfg)
 	if err != nil {
 		return err
 	}
@@ -171,19 +190,15 @@ func runTokenIssueBulk(ctx context.Context, c *cli.Command) error {
 	if n < 1 {
 		return fmt.Errorf("issue-bulk: --count must be 1 or more")
 	}
-	orgID := store.ZeroOrg
-	if v := c.String("org"); v != "" {
-		parsed, err := uuid.Parse(v)
-		if err != nil {
-			return fmt.Errorf("--org: %w", err)
-		}
-		orgID = parsed
+	orgID, err := orgFlag(c)
+	if err != nil {
+		return err
 	}
 	cfg, log, err := loadConfig(c)
 	if err != nil {
 		return err
 	}
-	st, err := store.OpenBolt(cfg.Storage.Path)
+	st, err := app.OpenStore(ctx, *cfg)
 	if err != nil {
 		return err
 	}
@@ -212,5 +227,59 @@ func runTokenIssueBulk(ctx context.Context, c *cli.Command) error {
 		return err
 	}
 	log.Info("sampler tokens issued", "count", len(samplers), "org_id", orgID)
+	return nil
+}
+
+func orgFlag(c *cli.Command) (uuid.UUID, error) {
+	v := c.String("org")
+	if v == "" {
+		return store.ZeroOrg, nil
+	}
+	id, err := uuid.Parse(v)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("--org: %w", err)
+	}
+	return id, nil
+}
+
+func runUserCreate(ctx context.Context, c *cli.Command) error {
+	orgID, err := orgFlag(c)
+	if err != nil {
+		return err
+	}
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil && err != io.EOF {
+		return err
+	}
+	password := strings.TrimRight(line, "\r\n")
+	if len(password) < 12 {
+		return fmt.Errorf("user create: give a password of 12 characters or more on stdin")
+	}
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		return err
+	}
+	cfg, log, err := loadConfig(c)
+	if err != nil {
+		return err
+	}
+	st, err := app.OpenStore(ctx, *cfg)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	email := strings.ToLower(strings.TrimSpace(c.String("email")))
+	u, err := st.GetUserByEmail(ctx, email)
+	if errors.Is(err, store.ErrNotFound) {
+		u = store.User{Email: email}
+	} else if err != nil {
+		return err
+	}
+	u.OrgID = orgID
+	u.PasswordHash = hash
+	if err := st.PutUser(ctx, u); err != nil {
+		return err
+	}
+	log.Info("user saved", "email", email, "org_id", orgID)
 	return nil
 }

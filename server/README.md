@@ -49,7 +49,7 @@ Without them, the app uses SSH to each host (local mode). There is no setting fo
 cmd/towertail-server/    urfave/cli entry point: serve, migrate, token
 app/                     builds and runs the server; the extension API
 config/                  koanf: YAML and env
-store/                   ConfigStore interface, Bolt, Postgres stub
+store/                   ConfigStore interface, Bolt and Postgres stores
 runtime/                 component lifecycle
 wire/                    JSON types between the services
 notify/                  the Notifier interface for alert channels
@@ -59,7 +59,7 @@ internal/
 ├── auth/                tokens and password hashes
 ├── clickhouse/          pool, batcher, spill, queries
 │   └── migrations/      embedded goose SQL, applied on start
-├── postgres/            client for cloud-managed mode (stub)
+├── postgres/            pool and migrations for cloud-managed mode
 │   └── migrations/      embedded goose migrations
 ├── alerter/             threshold and reachability state machine
 ├── hub/                 WebSocket fan-out
@@ -104,4 +104,4 @@ go test -tags=integration ./internal/clickhouse/...    # ClickHouse in testconta
 
 ## Cloud-managed mode
 
-Set `TT_CLOUD__MANAGED=true` and `TT_POSTGRES__DSN` to start the Postgres component. In self-hosted mode, Postgres stays off and the config is in a BoltDB file in `storage.path`.
+Set `TT_CLOUD__MANAGED=true` and `TT_POSTGRES__DSN` to keep the config in Postgres. The server runs the Postgres migrations at boot. `postgres.password` or `postgres.password_file` wins over a password in the DSN. In self-hosted mode, Postgres stays off and the config is in a BoltDB file in `storage.path`.

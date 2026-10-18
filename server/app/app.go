@@ -21,7 +21,6 @@ import (
 	"github.com/towertail/towertail/server/internal/clickhouse"
 	"github.com/towertail/towertail/server/internal/control"
 	"github.com/towertail/towertail/server/internal/hub"
-	"github.com/towertail/towertail/server/internal/postgres"
 	"github.com/towertail/towertail/server/internal/scan"
 	"github.com/towertail/towertail/server/runtime"
 	"github.com/towertail/towertail/server/store"
@@ -53,7 +52,8 @@ type App struct {
 	closers []func() error
 }
 
-// New builds the App. It opens the Bolt store unless WithStore is given.
+// New builds the App. Unless WithStore is given, it opens the Postgres
+// store when cloud.managed is true, else the Bolt store.
 func New(cfg config.Config, opts ...Option) (a *App, err error) {
 	b := &builder{}
 	for _, o := range opts {
@@ -72,12 +72,12 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 
 	a.store = b.store
 	if a.store == nil {
-		bs, err := store.OpenBolt(cfg.Storage.Path)
+		st, err := OpenStore(ctx, cfg)
 		if err != nil {
-			return nil, fmt.Errorf("open bolt: %w", err)
+			return nil, err
 		}
-		a.store = bs
-		a.closers = append(a.closers, bs.Close)
+		a.store = st
+		a.closers = append(a.closers, st.Close)
 	}
 
 	issuer := auth.NewIssuer(a.store)
@@ -97,11 +97,6 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 		a.eager = append(a.eager, a.ch.Name())
 	} else {
 		a.log.Warn("clickhouse disabled via config — ingest not persisted, history unavailable")
-	}
-	if cfg.Cloud.Managed {
-		pg := postgres.New(cfg.Postgres, a.log)
-		a.rt.Register(pg)
-		a.eager = append(a.eager, pg.Name())
 	}
 	for _, c := range b.components {
 		a.rt.Register(c)
@@ -141,6 +136,23 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 		Routes:     routes,
 	})
 	return a, nil
+}
+
+// OpenStore opens the Postgres store when cloud.managed is true, else the
+// Bolt store. The caller closes it.
+func OpenStore(ctx context.Context, cfg config.Config) (store.ConfigStore, error) {
+	if cfg.Cloud.Managed {
+		ps, err := store.OpenPostgres(ctx, cfg.Postgres)
+		if err != nil {
+			return nil, fmt.Errorf("open postgres: %w", err)
+		}
+		return ps, nil
+	}
+	bs, err := store.OpenBolt(cfg.Storage.Path)
+	if err != nil {
+		return nil, fmt.Errorf("open bolt: %w", err)
+	}
+	return bs, nil
 }
 
 // Handler is the HTTP handler of the API, for tests.
