@@ -1,6 +1,6 @@
 services:
   clickhouse:
-    image: clickhouse/clickhouse-server:latest
+    image: clickhouse/clickhouse-server:26.8.26.12-alpine
     restart: unless-stopped
     volumes:
       - ch-data:/var/lib/clickhouse

@@ -57,9 +57,12 @@ func (s *Server) handleIngest(c echo.Context) error {
 
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 128*1024), 4*1024*1024)
-	var accepted, rejected int
-	var firstErr string
-
+	var (
+		bundles  []clickhouse.IngestBundle
+		lines    [][]byte
+		rejected int
+		firstErr string
+	)
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(line) == 0 {
@@ -73,24 +76,36 @@ func (s *Server) handleIngest(c echo.Context) error {
 			}
 			continue
 		}
-		if s.hub != nil {
-			s.hub.PublishSample(t.OrgID, *t.NodeID, append([]byte(nil), line...))
-		}
-		if s.ch != nil {
-			if !s.ch.Batcher().Enqueue(bundle) {
-				rejected++
-				continue
-			}
-		}
-		s.evalAlerter(c.Request().Context(), t.OrgID, *t.NodeID, bundle)
-		accepted++
+		bundles = append(bundles, bundle)
+		lines = append(lines, append([]byte(nil), line...))
 	}
 	if err := scanner.Err(); err != nil {
+		ingestRequests.WithLabelValues("400").Inc()
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
+	// The batcher takes all the samples of the request or none. On a full
+	// queue the sampler sends the same body again later.
+	if s.ch != nil && len(bundles) > 0 {
+		if err := s.ch.Batcher().Enqueue(bundles...); err != nil {
+			ingestRequests.WithLabelValues("503").Inc()
+			ingestLines.WithLabelValues("busy").Add(float64(len(bundles)))
+			c.Response().Header().Set("Retry-After", "5")
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "ingest busy")
+		}
+	}
+	for i, bundle := range bundles {
+		if s.hub != nil {
+			s.hub.PublishSample(t.OrgID, *t.NodeID, lines[i])
+		}
+		s.evalAlerter(c.Request().Context(), t.OrgID, *t.NodeID, bundle)
+	}
+	ingestRequests.WithLabelValues("202").Inc()
+	ingestLines.WithLabelValues("accepted").Add(float64(len(bundles)))
+	ingestLines.WithLabelValues("rejected").Add(float64(rejected))
+
 	return c.JSON(http.StatusAccepted, map[string]any{
-		"accepted": accepted,
+		"accepted": len(bundles),
 		"rejected": rejected,
 		"error":    firstErr,
 	})

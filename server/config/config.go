@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -50,8 +51,12 @@ type ClickHouseConfig struct {
 	// fans incoming samples to subscribers. Intended for local dev boxes
 	// without Docker (`TT_CLICKHOUSE__DISABLED=true`) where you want the real
 	// server + real sampler code path minus persistence. Not for production.
-	Disabled         bool          `koanf:"disabled"`
-	Addr             string        `koanf:"addr"`
+	Disabled bool   `koanf:"disabled"`
+	Addr     string `koanf:"addr"`
+	// Addrs, if set, replaces Addr with a list of servers.
+	Addrs []string `koanf:"addrs"`
+	// Secure dials with TLS.
+	Secure           bool          `koanf:"secure"`
 	Database         string        `koanf:"database"`
 	User             string        `koanf:"user"`
 	Password         string        `koanf:"password"`
@@ -63,7 +68,10 @@ type ClickHouseConfig struct {
 	BatchFlushRows   int           `koanf:"batch_flush_rows"`
 	BatchFlushBytes  int           `koanf:"batch_flush_bytes"`
 	BatchFlushPeriod time.Duration `koanf:"batch_flush_period"`
-	RetentionDays    int           `koanf:"retention_days"`
+	// SpillDir keeps the batches that fail to insert. The default is
+	// storage.path/spill.
+	SpillDir      string `koanf:"spill_dir"`
+	SpillMaxBytes int64  `koanf:"spill_max_bytes"`
 }
 
 type PostgresConfig struct {
@@ -143,6 +151,9 @@ func Load(path string) (*Config, error) {
 	if err := cfg.resolveSecrets(); err != nil {
 		return nil, err
 	}
+	if cfg.ClickHouse.SpillDir == "" {
+		cfg.ClickHouse.SpillDir = filepath.Join(cfg.Storage.Path, "spill")
+	}
 	return &cfg, nil
 }
 
@@ -165,7 +176,7 @@ func setDefaults(k *koanf.Koanf) {
 	_ = k.Set("clickhouse.batch_flush_rows", 5000)
 	_ = k.Set("clickhouse.batch_flush_bytes", 1048576)
 	_ = k.Set("clickhouse.batch_flush_period", "1s")
-	_ = k.Set("clickhouse.retention_days", 7)
+	_ = k.Set("clickhouse.spill_max_bytes", 1<<30)
 
 	_ = k.Set("postgres.max_conns", 10)
 

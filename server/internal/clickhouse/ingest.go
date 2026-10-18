@@ -2,28 +2,52 @@ package clickhouse
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/towertail/towertail/server/config"
 )
 
-// batcher aggregates IngestBundles and flushes them in grouped batches.
-// One writer goroutine per shard (v1: a single shard is plenty at
-// 10k-host scale). Flushes on row count, byte estimate, or period.
-type batcher struct {
-	client *Client
-	log    *slog.Logger
+// ErrBusy is returned by Enqueue when the queue is full. The caller
+// answers 503, and the sampler sends again later.
+var ErrBusy = errors.New("clickhouse: ingest queue full")
 
+// queueSize is the capacity of the batcher queue, in bundles.
+const queueSize = 4096
+
+// inserter writes bundles to ClickHouse. Tests replace it.
+type inserter interface {
+	insert(ctx context.Context, bundles []IngestBundle) error
+}
+
+// batcher aggregates IngestBundles and flushes them in grouped batches.
+// One writer goroutine (v1: a single shard is plenty at 10k-host
+// scale). Flushes on row count, byte estimate, or period. A batch that
+// fails after the retries goes to the spill folder, and the next good
+// flush replays it.
+type batcher struct {
+	cfg    config.ClickHouseConfig
+	ins    inserter
+	spill  *spill
+	log    *slog.Logger
+	delays []time.Duration
+
+	enqMu  sync.Mutex
 	in     chan IngestBundle
 	wg     sync.WaitGroup
 	stopCh chan struct{}
 }
 
-func newBatcher(c *Client, log *slog.Logger) *batcher {
+func newBatcher(cfg config.ClickHouseConfig, ins inserter, sp *spill, log *slog.Logger) *batcher {
 	return &batcher{
-		client: c,
+		cfg:    cfg,
+		ins:    ins,
+		spill:  sp,
 		log:    log,
-		in:     make(chan IngestBundle, 4096),
+		delays: []time.Duration{time.Second, 2 * time.Second, 4 * time.Second},
+		in:     make(chan IngestBundle, queueSize),
 		stopCh: make(chan struct{}),
 	}
 }
@@ -38,80 +62,72 @@ func (b *batcher) stop() {
 	b.wg.Wait()
 }
 
-// Enqueue submits a bundle; returns false if the batcher is stopping or
-// its queue is full (caller can 503 or retry).
-func (b *batcher) Enqueue(bundle IngestBundle) bool {
-	select {
-	case b.in <- bundle:
-		return true
-	default:
-		return false
+// Enqueue submits the bundles of one request. It takes all of them or,
+// with ErrBusy, none, so a retry of the request adds no duplicate rows.
+// More bundles than the queue holds go in parts.
+func (b *batcher) Enqueue(bundles ...IngestBundle) error {
+	b.enqMu.Lock()
+	defer b.enqMu.Unlock()
+	for len(bundles) > 0 {
+		n := min(len(bundles), queueSize)
+		// Only Enqueue adds to the queue, and it holds enqMu, so the free
+		// space can only grow before the sends.
+		if cap(b.in)-len(b.in) < n {
+			return ErrBusy
+		}
+		for _, bundle := range bundles[:n] {
+			b.in <- bundle
+		}
+		bundles = bundles[n:]
 	}
+	batcherQueueDepth.Set(float64(len(b.in)))
+	return nil
 }
 
 func (b *batcher) run() {
 	defer b.wg.Done()
-	cfg := b.client.cfg
-	period := cfg.BatchFlushPeriod
+	period := b.cfg.BatchFlushPeriod
 	if period <= 0 {
 		period = time.Second
 	}
-	maxRows := cfg.BatchFlushRows
+	maxRows := b.cfg.BatchFlushRows
 	if maxRows <= 0 {
 		maxRows = 5000
 	}
-	maxBytes := cfg.BatchFlushBytes
+	maxBytes := b.cfg.BatchFlushBytes
 	if maxBytes <= 0 {
 		maxBytes = 1 << 20
 	}
 
 	var (
-		samples []SampleRow
-		disks   []DiskRow
-		ios     []DiskIORow
-		procs   []ProcRow
+		pending []IngestBundle
 		bytes   int
 	)
 	tick := time.NewTicker(period)
 	defer tick.Stop()
 
 	flush := func(reason string) {
-		if len(samples) == 0 && len(disks) == 0 && len(ios) == 0 && len(procs) == 0 {
-			return
+		if len(pending) > 0 {
+			b.flushPending(reason, pending)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := b.flush(ctx, samples, disks, ios, procs); err != nil {
-			b.log.Error("clickhouse batcher: flush failed", "reason", reason, "err", err)
-		} else {
-			b.log.Debug("clickhouse batcher: flushed",
-				"reason", reason,
-				"samples", len(samples),
-				"disks", len(disks),
-				"disk_io", len(ios),
-				"procs", len(procs),
-			)
-		}
-		samples = samples[:0]
-		disks = disks[:0]
-		ios = ios[:0]
-		procs = procs[:0]
+		pending = nil
 		bytes = 0
+		batcherQueueDepth.Set(float64(len(b.in)))
 	}
 
 	for {
 		select {
 		case <-b.stopCh:
+			for len(b.in) > 0 {
+				pending = append(pending, <-b.in)
+			}
 			flush("stop")
 			return
 		case bundle := <-b.in:
-			samples = append(samples, bundle.Sample)
-			disks = append(disks, bundle.Disks...)
-			ios = append(ios, bundle.DiskIO...)
-			procs = append(procs, bundle.Procs...)
+			pending = append(pending, bundle)
 			// Rough byte estimate, avoids JSON-marshal overhead in hot path.
 			bytes += 256 + 64*len(bundle.Disks) + 80*len(bundle.DiskIO) + 256*len(bundle.Procs)
-			if len(samples) >= maxRows || bytes >= maxBytes {
+			if len(pending) >= maxRows || bytes >= maxBytes {
 				flush("size")
 			}
 		case <-tick.C:
@@ -120,11 +136,101 @@ func (b *batcher) run() {
 	}
 }
 
-func (b *batcher) flush(ctx context.Context, samples []SampleRow, disks []DiskRow, ios []DiskIORow, procs []ProcRow) error {
+// flushPending inserts the batch with retries. On a failure it spills
+// the batch. On a success it replays one spill file.
+func (b *batcher) flushPending(reason string, pending []IngestBundle) {
+	start := time.Now()
+	err := b.insert(pending)
+	for i := 0; err != nil && i < len(b.delays); i++ {
+		batcherFlushErrors.Inc()
+		b.log.Warn("clickhouse batcher: flush failed, retry", "reason", reason, "attempt", i+1, "err", err)
+		if !b.wait(b.delays[i]) {
+			break
+		}
+		err = b.insert(pending)
+	}
+	if err != nil {
+		batcherFlushErrors.Inc()
+		b.log.Error("clickhouse batcher: flush failed, spill", "reason", reason, "bundles", len(pending), "err", err)
+		if err := b.spill.write(pending); err != nil {
+			b.log.Error("clickhouse batcher: spill failed, rows lost", "bundles", len(pending), "err", err)
+		}
+		return
+	}
+	batcherFlushSeconds.Observe(time.Since(start).Seconds())
+	batcherFlushRows.Observe(float64(rowCount(pending)))
+	b.log.Debug("clickhouse batcher: flushed", "reason", reason, "bundles", len(pending))
+	b.replay()
+}
+
+// replay inserts the oldest spill file once. It keeps the file when the
+// insert fails.
+func (b *batcher) replay() {
+	path, ok := b.spill.oldest()
+	if !ok {
+		return
+	}
+	bundles, err := b.spill.read(path)
+	if err != nil {
+		b.log.Error("clickhouse batcher: bad spill file", "path", path, "err", err)
+		b.spill.reject(path)
+		return
+	}
+	if err := b.insert(bundles); err != nil {
+		b.log.Warn("clickhouse batcher: spill replay failed", "path", path, "err", err)
+		return
+	}
+	b.spill.remove(path)
+	b.log.Info("clickhouse batcher: spill replayed", "path", path, "bundles", len(bundles))
+}
+
+func (b *batcher) insert(bundles []IngestBundle) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return b.ins.insert(ctx, bundles)
+}
+
+// wait sleeps for d. It returns false at once when the batcher stops,
+// so the stop flush spills without the retry delays.
+func (b *batcher) wait(d time.Duration) bool {
+	select {
+	case <-time.After(d):
+		return true
+	case <-b.stopCh:
+		return false
+	}
+}
+
+func rowCount(bundles []IngestBundle) int {
+	n := 0
+	for _, bd := range bundles {
+		n += 1 + len(bd.Disks) + len(bd.DiskIO) + len(bd.Procs)
+	}
+	return n
+}
+
+// insert writes the rows of the bundles to their tables.
+func (c *Client) insert(ctx context.Context, bundles []IngestBundle) error {
+	var (
+		samples []SampleRow
+		disks   []DiskRow
+		ios     []DiskIORow
+		procs   []ProcRow
+	)
+	for _, bd := range bundles {
+		samples = append(samples, bd.Sample)
+		disks = append(disks, bd.Disks...)
+		ios = append(ios, bd.DiskIO...)
+		procs = append(procs, bd.Procs...)
+	}
+	return c.flush(ctx, samples, disks, ios, procs)
+}
+
+func (c *Client) flush(ctx context.Context, samples []SampleRow, disks []DiskRow, ios []DiskIORow, procs []ProcRow) error {
 	if len(samples) > 0 {
 		// Explicit column list skips `ingested_at` (defaulted in the
 		// table DDL) so the row count matches `Append` arity.
-		const insertSamples = `INSERT INTO towertail.samples_raw (
+		insertSamples := `INSERT INTO ` + c.table("samples_raw") + ` (
 			ts, org_id, node_id, schema_v,
 			host_name, host_os, host_arch, host_kernel, host_uptime_s, host_sampler, host_machine_id,
 			cpu_pct, cpu_load_1, cpu_load_5, cpu_load_15, cpu_cores,
@@ -134,7 +240,7 @@ func (b *batcher) flush(ctx context.Context, samples []SampleRow, disks []DiskRo
 			procs_total, procs_visible, procs_root,
 			errors
 		)`
-		batch, err := b.client.conn.PrepareBatch(ctx, insertSamples)
+		batch, err := c.conn.PrepareBatch(ctx, insertSamples)
 		if err != nil {
 			return err
 		}
@@ -157,7 +263,7 @@ func (b *batcher) flush(ctx context.Context, samples []SampleRow, disks []DiskRo
 		}
 	}
 	if len(disks) > 0 {
-		batch, err := b.client.conn.PrepareBatch(ctx, "INSERT INTO towertail.disks")
+		batch, err := c.conn.PrepareBatch(ctx, "INSERT INTO "+c.table("disks"))
 		if err != nil {
 			return err
 		}
@@ -171,7 +277,7 @@ func (b *batcher) flush(ctx context.Context, samples []SampleRow, disks []DiskRo
 		}
 	}
 	if len(ios) > 0 {
-		batch, err := b.client.conn.PrepareBatch(ctx, "INSERT INTO towertail.disk_io_devices")
+		batch, err := c.conn.PrepareBatch(ctx, "INSERT INTO "+c.table("disk_io_devices"))
 		if err != nil {
 			return err
 		}
@@ -185,7 +291,7 @@ func (b *batcher) flush(ctx context.Context, samples []SampleRow, disks []DiskRo
 		}
 	}
 	if len(procs) > 0 {
-		batch, err := b.client.conn.PrepareBatch(ctx, "INSERT INTO towertail.procs_topn")
+		batch, err := c.conn.PrepareBatch(ctx, "INSERT INTO "+c.table("procs_topn"))
 		if err != nil {
 			return err
 		}
@@ -209,7 +315,7 @@ func (b *batcher) flush(ctx context.Context, samples []SampleRow, disks []DiskRo
 // WriteEvent inserts a single event row synchronously. Events are rare
 // enough that batching adds no meaningful win.
 func (c *Client) WriteEvent(ctx context.Context, e EventRow) error {
-	batch, err := c.conn.PrepareBatch(ctx, "INSERT INTO towertail.events")
+	batch, err := c.conn.PrepareBatch(ctx, "INSERT INTO "+c.table("events"))
 	if err != nil {
 		return err
 	}

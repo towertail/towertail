@@ -1,6 +1,7 @@
 package app
 
 import (
+	"io/fs"
 	"log/slog"
 
 	"github.com/labstack/echo/v4"
@@ -26,6 +27,12 @@ type builder struct {
 	routes     []func(Router)
 	middleware []echo.MiddlewareFunc
 	components []runtime.Component
+	migrations []migrations
+}
+
+type migrations struct {
+	fsys  fs.FS
+	table string
 }
 
 // WithLogger replaces the logger from the log config.
@@ -52,4 +59,12 @@ func WithMiddleware(m echo.MiddlewareFunc) Option {
 // WithComponent adds a component. Run starts it and stops it at the end.
 func WithComponent(c runtime.Component) Option {
 	return func(b *builder) { b.components = append(b.components, c) }
+}
+
+// WithMigrations adds ClickHouse migrations that run after the core
+// migrations. fsys holds goose SQL files at its root, and {{.DB}} in them
+// is the database name. table is the goose version table of the set. It
+// has no effect when ClickHouse is disabled.
+func WithMigrations(fsys fs.FS, table string) Option {
+	return func(b *builder) { b.migrations = append(b.migrations, migrations{fsys: fsys, table: table}) }
 }

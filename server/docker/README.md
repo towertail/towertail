@@ -49,4 +49,6 @@ This profile also starts Postgres. It does not enable cloud-managed mode in the 
 - Server logs: `docker compose logs -f server`.
 - Check ClickHouse: `docker compose exec clickhouse sh -c 'clickhouse-client --password "$(cat /run/secrets/ch_password)" -q "SELECT 1"'`.
 - Check the server: `curl http://localhost:8080/readyz` returns `ready` when ClickHouse is connected.
+- Ingest returns 503: the batcher queue is full. The samplers send again after `Retry-After`. Look at `towertail_batcher_queue_depth` on `/metrics`.
+- ClickHouse was down: the server keeps the failed batches in `/var/lib/towertail/spill` (in the server volume) and replays them when ClickHouse is back. `towertail_batcher_spill_bytes` shows the size.
 - Build again after a code change: `docker compose up -d --build server`.

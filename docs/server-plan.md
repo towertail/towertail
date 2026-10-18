@@ -699,12 +699,7 @@ server/
 │       └── version.go              # ldflags injected
 ├── migrations/
 │   ├── clickhouse/
-│   │   ├── 0001_samples_raw.sql
-│   │   ├── 0002_disks.sql
-│   │   ├── 0003_disk_io_devices.sql
-│   │   ├── 0004_procs_topn.sql
-│   │   ├── 0005_events.sql
-│   │   └── 0006_rollups.sql
+│   │   └── 00001_baseline.sql      # goose; {{.DB}} is the database
 │   └── postgres/
 │       ├── 00001_orgs.sql
 │       ├── 00002_users.sql

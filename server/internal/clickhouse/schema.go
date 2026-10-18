@@ -1,113 +1,139 @@
 package clickhouse
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
 	"embed"
 	"fmt"
 	"io/fs"
-	"sort"
-	"strings"
+	"testing/fstest"
+	"text/template"
+
+	ch "github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/pressly/goose/v3"
+	"github.com/pressly/goose/v3/database"
 )
 
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
-// ApplyMigrations runs every embedded migration against the database.
-// Migrations are idempotent (CREATE TABLE IF NOT EXISTS / CREATE
-// MATERIALIZED VIEW IF NOT EXISTS) so boot-time replay is safe.
-func (c *Client) ApplyMigrations(ctx context.Context) error {
-	entries, err := fs.ReadDir(migrationsFS, "migrations")
-	if err != nil {
-		return fmt.Errorf("read embedded migrations: %w", err)
-	}
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".sql") {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
+// coreVersionTable is the goose version table of the core migrations.
+const coreVersionTable = "goose_db_version"
 
-	for _, name := range names {
-		body, err := migrationsFS.ReadFile("migrations/" + name)
-		if err != nil {
-			return fmt.Errorf("read %s: %w", name, err)
-		}
-		statements := splitStatements(string(body))
-		for _, stmt := range statements {
-			stmt = strings.TrimSpace(stmt)
-			if stmt == "" {
-				continue
-			}
-			if err := c.conn.Exec(ctx, stmt); err != nil {
-				return fmt.Errorf("%s: %w", name, err)
-			}
+// migrationSet is a folder of goose SQL files with its own version table.
+type migrationSet struct {
+	fsys  fs.FS
+	table string
+}
+
+// AddMigrations adds a migration set that runs after the core set, with
+// its own version table. Call it before Start.
+func (c *Client) AddMigrations(fsys fs.FS, table string) {
+	c.extra = append(c.extra, migrationSet{fsys: fsys, table: table})
+}
+
+// ApplyMigrations runs the core migrations, then the added sets. The SQL
+// files use {{.DB}} for the database name.
+func (c *Client) ApplyMigrations(ctx context.Context) error {
+	if err := c.conn.Exec(ctx, "CREATE DATABASE IF NOT EXISTS "+c.db); err != nil {
+		return fmt.Errorf("create database: %w", err)
+	}
+	db := ch.OpenDB(c.options())
+	defer db.Close()
+
+	if err := c.markBaseline(ctx, db); err != nil {
+		return fmt.Errorf("mark baseline: %w", err)
+	}
+	core, err := fs.Sub(migrationsFS, "migrations")
+	if err != nil {
+		return err
+	}
+	sets := append([]migrationSet{{fsys: core, table: coreVersionTable}}, c.extra...)
+	for _, set := range sets {
+		if err := c.migrate(ctx, db, set); err != nil {
+			return fmt.Errorf("%s: %w", set.table, err)
 		}
 	}
 	return nil
 }
 
-// splitStatements breaks a file into individual statements at any `;`
-// that lands outside a string/comment. ClickHouse's native-protocol
-// query endpoint rejects multi-statement queries, so we send each one
-// separately. Empty statements are dropped so trailing semicolons at
-// end-of-file are harmless.
-func splitStatements(body string) []string {
-	// State: s=default, "='"=inside single-quoted literal,
-	// "=`"=inside backtick identifier, "=-"=inside line comment,
-	// "=*"=inside block comment.
-	var out []string
-	var cur strings.Builder
-	state := 's'
-	for i := 0; i < len(body); i++ {
-		c := body[i]
-		switch state {
-		case 's':
-			switch {
-			case c == ';':
-				if s := strings.TrimSpace(cur.String()); s != "" {
-					out = append(out, s)
-				}
-				cur.Reset()
-			case c == '\'':
-				cur.WriteByte(c)
-				state = '\''
-			case c == '`':
-				cur.WriteByte(c)
-				state = '`'
-			case c == '-' && i+1 < len(body) && body[i+1] == '-':
-				state = 'l'
-				i++
-			case c == '/' && i+1 < len(body) && body[i+1] == '*':
-				state = 'b'
-				i++
-			default:
-				cur.WriteByte(c)
-			}
-		case '\'':
-			cur.WriteByte(c)
-			if c == '\'' {
-				state = 's'
-			}
-		case '`':
-			cur.WriteByte(c)
-			if c == '`' {
-				state = 's'
-			}
-		case 'l':
-			if c == '\n' {
-				cur.WriteByte(c)
-				state = 's'
-			}
-		case 'b':
-			if c == '*' && i+1 < len(body) && body[i+1] == '/' {
-				state = 's'
-				i++
-			}
+func (c *Client) migrate(ctx context.Context, db *sql.DB, set migrationSet) error {
+	fsys, err := renderMigrations(set.fsys, c.db)
+	if err != nil {
+		return err
+	}
+	p, err := goose.NewProvider(goose.DialectClickHouse, db, fsys,
+		goose.WithTableName(c.table(set.table)),
+		goose.WithDisableGlobalRegistry(true),
+		goose.WithIsolateDDL(true),
+	)
+	if err != nil {
+		return err
+	}
+	results, err := p.Up(ctx)
+	if err != nil {
+		return err
+	}
+	for _, r := range results {
+		c.log.Info("clickhouse: migration applied", "table", set.table, "version", r.Source.Version, "dur_ms", r.Duration.Milliseconds())
+	}
+	return nil
+}
+
+// markBaseline marks version 1 as applied for a database with the schema
+// from before goose and no version table.
+func (c *Client) markBaseline(ctx context.Context, db *sql.DB) error {
+	exists := func(table string) (bool, error) {
+		var n uint8
+		err := c.conn.QueryRow(ctx, "EXISTS TABLE "+c.table(table)).Scan(&n)
+		return n == 1, err
+	}
+	hasVersion, err := exists(coreVersionTable)
+	if err != nil || hasVersion {
+		return err
+	}
+	hasSchema, err := exists("samples_raw")
+	if err != nil || !hasSchema {
+		return err
+	}
+	st, err := database.NewStore(database.DialectClickHouse, c.table(coreVersionTable))
+	if err != nil {
+		return err
+	}
+	if err := st.CreateVersionTable(ctx, db); err != nil {
+		return err
+	}
+	for _, v := range []int64{0, 1} {
+		if err := st.Insert(ctx, db, database.InsertRequest{Version: v}); err != nil {
+			return err
 		}
 	}
-	if s := strings.TrimSpace(cur.String()); s != "" {
-		out = append(out, s)
+	c.log.Info("clickhouse: baseline marked as applied", "database", c.db)
+	return nil
+}
+
+// renderMigrations fills {{.DB}} in each SQL file of fsys.
+func renderMigrations(fsys fs.FS, db string) (fs.FS, error) {
+	names, err := fs.Glob(fsys, "*.sql")
+	if err != nil {
+		return nil, err
 	}
-	return out
+	out := fstest.MapFS{}
+	for _, name := range names {
+		body, err := fs.ReadFile(fsys, name)
+		if err != nil {
+			return nil, err
+		}
+		t, err := template.New(name).Option("missingkey=error").Parse(string(body))
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", name, err)
+		}
+		var b bytes.Buffer
+		if err := t.Execute(&b, struct{ DB string }{DB: db}); err != nil {
+			return nil, fmt.Errorf("render %s: %w", name, err)
+		}
+		out[name] = &fstest.MapFile{Data: b.Bytes()}
+	}
+	return out, nil
 }

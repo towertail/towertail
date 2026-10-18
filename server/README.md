@@ -47,20 +47,23 @@ Without them, the app uses SSH to each host (local mode). There is no setting fo
 
 ```
 cmd/towertail-server/    urfave/cli entry point: serve, migrate, token
+app/                     builds and runs the server; the extension API
+config/                  koanf: YAML and env
+store/                   ConfigStore interface, Bolt, Postgres stub
+runtime/                 component lifecycle
+wire/                    JSON types between the services
+notify/                  the Notifier interface for alert channels
+authctx/                 the token of a request
 internal/
 ├── api/                 Echo server, routes, handlers
 ├── auth/                tokens and password hashes
-├── config/              koanf: YAML and env
-├── store/               ConfigStore interface, Bolt, Postgres stub
-├── clickhouse/          pool, batcher, queries
-│   └── migrations/      embedded SQL, applied on the first connection
+├── clickhouse/          pool, batcher, spill, queries
+│   └── migrations/      embedded goose SQL, applied on start
 ├── postgres/            client for cloud-managed mode (stub)
 │   └── migrations/      embedded goose migrations
-├── alerter/             threshold state machine
+├── alerter/             threshold and reachability state machine
 ├── hub/                 WebSocket fan-out
 ├── control/             control queue for each node (for example, kill process)
-├── runtime/             component lifecycle
-├── wire/                JSON types between the services
 └── version/             set by ldflags
 docker/                  Dockerfile, compose, Caddy
 testdata/load/           load generator
@@ -73,6 +76,14 @@ Refer to [`docs/server-plan.md`](../docs/server-plan.md) for the design, [`docs/
 ## Config
 
 The defaults are in the code. To change them, use a YAML file (`TT_CONFIG_FILE=/path/to/towertail-server.yaml`) or `TT_` environment variables. In a variable name, a double underscore (`__`) separates the levels. For example, `TT_HTTP__ADDR` sets `http.addr`, and `TT_CLICKHOUSE__PASSWORD_FILE` sets `clickhouse.password_file`. A single underscore stays part of the key name. Other examples: `TT_CLICKHOUSE__ADDR`, `TT_CLOUD__MANAGED`, `TT_POSTGRES__DSN`, `TT_AUTH__BOOTSTRAP_TOKEN`. Refer to [`config/config.go`](config/config.go) for all the keys.
+
+## ClickHouse
+
+- Migrations: goose SQL files in `internal/clickhouse/migrations/`, with the version table `goose_db_version`. They use `{{.DB}}` for the database name (`clickhouse.database`, default `towertail`). On start, the server applies the migrations that are not applied. A database from before goose (tables and no version table) gets version 1 marked as applied. Other modules add their own sets with `app.WithMigrations`.
+- Connection: `clickhouse.addr`, or `clickhouse.addrs` for more than one node. Set `clickhouse.secure=true` for TLS.
+- Ingest queue: when the batcher queue is full, `POST /v1/ingest/samples` returns 503 with `Retry-After: 5` and keeps none of the samples of the request.
+- Spill: a flush that fails 3 retries (1 s, 2 s, 4 s) goes to `clickhouse.spill_dir` (default `storage.path/spill`) as `*.ndjson.gz`, up to `clickhouse.spill_max_bytes` (default 1 GiB). The next good flush replays the oldest file. A file that cannot be read becomes `*.bad`.
+- Metrics on `/metrics`: `towertail_batcher_queue_depth`, `towertail_batcher_flush_seconds`, `towertail_batcher_flush_rows`, `towertail_batcher_flush_errors_total`, `towertail_batcher_spill_bytes`, `towertail_ingest_lines_total{result}`, `towertail_ingest_requests_total{code}`.
 
 ## Build
 

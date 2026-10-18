@@ -90,6 +90,9 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 	a.rt = runtime.New(a.log)
 	if !cfg.ClickHouse.Disabled {
 		a.ch = clickhouse.New(cfg.ClickHouse, a.log)
+		for _, m := range b.migrations {
+			a.ch.AddMigrations(m.fsys, m.table)
+		}
 		a.rt.Register(a.ch)
 		a.eager = append(a.eager, a.ch.Name())
 	} else {

@@ -18,7 +18,7 @@
 
 services:
   clickhouse:
-    image: clickhouse/clickhouse-server:24.3-alpine
+    image: clickhouse/clickhouse-server:26.8.26.12-alpine
     restart: "no"
     environment:
       CLICKHOUSE_DB: towertail

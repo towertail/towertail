@@ -243,7 +243,15 @@ func slogMiddleware(log *slog.Logger) echo.MiddlewareFunc {
 					status = http.StatusInternalServerError
 				}
 			}
-			log.Info("api: request",
+			level := slog.LevelInfo
+			switch {
+			case status >= 500:
+				level = slog.LevelWarn
+			case strings.HasPrefix(req.URL.Path, "/v1/ingest/"):
+				// Samplers send each few seconds. Keep them out of the info log.
+				level = slog.LevelDebug
+			}
+			log.Log(req.Context(), level, "api: request",
 				"method", req.Method,
 				"path", req.URL.Path,
 				"status", status,

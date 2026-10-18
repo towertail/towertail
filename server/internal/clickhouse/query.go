@@ -36,11 +36,11 @@ func (c *Client) QueryHistory(ctx context.Context, q HistoryQuery) ([]HistoryPoi
 	var sql string
 	switch {
 	case q.Resolution >= 5*time.Minute:
-		sql = historySQL("samples_5m", "ts_5m", q.Metric)
+		sql = historySQL(c.table("samples_5m"), "ts_5m", q.Metric)
 	case q.Resolution >= time.Minute:
-		sql = historySQL("samples_1m", "ts_minute", q.Metric)
+		sql = historySQL(c.table("samples_1m"), "ts_minute", q.Metric)
 	default:
-		sql = rawHistorySQL(q.Metric)
+		sql = rawHistorySQL(c.table("samples_raw"), q.Metric)
 	}
 
 	rows, err := c.conn.Query(ctx, sql, q.OrgID, q.NodeID, q.From, q.To)
@@ -60,74 +60,74 @@ func (c *Client) QueryHistory(ctx context.Context, q HistoryQuery) ([]HistoryPoi
 	return out, rows.Err()
 }
 
-func historySQL(view, bucket, metric string) string {
+func historySQL(table, bucket, metric string) string {
 	// All rollup columns are AggregateFunction states — we Merge them.
 	switch metric {
 	case "cpu":
 		return fmt.Sprintf(
 			"SELECT %s AS ts, avgMerge(cpu_pct_avg) AS v, maxMerge(cpu_pct_max) AS m "+
-				"FROM towertail.%s WHERE org_id = ? AND node_id = ? AND %s BETWEEN ? AND ? "+
+				"FROM %s WHERE org_id = ? AND node_id = ? AND %s BETWEEN ? AND ? "+
 				"GROUP BY ts ORDER BY ts",
-			bucket, view, bucket,
+			bucket, table, bucket,
 		)
 	case "mem":
 		return fmt.Sprintf(
 			"SELECT %s AS ts, avgMerge(mem_ratio_avg) AS v, avgMerge(mem_ratio_avg) AS m "+
-				"FROM towertail.%s WHERE org_id = ? AND node_id = ? AND %s BETWEEN ? AND ? "+
+				"FROM %s WHERE org_id = ? AND node_id = ? AND %s BETWEEN ? AND ? "+
 				"GROUP BY ts ORDER BY ts",
-			bucket, view, bucket,
+			bucket, table, bucket,
 		)
 	case "net_rx":
 		return fmt.Sprintf(
 			"SELECT %s AS ts, avgMerge(net_rx_avg) AS v, avgMerge(net_rx_avg) AS m "+
-				"FROM towertail.%s WHERE org_id = ? AND node_id = ? AND %s BETWEEN ? AND ? "+
+				"FROM %s WHERE org_id = ? AND node_id = ? AND %s BETWEEN ? AND ? "+
 				"GROUP BY ts ORDER BY ts",
-			bucket, view, bucket,
+			bucket, table, bucket,
 		)
 	case "net_tx":
 		return fmt.Sprintf(
 			"SELECT %s AS ts, avgMerge(net_tx_avg) AS v, avgMerge(net_tx_avg) AS m "+
-				"FROM towertail.%s WHERE org_id = ? AND node_id = ? AND %s BETWEEN ? AND ? "+
+				"FROM %s WHERE org_id = ? AND node_id = ? AND %s BETWEEN ? AND ? "+
 				"GROUP BY ts ORDER BY ts",
-			bucket, view, bucket,
+			bucket, table, bucket,
 		)
 	case "disk_read":
 		return fmt.Sprintf(
 			"SELECT %s AS ts, avgMerge(disk_read_avg) AS v, avgMerge(disk_read_avg) AS m "+
-				"FROM towertail.%s WHERE org_id = ? AND node_id = ? AND %s BETWEEN ? AND ? "+
+				"FROM %s WHERE org_id = ? AND node_id = ? AND %s BETWEEN ? AND ? "+
 				"GROUP BY ts ORDER BY ts",
-			bucket, view, bucket,
+			bucket, table, bucket,
 		)
 	case "disk_write":
 		return fmt.Sprintf(
 			"SELECT %s AS ts, avgMerge(disk_write_avg) AS v, avgMerge(disk_write_avg) AS m "+
-				"FROM towertail.%s WHERE org_id = ? AND node_id = ? AND %s BETWEEN ? AND ? "+
+				"FROM %s WHERE org_id = ? AND node_id = ? AND %s BETWEEN ? AND ? "+
 				"GROUP BY ts ORDER BY ts",
-			bucket, view, bucket,
+			bucket, table, bucket,
 		)
 	}
 	return ""
 }
 
-func rawHistorySQL(metric string) string {
+func rawHistorySQL(table, metric string) string {
 	switch metric {
 	case "cpu":
-		return "SELECT ts, toFloat64(cpu_pct), toFloat64(cpu_pct) FROM towertail.samples_raw " +
+		return "SELECT ts, toFloat64(cpu_pct), toFloat64(cpu_pct) FROM " + table + " " +
 			"WHERE org_id = ? AND node_id = ? AND ts BETWEEN ? AND ? ORDER BY ts"
 	case "mem":
 		return "SELECT ts, toFloat64(mem_used) / greatest(toFloat64(mem_total), 1), toFloat64(mem_used) / greatest(toFloat64(mem_total), 1) " +
-			"FROM towertail.samples_raw WHERE org_id = ? AND node_id = ? AND ts BETWEEN ? AND ? ORDER BY ts"
+			"FROM " + table + " WHERE org_id = ? AND node_id = ? AND ts BETWEEN ? AND ? ORDER BY ts"
 	case "net_rx":
-		return "SELECT ts, toFloat64(net_rx_bps), toFloat64(net_rx_bps) FROM towertail.samples_raw " +
+		return "SELECT ts, toFloat64(net_rx_bps), toFloat64(net_rx_bps) FROM " + table + " " +
 			"WHERE org_id = ? AND node_id = ? AND ts BETWEEN ? AND ? ORDER BY ts"
 	case "net_tx":
-		return "SELECT ts, toFloat64(net_tx_bps), toFloat64(net_tx_bps) FROM towertail.samples_raw " +
+		return "SELECT ts, toFloat64(net_tx_bps), toFloat64(net_tx_bps) FROM " + table + " " +
 			"WHERE org_id = ? AND node_id = ? AND ts BETWEEN ? AND ? ORDER BY ts"
 	case "disk_read":
-		return "SELECT ts, toFloat64(disk_read_bps), toFloat64(disk_read_bps) FROM towertail.samples_raw " +
+		return "SELECT ts, toFloat64(disk_read_bps), toFloat64(disk_read_bps) FROM " + table + " " +
 			"WHERE org_id = ? AND node_id = ? AND ts BETWEEN ? AND ? ORDER BY ts"
 	case "disk_write":
-		return "SELECT ts, toFloat64(disk_write_bps), toFloat64(disk_write_bps) FROM towertail.samples_raw " +
+		return "SELECT ts, toFloat64(disk_write_bps), toFloat64(disk_write_bps) FROM " + table + " " +
 			"WHERE org_id = ? AND node_id = ? AND ts BETWEEN ? AND ? ORDER BY ts"
 	}
 	return ""
@@ -152,7 +152,7 @@ type TintRow struct {
 // event since the time.
 func (c *Client) LastTints(ctx context.Context, since time.Time) ([]TintRow, error) {
 	rows, err := c.conn.Query(ctx,
-		"SELECT org_id, node_id, metric, toString(argMax(tint, ts)), max(ts) FROM towertail.events "+
+		"SELECT org_id, node_id, metric, toString(argMax(tint, ts)), max(ts) FROM "+c.table("events")+" "+
 			"WHERE ts >= ? AND "+alertKinds+" GROUP BY org_id, node_id, metric", since)
 	if err != nil {
 		return nil, err
@@ -180,7 +180,7 @@ type NodeSeen struct {
 // the time.
 func (c *Client) LastSeen(ctx context.Context, since time.Time) ([]NodeSeen, error) {
 	rows, err := c.conn.Query(ctx,
-		"SELECT org_id, node_id, max(ts) FROM towertail.samples_raw WHERE ts >= ? GROUP BY org_id, node_id", since)
+		"SELECT org_id, node_id, max(ts) FROM "+c.table("samples_raw")+" WHERE ts >= ? GROUP BY org_id, node_id", since)
 	if err != nil {
 		return nil, err
 	}
@@ -214,14 +214,17 @@ type AlertRow struct {
 // alertWindow is the age limit of open alerts. It is the TTL of events.
 const alertWindow = 90 * 24 * time.Hour
 
-const alertSelect = "SELECT event_id, node_id, toString(kind) AS kind_s, metric, toString(tint) AS tint_s, ts, payload, acked_by, acked_at, snoozed_until " +
-	"FROM towertail.events WHERE org_id = ? AND ts >= ? AND " + alertKinds + " " +
-	"ORDER BY ts DESC LIMIT 1 BY node_id, metric"
+// alertSelect gives the last event of each (node, metric) of the org.
+func (c *Client) alertSelect() string {
+	return "SELECT event_id, node_id, toString(kind) AS kind_s, metric, toString(tint) AS tint_s, ts, payload, acked_by, acked_at, snoozed_until " +
+		"FROM " + c.table("events") + " WHERE org_id = ? AND ts >= ? AND " + alertKinds + " " +
+		"ORDER BY ts DESC LIMIT 1 BY node_id, metric"
+}
 
 // OpenAlerts gives the open alerts of the org, the newest first.
 func (c *Client) OpenAlerts(ctx context.Context, orgID uuid.UUID) ([]AlertRow, error) {
 	return c.queryAlerts(ctx,
-		"SELECT * FROM ("+alertSelect+") WHERE tint_s != 'ok' ORDER BY ts DESC",
+		"SELECT * FROM ("+c.alertSelect()+") WHERE tint_s != 'ok' ORDER BY ts DESC",
 		orgID, time.Now().Add(-alertWindow))
 }
 
@@ -229,7 +232,7 @@ func (c *Client) OpenAlerts(ctx context.Context, orgID uuid.UUID) ([]AlertRow, e
 // when the event is not the open alert of its (node, metric).
 func (c *Client) Alert(ctx context.Context, orgID, eventID uuid.UUID) (AlertRow, error) {
 	rows, err := c.queryAlerts(ctx,
-		"SELECT * FROM ("+alertSelect+") WHERE tint_s != 'ok' AND event_id = ?",
+		"SELECT * FROM ("+c.alertSelect()+") WHERE tint_s != 'ok' AND event_id = ?",
 		orgID, time.Now().Add(-alertWindow), eventID)
 	if err != nil {
 		return AlertRow{}, err
@@ -273,5 +276,5 @@ func (c *Client) SnoozeAlert(ctx context.Context, orgID, eventID uuid.UUID, unti
 func (c *Client) updateEvent(ctx context.Context, set string, orgID, eventID uuid.UUID, args ...any) error {
 	ctx = ch.Context(ctx, ch.WithSettings(ch.Settings{"mutations_sync": 1}))
 	args = append(args, orgID, eventID)
-	return c.conn.Exec(ctx, "ALTER TABLE towertail.events UPDATE "+set+" WHERE org_id = ? AND event_id = ?", args...)
+	return c.conn.Exec(ctx, "ALTER TABLE "+c.table("events")+" UPDATE "+set+" WHERE org_id = ? AND event_id = ?", args...)
 }

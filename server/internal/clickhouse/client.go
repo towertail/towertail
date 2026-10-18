@@ -2,8 +2,10 @@ package clickhouse
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"sync/atomic"
 	"time"
 
@@ -20,27 +22,40 @@ import (
 type Client struct {
 	cfg     config.ClickHouseConfig
 	log     *slog.Logger
+	db      string
+	extra   []migrationSet
 	conn    driver.Conn
 	ready   atomic.Bool
 	batcher *batcher
 }
 
+// dbName limits the database name, because SQL text holds it.
+var dbName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
 func New(cfg config.ClickHouseConfig, log *slog.Logger) *Client {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Client{cfg: cfg, log: log}
+	db := cfg.Database
+	if db == "" {
+		db = "towertail"
+	}
+	return &Client{cfg: cfg, log: log, db: db}
 }
 
-func (c *Client) Name() string      { return "clickhouse" }
-func (c *Client) Ready() bool       { return c.ready.Load() }
-func (c *Client) Conn() driver.Conn { return c.conn }
+// table gives the name of a table in the database of the client.
+func (c *Client) table(name string) string { return c.db + "." + name }
 
-func (c *Client) Start(ctx context.Context) error {
+func (c *Client) options() *ch.Options {
+	addrs := c.cfg.Addrs
+	if len(addrs) == 0 {
+		addrs = []string{c.cfg.Addr}
+	}
 	opts := &ch.Options{
-		Addr: []string{c.cfg.Addr},
+		Addr: addrs,
+		// No default database: the SQL names the database of each table,
+		// so the migrations can create it.
 		Auth: ch.Auth{
-			Database: c.cfg.Database,
 			Username: c.cfg.User,
 			Password: c.cfg.Password,
 		},
@@ -52,6 +67,21 @@ func (c *Client) Start(ctx context.Context) error {
 			"async_insert": 0, // batches are already grouped in-process
 		},
 	}
+	if c.cfg.Secure {
+		opts.TLS = &tls.Config{}
+	}
+	return opts
+}
+
+func (c *Client) Name() string      { return "clickhouse" }
+func (c *Client) Ready() bool       { return c.ready.Load() }
+func (c *Client) Conn() driver.Conn { return c.conn }
+
+func (c *Client) Start(ctx context.Context) error {
+	if !dbName.MatchString(c.db) {
+		return fmt.Errorf("clickhouse: bad database name %q", c.db)
+	}
+	opts := c.options()
 	conn, err := ch.Open(opts)
 	if err != nil {
 		return fmt.Errorf("clickhouse open: %w", err)
@@ -68,10 +98,14 @@ func (c *Client) Start(ctx context.Context) error {
 		return fmt.Errorf("migrations: %w", err)
 	}
 
-	c.batcher = newBatcher(c, c.log)
+	sp, err := newSpill(c.cfg.SpillDir, c.cfg.SpillMaxBytes)
+	if err != nil {
+		return err
+	}
+	c.batcher = newBatcher(c.cfg, c, sp, c.log)
 	c.batcher.start()
 	c.ready.Store(true)
-	c.log.Info("clickhouse: ready", "addr", c.cfg.Addr, "database", c.cfg.Database)
+	c.log.Info("clickhouse: ready", "addr", opts.Addr, "database", c.db)
 	return nil
 }
 
