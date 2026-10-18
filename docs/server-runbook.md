@@ -118,6 +118,14 @@ The ingest limiter is separate at `TT_HTTP__INGEST_RATE_LIMIT_RPS`
 (default 1000). If the Mac app gets 429s, raise the generic; if samplers
 get them, raise ingest.
 
+The client IP comes from the socket address. Behind a proxy, all the
+clients then share the IP of the proxy. Set `TT_HTTP__TRUSTED_PROXY_HEADER`
+to the header that has the client IP: `X-Forwarded-For` (trusted only
+from private addresses, as with the Caddy of the compose stack) or
+`CF-Connecting-IP` (Cloudflare Tunnel). Set it only when no client can
+reach the server past the proxy, because a client can set the header.
+The request log shows the IP in `ip`.
+
 ### Alerter stuck on a stale threshold crossing
 
 Symptom: a node keeps paging after it recovered.

@@ -43,6 +43,12 @@ type HTTPConfig struct {
 	// IngestRateLimitRPS allows samplers pushing metrics to exceed the
 	// generic rate limit — a busy fleet can easily push > 10 rps/host.
 	IngestRateLimitRPS int `koanf:"ingest_rate_limit_rps"`
+	// TrustedProxyHeader is the header with the client IP, for the rate
+	// limits and the logs. Empty means the socket address. Use
+	// "X-Forwarded-For" behind a proxy on a private address (Caddy), or
+	// "CF-Connecting-IP" behind a Cloudflare Tunnel. Set it only when no
+	// client can reach the server past the proxy.
+	TrustedProxyHeader string `koanf:"trusted_proxy_header"`
 }
 
 type ClickHouseConfig struct {

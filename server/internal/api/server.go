@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -68,6 +69,7 @@ func New(d Deps) *Server {
 	e.HidePort = true
 	e.Validator = newValidator()
 	e.HTTPErrorHandler = httpErrorHandler(d.Log)
+	e.IPExtractor = ipExtractor(d.Config.HTTP.TrustedProxyHeader)
 
 	e.Use(middleware.RequestID())
 	e.Use(middleware.Recover())
@@ -261,10 +263,30 @@ func slogMiddleware(log *slog.Logger) echo.MiddlewareFunc {
 				"method", req.Method,
 				"path", req.URL.Path,
 				"status", status,
+				"ip", c.RealIP(),
 				"dur_ms", dur.Milliseconds(),
 				"request_id", c.Response().Header().Get(echo.HeaderXRequestID),
 			)
 			return err
+		}
+	}
+}
+
+// ipExtractor gives the client IP. Without a trusted header it uses the
+// socket address, so a client cannot set its own IP.
+func ipExtractor(header string) echo.IPExtractor {
+	direct := echo.ExtractIPDirect()
+	switch {
+	case header == "":
+		return direct
+	case strings.EqualFold(header, echo.HeaderXForwardedFor):
+		return echo.ExtractIPFromXFFHeader()
+	default:
+		return func(r *http.Request) string {
+			if ip := strings.TrimSpace(r.Header.Get(header)); net.ParseIP(ip) != nil {
+				return ip
+			}
+			return direct(r)
 		}
 	}
 }

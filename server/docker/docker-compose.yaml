@@ -55,6 +55,8 @@ services:
       TT_STORAGE__PATH: /var/lib/towertail
       TT_CLOUD__MANAGED: "false"
       TT_LOG__FORMAT: json
+      # Caddy is the only way in from outside, and it sets X-Forwarded-For.
+      TT_HTTP__TRUSTED_PROXY_HEADER: X-Forwarded-For
       TT_LOG__LEVEL: info
     volumes:
       - server-data:/var/lib/towertail
