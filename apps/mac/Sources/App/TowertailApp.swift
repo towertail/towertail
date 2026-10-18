@@ -29,7 +29,7 @@ struct TowertailApp: App {
             // soon as the app is running, not just after the user has
             // clicked the menu-bar icon.
             ZStack {
-                MenuBarIcon(store: env.store)
+                MenuBarIcon(store: env.store, settings: env.clientSettings)
                 SceneTapInstaller()
             }
         }

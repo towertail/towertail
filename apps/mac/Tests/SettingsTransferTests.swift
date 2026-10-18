@@ -31,6 +31,7 @@ final class SettingsTransferTests: XCTestCase {
         p.cardDensity = "b"
         p.notificationsEnabled = true
         p.defaultTerminalApp = "iTerm"
+        p.menuBarIconStyle = "full"
         return SettingsExport.from(p, appVersion: "0.9.9")
     }
 
@@ -85,6 +86,7 @@ final class SettingsTransferTests: XCTestCase {
         XCTAssertEqual(merged.localPollingIntervalSeconds, 5)
         XCTAssertEqual(merged.cardDensity, "b")
         XCTAssertEqual(merged.defaultTerminalApp, "iTerm")
+        XCTAssertEqual(merged.menuBarIconStyle, "full")
         XCTAssertEqual(merged.thresholds.cpuWarn, 0.5, "global thresholds should not have changed")
         XCTAssertFalse(merged.notificationsEnabled, "notifications section was unticked")
         XCTAssertTrue(report.generalApplied)
@@ -156,6 +158,32 @@ final class SettingsTransferTests: XCTestCase {
     // An export from Mac must carry that block through unchanged so a user
     // who round-trips Mac → Windows → Mac (or vice-versa) never loses their
     // Windows-only settings.
+
+    func testImportWithoutMenuBarIconStyleKeepsCurrent() throws {
+        var b = base()
+        b.menuBarIconStyle = "full"
+        var ex = makeExport(nodes: [])
+        ex.general.menuBarIconStyle = nil
+        let (merged, _) = SettingsTransfer.apply(ex, to: b, selection: .allDefaults)
+        XCTAssertEqual(merged.menuBarIconStyle, "full")
+    }
+
+    func testMenuBarIconStyleLivesInDarwinBlock() throws {
+        var b = base()
+        b.menuBarIconStyle = "full"
+        let data = try JSONEncoder().encode(b)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let darwin = try XCTUnwrap((json["platform"] as? [String: Any])?["darwin"] as? [String: Any])
+        XCTAssertEqual(darwin["menuBarIconStyle"] as? String, "full")
+        XCTAssertEqual(try JSONDecoder().decode(PersistedSettings.self, from: data).menuBarIconStyle, "full")
+    }
+
+    func testMissingMenuBarIconStyleDefaultsToPulse() throws {
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(base())) as? [String: Any])
+        json["platform"] = ["darwin": ["launchAtLogin": false]]
+        let data = try JSONSerialization.data(withJSONObject: json)
+        XCTAssertEqual(try JSONDecoder().decode(PersistedSettings.self, from: data).menuBarIconStyle, "pulse")
+    }
 
     func testExportCarriesSourcePlatform() {
         let ex = makeExport(nodes: [])

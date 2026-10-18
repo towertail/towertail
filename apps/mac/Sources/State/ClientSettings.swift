@@ -5,6 +5,11 @@ enum CardDensity: String, CaseIterable, Sendable {
     case a, b
 }
 
+/// `pulse` colors only the LEDs and the pulse line. `full` also colors the rack at warn and critical.
+enum MenuBarIconStyle: String, CaseIterable, Sendable {
+    case pulse, full
+}
+
 /// Local-only client preferences. These never live on a Towertail server —
 /// they describe how *this* Mac renders the app (density, terminal choice,
 /// launch-at-login). In Remote mode these are still owned here; only
@@ -15,6 +20,7 @@ final class ClientSettings {
     var cardDensity: CardDensity
     var launchAtLogin: Bool
     var defaultTerminalApp: String
+    var menuBarIconStyle: MenuBarIconStyle
 
     private let url: URL
 
@@ -24,6 +30,7 @@ final class ClientSettings {
         self.cardDensity = CardDensity(rawValue: p.cardDensity) ?? .a
         self.launchAtLogin = p.launchAtLogin
         self.defaultTerminalApp = p.defaultTerminalApp
+        self.menuBarIconStyle = MenuBarIconStyle(rawValue: p.menuBarIconStyle) ?? .pulse
     }
 
     static func loadFromDisk() -> ClientSettings {
@@ -35,6 +42,7 @@ final class ClientSettings {
         self.cardDensity = CardDensity(rawValue: p.cardDensity) ?? .a
         self.launchAtLogin = p.launchAtLogin
         self.defaultTerminalApp = p.defaultTerminalApp
+        self.menuBarIconStyle = MenuBarIconStyle(rawValue: p.menuBarIconStyle) ?? .pulse
     }
 
     func persist() {
@@ -43,6 +51,7 @@ final class ClientSettings {
         p.cardDensity = cardDensity.rawValue
         p.launchAtLogin = launchAtLogin
         p.defaultTerminalApp = defaultTerminalApp
+        p.menuBarIconStyle = menuBarIconStyle.rawValue
         SettingsPersistence.save(p, to: url)
         logSettingsDiff(before: before, after: p, fields: Self.diffFields)
     }
@@ -51,5 +60,6 @@ final class ClientSettings {
         SettingsField("cardDensity") { $0.cardDensity },
         SettingsField("launchAtLogin") { "\($0.launchAtLogin)" },
         SettingsField("defaultTerminalApp") { $0.defaultTerminalApp },
+        SettingsField("menuBarIconStyle") { $0.menuBarIconStyle },
     ]
 }

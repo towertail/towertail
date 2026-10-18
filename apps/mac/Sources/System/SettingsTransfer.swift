@@ -35,11 +35,12 @@ struct SettingsExport: Codable, Equatable {
         var autoUpdateSamplersEnabled: Bool
         var defaultTerminalApp: String
         var postWakeGraceSeconds: Int?
+        var menuBarIconStyle: String?
 
         enum CodingKeys: String, CodingKey {
             case localPollingIntervalSeconds, sshPollingIntervalSeconds
             case cardDensity, launchAtLogin, autoUpdateSamplersEnabled
-            case defaultTerminalApp, postWakeGraceSeconds
+            case defaultTerminalApp, postWakeGraceSeconds, menuBarIconStyle
         }
     }
 
@@ -63,7 +64,8 @@ struct SettingsExport: Codable, Equatable {
                 launchAtLogin: p.launchAtLogin,
                 autoUpdateSamplersEnabled: p.autoUpdateSamplersEnabled,
                 defaultTerminalApp: p.defaultTerminalApp,
-                postWakeGraceSeconds: p.postWakeGraceSeconds
+                postWakeGraceSeconds: p.postWakeGraceSeconds,
+                menuBarIconStyle: p.menuBarIconStyle
             ),
             globalThresholds: p.thresholds,
             notifications: NotificationsSection(
@@ -200,6 +202,9 @@ enum SettingsTransfer {
             out.defaultTerminalApp = imported.general.defaultTerminalApp
             if let grace = imported.general.postWakeGraceSeconds {
                 out.postWakeGraceSeconds = grace
+            }
+            if let style = imported.general.menuBarIconStyle {
+                out.menuBarIconStyle = style
             }
             report.generalApplied = true
         }

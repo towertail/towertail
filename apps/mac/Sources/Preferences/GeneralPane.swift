@@ -94,6 +94,16 @@ struct GeneralPane: View {
                     Text("Relaxed").tag(CardDensity.b)
                 }
                 .pickerStyle(.segmented)
+                Picker("Menu-bar icon", selection: Binding(
+                    get: { clientSettings.menuBarIconStyle },
+                    set: { clientSettings.menuBarIconStyle = $0; clientSettings.persist() }
+                )) {
+                    Text("Color the pulse").tag(MenuBarIconStyle.pulse)
+                    Text("Color the whole icon").tag(MenuBarIconStyle.full)
+                }
+                Text("At warn and critical, \"Color the whole icon\" also colors the rack.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Terminal") {
