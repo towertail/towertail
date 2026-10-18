@@ -145,6 +145,9 @@ func (s *Server) Group(prefix string, kinds ...store.TokenKind) *echo.Group {
 	return s.echo.Group(prefix, bearerMiddleware(s.issuer, kinds...))
 }
 
+// Public gives a route group with no bearer middleware.
+func (s *Server) Public(prefix string) *echo.Group { return s.echo.Group(prefix) }
+
 func (s *Server) Handler() http.Handler { return s.echo }
 
 // Start runs the HTTP server until ctx is cancelled or ListenAndServe

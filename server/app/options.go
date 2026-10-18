@@ -20,10 +20,12 @@ type Limits interface {
 	HistoryDays(ctx context.Context, orgID uuid.UUID) int
 }
 
-// Router gives route groups that require a bearer token of one of the
-// kinds.
+// Router gives route groups for extra routes.
 type Router interface {
+	// Group requires a bearer token of one of the kinds.
 	Group(prefix string, kinds ...store.TokenKind) *echo.Group
+	// Public requires no token, for example for a login.
+	Public(prefix string) *echo.Group
 }
 
 // Option changes how New builds the App.

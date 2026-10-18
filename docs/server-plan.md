@@ -744,7 +744,7 @@ a, err := app.New(cfg,
 err = a.Run(ctx)                               // serves until ctx is done
 ```
 
-- `Router.Group(prefix, kinds...)` gives an `*echo.Group` with the bearer middleware for the token kinds.
+- `Router.Group(prefix, kinds...)` gives an `*echo.Group` with the bearer middleware for the token kinds. `Router.Public(prefix)` gives a group with no token check.
 - The public packages are `app`, `authctx`, `config`, `notify`, `runtime`, `store` and `wire`. All other packages stay in `internal/`.
 - When the store is not Bolt, disk scans use a separate Bolt file `scans.db` in `storage.path`.
 - A middleware can call `authctx.Set(c, token)` (for example for a session cookie). The bearer middleware then accepts that token and checks only its kind.
