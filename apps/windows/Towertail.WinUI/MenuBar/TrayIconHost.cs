@@ -3,22 +3,32 @@ using H.NotifyIcon.Core;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media.Imaging;
+using Microsoft.UI.Dispatching;
+using Microsoft.Win32;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Towertail.WinUI.Bootstrap;
+using Towertail.WinUI.State;
 using Windows.Foundation;
+using Windows.UI.ViewManagement;
+using DrawingIcon = System.Drawing.Icon;
 
 namespace Towertail.WinUI.MenuBar;
 
 /// <summary>
 /// Hosts the tray icon ("notification area" icon) for the app. Click → toggle popover.
-/// Mirrors MenuBarIcon.swift on the Mac side.
+/// Mirrors MenuBarIcon.swift on the Mac side: the icon follows
+/// <see cref="ServerStore.AggregateLevel"/> and <see cref="ClientSettings.TrayIconStyle"/>.
 /// </summary>
 public sealed class TrayIconHost
 {
     private readonly AppEnvironment _env;
     private TaskbarIcon? _icon;
     private TrayPopoverWindow? _popover;
+    private DispatcherQueue? _queue;
+    // Keep a reference: ColorValuesChanged stops when UISettings is collected.
+    private readonly UISettings _uiSettings = new();
+    private readonly Dictionary<string, DrawingIcon> _icons = new();
 
     public TrayIconHost(AppEnvironment env) { _env = env; }
 
@@ -33,8 +43,11 @@ public sealed class TrayIconHost
             // native Win32 popup menu — bulletproof and requires no host.
             ContextMenuMode = ContextMenuMode.SecondWindow,
         };
-        var iconSource = LoadIconSource();
-        if (iconSource is not null) _icon.IconSource = iconSource;
+        _queue = DispatcherQueue.GetForCurrentThread();
+        UpdateIcon();
+        _env.Servers.PropertyChanged += OnStateChanged;
+        _env.ClientSettings.PropertyChanged += OnStateChanged;
+        _uiSettings.ColorValuesChanged += (_, _) => _queue?.TryEnqueue(UpdateIcon);
         _icon.LeftClickCommand = new RelayCommand(TogglePopover);
         _icon.RightClickCommand = new RelayCommand(ShowContextMenuNative);
         _icon.ForceCreate();
@@ -123,6 +136,8 @@ public sealed class TrayIconHost
 
     public void Dispose()
     {
+        _env.Servers.PropertyChanged -= OnStateChanged;
+        _env.ClientSettings.PropertyChanged -= OnStateChanged;
         _icon?.Dispose();
         _icon = null;
     }
@@ -134,17 +149,45 @@ public sealed class TrayIconHost
         else _popover.ShowAtTray();
     }
 
-    private static BitmapImage? LoadIconSource()
+    private void OnStateChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName is nameof(ServerStore.AggregateLevel) or nameof(ClientSettings.TrayIconStyle))
+            _queue?.TryEnqueue(UpdateIcon);
+    }
+
+    private void UpdateIcon()
+    {
+        if (_icon is null) return;
+        var level = _env.Servers.AggregateLevel;
+        var name = $"tray-{(TaskbarIsLight() ? "light" : "dark")}-{level.ToString().ToLowerInvariant()}";
+        if (level != HealthLevel.Nominal && _env.ClientSettings.TrayIconStyle == TrayIconStyle.Full) name += "-full";
+        if (LoadIcon(name) is { } icon) _icon.Icon = icon;
+    }
+
+    private DrawingIcon? LoadIcon(string name)
+    {
+        if (_icons.TryGetValue(name, out var cached)) return cached;
         try
         {
-            var path = Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico");
-            if (File.Exists(path))
-                return new BitmapImage(new Uri(path));
+            var path = Path.Combine(AppContext.BaseDirectory, "Assets", "Tray", name + ".ico");
+            if (!File.Exists(path)) return null;
+            // Pick the frame for the small-icon size at the current DPI.
+            var size = GetSystemMetrics(SM_CXSMICON);
+            return _icons[name] = new DrawingIcon(path, size, size);
         }
-        catch { }
-        return null;
+        catch { return null; }
     }
+
+    /// <summary>The taskbar has its own theme, separate from the app theme.</summary>
+    private static bool TaskbarIsLight()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+        return key?.GetValue("SystemUsesLightTheme") is int v && v == 1;
+    }
+
+    private const int SM_CXSMICON = 49;
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetrics(int nIndex);
 
     private sealed class RelayCommand : System.Windows.Input.ICommand
     {

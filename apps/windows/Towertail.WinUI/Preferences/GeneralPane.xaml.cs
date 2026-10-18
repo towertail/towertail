@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml.Controls;
 using Towertail.WinUI.Bootstrap;
+using Towertail.WinUI.State;
 
 namespace Towertail.WinUI.Preferences;
 
@@ -14,6 +15,15 @@ public sealed partial class GeneralPane : UserControl
         SshPollBox.Value = env.ServerSettings.SshPollingIntervalSeconds;
         GraceBox.Value = env.ServerSettings.PostWakeGraceSeconds;
         LaunchAtStartupSwitch.IsOn = env.ClientSettings.LaunchAtStartup;
+        TrayIconStyleBox.SelectedIndex = env.ClientSettings.TrayIconStyle == TrayIconStyle.Full ? 1 : 0;
+    }
+
+    private void OnTrayIconStyleChanged(object sender, SelectionChangedEventArgs e)
+    {
+        var style = TrayIconStyleBox.SelectedIndex == 1 ? TrayIconStyle.Full : TrayIconStyle.Pulse;
+        if (style == _env.ClientSettings.TrayIconStyle) return;
+        _env.ClientSettings.TrayIconStyle = style;
+        _env.ClientSettings.Persist();
     }
 
     private void OnLocalPollChanged(NumberBox s, NumberBoxValueChangedEventArgs e)

@@ -35,6 +35,9 @@ public sealed class SettingsExport
         public string CardDensity { get; set; } = "a";
         public int PostWakeGraceSeconds { get; set; } = 15;
         public bool AutoUpdateSamplersEnabled { get; set; }
+        /// <summary>Same key as the Mac. Null in older exports.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? MenuBarIconStyle { get; set; }
     }
 
     public sealed class NotificationsBlock
@@ -93,6 +96,7 @@ public static class SettingsTransfer
                 CardDensity = p.CardDensity,
                 PostWakeGraceSeconds = p.PostWakeGraceSeconds,
                 AutoUpdateSamplersEnabled = p.AutoUpdateSamplersEnabled,
+                MenuBarIconStyle = p.Platform.Windows.TrayIconStyle,
             },
             GlobalThresholds = p.Thresholds,
             Notifications = new SettingsExport.NotificationsBlock
@@ -117,6 +121,8 @@ public static class SettingsTransfer
             p.CardDensity = export.General.CardDensity;
             p.PostWakeGraceSeconds = export.General.PostWakeGraceSeconds;
             p.AutoUpdateSamplersEnabled = export.General.AutoUpdateSamplersEnabled;
+            if (export.General.MenuBarIconStyle is { } style)
+                p.Platform.Windows.TrayIconStyle = style;
         }
         if (options.ImportThresholds)
         {

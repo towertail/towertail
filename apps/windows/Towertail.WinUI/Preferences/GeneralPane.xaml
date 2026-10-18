@@ -35,6 +35,26 @@
                 </Grid>
             </Border>
 
+            <TextBlock Text="Appearance" Style="{StaticResource SettingsSectionHeaderTextBlockStyle}" />
+
+            <Border Style="{StaticResource SettingsRowBorder}">
+                <Grid Style="{StaticResource SettingsRowGrid}" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="16">
+                    <FontIcon Grid.Column="0" Glyph="&#xE790;" FontSize="18" VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="Tray icon" Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                        <TextBlock Text="The pulse always shows the state. The whole icon is louder at Warn and Critical."
+                                   Style="{ThemeResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                    <ComboBox Grid.Column="2" x:Name="TrayIconStyleBox" Width="200"
+                              VerticalAlignment="Center" SelectionChanged="OnTrayIconStyleChanged">
+                        <ComboBoxItem Content="Color the pulse" />
+                        <ComboBoxItem Content="Color the whole icon" />
+                    </ComboBox>
+                </Grid>
+            </Border>
+
             <TextBlock Text="Polling" Style="{StaticResource SettingsSectionHeaderTextBlockStyle}" />
 
             <Border Style="{StaticResource SettingsRowBorder}">

@@ -53,6 +53,7 @@ public sealed class WindowsPlatform
 {
     public bool LaunchAtStartup { get; set; }
     public string DefaultTerminalApp { get; set; } = "WindowsTerminal";
+    public string TrayIconStyle { get; set; } = "pulse";
 }
 
 public sealed class PersistedThresholds

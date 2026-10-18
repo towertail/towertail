@@ -13,6 +13,9 @@ public sealed partial class ServerStore : ObservableObject
 {
     public ObservableCollection<ServerViewModel> Servers { get; } = new();
 
+    /// <summary>Tray icon state. Mirrors aggregateState in ServerStore.swift.</summary>
+    [ObservableProperty] private HealthLevel _aggregateLevel;
+
     private readonly NodeStore _nodes;
     private readonly ServerSettings _settings;
     private readonly HistoryStore _history;
@@ -36,12 +39,14 @@ public sealed partial class ServerStore : ObservableObject
         nodes.NodeRemoved += (_, id) =>
         {
             for (int i = 0; i < Servers.Count; i++)
-                if (Servers[i].Node.Id == id) { Servers.RemoveAt(i); return; }
+                if (Servers[i].Node.Id == id) { Servers.RemoveAt(i); break; }
+            UpdateAggregateLevel();
         };
         nodes.NodeUpdated += (_, id) =>
         {
             var n = nodes.ById(id); if (n == null) return;
             var vm = Find(id); if (vm != null) vm.UpdateNode(n);
+            UpdateAggregateLevel();
         };
     }
 
@@ -96,10 +101,31 @@ public sealed partial class ServerStore : ObservableObject
             _history.AppendProcs(nodeId, sample.Ts, p.Root, p.Items);
 
         _notifier?.Evaluate(vm);
+        UpdateAggregateLevel();
     }
 
     /// <summary>A failed poll breaks the sample stream, so sustain must start again.</summary>
-    public void MarkUnreachable(Guid nodeId) => Find(nodeId)?.ResetAlerts();
+    public void MarkUnreachable(Guid nodeId)
+    {
+        Find(nodeId)?.ResetAlerts();
+        UpdateAggregateLevel();
+    }
+
+    /// <summary>
+    /// Worst sustained level over the hosts. A host counts only when its node
+    /// opts in with IconOnWarn / IconOnCritical for that level.
+    /// </summary>
+    private void UpdateAggregateLevel()
+    {
+        var level = HealthLevel.Nominal;
+        foreach (var vm in Servers)
+        {
+            var host = Enum.GetValues<AlertMetric>().Max(vm.AlertLevel);
+            if (host == HealthLevel.Critical && vm.Node.IconOnCritical) { level = HealthLevel.Critical; break; }
+            if (host == HealthLevel.Warn && vm.Node.IconOnWarn) level = HealthLevel.Warn;
+        }
+        AggregateLevel = level;
+    }
 
     public async Task EnsureProcsHydratedAsync(Guid nodeId)
     {
