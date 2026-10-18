@@ -1,7 +1,10 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -34,12 +37,40 @@ func (s *Server) handleCreateNode(c echo.Context) error {
 	if n.ID == uuid.Nil {
 		n.ID = uuid.New()
 	}
+	if err := s.checkNodeLimit(c.Request().Context(), t.OrgID, n.ID); err != nil {
+		return err
+	}
 	if err := s.store.PutNode(c.Request().Context(), t.OrgID, n); err != nil {
 		return err
 	}
 	s.audit(c, "create", "node", n.ID, "name", n.DisplayName, "kind", n.Kind)
 	s.broadcastNode(t.OrgID, n)
 	return c.JSON(http.StatusCreated, n)
+}
+
+// checkNodeLimit replies 402 when a new node goes above the plan limit.
+// An update of a node that exists always passes.
+func (s *Server) checkNodeLimit(ctx context.Context, orgID, id uuid.UUID) error {
+	if s.limits == nil {
+		return nil
+	}
+	max := s.limits.MaxNodes(ctx, orgID)
+	if max < 0 {
+		return nil
+	}
+	if _, err := s.store.GetNode(ctx, orgID, id); err == nil {
+		return nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	nodes, err := s.store.ListNodes(ctx, orgID)
+	if err != nil {
+		return err
+	}
+	if len(nodes) >= max {
+		return echo.NewHTTPError(http.StatusPaymentRequired, fmt.Sprintf("the plan allows %d nodes", max))
+	}
+	return nil
 }
 
 func (s *Server) handleGetNode(c echo.Context) error {
@@ -80,6 +111,9 @@ func (s *Server) handleUpdateNode(c echo.Context) error {
 		}
 	}
 	n.ID = id
+	if err := s.checkNodeLimit(c.Request().Context(), t.OrgID, id); err != nil {
+		return err
+	}
 	if err := s.store.PutNode(c.Request().Context(), t.OrgID, n); err != nil {
 		return err
 	}

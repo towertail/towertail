@@ -19,6 +19,9 @@ type Limits interface {
 	// HistoryDays is the number of days of history that the org can
 	// read. 0 means no limit.
 	HistoryDays(ctx context.Context, orgID uuid.UUID) int
+	// MaxNodes is the number of nodes that the org can have. A negative
+	// value means no limit.
+	MaxNodes(ctx context.Context, orgID uuid.UUID) int
 }
 
 // historyRange is the node and the range of a history request.

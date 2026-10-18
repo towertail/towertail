@@ -17,6 +17,7 @@ import (
 type fixedLimits int
 
 func (d fixedLimits) HistoryDays(context.Context, uuid.UUID) int { return int(d) }
+func (d fixedLimits) MaxNodes(context.Context, uuid.UUID) int    { return -1 }
 
 func rangeCtx(t *testing.T, query string) echo.Context {
 	t.Helper()

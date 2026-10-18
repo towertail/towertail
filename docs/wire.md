@@ -24,7 +24,7 @@ Error envelope for every REST 4xx/5xx:
 { "error": { "code": "not_found", "message": "...", "request_id": "..." } }
 ```
 
-Codes: `unauthorized`, `forbidden`, `not_found`, `bad_request`, `conflict`, `rate_limited`, `unavailable`, `not_implemented`, `internal`.
+Codes: `unauthorized`, `forbidden`, `not_found`, `bad_request`, `conflict`, `plan_limit` (402, a new node above the plan limit of a cloud org), `rate_limited`, `unavailable`, `not_implemented`, `internal`.
 
 ---
 

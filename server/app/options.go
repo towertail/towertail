@@ -18,6 +18,9 @@ type Limits interface {
 	// HistoryDays is the number of days of history that the org can
 	// read. 0 means no limit.
 	HistoryDays(ctx context.Context, orgID uuid.UUID) int
+	// MaxNodes is the number of nodes that the org can have. A negative
+	// value means no limit.
+	MaxNodes(ctx context.Context, orgID uuid.UUID) int
 }
 
 // Router gives route groups for extra routes.
@@ -86,6 +89,7 @@ func WithMigrations(fsys fs.FS, table string) Option {
 	return func(b *builder) { b.migrations = append(b.migrations, migrations{fsys: fsys, table: table}) }
 }
 
-// WithLimits sets the plan limits. The history endpoints clamp "from" to
+// WithLimits sets the plan limits. The node create endpoints reply 402
+// above MaxNodes. The history endpoints clamp "from" to
 // the history days of the org.
 func WithLimits(l Limits) Option { return func(b *builder) { b.limits = l } }

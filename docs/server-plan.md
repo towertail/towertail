@@ -741,6 +741,7 @@ a, err := app.New(cfg,
     }),
     app.WithMiddleware(mw),                    // after the core middleware
     app.WithComponent(billing),                // runtime.Component: Run starts it, then stops it
+    app.WithLimits(limits),                    // app.Limits: HistoryDays and MaxNodes of each org
 )
 err = a.Run(ctx)                               // serves until ctx is done
 ```
@@ -751,6 +752,7 @@ err = a.Run(ctx)                               // serves until ctx is done
 - A middleware can call `authctx.Set(c, token)` (for example for a session cookie). The bearer middleware then accepts that token and checks only its kind.
 - `store.NewToken(org, kind, label)` makes an API token with a new secret, and `store.HashToken(raw)` is the hash that the store keeps.
 - `(*store.PostgresStore).Migrate(ctx, fsys, table)` runs a set of goose SQL files with its own version table.
+- `app.Limits.MaxNodes` limits new nodes. `POST /v1/nodes`, a `PUT /v1/nodes/:id` that adds a node, and `POST /v1/sampler/enroll` reply 402 `plan_limit` above it. A negative value means no limit. Ingest for existing nodes does not stop.
 - `config.LoadSection(path, key, &out)` reads one key (for example `cloud`) from the same YAML file and env as `config.Load`.
 
 ---

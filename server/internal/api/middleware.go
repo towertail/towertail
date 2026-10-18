@@ -41,6 +41,8 @@ func httpErrorHandler(log *slog.Logger) echo.HTTPErrorHandler {
 				code = "bad_request"
 			case http.StatusConflict:
 				code = "conflict"
+			case http.StatusPaymentRequired:
+				code = "plan_limit"
 			case http.StatusTooManyRequests:
 				code = "rate_limited"
 			case http.StatusServiceUnavailable:

@@ -30,6 +30,9 @@ func (s *Server) handleSamplerEnroll(c echo.Context) error {
 	nodeID := req.NodeID
 	if nodeID == uuid.Nil {
 		nodeID = uuid.New()
+		if err := s.checkNodeLimit(c.Request().Context(), t.OrgID, nodeID); err != nil {
+			return err
+		}
 		node := store.Node{
 			ID:               nodeID,
 			DisplayName:      req.DisplayName,
