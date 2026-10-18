@@ -233,9 +233,12 @@ type AlertRow struct {
 // alertWindow is the age limit of open alerts. It is the TTL of events.
 const alertWindow = 90 * 24 * time.Hour
 
+// alertColumns is the column order that queryAlerts scans.
+const alertColumns = "event_id, node_id, toString(kind) AS kind_s, metric, toString(tint) AS tint_s, ts, payload, acked_by, acked_at, snoozed_until"
+
 // alertSelect gives the last event of each (node, metric) of the org.
 func (c *Client) alertSelect() string {
-	return "SELECT event_id, node_id, toString(kind) AS kind_s, metric, toString(tint) AS tint_s, ts, payload, acked_by, acked_at, snoozed_until " +
+	return "SELECT " + alertColumns + " " +
 		"FROM " + c.table("events") + " WHERE org_id = ? AND ts >= ? AND " + alertKinds + " " +
 		"ORDER BY ts DESC LIMIT 1 BY node_id, metric"
 }
@@ -245,6 +248,14 @@ func (c *Client) OpenAlerts(ctx context.Context, orgID uuid.UUID) ([]AlertRow, e
 	return c.queryAlerts(ctx,
 		"SELECT * FROM ("+c.alertSelect()+") WHERE tint_s != 'ok' ORDER BY ts DESC",
 		orgID, time.Now().Add(-alertWindow))
+}
+
+// RecentAlerts gives the alert events of the org since the time, the
+// newest first. A change back to ok is also an event.
+func (c *Client) RecentAlerts(ctx context.Context, orgID uuid.UUID, since time.Time, limit int) ([]AlertRow, error) {
+	return c.queryAlerts(ctx,
+		"SELECT "+alertColumns+" FROM "+c.table("events")+" WHERE org_id = ? AND ts >= ? AND "+alertKinds+" ORDER BY ts DESC LIMIT ?",
+		orgID, since, limit)
 }
 
 // Alert gives the open alert with the event id. It returns ErrNoAlert

@@ -66,6 +66,17 @@ func TestAlertsAckSnoozeRoundTrip(t *testing.T) {
 		t.Fatalf("after ack and snooze: %+v", a)
 	}
 
+	recent, err := client.RecentAlerts(ctx, org, now.Add(-150*time.Second), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recent) != 3 || recent[0].Tint != "ok" || recent[0].Metric != "mem" {
+		t.Fatalf("recent alerts = %+v", recent)
+	}
+	if recent, _ := client.RecentAlerts(ctx, org, now.Add(-time.Hour), 2); len(recent) != 2 {
+		t.Fatalf("recent alerts with limit 2 = %d rows", len(recent))
+	}
+
 	tints, err := client.LastTints(ctx, now.Add(-time.Hour))
 	if err != nil {
 		t.Fatal(err)

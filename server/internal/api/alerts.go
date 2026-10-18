@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,6 +25,37 @@ func (s *Server) handleListAlerts(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "clickhouse not ready")
 	}
 	rows, err := s.ch.OpenAlerts(c.Request().Context(), t.OrgID)
+	if err != nil {
+		return err
+	}
+	for _, r := range rows {
+		out.Alerts = append(out.Alerts, alertFromRow(r))
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
+// recentAlertsLimit is the most rows of GET /v1/alerts/recent.
+const recentAlertsLimit = 200
+
+func (s *Server) handleRecentAlerts(c echo.Context) error {
+	t, _ := authctx.TokenFrom(c)
+	days := 7
+	if v := c.QueryParam("days"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > 90 {
+			return echo.NewHTTPError(http.StatusBadRequest, "days must be 1 to 90")
+		}
+		days = n
+	}
+	out := wire.AlertList{Alerts: []wire.Alert{}}
+	if s.ch == nil {
+		return c.JSON(http.StatusOK, out)
+	}
+	if !s.ch.Ready() {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "clickhouse not ready")
+	}
+	since := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+	rows, err := s.ch.RecentAlerts(c.Request().Context(), t.OrgID, since, recentAlertsLimit)
 	if err != nil {
 		return err
 	}

@@ -72,6 +72,7 @@ Base path `/v1`. Authed unless otherwise marked.
 | GET | `/v1/settings` | — | `ServerSettings` |
 | PUT | `/v1/settings` | `ServerSettings` | `ServerSettings` |
 | GET | `/v1/alerts` | — | `AlertList`: the open alerts of the org, the newest first |
+| GET | `/v1/alerts/recent?days=7` | — | `AlertList`: the alert events of the org in the last `days` (1 to 90, default 7), the newest first, 200 at most. A change back to ok has the tint `ok` |
 | POST | `/v1/alerts/{id}/ack` | — | `Alert` (404 if the alert is not open) |
 | POST | `/v1/alerts/{id}/snooze?until=RFC3339` | — | `Alert` (404 if the alert is not open) |
 | GET | `/v1/channels` | — | `[Channel]` |

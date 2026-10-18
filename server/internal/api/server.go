@@ -203,6 +203,7 @@ func (s *Server) registerRoutes() {
 	userGroup.GET("/settings", s.handleGetSettings)
 	userGroup.PUT("/settings", s.handlePutSettings)
 	userGroup.GET("/alerts", s.handleListAlerts)
+	userGroup.GET("/alerts/recent", s.handleRecentAlerts)
 	userGroup.POST("/alerts/:id/ack", s.handleAckAlert)
 	userGroup.POST("/alerts/:id/snooze", s.handleSnoozeAlert)
 	if s.channels != nil {
