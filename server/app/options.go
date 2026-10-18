@@ -1,15 +1,24 @@
 package app
 
 import (
+	"context"
 	"io/fs"
 	"log/slog"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/towertail/towertail/server/notify"
 	"github.com/towertail/towertail/server/runtime"
 	"github.com/towertail/towertail/server/store"
 )
+
+// Limits gives the plan limits of an org.
+type Limits interface {
+	// HistoryDays is the number of days of history that the org can
+	// read. 0 means no limit.
+	HistoryDays(ctx context.Context, orgID uuid.UUID) int
+}
 
 // Router gives route groups that require a bearer token of one of the
 // kinds.
@@ -28,6 +37,7 @@ type builder struct {
 	middleware []echo.MiddlewareFunc
 	components []runtime.Component
 	migrations []migrations
+	limits     Limits
 }
 
 type migrations struct {
@@ -68,3 +78,7 @@ func WithComponent(c runtime.Component) Option {
 func WithMigrations(fsys fs.FS, table string) Option {
 	return func(b *builder) { b.migrations = append(b.migrations, migrations{fsys: fsys, table: table}) }
 }
+
+// WithLimits sets the plan limits. The history endpoints clamp "from" to
+// the history days of the org.
+func WithLimits(l Limits) Option { return func(b *builder) { b.limits = l } }

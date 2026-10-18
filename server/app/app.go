@@ -136,6 +136,7 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 		Alerter:    a.alerter,
 		Control:    ctrl,
 		Scans:      a.scans,
+		Limits:     b.limits,
 		Middleware: b.middleware,
 		Routes:     routes,
 	})

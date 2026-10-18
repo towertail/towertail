@@ -139,10 +139,54 @@ type NodeHistoryPoint struct {
 
 // NodeHistoryResponse wraps a series of points.
 type NodeHistoryResponse struct {
-	NodeID     uuid.UUID          `json:"node_id"`
-	Metric     string             `json:"metric"`
-	Resolution string             `json:"resolution"`
-	Points     []NodeHistoryPoint `json:"points"`
+	NodeID     uuid.UUID `json:"node_id"`
+	Metric     string    `json:"metric"`
+	Resolution string    `json:"resolution"`
+	// Clamped is true when the plan history limit moved "from" later.
+	Clamped bool               `json:"clamped,omitempty"`
+	Points  []NodeHistoryPoint `json:"points"`
+}
+
+// TopProcess is one process of a node over a range: a name and a cmd.
+type TopProcess struct {
+	Name      string  `json:"name"`
+	Cmd       string  `json:"cmd"`
+	CPUPctAvg float64 `json:"cpu_pct_avg"`
+	CPUPctMax float64 `json:"cpu_pct_max"`
+	RSSMax    uint64  `json:"rss_max"`
+}
+
+// NodeProcessesResponse is the top processes of a node, by average CPU.
+type NodeProcessesResponse struct {
+	NodeID    uuid.UUID    `json:"node_id"`
+	From      time.Time    `json:"from"`
+	To        time.Time    `json:"to"`
+	Clamped   bool         `json:"clamped,omitempty"`
+	Processes []TopProcess `json:"processes"`
+}
+
+// DiskPoint is the use of a mount at the end of one bucket.
+type DiskPoint struct {
+	TS    time.Time `json:"ts"`
+	Used  uint64    `json:"used"`
+	Total uint64    `json:"total"`
+}
+
+// DiskSeries is the use of one mount over a range.
+type DiskSeries struct {
+	Mount  string      `json:"mount"`
+	FS     string      `json:"fs"`
+	Points []DiskPoint `json:"points"`
+}
+
+// NodeDisksResponse is the use of each mount of a node over a range.
+type NodeDisksResponse struct {
+	NodeID     uuid.UUID    `json:"node_id"`
+	From       time.Time    `json:"from"`
+	To         time.Time    `json:"to"`
+	Resolution string       `json:"resolution"`
+	Clamped    bool         `json:"clamped,omitempty"`
+	Mounts     []DiskSeries `json:"mounts"`
 }
 
 // Alert is an open alert: the last event of a (node, metric) when its

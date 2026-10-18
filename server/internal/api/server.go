@@ -38,6 +38,7 @@ type Server struct {
 	alerter *alerter.Engine
 	control *control.Queue
 	scans   *scan.Manager
+	limits  Limits
 }
 
 // Deps is the dependency bundle supplied by main.
@@ -52,6 +53,8 @@ type Deps struct {
 	Alerter *alerter.Engine
 	Control *control.Queue
 	Scans   *scan.Manager
+	// Limits gives the plan limits. Nil means no limits.
+	Limits Limits
 	// Middleware runs after the core middleware.
 	Middleware []echo.MiddlewareFunc
 	// Routes add routes after the core routes.
@@ -119,6 +122,7 @@ func New(d Deps) *Server {
 		alerter: d.Alerter,
 		control: d.Control,
 		scans:   d.Scans,
+		limits:  d.Limits,
 	}
 	s.registerRoutes()
 	for _, f := range d.Routes {
@@ -183,6 +187,8 @@ func (s *Server) registerRoutes() {
 	userGroup.DELETE("/nodes/:id", s.handleDeleteNode)
 	userGroup.POST("/nodes/:id/kill-process", s.handleKillProcess)
 	userGroup.GET("/nodes/:id/history", s.handleHistory)
+	userGroup.GET("/nodes/:id/processes", s.handleProcesses)
+	userGroup.GET("/nodes/:id/disks", s.handleDisks)
 	userGroup.GET("/settings", s.handleGetSettings)
 	userGroup.PUT("/settings", s.handlePutSettings)
 	userGroup.GET("/alerts", s.handleListAlerts)

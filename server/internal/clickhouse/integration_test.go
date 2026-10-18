@@ -141,16 +141,33 @@ func TestMigrationsMarkBaseline(t *testing.T) {
 
 	raw := startClient(t, addr, "old", nil)
 	ctx := context.Background()
-	if err := raw.conn.Exec(ctx, "DROP TABLE "+raw.table(coreVersionTable)); err != nil {
-		t.Fatalf("drop version table: %v", err)
+	org, node := uuid.New(), uuid.New()
+	ts := time.Now().UTC().Add(-3 * time.Hour)
+	if err := raw.insert(ctx, []IngestBundle{
+		{Sample: SampleRow{TS: ts, OrgID: org, NodeID: node, SchemaV: 1, CPUPct: 20, Errors: []string{}}},
+		{Sample: SampleRow{TS: ts.Add(time.Second), OrgID: org, NodeID: node, SchemaV: 1, CPUPct: 60, Errors: []string{}}},
+	}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	// Make the schema from before goose: drop the version table and what
+	// the later migrations add.
+	for _, name := range []string{coreVersionTable, "samples_1h_mv", "samples_1h", "procs_top_1m_mv", "procs_top_1m", "procs_top_1h_mv", "procs_top_1h"} {
+		if err := raw.conn.Exec(ctx, "DROP TABLE "+raw.table(name)); err != nil {
+			t.Fatalf("drop %s: %v", name, err)
+		}
 	}
 	stopClient(raw)
 
 	client := startClient(t, addr, "old", nil)
 	defer stopClient(client)
 	got := versions(t, client, coreVersionTable)
-	if len(got) < 2 || got[0] != 0 || got[1] != 1 {
-		t.Fatalf("versions = %v, want 0, 1, ...", got)
+	if len(got) < 3 || got[0] != 0 || got[1] != 1 || got[2] != 2 {
+		t.Fatalf("versions = %v, want 0, 1, 2, ...", got)
+	}
+	// samples_1h gets the old rows from samples_5m.
+	pts, _, err := client.QueryHistory(ctx, HistoryQuery{OrgID: org, NodeID: node, Metric: "cpu", From: ts.Add(-60 * 24 * time.Hour), To: ts.Add(time.Hour)})
+	if err != nil || len(pts) != 1 || pts[0].Value != 40 || pts[0].Max != 60 {
+		t.Fatalf("samples_1h = %+v, err %v", pts, err)
 	}
 }
 
@@ -231,7 +248,8 @@ func TestMigrationsCreateExpectedTables(t *testing.T) {
 		}
 		seen[name] = true
 	}
-	want := []string{"samples_raw", "disks", "disk_io_devices", "procs_topn", "events"}
+	want := []string{"samples_raw", "disks", "disk_io_devices", "procs_topn", "events",
+		"samples_1m", "samples_5m", "samples_1h", "procs_top_1m", "procs_top_1h"}
 	for _, tbl := range want {
 		if !seen[tbl] {
 			t.Errorf("expected table %q missing; got %v", tbl, seen)

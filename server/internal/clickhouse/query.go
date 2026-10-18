@@ -19,33 +19,60 @@ type HistoryPoint struct {
 	Max   float64
 }
 
-// HistoryQuery parameters. Resolution is picked by the caller based on
-// (To - From) span.
+// HistoryQuery parameters.
 type HistoryQuery struct {
-	OrgID      uuid.UUID
-	NodeID     uuid.UUID
-	Metric     string // "cpu" | "mem" | "net_rx" | "net_tx" | "disk_read" | "disk_write"
-	From, To   time.Time
-	Resolution time.Duration // 1m or 5m align with samples_1m / samples_5m
+	OrgID    uuid.UUID
+	NodeID   uuid.UUID
+	Metric   string // "cpu" | "mem" | "net_rx" | "net_tx" | "disk_read" | "disk_write"
+	From, To time.Time
+	// Step groups the points. A step smaller than the bucket of the tier
+	// gives the points of the tier.
+	Step time.Duration
 }
 
-// QueryHistory returns aggregated points for the requested metric +
-// time range. Uses the rollup MV matching the resolution. Steps finer
-// than one minute fall back to samples_raw.
-func (c *Client) QueryHistory(ctx context.Context, q HistoryQuery) ([]HistoryPoint, error) {
-	var sql string
-	switch {
-	case q.Resolution >= 5*time.Minute:
-		sql = historySQL(c.table("samples_5m"), "ts_5m", q.Metric)
-	case q.Resolution >= time.Minute:
-		sql = historySQL(c.table("samples_1m"), "ts_minute", q.Metric)
-	default:
-		sql = rawHistorySQL(c.table("samples_raw"), q.Metric)
-	}
+// ErrUnknownMetric is returned for a metric that has no column.
+var ErrUnknownMetric = errors.New("clickhouse: unknown metric")
 
+// tier is one table of the history, with its time column and bucket.
+type tier struct {
+	table  string
+	ts     string
+	bucket time.Duration
+}
+
+var (
+	tierRaw = tier{"samples_raw", "ts", 0}
+	tier1m  = tier{"samples_1m", "ts_minute", time.Minute}
+	tier5m  = tier{"samples_5m", "ts_5m", 5 * time.Minute}
+	tier1h  = tier{"samples_1h", "ts_hour", time.Hour}
+)
+
+// historyTier chooses the table by the length of the range.
+func historyTier(span time.Duration) tier {
+	switch {
+	case span <= 6*time.Hour:
+		return tierRaw
+	case span <= 7*24*time.Hour:
+		return tier1m
+	case span <= 30*24*time.Hour:
+		return tier5m
+	default:
+		return tier1h
+	}
+}
+
+// QueryHistory returns the points of one metric in the range, and the
+// bucket of the points (0 means one point for each sample). The tier
+// comes from the range, and the step groups the points of the tier.
+func (c *Client) QueryHistory(ctx context.Context, q HistoryQuery) ([]HistoryPoint, time.Duration, error) {
+	t := historyTier(q.To.Sub(q.From))
+	sql, err := c.historySQL(t, q.Metric, q.Step)
+	if err != nil {
+		return nil, 0, err
+	}
 	rows, err := c.conn.Query(ctx, sql, q.OrgID, q.NodeID, q.From, q.To)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -53,84 +80,76 @@ func (c *Client) QueryHistory(ctx context.Context, q HistoryQuery) ([]HistoryPoi
 	for rows.Next() {
 		var p HistoryPoint
 		if err := rows.Scan(&p.TS, &p.Value, &p.Max); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		out = append(out, p)
 	}
-	return out, rows.Err()
+	return out, t.resolution(q.Step), rows.Err()
 }
 
-func historySQL(table, bucket, metric string) string {
-	// All rollup columns are AggregateFunction states — we Merge them.
-	switch metric {
-	case "cpu":
-		return fmt.Sprintf(
-			"SELECT %s AS ts, avgMerge(cpu_pct_avg) AS v, maxMerge(cpu_pct_max) AS m "+
-				"FROM %s WHERE org_id = ? AND node_id = ? AND %s BETWEEN ? AND ? "+
-				"GROUP BY ts ORDER BY ts",
-			bucket, table, bucket,
-		)
-	case "mem":
-		return fmt.Sprintf(
-			"SELECT %s AS ts, avgMerge(mem_ratio_avg) AS v, avgMerge(mem_ratio_avg) AS m "+
-				"FROM %s WHERE org_id = ? AND node_id = ? AND %s BETWEEN ? AND ? "+
-				"GROUP BY ts ORDER BY ts",
-			bucket, table, bucket,
-		)
-	case "net_rx":
-		return fmt.Sprintf(
-			"SELECT %s AS ts, avgMerge(net_rx_avg) AS v, avgMerge(net_rx_avg) AS m "+
-				"FROM %s WHERE org_id = ? AND node_id = ? AND %s BETWEEN ? AND ? "+
-				"GROUP BY ts ORDER BY ts",
-			bucket, table, bucket,
-		)
-	case "net_tx":
-		return fmt.Sprintf(
-			"SELECT %s AS ts, avgMerge(net_tx_avg) AS v, avgMerge(net_tx_avg) AS m "+
-				"FROM %s WHERE org_id = ? AND node_id = ? AND %s BETWEEN ? AND ? "+
-				"GROUP BY ts ORDER BY ts",
-			bucket, table, bucket,
-		)
-	case "disk_read":
-		return fmt.Sprintf(
-			"SELECT %s AS ts, avgMerge(disk_read_avg) AS v, avgMerge(disk_read_avg) AS m "+
-				"FROM %s WHERE org_id = ? AND node_id = ? AND %s BETWEEN ? AND ? "+
-				"GROUP BY ts ORDER BY ts",
-			bucket, table, bucket,
-		)
-	case "disk_write":
-		return fmt.Sprintf(
-			"SELECT %s AS ts, avgMerge(disk_write_avg) AS v, avgMerge(disk_write_avg) AS m "+
-				"FROM %s WHERE org_id = ? AND node_id = ? AND %s BETWEEN ? AND ? "+
-				"GROUP BY ts ORDER BY ts",
-			bucket, table, bucket,
-		)
+// resolution is the bucket of the points for the step.
+func (t tier) resolution(step time.Duration) time.Duration {
+	if step > t.bucket && step >= time.Second {
+		return step.Truncate(time.Second)
 	}
-	return ""
+	return t.bucket
 }
 
-func rawHistorySQL(table, metric string) string {
-	switch metric {
-	case "cpu":
-		return "SELECT ts, toFloat64(cpu_pct), toFloat64(cpu_pct) FROM " + table + " " +
-			"WHERE org_id = ? AND node_id = ? AND ts BETWEEN ? AND ? ORDER BY ts"
-	case "mem":
-		return "SELECT ts, toFloat64(mem_used) / greatest(toFloat64(mem_total), 1), toFloat64(mem_used) / greatest(toFloat64(mem_total), 1) " +
-			"FROM " + table + " WHERE org_id = ? AND node_id = ? AND ts BETWEEN ? AND ? ORDER BY ts"
-	case "net_rx":
-		return "SELECT ts, toFloat64(net_rx_bps), toFloat64(net_rx_bps) FROM " + table + " " +
-			"WHERE org_id = ? AND node_id = ? AND ts BETWEEN ? AND ? ORDER BY ts"
-	case "net_tx":
-		return "SELECT ts, toFloat64(net_tx_bps), toFloat64(net_tx_bps) FROM " + table + " " +
-			"WHERE org_id = ? AND node_id = ? AND ts BETWEEN ? AND ? ORDER BY ts"
-	case "disk_read":
-		return "SELECT ts, toFloat64(disk_read_bps), toFloat64(disk_read_bps) FROM " + table + " " +
-			"WHERE org_id = ? AND node_id = ? AND ts BETWEEN ? AND ? ORDER BY ts"
-	case "disk_write":
-		return "SELECT ts, toFloat64(disk_write_bps), toFloat64(disk_write_bps) FROM " + table + " " +
-			"WHERE org_id = ? AND node_id = ? AND ts BETWEEN ? AND ? ORDER BY ts"
+// rollupCols are the avg and max state columns of each metric.
+var rollupCols = map[string][2]string{
+	"cpu":        {"cpu_pct_avg", "cpu_pct_max"},
+	"mem":        {"mem_ratio_avg", ""},
+	"net_rx":     {"net_rx_avg", ""},
+	"net_tx":     {"net_tx_avg", ""},
+	"disk_read":  {"disk_read_avg", ""},
+	"disk_write": {"disk_write_avg", ""},
+}
+
+// rawExprs are the samples_raw expressions of each metric.
+var rawExprs = map[string]string{
+	"cpu":        "toFloat64(cpu_pct)",
+	"mem":        "toFloat64(mem_used) / greatest(toFloat64(mem_total), 1)",
+	"net_rx":     "toFloat64(net_rx_bps)",
+	"net_tx":     "toFloat64(net_tx_bps)",
+	"disk_read":  "toFloat64(disk_read_bps)",
+	"disk_write": "toFloat64(disk_write_bps)",
+}
+
+func (c *Client) historySQL(t tier, metric string, step time.Duration) (string, error) {
+	ts := t.ts
+	res := t.resolution(step)
+	group := res > t.bucket
+	if group {
+		ts = fmt.Sprintf("toStartOfInterval(%s, INTERVAL %d SECOND)", t.ts, int64(res/time.Second))
 	}
-	return ""
+	var v, m string
+	if t == tierRaw {
+		e, ok := rawExprs[metric]
+		if !ok {
+			return "", ErrUnknownMetric
+		}
+		v, m = e, e
+		if group {
+			v, m = "avg("+e+")", "max("+e+")"
+		}
+	} else {
+		cols, ok := rollupCols[metric]
+		if !ok {
+			return "", ErrUnknownMetric
+		}
+		v = "avgMerge(" + cols[0] + ")"
+		m = v
+		if cols[1] != "" {
+			m = "maxMerge(" + cols[1] + ")"
+		}
+		group = true
+	}
+	sql := fmt.Sprintf("SELECT %s AS t, toFloat64(%s) AS v, toFloat64(%s) AS m FROM %s WHERE org_id = ? AND node_id = ? AND %s BETWEEN ? AND ?",
+		ts, v, m, c.table(t.table), t.ts)
+	if group {
+		sql += " GROUP BY t"
+	}
+	return sql + " ORDER BY t", nil
 }
 
 // ErrNoAlert is returned when the org has no alert with the id.

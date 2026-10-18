@@ -67,6 +67,8 @@ Base path `/v1`. Authed unless otherwise marked.
 | DELETE | `/v1/nodes/{id}` | — | 204 |
 | POST | `/v1/nodes/{id}/kill-process?pid=…` | — | 202 |
 | GET | `/v1/nodes/{id}/history?metric=cpu&from=…&to=…&step=1m` | — | `NodeHistoryResponse` |
+| GET | `/v1/nodes/{id}/processes?from=…&to=…&limit=10` | — | `NodeProcessesResponse` |
+| GET | `/v1/nodes/{id}/disks?from=…&to=…` | — | `NodeDisksResponse` |
 | GET | `/v1/settings` | — | `ServerSettings` |
 | PUT | `/v1/settings` | `ServerSettings` | `ServerSettings` |
 | GET | `/v1/alerts` | — | `AlertList`: the open alerts of the org, the newest first |
@@ -235,7 +237,10 @@ The server's [`wire`](../server/wire/wire.go) package is the source of truth. No
 - `EnrollRequest`, `EnrollResponse`.
 - `ControlNextResponse`, `KillProcessPayload`, `DiskScanPayload`.
 - `DiskScanRequest`, `DiskScanJob`, `DiskScanProgressResponse`. The scan lines are `pkg/schema/scan.go` in [towertail/sampler](https://github.com/towertail/sampler).
-- `NodeHistoryPoint`, `NodeHistoryResponse`.
+- `NodeHistoryPoint`, `NodeHistoryResponse` — `{ node_id, metric, resolution, clamped?, points: [{ ts, value, max? }] }`. `metric` is `cpu`, `mem`, `net_rx`, `net_tx`, `disk_read` or `disk_write`. The length of the range selects the table: 6 h or less reads the raw samples, 7 d or less the 1 min rollup, 30 d or less the 5 min rollup, else the 1 h rollup. A `step` larger than the bucket of the table groups the points. `resolution` is `raw` (one point for each sample) or the bucket, for example `5m0s`.
+- `NodeProcessesResponse` — `{ node_id, from, to, clamped?, processes: [TopProcess] }`. `TopProcess` is `{ name, cmd, cpu_pct_avg, cpu_pct_max, rss_max }`, the highest `cpu_pct_avg` first. A process is a name and a cmd. 1 h or less reads each sample. 7 d or less reads the top 10 of each minute. Longer ranges read the top 5 of each hour. `limit` is 10 by default and 50 at most.
+- `NodeDisksResponse` — `{ node_id, from, to, resolution, clamped?, mounts: [{ mount, fs, points: [{ ts, used, total }] }] }`. Each point is the last value in its bucket. The bucket gives about 240 points, 1 min at least. The disk rows stay 7 days.
+- History range: `from` and `to` are RFC 3339 or `now`, `now-1h`. The default `to` is now. The default range is 1 h (history, processes) or 24 h (disks). The plan of the org can limit the history days. Then the server moves `from` to the oldest allowed time and sets `clamped: true`.
 
 ---
 
