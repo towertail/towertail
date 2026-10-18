@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/csv"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -55,6 +57,18 @@ func main() {
 							&cli.StringFlag{Name: "node-id", Usage: "node UUID for sampler tokens"},
 						},
 						Action: runTokenIssue,
+					},
+					{
+						Name:  "issue-bulk",
+						Usage: "make N nodes with one sampler token each, as CSV (node_id,token)",
+						Flags: []cli.Flag{
+							&cli.StringFlag{Name: "kind", Value: "sampler", Usage: "only sampler"},
+							&cli.IntFlag{Name: "count", Usage: "number of nodes", Required: true},
+							&cli.StringFlag{Name: "org", Usage: "org UUID (default: the self-hosted org)"},
+							&cli.StringFlag{Name: "prefix", Value: "load", Usage: "node name prefix"},
+							&cli.StringFlag{Name: "out", Usage: "CSV file (default: stdout)"},
+						},
+						Action: runTokenIssueBulk,
 					},
 				},
 			},
@@ -146,5 +160,57 @@ func runTokenIssue(ctx context.Context, c *cli.Command) error {
 	}
 	log.Info("token issued", "id", t.ID, "kind", t.Kind)
 	fmt.Println(raw)
+	return nil
+}
+
+func runTokenIssueBulk(ctx context.Context, c *cli.Command) error {
+	if c.String("kind") != string(store.TokenKindSampler) {
+		return fmt.Errorf("issue-bulk: only --kind=sampler")
+	}
+	n := int(c.Int("count"))
+	if n < 1 {
+		return fmt.Errorf("issue-bulk: --count must be 1 or more")
+	}
+	orgID := store.ZeroOrg
+	if v := c.String("org"); v != "" {
+		parsed, err := uuid.Parse(v)
+		if err != nil {
+			return fmt.Errorf("--org: %w", err)
+		}
+		orgID = parsed
+	}
+	cfg, log, err := loadConfig(c)
+	if err != nil {
+		return err
+	}
+	st, err := store.OpenBolt(cfg.Storage.Path)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	var w io.Writer = os.Stdout
+	if p := c.String("out"); p != "" {
+		f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		w = f
+	}
+	samplers, err := app.IssueSamplers(ctx, st, orgID, n, c.String("prefix"))
+	if err != nil {
+		return err
+	}
+	cw := csv.NewWriter(w)
+	_ = cw.Write([]string{"node_id", "token"})
+	for _, s := range samplers {
+		_ = cw.Write([]string{s.NodeID.String(), s.Token})
+	}
+	cw.Flush()
+	if err := cw.Error(); err != nil {
+		return err
+	}
+	log.Info("sampler tokens issued", "count", len(samplers), "org_id", orgID)
 	return nil
 }

@@ -214,3 +214,27 @@ func TestWithNotifier(t *testing.T) {
 		t.Fatal("no alert")
 	}
 }
+
+func TestIssueSamplers(t *testing.T) {
+	st, err := store.OpenBolt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	org := uuid.New()
+	got, err := IssueSamplers(ctx, st, org, 3, "load")
+	if err != nil || len(got) != 3 {
+		t.Fatalf("IssueSamplers = %d, %v", len(got), err)
+	}
+	issuer := auth.NewIssuer(st)
+	for _, s := range got {
+		tok, err := issuer.Verify(ctx, s.Token)
+		if err != nil || tok.Kind != store.TokenKindSampler || tok.OrgID != org || tok.NodeID == nil || *tok.NodeID != s.NodeID {
+			t.Fatalf("token for %s = %+v, %v", s.NodeID, tok, err)
+		}
+		if _, err := st.GetNode(ctx, org, s.NodeID); err != nil {
+			t.Fatalf("node %s: %v", s.NodeID, err)
+		}
+	}
+}
