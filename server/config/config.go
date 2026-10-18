@@ -26,6 +26,7 @@ type Config struct {
 	Ingest     IngestConfig
 	Log        LogConfig
 	Cloud      CloudConfig
+	Notify     NotifyConfig
 }
 
 type HTTPConfig struct {
@@ -127,6 +128,29 @@ func (c LogConfig) NewLogger() *slog.Logger {
 	return slog.New(slog.NewJSONHandler(os.Stdout, opts))
 }
 
+// NotifyConfig is for the alert channels. The channels themselves are in
+// the store, one set for each org.
+type NotifyConfig struct {
+	// BlockPrivateTargets refuses webhook targets with a loopback,
+	// private, link-local or CGNAT address. Set it when users that you
+	// do not trust can add channels (the cloud).
+	BlockPrivateTargets bool       `koanf:"block_private_targets"`
+	SMTP                SMTPConfig `koanf:"smtp"`
+}
+
+// SMTPConfig is the mail server of the email channel. With no host, the
+// email channel is off.
+type SMTPConfig struct {
+	Host         string `koanf:"host"`
+	Port         int    `koanf:"port"`
+	User         string `koanf:"user"`
+	Password     string `koanf:"password"`
+	PasswordFile string `koanf:"password_file"`
+	From         string `koanf:"from"`
+	// TLS is starttls (the default), tls (implicit, port 465) or none.
+	TLS string `koanf:"tls"`
+}
+
 type CloudConfig struct {
 	Managed bool `koanf:"managed"`
 }
@@ -196,6 +220,9 @@ func setDefaults(k *koanf.Koanf) {
 	_ = k.Set("log.format", "json")
 
 	_ = k.Set("cloud.managed", false)
+
+	_ = k.Set("notify.smtp.port", 587)
+	_ = k.Set("notify.smtp.tls", "starttls")
 }
 
 func (c *Config) resolveSecrets() error {
@@ -205,6 +232,13 @@ func (c *Config) resolveSecrets() error {
 			return fmt.Errorf("read clickhouse password file: %w", err)
 		}
 		c.ClickHouse.Password = strings.TrimSpace(string(b))
+	}
+	if c.Notify.SMTP.Password == "" && c.Notify.SMTP.PasswordFile != "" {
+		b, err := os.ReadFile(c.Notify.SMTP.PasswordFile)
+		if err != nil {
+			return fmt.Errorf("read smtp password file: %w", err)
+		}
+		c.Notify.SMTP.Password = strings.TrimSpace(string(b))
 	}
 	if c.Postgres.Password == "" && c.Postgres.PasswordFile != "" {
 		b, err := os.ReadFile(c.Postgres.PasswordFile)

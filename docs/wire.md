@@ -74,6 +74,12 @@ Base path `/v1`. Authed unless otherwise marked.
 | GET | `/v1/alerts` | — | `AlertList`: the open alerts of the org, the newest first |
 | POST | `/v1/alerts/{id}/ack` | — | `Alert` (404 if the alert is not open) |
 | POST | `/v1/alerts/{id}/snooze?until=RFC3339` | — | `Alert` (404 if the alert is not open) |
+| GET | `/v1/channels` | — | `[Channel]` |
+| POST | `/v1/channels` | `ChannelRequest` | `Channel` (201, 400 if not valid) |
+| GET | `/v1/channels/{id}` | — | `Channel` |
+| PUT | `/v1/channels/{id}` | `ChannelRequest` | `Channel` |
+| DELETE | `/v1/channels/{id}` | — | 204 |
+| POST | `/v1/channels/{id}/test` | — | `ChannelTestResponse` (200, also when the send fails) |
 | POST | `/v1/sampler/enroll` | `EnrollRequest` | `EnrollResponse` |
 | GET | `/v1/sampler/versions` | — | `{ "linux-amd64": "sha256:…", … }` |
 | POST | `/v1/nodes/{id}/disk-scans` | `DiskScanRequest` | `DiskScanJob` (202) |
@@ -192,6 +198,24 @@ The sampler runs one scan at a time. It posts a progress line each 2 s, and the 
 
 ---
 
+### 3.2 Alert channels
+
+Each org has its own alert channels. When the alerter sends an alert (the notify flags of the settings and of the node, the snooze and the cooldown apply), the server sends it to each enabled channel whose route matches. It sends to all channels at the same time. A failed send gets 2 more attempts after 1 s and 3 s. A 4xx reply (not 408 or 429) and an SMTP 5xx reply are final.
+
+| `kind` | `target` | What the server sends |
+|---|---|---|
+| `slack` | incoming webhook URL | `text` and one attachment in the color of the tint |
+| `discord` | webhook URL | one embed in the color of the tint, no mentions |
+| `pagerduty` | the routing key (32 characters) of an Events API v2 integration | `trigger` with severity `warning` or `critical`; a change to ok sends `resolve`. `dedup_key` is `<org>:<node>:<metric>`. |
+| `webhook` | URL | `AlertPayload` (below) |
+| `email` | 1 to 20 addresses, comma-separated | plain text mail through `notify.smtp`. The kind is available only when `notify.smtp.host` is set. |
+
+**Route.** `minTint` is `warn` (the default) or `critical`. A change back to ok matches when the tint that it ends matches. `metrics` (`cpu`, `mem`, `disk`, `reachability`) and `tags` (the node must have one of them) are empty for all.
+
+**Webhook body.** `AlertPayload` is `{ v: 1, type: "alert" | "test", eventId, orgId, nodeId, nodeName, tags, metric, from, to, value, at, title, text }`. `value` is a ratio (0..1) for `cpu`, `mem` and `disk`, and the seconds since the last sample for `reachability`. The header `X-Towertail-Event` is the type. With a secret, the server also sends `X-Towertail-Timestamp` (Unix seconds, the time of the send) and `X-Towertail-Signature: sha256=<hex>`, the HMAC-SHA256 of `<timestamp>.<body>` with the secret. Check the signature, and refuse a timestamp older than 5 minutes.
+
+**Private targets.** With `notify.block_private_targets=true` (the cloud), the server does not connect to loopback, private, link-local, CGNAT (`100.64.0.0/10`) or multicast addresses. It checks the address after the DNS lookup. It does not follow redirects.
+
 ## 4. WebSocket messages
 
 Endpoint: `/v1/stream`. Client presents bearer token in the `Authorization` header on the upgrade request.
@@ -233,6 +257,9 @@ The server's [`wire`](../server/wire/wire.go) package is the source of truth. No
 - `Node` — camelCase mirror of the Swift `Node` struct (`apps/mac/Sources/State/Node.swift`).
 - `ServerSettings` — camelCase mirror of the Swift `ServerSettings` class. The server adds `notifyCooldownSeconds`: the minimum time between two alerts with the same node, metric and tint (0 means 600).
 - `Alert` — `{ id, node_id, kind, metric, tint, ts, value, acked_by?, acked_at?, snoozed_until? }`. `id` is the event id. An alert is open while the last event of its node and metric has a tint other than `ok`. `metric` is `reachability` when a node sends no sample for 3 intervals. `AlertList` is `{ alerts: [Alert] }`.
+- `Channel` — `{ id, kind, name, enabled, target, hasSecret, route: { minTint?, metrics?, tags? }, createdAt }`. An alert channel of the org (§3.2).
+- `ChannelRequest` — `{ kind, name, enabled?, target?, secret?, route }`. On PUT, a missing `enabled`, `target` or `secret` keeps the stored value. `"secret": ""` removes the secret. `ChannelTestResponse` is `{ ok, error? }`.
+- `AlertPayload` — the body of a generic webhook (§3.2).
 - `LoginRequest`, `LoginResponse`.
 - `EnrollRequest`, `EnrollResponse`.
 - `ControlNextResponse`, `KillProcessPayload`, `DiskScanPayload`.

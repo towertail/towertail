@@ -220,6 +220,64 @@ func (s *PostgresStore) GetUserByEmail(ctx context.Context, email string) (User,
 	return u, notFound(err)
 }
 
+func (s *PostgresStore) ListChannels(ctx context.Context, orgID uuid.UUID) ([]Channel, error) {
+	rows, err := s.pool.Query(ctx, `SELECT data FROM channels WHERE org_id = $1 ORDER BY id`, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Channel
+	for rows.Next() {
+		var data []byte
+		if err := rows.Scan(&data); err != nil {
+			return nil, err
+		}
+		var ch Channel
+		if err := json.Unmarshal(data, &ch); err != nil {
+			return nil, err
+		}
+		out = append(out, ch)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresStore) GetChannel(ctx context.Context, orgID, id uuid.UUID) (Channel, error) {
+	var data []byte
+	err := s.pool.QueryRow(ctx, `SELECT data FROM channels WHERE org_id = $1 AND id = $2`, orgID, id).Scan(&data)
+	if err != nil {
+		return Channel{}, notFound(err)
+	}
+	var ch Channel
+	err = json.Unmarshal(data, &ch)
+	return ch, err
+}
+
+func (s *PostgresStore) PutChannel(ctx context.Context, ch Channel) error {
+	if ch.ID == uuid.Nil {
+		return errors.New("store: channel id required")
+	}
+	data, err := json.Marshal(ch)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO channels (org_id, id, data) VALUES ($1, $2, $3)
+		ON CONFLICT (org_id, id) DO UPDATE SET data = EXCLUDED.data, updated_at = now()`,
+		ch.OrgID, ch.ID, data)
+	return err
+}
+
+func (s *PostgresStore) DeleteChannel(ctx context.Context, orgID, id uuid.UUID) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM channels WHERE org_id = $1 AND id = $2`, orgID, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *PostgresStore) EnqueueControl(ctx context.Context, msg ControlMessage) error {
 	if msg.ID == uuid.Nil {
 		msg.ID = uuid.New()

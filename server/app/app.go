@@ -18,10 +18,12 @@ import (
 	"github.com/towertail/towertail/server/internal/alerter"
 	"github.com/towertail/towertail/server/internal/api"
 	"github.com/towertail/towertail/server/internal/auth"
+	"github.com/towertail/towertail/server/internal/channels"
 	"github.com/towertail/towertail/server/internal/clickhouse"
 	"github.com/towertail/towertail/server/internal/control"
 	"github.com/towertail/towertail/server/internal/hub"
 	"github.com/towertail/towertail/server/internal/scan"
+	"github.com/towertail/towertail/server/notify"
 	"github.com/towertail/towertail/server/runtime"
 	"github.com/towertail/towertail/server/store"
 )
@@ -104,7 +106,9 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 	}
 
 	a.hub = hub.New(a.log)
-	a.alerter = alerter.New(a.log, nil, a.hub, chEvents{ch: a.ch}, a.store, b.notifiers...)
+	router := channels.NewRouter(a.store, cfg.Notify, a.log)
+	notifiers := append([]notify.Notifier{router}, b.notifiers...)
+	a.alerter = alerter.New(a.log, nil, a.hub, chEvents{ch: a.ch}, a.store, notifiers...)
 	ctrl := control.New(a.store)
 	scanDB, err := a.scanDB()
 	if err != nil {
@@ -132,6 +136,7 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 		Control:    ctrl,
 		Scans:      a.scans,
 		Limits:     b.limits,
+		Channels:   router,
 		Middleware: b.middleware,
 		Routes:     routes,
 	})

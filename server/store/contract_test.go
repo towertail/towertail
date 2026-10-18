@@ -24,6 +24,7 @@ func testContract(t *testing.T, h storeHarness) {
 	t.Run("Tokens", func(t *testing.T) { contractTokens(t, h) })
 	t.Run("Users", func(t *testing.T) { contractUsers(t, h) })
 	t.Run("Control", func(t *testing.T) { contractControl(t, h) })
+	t.Run("Channels", func(t *testing.T) { contractChannels(t, h) })
 }
 
 func contractNodes(t *testing.T, h storeHarness) {
@@ -237,5 +238,49 @@ func contractControl(t *testing.T, h storeHarness) {
 	wg.Wait()
 	if len(seen) != n {
 		t.Errorf("claimed %d of %d", len(seen), n)
+	}
+}
+
+func contractChannels(t *testing.T, h storeHarness) {
+	ctx := context.Background()
+	org, other := h.newOrg(t), h.newOrg(t)
+	ch := Channel{
+		ID: uuid.New(), OrgID: org, Kind: ChannelWebhook, Name: "ops", Enabled: true,
+		Target: "https://example.com/hook", Secret: "s3cret",
+		Route:     ChannelRoute{MinTint: "critical", Metrics: []string{"cpu"}, Tags: []string{"prod"}},
+		CreatedAt: time.Now().UTC().Truncate(time.Second),
+	}
+	if err := h.s.PutChannel(ctx, Channel{OrgID: org}); err == nil {
+		t.Error("put without id: want error")
+	}
+	if err := h.s.PutChannel(ctx, ch); err != nil {
+		t.Fatal(err)
+	}
+	got, err := h.s.GetChannel(ctx, org, ch.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Secret != "s3cret" || got.Route.Tags[0] != "prod" || got.Route.MinTint != "critical" || !got.CreatedAt.Equal(ch.CreatedAt) {
+		t.Errorf("get: %+v", got)
+	}
+	ch.Name = "ops-2"
+	if err := h.s.PutChannel(ctx, ch); err != nil {
+		t.Fatal(err)
+	}
+	list, err := h.s.ListChannels(ctx, org)
+	if err != nil || len(list) != 1 || list[0].Name != "ops-2" {
+		t.Fatalf("list: %+v, %v", list, err)
+	}
+	if _, err := h.s.GetChannel(ctx, other, ch.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("other org: %v", err)
+	}
+	if err := h.s.DeleteChannel(ctx, other, ch.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("delete from other org: %v", err)
+	}
+	if err := h.s.DeleteChannel(ctx, org, ch.ID); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ := h.s.ListChannels(ctx, org); len(list) != 0 {
+		t.Errorf("after delete: %d", len(list))
 	}
 }

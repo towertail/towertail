@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	settingsTTL     = 30 * time.Second
-	notifyTimeout   = 10 * time.Second
+	settingsTTL = 30 * time.Second
+	// notifyTimeout covers the retries of the channel router.
+	notifyTimeout   = 30 * time.Second
 	defaultCooldown = 10 * time.Minute
 )
 
@@ -246,7 +247,7 @@ func (e *Engine) emit(ctx context.Context, cfg store.ServerSettings, node *store
 		}
 	}
 	if e.shouldNotify(cfg, node, c) {
-		e.notify(c, node)
+		e.notify(evt.ID, c, node)
 	}
 }
 
@@ -291,18 +292,20 @@ func (e *Engine) shouldNotify(cfg store.ServerSettings, node *store.Node, c chan
 }
 
 // notify calls each notifier in its own goroutine with a timeout.
-func (e *Engine) notify(c change, node *store.Node) {
+func (e *Engine) notify(eventID uuid.UUID, c change, node *store.Node) {
 	a := notify.Alert{
-		OrgID:  c.key.org,
-		NodeID: c.key.node,
-		Metric: c.key.metric,
-		From:   c.from,
-		To:     c.to,
-		Value:  c.value,
-		At:     c.at,
+		EventID: eventID,
+		OrgID:   c.key.org,
+		NodeID:  c.key.node,
+		Metric:  c.key.metric,
+		From:    c.from,
+		To:      c.to,
+		Value:   c.value,
+		At:      c.at,
 	}
 	if node != nil {
 		a.NodeName = node.DisplayName
+		a.Tags = node.Tags
 	}
 	for _, n := range e.notifiers {
 		go func() {

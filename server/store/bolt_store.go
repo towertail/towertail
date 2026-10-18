@@ -26,6 +26,7 @@ var (
 	bucketTokens   = []byte("tokens")
 	bucketUsers    = []byte("users")
 	bucketControl  = []byte("control")
+	bucketChannels = []byte("channels")
 )
 
 // OpenBolt initialises the ConfigStore backed by a BoltDB file at the
@@ -60,7 +61,7 @@ func OpenBoltFile(dir, name string) (*bolt.DB, error) {
 
 func (s *BoltStore) init() error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		for _, name := range [][]byte{bucketNodes, bucketSettings, bucketTokens, bucketUsers, bucketControl} {
+		for _, name := range [][]byte{bucketNodes, bucketSettings, bucketTokens, bucketUsers, bucketControl, bucketChannels} {
 			if _, err := tx.CreateBucketIfNotExists(name); err != nil {
 				return err
 			}
@@ -76,6 +77,7 @@ func (s *BoltStore) Close() error { return s.db.Close() }
 func (s *BoltStore) DB() *bolt.DB { return s.db }
 
 // nodes bucket layout: key = orgID-bytes | nodeID-bytes, value = JSON.
+// The channels bucket uses the same key.
 func nodeKey(orgID, nodeID uuid.UUID) []byte {
 	k := make([]byte, 32)
 	copy(k, orgID[:])
@@ -261,6 +263,60 @@ func (s *BoltStore) GetUserByEmail(_ context.Context, email string) (User, error
 	})
 	u.User.PasswordHash = u.PasswordHash
 	return u.User, err
+}
+
+// channels bucket layout: key = orgID | channelID, value = JSON.
+func (s *BoltStore) ListChannels(_ context.Context, orgID uuid.UUID) ([]Channel, error) {
+	var out []Channel
+	err := s.db.View(func(tx *bolt.Tx) error {
+		c := tx.Bucket(bucketChannels).Cursor()
+		prefix := orgPrefix(orgID)
+		for k, v := c.Seek(prefix); k != nil && hasPrefix(k, prefix); k, v = c.Next() {
+			var ch Channel
+			if err := json.Unmarshal(v, &ch); err != nil {
+				return err
+			}
+			out = append(out, ch)
+		}
+		return nil
+	})
+	return out, err
+}
+
+func (s *BoltStore) GetChannel(_ context.Context, orgID, id uuid.UUID) (Channel, error) {
+	var ch Channel
+	err := s.db.View(func(tx *bolt.Tx) error {
+		v := tx.Bucket(bucketChannels).Get(nodeKey(orgID, id))
+		if v == nil {
+			return ErrNotFound
+		}
+		return json.Unmarshal(v, &ch)
+	})
+	return ch, err
+}
+
+func (s *BoltStore) PutChannel(_ context.Context, ch Channel) error {
+	if ch.ID == uuid.Nil {
+		return errors.New("store: channel id required")
+	}
+	data, err := json.Marshal(ch)
+	if err != nil {
+		return err
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketChannels).Put(nodeKey(ch.OrgID, ch.ID), data)
+	})
+}
+
+func (s *BoltStore) DeleteChannel(_ context.Context, orgID, id uuid.UUID) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketChannels)
+		k := nodeKey(orgID, id)
+		if b.Get(k) == nil {
+			return ErrNotFound
+		}
+		return b.Delete(k)
+	})
 }
 
 // control bucket layout: key = nodeID | createdAt-nanos | msgID, value = JSON.

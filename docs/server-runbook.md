@@ -75,6 +75,9 @@ docker compose run --rm server token issue --kind=sampler --node-id=<uuid> --lab
 - `GET /readyz` — lazy-started components that *have been required* must
   be `Ready()`. Returns 503 while CH is reconnecting, for example.
 - `GET /metrics` — Prometheus text format (bundled `promhttp.Handler`).
+  `towertail_notify_sends_total{kind,result}` counts the alert sends to
+  channels. A rising `result="error"` count means that a channel target
+  is wrong or down. The log line `alerter: notify` has the error.
 
 Structured logs go to stdout in JSON by default (`log.format=json`).
 Three categories worth filtering on:
@@ -200,6 +203,9 @@ is the only record of *who killed PID 1337 on prod-db-3*.
 - CORS defaults to `*`. In production set
   `TT_HTTP__CORS_ALLOW_ORIGINS='["https://app.towertail.com"]'` so
   browsers can't call the API from anywhere.
+- Alert channels: users add webhook URLs. When users that you do not
+  trust can add channels, set `TT_NOTIFY__BLOCK_PRIVATE_TARGETS=true`.
+  Then the server does not send to private or loopback addresses.
 - Bearer tokens are required on *every* route except `/v1/auth/login`,
   `/healthz`, `/readyz`, `/metrics`.
 - TLS is terminated by Caddy (in the compose file); the server itself

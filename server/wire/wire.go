@@ -261,3 +261,60 @@ type DiskScanPayload struct {
 type DiskScanProgressResponse struct {
 	Cancel bool `json:"cancel"`
 }
+
+// ChannelRoute selects the alerts of a channel. minTint is warn (the
+// default) or critical. Empty metrics or tags match all.
+type ChannelRoute struct {
+	MinTint Tint     `json:"minTint,omitempty"`
+	Metrics []string `json:"metrics,omitempty"`
+	Tags    []string `json:"tags,omitempty"`
+}
+
+// Channel is an alert channel of the org. The secret is never sent.
+type Channel struct {
+	ID        uuid.UUID    `json:"id"`
+	Kind      string       `json:"kind"` // slack | discord | pagerduty | webhook | email
+	Name      string       `json:"name"`
+	Enabled   bool         `json:"enabled"`
+	Target    string       `json:"target"`
+	HasSecret bool         `json:"hasSecret"`
+	Route     ChannelRoute `json:"route"`
+	CreatedAt time.Time    `json:"createdAt"`
+}
+
+// ChannelRequest is the body of POST /v1/channels and PUT
+// /v1/channels/{id}. On PUT, a missing enabled, target or secret keeps
+// the stored value. An empty secret removes it.
+type ChannelRequest struct {
+	Kind    string       `json:"kind"`
+	Name    string       `json:"name"`
+	Enabled *bool        `json:"enabled,omitempty"`
+	Target  *string      `json:"target,omitempty"`
+	Secret  *string      `json:"secret,omitempty"`
+	Route   ChannelRoute `json:"route"`
+}
+
+// ChannelTestResponse is the result of POST /v1/channels/{id}/test.
+type ChannelTestResponse struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+// AlertPayload is the body that a generic webhook channel gets. Type is
+// alert or test.
+type AlertPayload struct {
+	V        int       `json:"v"`
+	Type     string    `json:"type"`
+	EventID  uuid.UUID `json:"eventId"`
+	OrgID    uuid.UUID `json:"orgId"`
+	NodeID   uuid.UUID `json:"nodeId"`
+	NodeName string    `json:"nodeName"`
+	Tags     []string  `json:"tags"`
+	Metric   string    `json:"metric"`
+	From     Tint      `json:"from"`
+	To       Tint      `json:"to"`
+	Value    float64   `json:"value"`
+	At       time.Time `json:"at"`
+	Title    string    `json:"title"`
+	Text     string    `json:"text"`
+}

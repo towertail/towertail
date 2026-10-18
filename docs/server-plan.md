@@ -30,7 +30,7 @@ Status on 2026-10-15. The phases are in [§10](#10-phased-delivery). Phases B, E
 | K — Postgres store | Done | `PostgresStore` implements `ConfigStore` for many orgs. `cloud.managed=true` selects it and runs the migrations at boot. Bolt and Postgres pass the same contract tests. `towertail-server user create` makes a user for login. |
 | L — Hardening | Partial | Rate limits, CORS, audit log, load generator, [runbook](server-runbook.md). No nightly load test in CI. |
 | Relay (`cmd/towertail-relay`) | Not started | SSH pull in the tailnet, push to a server. |
-| Alert delivery (`internal/notify`) | Not started | Slack, Discord, PagerDuty, webhooks, SMTP. |
+| Alert delivery (`internal/channels`) | Done | Slack, Discord, PagerDuty, webhooks and SMTP. Each org manages its channels with `/v1/channels` (routes by tint, metric and node tag, and a test send). Retries with backoff. See [wire.md](wire.md) §3.2. |
 
 ---
 

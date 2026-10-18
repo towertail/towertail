@@ -52,7 +52,7 @@ config/                  koanf: YAML and env
 store/                   ConfigStore interface, Bolt and Postgres stores
 runtime/                 component lifecycle
 wire/                    JSON types between the services
-notify/                  the Notifier interface for alert channels
+notify/                  the Notifier interface and the Alert text
 authctx/                 the token of a request
 internal/
 ├── api/                 Echo server, routes, handlers
@@ -62,6 +62,7 @@ internal/
 ├── postgres/            pool and migrations for cloud-managed mode
 │   └── migrations/      embedded goose migrations
 ├── alerter/             threshold and reachability state machine
+├── channels/            alert channels: Slack, Discord, PagerDuty, webhook, SMTP
 ├── hub/                 WebSocket fan-out
 ├── control/             control queue for each node (for example, kill process)
 └── version/             set by ldflags
@@ -69,7 +70,7 @@ docker/                  Dockerfile, compose, Caddy
 testdata/load/           load generator
 ```
 
-Not started: the relay (`cmd/towertail-relay`) and alert delivery (`internal/notify`). Refer to the status table in [`docs/server-plan.md`](../docs/server-plan.md#status).
+Not started: the relay (`cmd/towertail-relay`). Refer to the status table in [`docs/server-plan.md`](../docs/server-plan.md#status).
 
 Refer to [`docs/server-plan.md`](../docs/server-plan.md) for the design, [`docs/wire.md`](../docs/wire.md) for the wire contract, and [`docs/server-runbook.md`](../docs/server-runbook.md) for operation (first start, failure modes, upgrades, audit log).
 

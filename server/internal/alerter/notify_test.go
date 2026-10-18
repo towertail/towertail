@@ -47,7 +47,7 @@ func (n *countingNotifier) wait(want int) []notify.Alert {
 func newClock() *testClock { return &testClock{t: time.Unix(1700000000, 0).UTC()} }
 
 func notifyNode(id uuid.UUID) store.Node {
-	return store.Node{ID: id, DisplayName: "web-1", Enabled: true, NotifyOnWarn: true, NotifyOnCritical: true}
+	return store.Node{ID: id, DisplayName: "web-1", Tags: []string{"prod"}, Enabled: true, NotifyOnWarn: true, NotifyOnCritical: true}
 }
 
 func TestAlerter_SettingsForEachOrg(t *testing.T) {
@@ -132,7 +132,8 @@ func TestAlerter_NotifyRules(t *testing.T) {
 			if tc.want == 1 {
 				a := got[0]
 				if a.OrgID != org || a.NodeID != id || a.NodeName != "web-1" || a.Metric != "cpu" ||
-					a.From != TintOK || a.To != TintCritical || a.Value != 0.95 {
+					a.From != TintOK || a.To != TintCritical || a.Value != 0.95 ||
+					a.EventID == uuid.Nil || len(a.Tags) != 1 || a.Tags[0] != "prod" {
 					t.Fatalf("alert = %+v", a)
 				}
 			}

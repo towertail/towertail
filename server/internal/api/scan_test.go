@@ -58,13 +58,14 @@ func newScanEnv(t *testing.T) *scanEnv {
 	ctrl := control.New(st)
 	issuer := auth.NewIssuer(st)
 	srv := New(Deps{
-		Config:  &config.Config{},
-		Log:     log,
-		Store:   st,
-		Issuer:  issuer,
-		Hub:     h,
-		Control: ctrl,
-		Scans:   scan.NewManager(scanStore, ctrl, h, log, nil),
+		Config:   &config.Config{},
+		Log:      log,
+		Store:    st,
+		Issuer:   issuer,
+		Hub:      h,
+		Control:  ctrl,
+		Scans:    scan.NewManager(scanStore, ctrl, h, log, nil),
+		Channels: &fakeChannels{},
 	})
 
 	e := &scanEnv{t: t, srv: srv, on: uuid.New(), off: uuid.New()}

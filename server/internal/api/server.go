@@ -28,18 +28,19 @@ import (
 
 // Server assembles the Echo instance and wires every dependency.
 type Server struct {
-	echo    *echo.Echo
-	cfg     *config.Config
-	log     *slog.Logger
-	runtime *runtime.Runtime
-	store   store.ConfigStore
-	ch      *clickhouse.Client
-	issuer  *auth.TokenIssuer
-	hub     *hub.Hub
-	alerter *alerter.Engine
-	control *control.Queue
-	scans   *scan.Manager
-	limits  Limits
+	echo     *echo.Echo
+	cfg      *config.Config
+	log      *slog.Logger
+	runtime  *runtime.Runtime
+	store    store.ConfigStore
+	ch       *clickhouse.Client
+	issuer   *auth.TokenIssuer
+	hub      *hub.Hub
+	alerter  *alerter.Engine
+	control  *control.Queue
+	scans    *scan.Manager
+	limits   Limits
+	channels Channels
 }
 
 // Deps is the dependency bundle supplied by main.
@@ -56,6 +57,9 @@ type Deps struct {
 	Scans   *scan.Manager
 	// Limits gives the plan limits. Nil means no limits.
 	Limits Limits
+	// Channels checks and tests alert channels. Nil turns off the
+	// channel routes.
+	Channels Channels
 	// Middleware runs after the core middleware.
 	Middleware []echo.MiddlewareFunc
 	// Routes add routes after the core routes.
@@ -113,18 +117,19 @@ func New(d Deps) *Server {
 	e.Use(d.Middleware...)
 
 	s := &Server{
-		echo:    e,
-		cfg:     d.Config,
-		log:     d.Log,
-		runtime: d.Runtime,
-		store:   d.Store,
-		ch:      d.CH,
-		issuer:  d.Issuer,
-		hub:     d.Hub,
-		alerter: d.Alerter,
-		control: d.Control,
-		scans:   d.Scans,
-		limits:  d.Limits,
+		echo:     e,
+		cfg:      d.Config,
+		log:      d.Log,
+		runtime:  d.Runtime,
+		store:    d.Store,
+		ch:       d.CH,
+		issuer:   d.Issuer,
+		hub:      d.Hub,
+		alerter:  d.Alerter,
+		control:  d.Control,
+		scans:    d.Scans,
+		limits:   d.Limits,
+		channels: d.Channels,
 	}
 	s.registerRoutes()
 	for _, f := range d.Routes {
@@ -196,6 +201,14 @@ func (s *Server) registerRoutes() {
 	userGroup.GET("/alerts", s.handleListAlerts)
 	userGroup.POST("/alerts/:id/ack", s.handleAckAlert)
 	userGroup.POST("/alerts/:id/snooze", s.handleSnoozeAlert)
+	if s.channels != nil {
+		userGroup.GET("/channels", s.handleListChannels)
+		userGroup.POST("/channels", s.handleCreateChannel)
+		userGroup.GET("/channels/:id", s.handleGetChannel)
+		userGroup.PUT("/channels/:id", s.handleUpdateChannel)
+		userGroup.DELETE("/channels/:id", s.handleDeleteChannel)
+		userGroup.POST("/channels/:id/test", s.handleTestChannel)
+	}
 	userGroup.POST("/sampler/enroll", s.handleSamplerEnroll)
 	userGroup.GET("/sampler/versions", s.handleSamplerVersions)
 	userGroup.POST("/nodes/:id/disk-scans", s.handleRequestDiskScan)

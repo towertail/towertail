@@ -41,6 +41,13 @@ type ConfigStore interface {
 	PutUser(ctx context.Context, u User) error
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 
+	// Alert channels. DeleteChannel returns ErrNotFound for a missing
+	// channel.
+	ListChannels(ctx context.Context, orgID uuid.UUID) ([]Channel, error)
+	GetChannel(ctx context.Context, orgID, id uuid.UUID) (Channel, error)
+	PutChannel(ctx context.Context, ch Channel) error
+	DeleteChannel(ctx context.Context, orgID, id uuid.UUID) error
+
 	// Control queue
 	EnqueueControl(ctx context.Context, msg ControlMessage) error
 	ClaimControl(ctx context.Context, nodeID uuid.UUID) (ControlMessage, error)
