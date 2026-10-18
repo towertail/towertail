@@ -4,6 +4,7 @@ package notify
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -29,6 +30,15 @@ type Alert struct {
 	// Test is true for a test send from the API.
 	Test bool
 }
+
+// Mailer sends the mail of the email alert channel. The server uses SMTP
+// when no Mailer is given (app.WithMailer).
+type Mailer interface {
+	SendAlert(ctx context.Context, to []string, a Alert) error
+}
+
+// ErrPermanent in the error chain of a Mailer means: do not try again.
+var ErrPermanent = errors.New("notify: permanent error")
 
 // Notifier sends an Alert to one channel.
 type Notifier interface {

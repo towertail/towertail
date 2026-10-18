@@ -40,9 +40,9 @@ type Router struct {
 	delays []time.Duration
 }
 
-// NewRouter makes the router. The email channel is off when the config
-// has no SMTP host.
-func NewRouter(st Store, cfg config.NotifyConfig, log *slog.Logger) *Router {
+// NewRouter makes the router. The email channel uses m when it is not
+// nil, else SMTP. It is off when there is no m and no SMTP host.
+func NewRouter(st Store, cfg config.NotifyConfig, m notify.Mailer, log *slog.Logger) *Router {
 	p := newPoster(cfg.BlockPrivateTargets)
 	r := &Router{
 		store: st,
@@ -55,7 +55,10 @@ func NewRouter(st Store, cfg config.NotifyConfig, log *slog.Logger) *Router {
 		},
 		delays: []time.Duration{time.Second, 3 * time.Second},
 	}
-	if cfg.SMTP.Host != "" {
+	switch {
+	case m != nil:
+		r.senders[store.ChannelEmail] = mailer{m: m}
+	case cfg.SMTP.Host != "":
 		r.senders[store.ChannelEmail] = email{cfg: cfg.SMTP}
 	}
 	return r

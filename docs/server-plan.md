@@ -734,6 +734,7 @@ The private cloud module builds the same server with its own parts. Package `app
 a, err := app.New(cfg,
     app.WithStore(pgStore),                    // replaces the Bolt store; the caller closes it
     app.WithNotifier(pushNotifier),            // more than one is allowed
+    app.WithMailer(mailer),                    // notify.Mailer for the email channel, in place of SMTP
     app.WithRoutes(func(r app.Router) {        // extra routes, after the core routes
         g := r.Group("/v1/account", store.TokenKindUser)
         g.GET("", handleAccount)               // authctx.TokenFrom(c) gives the token

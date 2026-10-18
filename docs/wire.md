@@ -208,7 +208,7 @@ Each org has its own alert channels. When the alerter sends an alert (the notify
 | `discord` | webhook URL | one embed in the color of the tint, no mentions |
 | `pagerduty` | the routing key (32 characters) of an Events API v2 integration | `trigger` with severity `warning` or `critical`; a change to ok sends `resolve`. `dedup_key` is `<org>:<node>:<metric>`. |
 | `webhook` | URL | `AlertPayload` (below) |
-| `email` | 1 to 20 addresses, comma-separated | plain text mail through `notify.smtp`. The kind is available only when `notify.smtp.host` is set. |
+| `email` | 1 to 20 addresses, comma-separated | plain text mail through `notify.smtp`. The kind is available only when `notify.smtp.host` is set, or when an extension gives a mailer (`app.WithMailer`; the cloud does this). |
 
 **Route.** `minTint` is `warn` (the default) or `critical`. A change back to ok matches when the tint that it ends matches. `metrics` (`cpu`, `mem`, `disk`, `reachability`) and `tags` (the node must have one of them) are empty for all.
 

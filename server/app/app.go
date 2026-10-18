@@ -106,7 +106,7 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 	}
 
 	a.hub = hub.New(a.log)
-	router := channels.NewRouter(a.store, cfg.Notify, a.log)
+	router := channels.NewRouter(a.store, cfg.Notify, b.mailer, a.log)
 	notifiers := append([]notify.Notifier{router}, b.notifiers...)
 	a.alerter = alerter.New(a.log, nil, a.hub, chEvents{ch: a.ch}, a.store, notifiers...)
 	ctrl := control.New(a.store)

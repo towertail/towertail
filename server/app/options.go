@@ -40,6 +40,7 @@ type builder struct {
 	components []runtime.Component
 	migrations []migrations
 	limits     Limits
+	mailer     notify.Mailer
 }
 
 type migrations struct {
@@ -57,6 +58,10 @@ func WithStore(s store.ConfigStore) Option { return func(b *builder) { b.store =
 func WithNotifier(n notify.Notifier) Option {
 	return func(b *builder) { b.notifiers = append(b.notifiers, n) }
 }
+
+// WithMailer sends the mail of the email alert channel through m, in
+// place of SMTP.
+func WithMailer(m notify.Mailer) Option { return func(b *builder) { b.mailer = m } }
 
 // WithRoutes adds routes after the core routes.
 func WithRoutes(f func(r Router)) Option {

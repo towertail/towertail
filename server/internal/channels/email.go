@@ -158,6 +158,20 @@ func (e email) message(from *mail.Address, to []string, a notify.Alert) []byte {
 	return b.Bytes()
 }
 
+// mailer sends through the Mailer of an extension, for example the cloud.
+type mailer struct{ m notify.Mailer }
+
+func (m mailer) send(ctx context.Context, ch store.Channel, a notify.Alert) error {
+	to, err := recipients(ch.Target)
+	if err != nil {
+		return &sendError{err: err}
+	}
+	if err := m.m.SendAlert(ctx, to, a); err != nil {
+		return &sendError{err: err, retry: !errors.Is(err, notify.ErrPermanent)}
+	}
+	return nil
+}
+
 // smtpError makes a 5xx reply final. A 4xx reply is a temporary error.
 func smtpError(err error) error {
 	var te *textproto.Error

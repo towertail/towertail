@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -79,7 +80,7 @@ func (h *hook) json(t *testing.T, i int) map[string]any {
 }
 
 func newTestRouter(list ...store.Channel) *Router {
-	r := NewRouter(fakeStore{list: list}, config.NotifyConfig{}, slog.New(slog.DiscardHandler))
+	r := NewRouter(fakeStore{list: list}, config.NotifyConfig{}, nil, slog.New(slog.DiscardHandler))
 	r.delays = []time.Duration{time.Millisecond, time.Millisecond}
 	return r
 }
@@ -413,5 +414,39 @@ func TestTestSend(t *testing.T) {
 	m := h.json(t, 0)
 	if m["type"] != "test" || m["title"] != "[test] test-node: CPU warn" {
 		t.Errorf("test payload: %v", m)
+	}
+}
+
+type fakeMailer struct {
+	to  []string
+	err error
+}
+
+func (m *fakeMailer) SendAlert(_ context.Context, to []string, _ notify.Alert) error {
+	m.to = to
+	return m.err
+}
+
+func TestMailer(t *testing.T) {
+	m := &fakeMailer{}
+	r := NewRouter(fakeStore{}, config.NotifyConfig{SMTP: config.SMTPConfig{Host: "smtp.example.com"}}, m, slog.New(slog.DiscardHandler))
+	ch := channel(store.ChannelEmail, "ops@example.com, Dev <dev@example.com>")
+	if err := r.Validate(ch); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Test(context.Background(), ch); err != nil {
+		t.Fatal(err)
+	}
+	if len(m.to) != 2 || m.to[1] != "dev@example.com" {
+		t.Errorf("to: %v", m.to)
+	}
+	s := r.senders[store.ChannelEmail]
+	m.err = errors.New("502")
+	if err := s.send(context.Background(), ch, testAlert()); !retryable(err) {
+		t.Errorf("temporary error: %v", err)
+	}
+	m.err = fmt.Errorf("bad address: %w", notify.ErrPermanent)
+	if err := s.send(context.Background(), ch, testAlert()); err == nil || retryable(err) {
+		t.Errorf("permanent error: %v", err)
 	}
 }
