@@ -8,12 +8,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
-	"github.com/towertail/towertail/server/internal/store"
-	"github.com/towertail/towertail/server/internal/wire"
+	"github.com/towertail/towertail/server/authctx"
+	"github.com/towertail/towertail/server/store"
+	"github.com/towertail/towertail/server/wire"
 )
 
 func (s *Server) handleListNodes(c echo.Context) error {
-	t, _ := tokenFromCtx(c)
+	t, _ := authctx.TokenFrom(c)
 	nodes, err := s.store.ListNodes(c.Request().Context(), t.OrgID)
 	if err != nil {
 		return err
@@ -25,7 +26,7 @@ func (s *Server) handleListNodes(c echo.Context) error {
 }
 
 func (s *Server) handleCreateNode(c echo.Context) error {
-	t, _ := tokenFromCtx(c)
+	t, _ := authctx.TokenFrom(c)
 	var n store.Node
 	if err := c.Bind(&n); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
@@ -42,7 +43,7 @@ func (s *Server) handleCreateNode(c echo.Context) error {
 }
 
 func (s *Server) handleGetNode(c echo.Context) error {
-	t, _ := tokenFromCtx(c)
+	t, _ := authctx.TokenFrom(c)
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "bad id")
@@ -55,7 +56,7 @@ func (s *Server) handleGetNode(c echo.Context) error {
 }
 
 func (s *Server) handleUpdateNode(c echo.Context) error {
-	t, _ := tokenFromCtx(c)
+	t, _ := authctx.TokenFrom(c)
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "bad id")
@@ -88,7 +89,7 @@ func (s *Server) handleUpdateNode(c echo.Context) error {
 }
 
 func (s *Server) handleDeleteNode(c echo.Context) error {
-	t, _ := tokenFromCtx(c)
+	t, _ := authctx.TokenFrom(c)
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "bad id")

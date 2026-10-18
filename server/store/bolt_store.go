@@ -32,13 +32,9 @@ var (
 // given directory. The file is named config.db. Creates the directory
 // when absent.
 func OpenBolt(dir string) (*BoltStore, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("mkdir %s: %w", dir, err)
-	}
-	path := filepath.Join(dir, "config.db")
-	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 3 * time.Second})
+	db, err := OpenBoltFile(dir, "config.db")
 	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", path, err)
+		return nil, err
 	}
 	s := &BoltStore{db: db}
 	if err := s.init(); err != nil {
@@ -46,6 +42,20 @@ func OpenBolt(dir string) (*BoltStore, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// OpenBoltFile opens the BoltDB file name in dir. Creates the directory
+// when absent.
+func OpenBoltFile(dir, name string) (*bolt.DB, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("mkdir %s: %w", dir, err)
+	}
+	path := filepath.Join(dir, name)
+	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 3 * time.Second})
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", path, err)
+	}
+	return db, nil
 }
 
 func (s *BoltStore) init() error {

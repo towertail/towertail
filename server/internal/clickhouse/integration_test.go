@@ -22,7 +22,7 @@ import (
 	tc "github.com/testcontainers/testcontainers-go"
 	tcch "github.com/testcontainers/testcontainers-go/modules/clickhouse"
 
-	"github.com/towertail/towertail/server/internal/config"
+	"github.com/towertail/towertail/server/config"
 )
 
 // startClickHouse boots a throwaway ClickHouse container and returns a

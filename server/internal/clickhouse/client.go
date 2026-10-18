@@ -10,8 +10,8 @@ import (
 	ch "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
-	"github.com/towertail/towertail/server/internal/config"
-	"github.com/towertail/towertail/server/internal/runtime"
+	"github.com/towertail/towertail/server/config"
+	"github.com/towertail/towertail/server/runtime"
 )
 
 // Client wraps a ClickHouse native driver connection pool and the

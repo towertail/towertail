@@ -8,16 +8,17 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/towertail/towertail/server/authctx"
 	"github.com/towertail/towertail/server/internal/scan"
-	"github.com/towertail/towertail/server/internal/store"
-	"github.com/towertail/towertail/server/internal/wire"
+	"github.com/towertail/towertail/server/store"
+	"github.com/towertail/towertail/server/wire"
 )
 
 // maxProgressBytes is the limit of one progress post.
 const maxProgressBytes = 1 << 20
 
 func (s *Server) handleRequestDiskScan(c echo.Context) error {
-	t, _ := tokenFromCtx(c)
+	t, _ := authctx.TokenFrom(c)
 	ctx := c.Request().Context()
 	nodeID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -54,7 +55,7 @@ func (s *Server) handleRequestDiskScan(c echo.Context) error {
 }
 
 func (s *Server) handleListDiskScans(c echo.Context) error {
-	t, _ := tokenFromCtx(c)
+	t, _ := authctx.TokenFrom(c)
 	ctx := c.Request().Context()
 	nodeID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
@@ -142,7 +143,7 @@ func (s *Server) handlePutDiskScanResult(c echo.Context) error {
 // userJob loads the job of the path for a user token. A job of another
 // org gives 404.
 func (s *Server) userJob(c echo.Context) (scan.Job, error) {
-	t, _ := tokenFromCtx(c)
+	t, _ := authctx.TokenFrom(c)
 	id, err := uuid.Parse(c.Param("job"))
 	if err != nil {
 		return scan.Job{}, echo.NewHTTPError(http.StatusBadRequest, "bad job id")
@@ -160,7 +161,7 @@ func (s *Server) userJob(c echo.Context) (scan.Job, error) {
 // samplerJob loads the job of the path for a sampler token. A job of
 // another node gives 403.
 func (s *Server) samplerJob(c echo.Context) (scan.Job, error) {
-	t, _ := tokenFromCtx(c)
+	t, _ := authctx.TokenFrom(c)
 	id, err := uuid.Parse(c.Param("job"))
 	if err != nil {
 		return scan.Job{}, echo.NewHTTPError(http.StatusBadRequest, "bad job id")

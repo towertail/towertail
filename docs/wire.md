@@ -224,7 +224,7 @@ On connect the server immediately replays the most recent `sample` for every nod
 
 ## 5. Go types (reference)
 
-The server's [`internal/wire`](../server/internal/wire/wire.go) package is the source of truth. Notable cross-module shapes:
+The server's [`wire`](../server/wire/wire.go) package is the source of truth. Notable cross-module shapes:
 
 - `Sample` — identical to `pkg/schema/sample.go` Sample in [towertail/sampler](https://github.com/towertail/sampler), just relaxed around optional fields.
 - `Event` — `{ id, ts, kind, nodeId, metric?, tint? }` where `kind` ∈ `threshold_crossed | reachability_changed | sampler_version` and `tint` ∈ `ok | warn | critical`.

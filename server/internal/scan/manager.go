@@ -17,7 +17,7 @@ import (
 	"github.com/towertail/sampler/pkg/schema"
 
 	"github.com/towertail/towertail/server/internal/control"
-	"github.com/towertail/towertail/server/internal/wire"
+	"github.com/towertail/towertail/server/wire"
 )
 
 // Limits and timeouts of the jobs.

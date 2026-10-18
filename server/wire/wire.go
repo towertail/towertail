@@ -42,6 +42,15 @@ type Sample struct {
 
 // --- Server-only types ---
 
+// Tint is the threshold state of one metric.
+type Tint string
+
+const (
+	TintOK       Tint = "ok"
+	TintWarn     Tint = "warn"
+	TintCritical Tint = "critical"
+)
+
 // Event is a BackendEvent equivalent.
 type Event struct {
 	ID     uuid.UUID `json:"id"`

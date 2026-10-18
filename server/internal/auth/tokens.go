@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/towertail/towertail/server/internal/store"
+	"github.com/towertail/towertail/server/store"
 )
 
 // TokenIssuer issues opaque bearer tokens and persists a SHA-256 of

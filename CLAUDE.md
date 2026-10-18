@@ -138,7 +138,7 @@ Invocation modes (see [wire-format.md](https://github.com/towertail/sampler/blob
 
 ## Server — `server/`
 
-Go module `github.com/towertail/towertail/server` (own `go.mod`, Go 1.25). It requires `github.com/towertail/sampler` for `pkg/schema`. Entry point `cmd/towertail-server` (`serve`, `migrate`, `token issue`). Packages are in `internal/` (api, hub, control, store, clickhouse, alerter, auth, config, postgres, runtime, wire, version). Not started: `cmd/towertail-relay` and `internal/notify`. Design and status: [`docs/server-plan.md`](docs/server-plan.md); API contract: [`docs/wire.md`](docs/wire.md).
+Go module `github.com/towertail/towertail/server` (own `go.mod`, Go 1.25). It requires `github.com/towertail/sampler` for `pkg/schema`. Entry point `cmd/towertail-server` (`serve`, `migrate`, `token issue`); `serve` calls `app.New(cfg).Run(ctx)`. Public packages: `app` (wiring and the extension API for the cloud), `authctx`, `config`, `notify`, `runtime`, `store`, `wire`. The others are in `internal/` (api, hub, control, clickhouse, alerter, auth, postgres, scan, version). Not started: `cmd/towertail-relay` and the notify channels. Design and status: [`docs/server-plan.md`](docs/server-plan.md); API contract: [`docs/wire.md`](docs/wire.md).
 
 Config comes from defaults, a YAML file (`TT_CONFIG_FILE`) and `TT_` env vars. A double underscore separates levels: `TT_CLICKHOUSE__ADDR` sets `clickhouse.addr`. Docker deployment: `server/docker/` (compose with ClickHouse and Caddy; the build context is `server/`).
 

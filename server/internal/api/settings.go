@@ -7,12 +7,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
-	"github.com/towertail/towertail/server/internal/store"
-	"github.com/towertail/towertail/server/internal/wire"
+	"github.com/towertail/towertail/server/authctx"
+	"github.com/towertail/towertail/server/store"
+	"github.com/towertail/towertail/server/wire"
 )
 
 func (s *Server) handleGetSettings(c echo.Context) error {
-	t, _ := tokenFromCtx(c)
+	t, _ := authctx.TokenFrom(c)
 	cfg, err := s.store.GetSettings(c.Request().Context(), t.OrgID)
 	if err != nil {
 		return err
@@ -21,7 +22,7 @@ func (s *Server) handleGetSettings(c echo.Context) error {
 }
 
 func (s *Server) handlePutSettings(c echo.Context) error {
-	t, _ := tokenFromCtx(c)
+	t, _ := authctx.TokenFrom(c)
 	var cfg store.ServerSettings
 	if err := c.Bind(&cfg); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())

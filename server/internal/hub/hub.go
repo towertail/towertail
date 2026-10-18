@@ -11,7 +11,7 @@ import (
 	"github.com/coder/websocket/wsjson"
 	"github.com/google/uuid"
 
-	"github.com/towertail/towertail/server/internal/wire"
+	"github.com/towertail/towertail/server/wire"
 )
 
 // Hub fans out samples and events to connected websocket clients.

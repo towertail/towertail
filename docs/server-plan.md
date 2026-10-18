@@ -657,10 +657,16 @@ server/
 ├── cmd/
 │   └── towertail-server/
 │       └── main.go                 # urfave/cli root: serve, migrate, token, user, config
+├── app/                            # public: app.New(cfg, opts...) wires and runs the server (§7.1)
+├── authctx/                        # public: TokenFrom(c) for extra routes
+├── config/                         # public: Config struct and Load (koanf; env + yaml)
+├── notify/                         # public: Notifier interface and Alert
+├── runtime/                        # public: Component lifecycle / Require(name) guard
+├── store/                          # public: ConfigStore, models, Bolt and Postgres impls
+├── wire/                           # public: REST and WS shapes
 ├── internal/
 │   ├── api/
-│   │   ├── server.go               # Echo instance assembly + global middleware
-│   │   ├── routes.go               # route registration (groups per auth class)
+│   │   ├── server.go               # Echo instance assembly + global middleware + routes
 │   │   ├── auth.go                 # bearer middleware + login handler
 │   │   ├── nodes.go                # CRUD handlers
 │   │   ├── settings.go
@@ -670,18 +676,10 @@ server/
 │   │   ├── control.go              # sampler long-poll
 │   │   ├── sampler.go              # enroll + versions
 │   │   ├── stream.go               # WS handler
-│   │   └── errors.go               # error envelope helpers
+│   │   └── middleware.go           # error envelope + audit
 │   ├── auth/
 │   │   ├── tokens.go               # issue/verify/revoke; sha256 at rest
 │   │   └── passwords.go            # argon2id wrapper
-│   ├── config/
-│   │   ├── config.go               # koanf load; env + yaml
-│   │   └── defaults.go
-│   ├── store/
-│   │   ├── config_store.go         # interface
-│   │   ├── bolt_store.go           # BoltDB impl (self-hosted)
-│   │   ├── postgres_store.go       # stub impl (cloud-managed); compiles, returns ErrNotImplemented for self-hosted
-│   │   └── models.go               # Node, ServerSettings, Alert etc. shared DTOs
 │   ├── clickhouse/
 │   │   ├── client.go               # pool, batcher, readiness
 │   │   ├── schema.go               # embed SQL; idempotent boot DDL
@@ -697,9 +695,6 @@ server/
 │   │   └── hub.go                  # WS broadcast hub
 │   ├── control/
 │   │   └── queue.go                # per-node control msg queue in Bolt
-│   ├── runtime/
-│   │   ├── runtime.go              # Component lifecycle / DI
-│   │   └── components.go           # Require(name) guard
 │   └── version/
 │       └── version.go              # ldflags injected
 ├── migrations/
@@ -728,6 +723,28 @@ server/
 ├── go.sum
 └── README.md
 ```
+
+### 7.1 Extension API
+
+The private cloud module builds the same server with its own parts. Package `app` owns the wiring. `cmd/towertail-server` only calls `app.New(cfg).Run(ctx)`.
+
+```go
+a, err := app.New(cfg,
+    app.WithStore(pgStore),                    // replaces the Bolt store; the caller closes it
+    app.WithNotifier(pushNotifier),            // more than one is allowed
+    app.WithRoutes(func(r app.Router) {        // extra routes, after the core routes
+        g := r.Group("/v1/account", store.TokenKindUser)
+        g.GET("", handleAccount)               // authctx.TokenFrom(c) gives the token
+    }),
+    app.WithMiddleware(mw),                    // after the core middleware
+    app.WithComponent(billing),                // runtime.Component: Run starts it, then stops it
+)
+err = a.Run(ctx)                               // serves until ctx is done
+```
+
+- `Router.Group(prefix, kinds...)` gives an `*echo.Group` with the bearer middleware for the token kinds.
+- The public packages are `app`, `authctx`, `config`, `notify`, `runtime`, `store` and `wire`. All other packages stay in `internal/`.
+- When the store is not Bolt, disk scans use a separate Bolt file `scans.db` in `storage.path`.
 
 ---
 

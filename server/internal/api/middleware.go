@@ -8,8 +8,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
-	"github.com/towertail/towertail/server/internal/store"
-	"github.com/towertail/towertail/server/internal/wire"
+	"github.com/towertail/towertail/server/authctx"
+	"github.com/towertail/towertail/server/store"
+	"github.com/towertail/towertail/server/wire"
 )
 
 // httpErrorHandler is installed as Echo's global error handler. It
@@ -69,7 +70,7 @@ func httpErrorHandler(log *slog.Logger) echo.HTTPErrorHandler {
 // we'd keep when routing to an immutable log (Loki, ClickHouse `events`)
 // in a follow-up.
 func (s *Server) audit(c echo.Context, action, resource string, id uuid.UUID, extra ...any) {
-	t, _ := tokenFromCtx(c)
+	t, _ := authctx.TokenFrom(c)
 	args := []any{
 		"action", action,
 		"resource", resource,

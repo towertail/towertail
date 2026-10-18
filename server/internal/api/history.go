@@ -7,13 +7,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/towertail/towertail/server/authctx"
 	"github.com/towertail/towertail/server/internal/clickhouse"
-	"github.com/towertail/towertail/server/internal/wire"
+	"github.com/towertail/towertail/server/wire"
 )
 
 // handleHistory returns a time-bucketed aggregate for a single metric.
 func (s *Server) handleHistory(c echo.Context) error {
-	t, _ := tokenFromCtx(c)
+	t, _ := authctx.TokenFrom(c)
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "bad id")

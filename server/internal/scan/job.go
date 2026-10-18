@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/towertail/sampler/pkg/schema"
 
-	"github.com/towertail/towertail/server/internal/wire"
+	"github.com/towertail/towertail/server/wire"
 )
 
 // State is the state of a job.

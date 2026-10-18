@@ -19,13 +19,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/towertail/sampler/pkg/schema"
 
+	"github.com/towertail/towertail/server/config"
 	"github.com/towertail/towertail/server/internal/auth"
-	"github.com/towertail/towertail/server/internal/config"
 	"github.com/towertail/towertail/server/internal/control"
 	"github.com/towertail/towertail/server/internal/hub"
 	"github.com/towertail/towertail/server/internal/scan"
-	"github.com/towertail/towertail/server/internal/store"
-	"github.com/towertail/towertail/server/internal/wire"
+	"github.com/towertail/towertail/server/store"
+	"github.com/towertail/towertail/server/wire"
 )
 
 const progressLine = `{"t":"progress","v":1,"files":10,"dirs":2,"bytes":100,"no_access_dirs":0,"current":"/var","elapsed_ms":2000,"used_bytes":0,"top":[]}`

@@ -72,7 +72,7 @@ Refer to [`docs/server-plan.md`](../docs/server-plan.md) for the design, [`docs/
 
 ## Config
 
-The defaults are in the code. To change them, use a YAML file (`TT_CONFIG_FILE=/path/to/towertail-server.yaml`) or `TT_` environment variables. In a variable name, a double underscore (`__`) separates the levels. For example, `TT_HTTP__ADDR` sets `http.addr`, and `TT_CLICKHOUSE__PASSWORD_FILE` sets `clickhouse.password_file`. A single underscore stays part of the key name. Other examples: `TT_CLICKHOUSE__ADDR`, `TT_CLOUD__MANAGED`, `TT_POSTGRES__DSN`, `TT_AUTH__BOOTSTRAP_TOKEN`. Refer to [`internal/config/config.go`](internal/config/config.go) for all the keys.
+The defaults are in the code. To change them, use a YAML file (`TT_CONFIG_FILE=/path/to/towertail-server.yaml`) or `TT_` environment variables. In a variable name, a double underscore (`__`) separates the levels. For example, `TT_HTTP__ADDR` sets `http.addr`, and `TT_CLICKHOUSE__PASSWORD_FILE` sets `clickhouse.password_file`. A single underscore stays part of the key name. Other examples: `TT_CLICKHOUSE__ADDR`, `TT_CLOUD__MANAGED`, `TT_POSTGRES__DSN`, `TT_AUTH__BOOTSTRAP_TOKEN`. Refer to [`config/config.go`](config/config.go) for all the keys.
 
 ## Build
 

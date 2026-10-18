@@ -5,11 +5,12 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/labstack/echo/v4"
+	"github.com/towertail/towertail/server/authctx"
 )
 
 // handleStream accepts a websocket connection and hands it to the hub.
 func (s *Server) handleStream(c echo.Context) error {
-	t, _ := tokenFromCtx(c)
+	t, _ := authctx.TokenFrom(c)
 	conn, err := websocket.Accept(c.Response().Writer, c.Request(), &websocket.AcceptOptions{
 		InsecureSkipVerify: true,
 	})

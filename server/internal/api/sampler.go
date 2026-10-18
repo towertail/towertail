@@ -7,14 +7,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
-	"github.com/towertail/towertail/server/internal/store"
-	"github.com/towertail/towertail/server/internal/wire"
+	"github.com/towertail/towertail/server/authctx"
+	"github.com/towertail/towertail/server/store"
+	"github.com/towertail/towertail/server/wire"
 )
 
 // handleSamplerEnroll binds (or creates) a Node and issues a sampler
 // token in one round-trip. Called by `sampler service install`.
 func (s *Server) handleSamplerEnroll(c echo.Context) error {
-	t, _ := tokenFromCtx(c)
+	t, _ := authctx.TokenFrom(c)
 	if t.Kind != store.TokenKindUser && t.Kind != store.TokenKindAdmin {
 		return echo.NewHTTPError(http.StatusForbidden, "user or admin token required")
 	}

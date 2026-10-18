@@ -13,15 +13,16 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/towertail/towertail/server/authctx"
 	"github.com/towertail/towertail/server/internal/clickhouse"
-	"github.com/towertail/towertail/server/internal/store"
-	"github.com/towertail/towertail/server/internal/wire"
+	"github.com/towertail/towertail/server/store"
+	"github.com/towertail/towertail/server/wire"
 )
 
 // handleIngest accepts NDJSON (optionally gzipped) and pushes each sample
 // into the ClickHouse batcher.
 func (s *Server) handleIngest(c echo.Context) error {
-	t, ok := tokenFromCtx(c)
+	t, ok := authctx.TokenFrom(c)
 	if !ok || t.Kind != store.TokenKindSampler {
 		return echo.NewHTTPError(http.StatusForbidden, "sampler token required")
 	}

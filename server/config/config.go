@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -88,6 +89,26 @@ type IngestConfig struct {
 type LogConfig struct {
 	Level  string `koanf:"level"`
 	Format string `koanf:"format"`
+}
+
+// NewLogger writes to stdout at the configured level and format.
+func (c LogConfig) NewLogger() *slog.Logger {
+	var level slog.Level
+	switch c.Level {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+	opts := &slog.HandlerOptions{Level: level}
+	if c.Format == "text" {
+		return slog.New(slog.NewTextHandler(os.Stdout, opts))
+	}
+	return slog.New(slog.NewJSONHandler(os.Stdout, opts))
 }
 
 type CloudConfig struct {

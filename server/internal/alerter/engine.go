@@ -10,8 +10,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/towertail/towertail/server/internal/clickhouse"
-	"github.com/towertail/towertail/server/internal/store"
-	"github.com/towertail/towertail/server/internal/wire"
+	"github.com/towertail/towertail/server/store"
+	"github.com/towertail/towertail/server/wire"
 )
 
 // Clock abstracts time.Now for deterministic tests.
@@ -35,12 +35,12 @@ type Store interface {
 	WriteEvent(ctx context.Context, e clickhouse.EventRow) error
 }
 
-type Tint string
+type Tint = wire.Tint
 
 const (
-	TintOK       Tint = "ok"
-	TintWarn     Tint = "warn"
-	TintCritical Tint = "critical"
+	TintOK       = wire.TintOK
+	TintWarn     = wire.TintWarn
+	TintCritical = wire.TintCritical
 )
 
 // nodeState tracks per-(org,node) threshold state for each metric.

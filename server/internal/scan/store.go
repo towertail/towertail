@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	bolt "go.etcd.io/bbolt"
 
-	"github.com/towertail/towertail/server/internal/store"
+	"github.com/towertail/towertail/server/store"
 )
 
 // ErrActive is the error for a second job on a node that has a queued

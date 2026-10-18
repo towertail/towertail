@@ -9,9 +9,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/towertail/towertail/server/authctx"
 	"github.com/towertail/towertail/server/internal/control"
-	"github.com/towertail/towertail/server/internal/store"
-	"github.com/towertail/towertail/server/internal/wire"
+	"github.com/towertail/towertail/server/store"
+	"github.com/towertail/towertail/server/wire"
 )
 
 // handleControlNext is a short long-poll: samplers call this every
@@ -19,7 +20,7 @@ import (
 // is waiting. A blocking implementation can be added once we measure
 // how noisy the poll is.
 func (s *Server) handleControlNext(c echo.Context) error {
-	t, _ := tokenFromCtx(c)
+	t, _ := authctx.TokenFrom(c)
 	if t.Kind != store.TokenKindSampler || t.NodeID == nil {
 		return echo.NewHTTPError(http.StatusForbidden, "sampler token required")
 	}

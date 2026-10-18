@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/towertail/towertail/server/internal/store"
+	"github.com/towertail/towertail/server/store"
 )
 
 func TestIssuerRoundTrip(t *testing.T) {

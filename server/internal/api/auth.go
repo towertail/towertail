@@ -6,14 +6,11 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/towertail/towertail/server/authctx"
 	"github.com/towertail/towertail/server/internal/auth"
-	"github.com/towertail/towertail/server/internal/store"
-	"github.com/towertail/towertail/server/internal/wire"
+	"github.com/towertail/towertail/server/store"
+	"github.com/towertail/towertail/server/wire"
 )
-
-// tokenKey is the Echo context key used to store the authenticated
-// token struct for handlers downstream.
-const tokenKey = "towertail.token"
 
 // bearerMiddleware rejects requests without a valid bearer token.
 // kinds may contain multiple kinds (e.g. user + admin); empty means any.
@@ -37,7 +34,7 @@ func bearerMiddleware(issuer *auth.TokenIssuer, kinds ...store.TokenKind) echo.M
 					return echo.NewHTTPError(http.StatusForbidden, "token kind not allowed")
 				}
 			}
-			c.Set(tokenKey, t)
+			authctx.Set(c, t)
 			return next(c)
 		}
 	}
@@ -52,15 +49,6 @@ func extractBearer(c echo.Context) string {
 		return ""
 	}
 	return strings.TrimSpace(h[len("Bearer "):])
-}
-
-func tokenFromCtx(c echo.Context) (store.Token, bool) {
-	v := c.Get(tokenKey)
-	if v == nil {
-		return store.Token{}, false
-	}
-	t, ok := v.(store.Token)
-	return t, ok
 }
 
 // handleLogin authenticates an email+password and returns a user token.
@@ -89,7 +77,7 @@ func (s *Server) handleLogin(c echo.Context) error {
 
 // handleLogout revokes the caller's token.
 func (s *Server) handleLogout(c echo.Context) error {
-	t, ok := tokenFromCtx(c)
+	t, ok := authctx.TokenFrom(c)
 	if !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "")
 	}

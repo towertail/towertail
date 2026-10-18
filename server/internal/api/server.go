@@ -14,15 +14,15 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/time/rate"
 
+	"github.com/towertail/towertail/server/config"
 	"github.com/towertail/towertail/server/internal/alerter"
 	"github.com/towertail/towertail/server/internal/auth"
 	"github.com/towertail/towertail/server/internal/clickhouse"
-	"github.com/towertail/towertail/server/internal/config"
 	"github.com/towertail/towertail/server/internal/control"
 	"github.com/towertail/towertail/server/internal/hub"
-	"github.com/towertail/towertail/server/internal/runtime"
 	"github.com/towertail/towertail/server/internal/scan"
-	"github.com/towertail/towertail/server/internal/store"
+	"github.com/towertail/towertail/server/runtime"
+	"github.com/towertail/towertail/server/store"
 )
 
 // Server assembles the Echo instance and wires every dependency.
@@ -52,6 +52,10 @@ type Deps struct {
 	Alerter *alerter.Engine
 	Control *control.Queue
 	Scans   *scan.Manager
+	// Middleware runs after the core middleware.
+	Middleware []echo.MiddlewareFunc
+	// Routes add routes after the core routes.
+	Routes []func(*Server)
 }
 
 // New wires the handlers and middleware onto a fresh Echo instance.
@@ -101,6 +105,8 @@ func New(d Deps) *Server {
 		},
 	}))
 
+	e.Use(d.Middleware...)
+
 	s := &Server{
 		echo:    e,
 		cfg:     d.Config,
@@ -115,7 +121,16 @@ func New(d Deps) *Server {
 		scans:   d.Scans,
 	}
 	s.registerRoutes()
+	for _, f := range d.Routes {
+		f(s)
+	}
 	return s
+}
+
+// Group gives a route group that requires a bearer token of one of the
+// kinds.
+func (s *Server) Group(prefix string, kinds ...store.TokenKind) *echo.Group {
+	return s.echo.Group(prefix, bearerMiddleware(s.issuer, kinds...))
 }
 
 func (s *Server) Handler() http.Handler { return s.echo }
