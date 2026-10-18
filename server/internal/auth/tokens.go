@@ -2,12 +2,8 @@ package auth
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/base64"
 	"errors"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -27,20 +23,11 @@ func NewIssuer(s store.ConfigStore) *TokenIssuer {
 // Issue creates a new token. The returned string is the raw secret the
 // caller hands to the client; the store retains only the hash.
 func (i *TokenIssuer) Issue(ctx context.Context, orgID uuid.UUID, kind store.TokenKind, label string, nodeID *uuid.UUID) (string, store.Token, error) {
-	raw, err := generateSecret(32)
+	raw, t, err := store.NewToken(orgID, kind, label)
 	if err != nil {
 		return "", store.Token{}, err
 	}
-	hash := hashToken(raw)
-	t := store.Token{
-		ID:        uuid.New(),
-		OrgID:     orgID,
-		Kind:      kind,
-		Label:     label,
-		Hash:      hash,
-		NodeID:    nodeID,
-		CreatedAt: time.Now().UTC(),
-	}
+	t.NodeID = nodeID
 	if err := i.store.PutToken(ctx, t); err != nil {
 		return "", store.Token{}, err
 	}
@@ -53,7 +40,7 @@ func (i *TokenIssuer) Verify(ctx context.Context, raw string) (store.Token, erro
 	if raw == "" {
 		return store.Token{}, errors.New("auth: empty token")
 	}
-	expected := hashToken(raw)
+	expected := store.HashToken(raw)
 	t, err := i.store.GetTokenByHash(ctx, expected)
 	if err != nil {
 		return store.Token{}, err
@@ -74,23 +61,4 @@ func (i *TokenIssuer) Verify(ctx context.Context, raw string) (store.Token, erro
 // Revoke deletes the token by id.
 func (i *TokenIssuer) Revoke(ctx context.Context, id uuid.UUID) error {
 	return i.store.DeleteToken(ctx, id)
-}
-
-func hashToken(raw string) []byte {
-	sum := sha256.Sum256([]byte(raw))
-	return sum[:]
-}
-
-// HashForSeed is exposed for the bootstrap-token install path where the
-// caller supplies a known raw secret rather than generating one.
-func HashForSeed(raw string) []byte {
-	return hashToken(raw)
-}
-
-func generateSecret(n int) (string, error) {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return "tt_" + base64.RawURLEncoding.EncodeToString(b), nil
 }

@@ -221,7 +221,7 @@ func (a *App) installBootstrapToken(ctx context.Context, issuer *auth.TokenIssue
 		OrgID: store.ZeroOrg,
 		Kind:  store.TokenKindAdmin,
 		Label: "bootstrap",
-		Hash:  auth.HashForSeed(raw),
+		Hash:  store.HashToken(raw),
 	})
 	if err == nil {
 		a.log.Info("bootstrap token installed")

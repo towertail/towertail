@@ -1,10 +1,12 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -38,6 +40,9 @@ type HTTPConfig struct {
 	// Mac app never calls you — this is a defense-in-depth knob only,
 	// since bearer tokens are required on every route anyway.
 	CORSAllowOrigins []string `koanf:"cors_allow_origins"`
+	// CORSAllowCredentials lets the browser send cookies from the allowed
+	// origins. Load refuses it with the origin "*".
+	CORSAllowCredentials bool `koanf:"cors_allow_credentials"`
 	// RateLimitRPS is requests-per-second per-IP on the generic limiter
 	// (everything except /v1/ingest, which has its own budget).
 	RateLimitRPS int `koanf:"rate_limit_rps"`
@@ -157,22 +162,9 @@ type CloudConfig struct {
 
 // Load resolves configuration from YAML + env. Path may be empty.
 func Load(path string) (*Config, error) {
-	k := koanf.New(".")
-	setDefaults(k)
-
-	if path != "" {
-		if err := k.Load(file.Provider(path), yaml.Parser()); err != nil {
-			return nil, fmt.Errorf("load config file %q: %w", path, err)
-		}
-	}
-
-	// TT_FOO_BAR → foo.bar
-	if err := k.Load(env.Provider("TT_", ".", func(s string) string {
-		s = strings.TrimPrefix(s, "TT_")
-		s = strings.ToLower(s)
-		return strings.ReplaceAll(s, "__", ".")
-	}), nil); err != nil {
-		return nil, fmt.Errorf("load env: %w", err)
+	k, err := load(path)
+	if err != nil {
+		return nil, err
 	}
 
 	var cfg Config
@@ -183,10 +175,46 @@ func Load(path string) (*Config, error) {
 	if err := cfg.resolveSecrets(); err != nil {
 		return nil, err
 	}
+	if cfg.HTTP.CORSAllowCredentials && slices.Contains(cfg.HTTP.CORSAllowOrigins, "*") {
+		return nil, errors.New("http.cors_allow_credentials needs explicit http.cors_allow_origins, not \"*\"")
+	}
 	if cfg.ClickHouse.SpillDir == "" {
 		cfg.ClickHouse.SpillDir = filepath.Join(cfg.Storage.Path, "spill")
 	}
 	return &cfg, nil
+}
+
+// LoadSection reads the key from the same YAML file and env as Load into
+// out, for config that only an extension knows. An example is the key
+// "cloud" of the managed cloud.
+func LoadSection(path, key string, out any) error {
+	k, err := load(path)
+	if err != nil {
+		return err
+	}
+	if err := k.Unmarshal(key, out); err != nil {
+		return fmt.Errorf("unmarshal %s: %w", key, err)
+	}
+	return nil
+}
+
+func load(path string) (*koanf.Koanf, error) {
+	k := koanf.New(".")
+	setDefaults(k)
+	if path != "" {
+		if err := k.Load(file.Provider(path), yaml.Parser()); err != nil {
+			return nil, fmt.Errorf("load config file %q: %w", path, err)
+		}
+	}
+	// TT_FOO_BAR → foo.bar
+	if err := k.Load(env.Provider("TT_", ".", func(s string) string {
+		s = strings.TrimPrefix(s, "TT_")
+		s = strings.ToLower(s)
+		return strings.ReplaceAll(s, "__", ".")
+	}), nil); err != nil {
+		return nil, fmt.Errorf("load env: %w", err)
+	}
+	return k, nil
 }
 
 func setDefaults(k *koanf.Koanf) {

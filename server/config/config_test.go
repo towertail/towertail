@@ -38,3 +38,37 @@ func TestLoadPasswordFiles(t *testing.T) {
 		t.Errorf("password wins over the file: %q", cfg.Postgres.Password)
 	}
 }
+
+func TestCORSCredentials(t *testing.T) {
+	t.Setenv("TT_HTTP__CORS_ALLOW_CREDENTIALS", "true")
+	if _, err := Load(""); err == nil {
+		t.Error("credentials with the origin *: want error")
+	}
+	t.Setenv("TT_HTTP__CORS_ALLOW_ORIGINS", "https://app.example.com")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.HTTP.CORSAllowOrigins) != 1 || cfg.HTTP.CORSAllowOrigins[0] != "https://app.example.com" {
+		t.Errorf("origins: %v", cfg.HTTP.CORSAllowOrigins)
+	}
+}
+
+func TestLoadSection(t *testing.T) {
+	t.Setenv("TT_CLOUD__BASE_URL", "https://api.example.com")
+	t.Setenv("TT_CLOUD__OAUTH__GITHUB__CLIENT_ID", "gh")
+	var out struct {
+		BaseURL string `koanf:"base_url"`
+		OAuth   struct {
+			GitHub struct {
+				ClientID string `koanf:"client_id"`
+			} `koanf:"github"`
+		} `koanf:"oauth"`
+	}
+	if err := LoadSection("", "cloud", &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.BaseURL != "https://api.example.com" || out.OAuth.GitHub.ClientID != "gh" {
+		t.Errorf("section: %+v", out)
+	}
+}

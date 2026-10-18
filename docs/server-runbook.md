@@ -201,8 +201,11 @@ is the only record of *who killed PID 1337 on prod-db-3*.
 - Passwords use argon2id via `auth.HashPassword` — no cost-of-living
   fallback, bump `argon2Time` if you need to harden further.
 - CORS defaults to `*`. In production set
-  `TT_HTTP__CORS_ALLOW_ORIGINS='["https://app.towertail.com"]'` so
-  browsers can't call the API from anywhere.
+  `TT_HTTP__CORS_ALLOW_ORIGINS=https://app.towertail.com` so
+  browsers can't call the API from anywhere. The env value is one
+  origin. Put more than one origin in the YAML file.
+- `TT_HTTP__CORS_ALLOW_CREDENTIALS=true` lets the browser send cookies
+  from the allowed origins. The server refuses it with the origin `*`.
 - Alert channels: users add webhook URLs. When users that you do not
   trust can add channels, set `TT_NOTIFY__BLOCK_PRIVATE_TARGETS=true`.
   Then the server does not send to private or loopback addresses.

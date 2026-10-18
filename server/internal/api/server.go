@@ -96,9 +96,10 @@ func New(d Deps) *Server {
 		origins = []string{"*"}
 	}
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
-		AllowOrigins: origins,
-		AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions},
-		AllowHeaders: []string{echo.HeaderAuthorization, echo.HeaderContentType, echo.HeaderContentEncoding},
+		AllowOrigins:     origins,
+		AllowMethods:     []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions},
+		AllowHeaders:     []string{echo.HeaderAuthorization, echo.HeaderContentType, echo.HeaderContentEncoding, echo.HeaderXRequestedWith},
+		AllowCredentials: d.Config.HTTP.CORSAllowCredentials,
 	}))
 	// Skip rate limiting on /v1/ingest here — samplers pushing metrics
 	// need a much higher budget, so the ingest route applies its own

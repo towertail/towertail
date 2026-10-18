@@ -109,9 +109,14 @@ func contractTokens(t *testing.T, h storeHarness) {
 	ctx := context.Background()
 	org, other := h.newOrg(t), h.newOrg(t)
 	node := uuid.New()
+	user := User{OrgID: org, Email: uuid.NewString() + "@example.com"}
+	if err := h.s.PutUser(ctx, user); err != nil {
+		t.Fatal(err)
+	}
+	user, _ = h.s.GetUserByEmail(ctx, user.Email)
 	tok := Token{
 		ID: uuid.New(), OrgID: org, Kind: TokenKindSampler, Label: "web-1",
-		Hash: []byte(uuid.NewString()), NodeID: &node, CreatedAt: time.Now().UTC().Truncate(time.Millisecond),
+		Hash: []byte(uuid.NewString()), NodeID: &node, UserID: &user.ID, CreatedAt: time.Now().UTC().Truncate(time.Millisecond),
 	}
 	if err := h.s.PutToken(ctx, Token{ID: uuid.New(), OrgID: org}); err == nil {
 		t.Error("put without hash: want error")
@@ -127,7 +132,7 @@ func contractTokens(t *testing.T, h storeHarness) {
 		t.Fatal(err)
 	}
 	if got.ID != tok.ID || got.OrgID != org || got.Kind != TokenKindSampler || got.Label != "web-1" ||
-		*got.NodeID != node || !got.CreatedAt.Equal(tok.CreatedAt) || got.RevokedAt != nil {
+		*got.NodeID != node || *got.UserID != user.ID || !got.CreatedAt.Equal(tok.CreatedAt) || got.RevokedAt != nil {
 		t.Errorf("get: %+v", got)
 	}
 

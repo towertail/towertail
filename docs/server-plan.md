@@ -747,6 +747,10 @@ err = a.Run(ctx)                               // serves until ctx is done
 - `Router.Group(prefix, kinds...)` gives an `*echo.Group` with the bearer middleware for the token kinds.
 - The public packages are `app`, `authctx`, `config`, `notify`, `runtime`, `store` and `wire`. All other packages stay in `internal/`.
 - When the store is not Bolt, disk scans use a separate Bolt file `scans.db` in `storage.path`.
+- A middleware can call `authctx.Set(c, token)` (for example for a session cookie). The bearer middleware then accepts that token and checks only its kind.
+- `store.NewToken(org, kind, label)` makes an API token with a new secret, and `store.HashToken(raw)` is the hash that the store keeps.
+- `(*store.PostgresStore).Migrate(ctx, fsys, table)` runs a set of goose SQL files with its own version table.
+- `config.LoadSection(path, key, &out)` reads one key (for example `cloud`) from the same YAML file and env as `config.Load`.
 
 ---
 

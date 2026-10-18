@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"time"
 
 	"github.com/google/uuid"
@@ -39,6 +40,12 @@ func OpenPostgres(ctx context.Context, cfg config.PostgresConfig) (*PostgresStor
 // Pool gives the pool to stores that keep their own tables in the same
 // database.
 func (s *PostgresStore) Pool() *pgxpool.Pool { return s.pool }
+
+// Migrate runs the goose SQL files at the root of fsys, with table as the
+// version table. The cloud uses it for its own tables.
+func (s *PostgresStore) Migrate(ctx context.Context, fsys fs.FS, table string) error {
+	return postgres.MigrateFS(ctx, s.pool, fsys, table)
+}
 
 func (s *PostgresStore) Close() error {
 	s.pool.Close()
@@ -123,7 +130,7 @@ func (s *PostgresStore) PutSettings(ctx context.Context, orgID uuid.UUID, settin
 	return err
 }
 
-const tokenCols = `id, org_id, kind, label, token_hash, node_id, created_at, last_used_at, revoked_at`
+const tokenCols = `id, org_id, kind, label, token_hash, node_id, user_id, created_at, last_used_at, revoked_at`
 
 func (s *PostgresStore) PutToken(ctx context.Context, t Token) error {
 	if len(t.Hash) == 0 {
@@ -133,10 +140,10 @@ func (s *PostgresStore) PutToken(ctx context.Context, t Token) error {
 		t.CreatedAt = time.Now().UTC()
 	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO api_tokens (`+tokenCols+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO api_tokens (`+tokenCols+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (id) DO UPDATE SET
 			label = EXCLUDED.label, last_used_at = EXCLUDED.last_used_at, revoked_at = EXCLUDED.revoked_at`,
-		t.ID, t.OrgID, string(t.Kind), t.Label, t.Hash, t.NodeID, t.CreatedAt, t.LastUsedAt, t.RevokedAt)
+		t.ID, t.OrgID, string(t.Kind), t.Label, t.Hash, t.NodeID, t.UserID, t.CreatedAt, t.LastUsedAt, t.RevokedAt)
 	return err
 }
 
@@ -180,7 +187,7 @@ func scanToken(row pgx.Row) (Token, error) {
 		kind  string
 		label *string
 	)
-	err := row.Scan(&t.ID, &t.OrgID, &kind, &label, &t.Hash, &t.NodeID, &t.CreatedAt, &t.LastUsedAt, &t.RevokedAt)
+	err := row.Scan(&t.ID, &t.OrgID, &kind, &label, &t.Hash, &t.NodeID, &t.UserID, &t.CreatedAt, &t.LastUsedAt, &t.RevokedAt)
 	t.Kind = TokenKind(kind)
 	if label != nil {
 		t.Label = *label

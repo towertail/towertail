@@ -14,6 +14,8 @@ import (
 
 // bearerMiddleware rejects requests without a valid bearer token.
 // kinds may contain multiple kinds (e.g. user + admin); empty means any.
+// A token that an earlier middleware set with authctx.Set (for example a
+// cloud session cookie) counts as verified.
 func bearerMiddleware(issuer *auth.TokenIssuer, kinds ...store.TokenKind) echo.MiddlewareFunc {
 	allowed := map[store.TokenKind]struct{}{}
 	for _, k := range kinds {
@@ -21,13 +23,16 @@ func bearerMiddleware(issuer *auth.TokenIssuer, kinds ...store.TokenKind) echo.M
 	}
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			raw := extractBearer(c)
-			if raw == "" {
-				return echo.NewHTTPError(http.StatusUnauthorized, "missing token")
-			}
-			t, err := issuer.Verify(c.Request().Context(), raw)
-			if err != nil {
-				return echo.NewHTTPError(http.StatusUnauthorized, "invalid token")
+			t, ok := authctx.TokenFrom(c)
+			if !ok {
+				raw := extractBearer(c)
+				if raw == "" {
+					return echo.NewHTTPError(http.StatusUnauthorized, "missing token")
+				}
+				var err error
+				if t, err = issuer.Verify(c.Request().Context(), raw); err != nil {
+					return echo.NewHTTPError(http.StatusUnauthorized, "invalid token")
+				}
 			}
 			if len(allowed) > 0 {
 				if _, ok := allowed[t.Kind]; !ok {

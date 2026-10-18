@@ -96,12 +96,14 @@ func DefaultServerSettings() ServerSettings {
 // Token represents an issued auth token. Raw tokens are never stored;
 // only the SHA-256 hash lives in the database.
 type Token struct {
-	ID         uuid.UUID  `json:"id"`
-	OrgID      uuid.UUID  `json:"orgId"`
-	Kind       TokenKind  `json:"kind"`
-	Label      string     `json:"label"`
-	Hash       []byte     `json:"hash"`
-	NodeID     *uuid.UUID `json:"nodeId,omitempty"`
+	ID     uuid.UUID  `json:"id"`
+	OrgID  uuid.UUID  `json:"orgId"`
+	Kind   TokenKind  `json:"kind"`
+	Label  string     `json:"label"`
+	Hash   []byte     `json:"hash"`
+	NodeID *uuid.UUID `json:"nodeId,omitempty"`
+	// UserID is the user that the token acts for, when it is known.
+	UserID     *uuid.UUID `json:"userId,omitempty"`
 	CreatedAt  time.Time  `json:"createdAt"`
 	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
 	RevokedAt  *time.Time `json:"revokedAt,omitempty"`
