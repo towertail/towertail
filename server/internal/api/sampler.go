@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -58,6 +59,48 @@ func (s *Server) handleSamplerEnroll(c echo.Context) error {
 		SamplerToken: raw,
 		Endpoint:     "", // filled by caller-side config
 	})
+}
+
+// handleListSamplerTokens lists the sampler tokens of the org that are
+// not revoked.
+func (s *Server) handleListSamplerTokens(c echo.Context) error {
+	t, _ := authctx.TokenFrom(c)
+	all, err := s.store.ListTokens(c.Request().Context(), t.OrgID)
+	if err != nil {
+		return err
+	}
+	out := []wire.SamplerToken{}
+	for _, tk := range all {
+		if tk.Kind != store.TokenKindSampler || tk.RevokedAt != nil {
+			continue
+		}
+		out = append(out, wire.SamplerToken{ID: tk.ID, Label: tk.Label, NodeID: tk.NodeID, CreatedAt: tk.CreatedAt, LastUsedAt: tk.LastUsedAt})
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
+// handleRevokeSamplerToken deletes a sampler token of the org. The node
+// stays.
+func (s *Server) handleRevokeSamplerToken(c echo.Context) error {
+	t, _ := authctx.TokenFrom(c)
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "bad id")
+	}
+	ctx := c.Request().Context()
+	all, err := s.store.ListTokens(ctx, t.OrgID)
+	if err != nil {
+		return err
+	}
+	i := slices.IndexFunc(all, func(tk store.Token) bool { return tk.ID == id && tk.Kind == store.TokenKindSampler })
+	if i < 0 {
+		return echo.NewHTTPError(http.StatusNotFound, "token not found")
+	}
+	if err := s.store.DeleteToken(ctx, id); err != nil {
+		return err
+	}
+	s.audit(c, "revoke", "sampler_token", id)
+	return c.NoContent(http.StatusNoContent)
 }
 
 // handleSamplerVersions returns the expected sampler SHA per triple.

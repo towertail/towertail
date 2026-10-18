@@ -117,6 +117,16 @@ type EnrollResponse struct {
 	Endpoint     string    `json:"endpoint"`
 }
 
+// SamplerToken is one sampler token in GET /v1/sampler/tokens. It has no
+// secret.
+type SamplerToken struct {
+	ID         uuid.UUID  `json:"id"`
+	Label      string     `json:"label"`
+	NodeID     *uuid.UUID `json:"nodeId,omitempty"`
+	CreatedAt  time.Time  `json:"createdAt"`
+	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
+}
+
 // ControlNextResponse is returned from the sampler long-poll. When no
 // message is available, HTTP 204 is returned with no body.
 type ControlNextResponse struct {

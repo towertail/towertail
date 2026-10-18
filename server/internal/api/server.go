@@ -215,6 +215,8 @@ func (s *Server) registerRoutes() {
 	}
 	userGroup.POST("/sampler/enroll", s.handleSamplerEnroll)
 	userGroup.GET("/sampler/versions", s.handleSamplerVersions)
+	userGroup.GET("/sampler/tokens", s.handleListSamplerTokens)
+	userGroup.DELETE("/sampler/tokens/:id", s.handleRevokeSamplerToken)
 	userGroup.POST("/nodes/:id/disk-scans", s.handleRequestDiskScan)
 	userGroup.GET("/nodes/:id/disk-scans", s.handleListDiskScans)
 	userGroup.GET("/disk-scans/:job", s.handleGetDiskScan)

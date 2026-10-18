@@ -82,6 +82,8 @@ Base path `/v1`. Authed unless otherwise marked.
 | POST | `/v1/channels/{id}/test` | — | `ChannelTestResponse` (200, also when the send fails) |
 | POST | `/v1/sampler/enroll` | `EnrollRequest` | `EnrollResponse` |
 | GET | `/v1/sampler/versions` | — | `{ "linux-amd64": "sha256:…", … }` |
+| GET | `/v1/sampler/tokens` | — | `[SamplerToken]`: the sampler tokens of the org, with no secret |
+| DELETE | `/v1/sampler/tokens/{id}` | — | 204. The node stays. Its sampler cannot send again until it enrolls again |
 | POST | `/v1/nodes/{id}/disk-scans` | `DiskScanRequest` | `DiskScanJob` (202) |
 | GET | `/v1/nodes/{id}/disk-scans` | — | `{ "jobs": [DiskScanJob] }`, the newest first |
 | GET | `/v1/disk-scans/{job}` | — | `DiskScanJob` |
@@ -261,7 +263,7 @@ The server's [`wire`](../server/wire/wire.go) package is the source of truth. No
 - `ChannelRequest` — `{ kind, name, enabled?, target?, secret?, route }`. On PUT, a missing `enabled`, `target` or `secret` keeps the stored value. `"secret": ""` removes the secret. `ChannelTestResponse` is `{ ok, error? }`.
 - `AlertPayload` — the body of a generic webhook (§3.2).
 - `LoginRequest`, `LoginResponse`.
-- `EnrollRequest`, `EnrollResponse`.
+- `EnrollRequest`, `EnrollResponse`. `SamplerToken` is `{ id, label, nodeId?, createdAt, lastUsedAt? }`.
 - `ControlNextResponse`, `KillProcessPayload`, `DiskScanPayload`.
 - `DiskScanRequest`, `DiskScanJob`, `DiskScanProgressResponse`. The scan lines are `pkg/schema/scan.go` in [towertail/sampler](https://github.com/towertail/sampler).
 - `NodeHistoryPoint`, `NodeHistoryResponse` — `{ node_id, metric, resolution, clamped?, points: [{ ts, value, max? }] }`. `metric` is `cpu`, `mem`, `net_rx`, `net_tx`, `disk_read` or `disk_write`. The length of the range selects the table: 6 h or less reads the raw samples, 7 d or less the 1 min rollup, 30 d or less the 5 min rollup, else the 1 h rollup. A `step` larger than the bucket of the table groups the points. `resolution` is `raw` (one point for each sample) or the bucket, for example `5m0s`.
