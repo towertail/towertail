@@ -51,6 +51,18 @@ final class AlertRulesTests: XCTestCase {
 
     // MARK: sustain window
 
+    func testIconSkipsSnoozedServer() {
+        var node = Node(displayName: "h", kind: .ssh, snoozedUntil: Date().addingTimeInterval(3600))
+        let store = ServerStore(nodeLookup: { _ in node })
+        let v = ServerViewModel(id: node.id, hostname: "h", dnsName: "h", osArch: "x", alertRules: rules())
+        store.register(v)
+        v.ingest(sample(at: 0, disk: 0.97))
+        XCTAssertEqual(v.alertLevel, .critical)
+        XCTAssertEqual(store.aggregateState, .nominal)
+        node.snoozedUntil = nil
+        XCTAssertEqual(store.aggregateState, .critical)
+    }
+
     func testCardStaysRawWhileAlertIsGated() {
         let v = vm(rules())
         v.ingest(sample(at: 0, cpu: 95))

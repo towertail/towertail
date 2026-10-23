@@ -113,13 +113,14 @@ public sealed partial class ServerStore : ObservableObject
 
     /// <summary>
     /// Worst sustained level over the hosts. A host counts only when its node
-    /// opts in with IconOnWarn / IconOnCritical for that level.
+    /// opts in with IconOnWarn / IconOnCritical for that level. Snoozed hosts do not count.
     /// </summary>
     private void UpdateAggregateLevel()
     {
         var level = HealthLevel.Nominal;
         foreach (var vm in Servers)
         {
+            if (vm.Node.IsSnoozed) continue;
             var host = Enum.GetValues<AlertMetric>().Max(vm.AlertLevel);
             if (host == HealthLevel.Critical && vm.Node.IconOnCritical) { level = HealthLevel.Critical; break; }
             if (host == HealthLevel.Warn && vm.Node.IconOnWarn) level = HealthLevel.Warn;

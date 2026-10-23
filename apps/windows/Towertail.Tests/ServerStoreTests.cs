@@ -60,6 +60,19 @@ public sealed class ServerStoreTests : IAsyncLifetime
         _servers.AggregateLevel.Should().Be(HealthLevel.Critical);
     }
 
+    [Fact]
+    public void AggregateLevelSkipsSnoozedHosts()
+    {
+        var n = _nodes.Nodes[0];
+        _nodes.SetSnooze(n.Id, DateTime.UtcNow.AddHours(1));
+
+        _servers.Ingest(n.Id, Make(n, diskPct: 97));
+        _servers.AggregateLevel.Should().Be(HealthLevel.Nominal);
+
+        _nodes.SetSnooze(n.Id, null);
+        _servers.AggregateLevel.Should().Be(HealthLevel.Critical);
+    }
+
     private static Sample Make(Node n, double diskPct)
     {
         var diskUsed = (long)(diskPct / 100.0 * 500_000_000_000L);

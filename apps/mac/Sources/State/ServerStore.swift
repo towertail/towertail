@@ -169,13 +169,14 @@ final class ServerStore {
     /// `iconOnCritical`. A VM in warn only escalates the icon if its node
     /// has iconOnWarn=true; likewise for critical. Nodes opted out still
     /// show in the popover and still notify — they just don't drag the
-    /// top-level status.
+    /// top-level status. Snoozed nodes do not count at all.
     var aggregateState: AggregateState {
         var hasWarn = false
         var hasOfflineContributing = false
         var anyContributes = false
         for vm in serverVMs {
             let node = nodeLookup?(vm.id)
+            if node?.isSnoozed == true { continue }
             let iconWarn = node?.iconOnWarn ?? true
             let iconCritical = node?.iconOnCritical ?? true
             switch vm.state {
@@ -209,7 +210,10 @@ final class ServerStore {
         if hasWarn { return .warn }
         if anyContributes, hasOfflineContributing {
             let allOffline = serverVMs
-                .filter { (nodeLookup?($0.id)?.iconOnCritical ?? true) }
+                .filter {
+                    let node = nodeLookup?($0.id)
+                    return node?.isSnoozed != true && (node?.iconOnCritical ?? true)
+                }
                 .allSatisfy { $0.state.isOffline }
             if allOffline { return .critical }
         }
