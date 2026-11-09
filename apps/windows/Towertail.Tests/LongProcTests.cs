@@ -276,7 +276,7 @@ public sealed class LongProcViewModelTests
         vm.Health.Reasons.Should().ContainSingle(r => r.Signal == HealthSignal.LongProc && r.Text == "OrbStack Helper 60% for 30m");
         vm.HostAlertLevel().Should().Be(HealthLevel.Warn);
         // The health sustain window does not count the long process.
-        vm.Health.AlertWindowLevel.Should().Be(HealthLevel.Nominal);
+        vm.Health.AlertWindowLevel(MutedSignals.None).Should().Be(HealthLevel.Nominal);
         vm.AlertLevel(AlertMetric.Health).Should().Be(HealthLevel.Nominal);
     }
 

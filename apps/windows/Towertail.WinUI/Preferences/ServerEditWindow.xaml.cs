@@ -2,6 +2,7 @@ using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Towertail.WinUI.Backend;
 using Towertail.WinUI.Bootstrap;
 using Towertail.WinUI.State;
 using Towertail.WinUI.SystemServices;
@@ -19,6 +20,15 @@ public sealed partial class ServerEditWindow : Window
     private string? _knownHostFingerprint;
 
     private Slider[] _thresholdSliders = Array.Empty<Slider>();
+    private readonly List<(CheckBox Box, AlertSignal Signal)> _mutes = new();
+
+    private static readonly (AlertSignal Signal, string Title)[] MuteTitles =
+    {
+        (AlertSignal.Cpu, "CPU"), (AlertSignal.Mem, "Memory"), (AlertSignal.Disk, "Disk"),
+        (AlertSignal.Procs, "Processes"), (AlertSignal.Zombies, "Zombies"), (AlertSignal.Pids, "PID use"),
+        (AlertSignal.Files, "Open files"), (AlertSignal.Inodes, "Inodes"),
+        (AlertSignal.MemPressure, "Memory pressure"), (AlertSignal.IoPressure, "I/O pressure"),
+    };
 
     public ServerEditWindow()
     {
@@ -39,6 +49,36 @@ public sealed partial class ServerEditWindow : Window
     private void SetThresholdsEnabled(bool enabled)
     {
         foreach (var s in _thresholdSliders) s.IsEnabled = enabled;
+    }
+
+    /// <summary>A globally muted signal shows checked and disabled.</summary>
+    private void BindMutes(MutedSignals node)
+    {
+        var global = _env.ServerSettings.MutedSignals;
+        var remote = _env.Backend is RemoteBackend;
+        MuteGrid.Children.Clear();
+        _mutes.Clear();
+        foreach (var (signal, title) in MuteTitles)
+        {
+            var inherited = global.Contains(signal);
+            var box = new CheckBox
+            {
+                Content = title,
+                IsChecked = inherited || node.Contains(signal),
+                IsEnabled = !inherited && !remote,
+            };
+            if (inherited) ToolTipService.SetToolTip(box, "Muted on all servers");
+            MuteGrid.Children.Add(box);
+            _mutes.Add((box, signal));
+        }
+        if (remote) MuteHeader.Text = "Mute notifications: Not supported by this server";
+    }
+
+    /// <summary>A disabled box keeps the host's own value.</summary>
+    private MutedSignals SelectedMutes()
+    {
+        var own = _existing?.MutedSignals ?? MutedSignals.None;
+        return new(_mutes.Where(m => m.Box.IsEnabled ? m.Box.IsChecked == true : own.Contains(m.Signal)).Select(m => m.Signal));
     }
 
     private void ResizeInitial(int w, int h)
@@ -77,6 +117,7 @@ public sealed partial class ServerEditWindow : Window
             if (!string.IsNullOrEmpty(pw)) PasswordBoxField.Password = pw;
         }
 
+        BindMutes(n?.MutedSignals ?? MutedSignals.None);
         UpdatePasswordVisibility();
         UpdateHostKeyPanel();
 
@@ -232,6 +273,9 @@ public sealed partial class ServerEditWindow : Window
             CustomAlerts = CustomAlertsCheck.IsChecked == true ? AlertsEditor.Rules : null,
             Favorite = _existing?.Favorite ?? false,
             SnoozedUntil = _existing?.SnoozedUntil,
+            CustomLongProc = _existing?.CustomLongProc,
+            IgnoredProcs = _existing?.IgnoredProcs ?? Array.Empty<string>(),
+            MutedSignals = SelectedMutes(),
         };
 
         // DPAPI handling: store on password auth, delete on password → key (or away from SSH).

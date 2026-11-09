@@ -53,6 +53,19 @@ public sealed partial class ServerViewModel : ObservableObject
     /// <summary>Effective alert rules for this host. Set by <see cref="ServerStore"/> before each ingest.</summary>
     public AlertRules AlertRules { get; set; } = AlertRules.Defaults;
 
+    /// <summary>Global and host mutes. Set by <see cref="ServerStore"/> before each ingest.</summary>
+    public MutedSignals Muted
+    {
+        get => _muted;
+        set
+        {
+            if (_muted.Equals(value)) return;
+            _muted = value;
+            _windows[AlertMetric.Health].Reset();
+        }
+    }
+    private MutedSignals _muted = MutedSignals.None;
+
     /// <summary>
     /// True when the host shows real memory stress (PSI, macOS pressure, or fast swap growth);
     /// false when it shows none; null when the host gives no signal.
@@ -165,7 +178,7 @@ public sealed partial class ServerViewModel : ObservableObject
             ProcCountSeries.Append(now, h.Procs);
         Health = HealthStatus.Evaluate(s.Health, s.Disks, Thresholds, LongProcs, now);
         foreach (var (m, w) in _windows)
-            w.Record(now, m == AlertMetric.Health ? Health.AlertWindowLevel : RawLevel(m),
+            w.Record(now, m == AlertMetric.Health ? Health.AlertWindowLevel(Muted) : RawLevel(m),
                      AlertRules.For(m).SustainSeconds);
 
         if (s.Ports is { } pl)
@@ -187,6 +200,7 @@ public sealed partial class ServerViewModel : ObservableObject
     /// <summary>Sustain-gated level that drives notifications.</summary>
     public HealthLevel AlertLevel(AlertMetric m)
     {
+        if (Muted.Mutes(m)) return HealthLevel.Nominal;
         var rule = AlertRules.For(m);
         var sustained = _windows[m].Level(rule.SustainSeconds, AlertRules.Tolerance);
         return m switch
@@ -198,7 +212,7 @@ public sealed partial class ServerViewModel : ObservableObject
                 _ => sustained,
             },
             // Inodes run out like disk space: no sustain.
-            AlertMetric.Health => (HealthLevel)Math.Max((int)sustained, (int)Health.TintOf(HealthSignal.Inodes)),
+            AlertMetric.Health => (HealthLevel)Math.Max((int)sustained, (int)(Muted.Mutes(HealthSignal.Inodes) ? HealthLevel.Nominal : Health.TintOf(HealthSignal.Inodes))),
             _ => sustained,
         };
     }
@@ -289,6 +303,7 @@ public sealed partial class ServerViewModel : ObservableObject
     private static bool? MemPressureOf(Sample s, long? prevSwapUsed, double? elapsed)
     {
         if (s.Health?.Psi is { } psi) return psi.MemFull >= PsiMemFullPressured || psi.MemSome >= PsiMemSomePressured;
+        if (s.Health?.MemPressurePct is int pct) return pct >= HealthStatus.MacMemPressureCritical;
         if (s.Health?.MemPressure is int mp) return mp == 4;
         if (s.Swap.Total > 0 && prevSwapUsed is long prev && elapsed is double dt && dt > 0)
             return (s.Swap.Used - prev) / dt >= SwapGrowthPressuredBps;

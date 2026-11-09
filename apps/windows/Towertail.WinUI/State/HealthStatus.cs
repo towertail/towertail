@@ -24,6 +24,7 @@ public sealed record HealthStatus(
     public const double InodesWarn = 0.85, InodesCritical = 0.95;
     public const double MemPsiWarn = 10, MemPsiCritical = 20;
     public const double IoPsiWarn = 20, IoPsiCritical = 40;
+    public const double MacMemPressureWarn = 80, MacMemPressureCritical = 90;
 
     public static readonly HealthStatus Nominal = new(HealthLevel.Nominal, Array.Empty<HealthReason>(), null);
 
@@ -49,9 +50,15 @@ public sealed record HealthStatus(
     /// Level for the health sustain window. Inodes alert at once like disk space, and long
     /// processes have their own sustain time.
     /// </summary>
-    public HealthLevel AlertWindowLevel
-        => Reasons.Where(r => r.Signal is not (HealthSignal.Inodes or HealthSignal.LongProc))
+    public HealthLevel AlertWindowLevel(MutedSignals muted)
+        => Unmuted(muted).Where(r => r.Signal is not (HealthSignal.Inodes or HealthSignal.LongProc))
             .Select(r => r.Level).DefaultIfEmpty(HealthLevel.Nominal).Max();
+
+    public IReadOnlyList<HealthReason> Unmuted(MutedSignals muted)
+        => muted.IsEmpty ? Reasons : Reasons.Where(r => !muted.Mutes(r.Signal)).ToList();
+
+    /// <summary>Notification body without the muted signals.</summary>
+    public string BodyExcept(MutedSignals muted) => string.Join(" · ", Unmuted(muted).Select(r => r.Text));
 
     public static HealthStatus Evaluate(HealthInfo? h, IReadOnlyList<DiskSample>? disks, MetricThresholds t,
         IReadOnlyList<LongProc>? longProcs = null, DateTime? now = null)
@@ -74,19 +81,23 @@ public sealed record HealthStatus(
             if (Frac(h.FilesUsed, h.FilesMax) is double ff)
                 Add(reasons, HealthSignal.Files, Ratio(ff, FilesWarn, FilesCritical), $"Open files {Pct(ff)} of limit");
 
-            if (h.Psi is { } psi)
+            // macOS number first, then Linux PSI, then the macOS kernel level of old samplers.
+            if (h.MemPressurePct is int mp)
+                Add(reasons, HealthSignal.MemPressure, Ratio(mp, MacMemPressureWarn, MacMemPressureCritical), $"Memory pressure {mp}%");
+            else if (h.Psi is { } mpsi)
             {
-                if (psi.MemFull >= MemPsiCritical)
-                    Add(reasons, HealthSignal.MemPressure, HealthLevel.Critical, $"Memory pressure {psi.MemFull:0}%");
-                else if (psi.MemSome >= MemPsiWarn)
-                    Add(reasons, HealthSignal.MemPressure, HealthLevel.Warn, $"Memory pressure {psi.MemSome:0}%");
-                Add(reasons, HealthSignal.IoPressure, Ratio(psi.IoFull, IoPsiWarn, IoPsiCritical), $"I/O pressure {psi.IoFull:0}%");
+                if (mpsi.MemFull >= MemPsiCritical)
+                    Add(reasons, HealthSignal.MemPressure, HealthLevel.Critical, $"Memory pressure {mpsi.MemFull:0}%");
+                else if (mpsi.MemSome >= MemPsiWarn)
+                    Add(reasons, HealthSignal.MemPressure, HealthLevel.Warn, $"Memory pressure {mpsi.MemSome:0}%");
             }
-
-            if (h.MemPressure is 4)
+            else if (h.MemPressure is 4)
                 Add(reasons, HealthSignal.MemPressure, HealthLevel.Critical, "Memory pressure critical");
             else if (h.MemPressure is 2)
                 Add(reasons, HealthSignal.MemPressure, HealthLevel.Warn, "Memory pressure high");
+
+            if (h.Psi is { } psi)
+                Add(reasons, HealthSignal.IoPressure, Ratio(psi.IoFull, IoPsiWarn, IoPsiCritical), $"I/O pressure {psi.IoFull:0}%");
         }
 
         if (disks is not null)
@@ -130,4 +141,20 @@ public sealed record HealthStatus(
 
     private static string N(int v) => v.ToString("N0", CultureInfo.InvariantCulture);
     private static string Pct(double f) => $"{Math.Round(f * 100):0}%";
+}
+
+public static class HealthSignalExtensions
+{
+    /// <summary>The mute key of a health signal. Long processes have no mute.</summary>
+    public static AlertSignal? ToAlertSignal(this HealthSignal s) => s switch
+    {
+        HealthSignal.Procs => AlertSignal.Procs,
+        HealthSignal.Zombies => AlertSignal.Zombies,
+        HealthSignal.Pids => AlertSignal.Pids,
+        HealthSignal.Files => AlertSignal.Files,
+        HealthSignal.Inodes => AlertSignal.Inodes,
+        HealthSignal.MemPressure => AlertSignal.MemPressure,
+        HealthSignal.IoPressure => AlertSignal.IoPressure,
+        _ => null,
+    };
 }

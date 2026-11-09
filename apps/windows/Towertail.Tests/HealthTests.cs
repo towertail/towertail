@@ -116,8 +116,8 @@ public sealed class HealthTests
 
     private static HealthInfo H(int procs = 100, int? zombies = null, IReadOnlyList<ZombieParent>? parents = null,
         long? pidsUsed = null, long? pidsMax = null, long? filesUsed = null, long? filesMax = null,
-        PsiInfo? psi = null, int? memPressure = null)
-        => new(procs, zombies, parents, pidsUsed, pidsMax, filesUsed, filesMax, psi, memPressure);
+        PsiInfo? psi = null, int? memPressure = null, int? memPressurePct = null)
+        => new(procs, zombies, parents, pidsUsed, pidsMax, filesUsed, filesMax, psi, memPressure, memPressurePct);
 
     private static HealthStatus Eval(HealthInfo? h, params DiskSample[] disks) => HealthStatus.Evaluate(h, disks, T);
 
@@ -217,6 +217,40 @@ public sealed class HealthTests
     [InlineData(4, HealthLevel.Critical)]
     public void MacMemPressureRule(int mp, HealthLevel level)
         => Eval(H(memPressure: mp)).Level.Should().Be(level);
+
+    [Theory]
+    [InlineData(58, HealthLevel.Nominal)]
+    [InlineData(85, HealthLevel.Warn)]
+    [InlineData(92, HealthLevel.Critical)]
+    public void MacMemPressureNumberRule(int pct, HealthLevel level)
+        => Eval(H(memPressure: 1, memPressurePct: pct)).Level.Should().Be(level);
+
+    [Fact]
+    public void MacMemPressureNumberWinsOverKernelLevel()
+    {
+        Eval(H(memPressure: 2, memPressurePct: 58)).Level.Should().Be(HealthLevel.Nominal);
+        Eval(H(memPressure: 1, memPressurePct: 92)).Reasons.Single().Text.Should().Be("Memory pressure 92%");
+    }
+
+    [Fact]
+    public void DecodesMemPressurePct()
+    {
+        var with = SampleCodec.Decode(Head + ""","health":{"procs":1,"mem_pressure":2,"mem_pressure_pct":58}}""");
+        with.Health!.MemPressurePct.Should().Be(58);
+        var without = SampleCodec.Decode(Head + ""","health":{"procs":1,"mem_pressure":2}}""");
+        without.Health!.MemPressurePct.Should().BeNull();
+        without.Health.MemPressure.Should().Be(2);
+    }
+
+    [Fact]
+    public void BodyExceptSkipsMutedSignals()
+    {
+        var st = Eval(H(6000, memPressure: 1, memPressurePct: 95));
+        st.BodyExcept(MutedSignals.None).Should().Contain("Memory pressure");
+        var muted = new MutedSignals(new[] { AlertSignal.MemPressure });
+        st.BodyExcept(muted).Should().Be("6,000 processes");
+        st.AlertWindowLevel(muted).Should().Be(HealthLevel.Warn);
+    }
 
     [Fact]
     public void CriticalReasonsComeFirst()

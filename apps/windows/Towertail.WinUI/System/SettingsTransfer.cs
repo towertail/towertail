@@ -132,8 +132,11 @@ public static class SettingsTransfer
         {
             // An export without alerts keeps the current rules.
             var alerts = export.GlobalThresholds.Alerts ?? p.Thresholds.AlertsOrMigrated(p.SshPollingIntervalSeconds);
+            // An export without mutes keeps the current mutes.
+            var muted = export.GlobalThresholds.Muted ?? p.Thresholds.Muted;
             p.Thresholds = export.GlobalThresholds;
             p.Thresholds.Alerts = alerts;
+            p.Thresholds.Muted = muted;
             if (export.LongProc is { } rule) p.LongProc = rule;
         }
         if (options.ImportNotifications)

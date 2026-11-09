@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -258,5 +259,88 @@ public sealed class SustainWindow
         if (critical / sustainSeconds >= tolerance) return HealthLevel.Critical;
         if (warn / sustainSeconds >= tolerance) return HealthLevel.Warn;
         return HealthLevel.Nominal;
+    }
+}
+
+/// <summary>A signal that the user can mute. Wire names match ThresholdMetric on the Mac.</summary>
+public enum AlertSignal { Cpu, Mem, Disk, Procs, Zombies, Pids, Files, Inodes, MemPressure, IoPressure }
+
+/// <summary>
+/// Signals that send no notification and do not tint the tray icon
+/// (settings.json <c>thresholds.muted</c> and <c>nodes[].mutedSignals</c>). Mirrors MutedSignals on the Mac.
+/// </summary>
+[JsonConverter(typeof(MutedSignalsJsonConverter))]
+public sealed record MutedSignals(ImmutableHashSet<AlertSignal> Set)
+{
+    public static readonly MutedSignals None = new(ImmutableHashSet<AlertSignal>.Empty);
+
+    public MutedSignals(IEnumerable<AlertSignal> signals) : this(signals.ToImmutableHashSet()) { }
+
+    public bool IsEmpty => Set.IsEmpty;
+
+    public bool Contains(AlertSignal s) => Set.Contains(s);
+
+    /// <summary>Only CPU, memory and disk. Health is filtered per reason.</summary>
+    public bool Mutes(AlertMetric m) => m switch
+    {
+        AlertMetric.Cpu => Set.Contains(AlertSignal.Cpu),
+        AlertMetric.Mem => Set.Contains(AlertSignal.Mem),
+        AlertMetric.Disk => Set.Contains(AlertSignal.Disk),
+        _ => false,
+    };
+
+    public bool Mutes(HealthSignal s) => s.ToAlertSignal() is { } a && Set.Contains(a);
+
+    public MutedSignals With(AlertSignal s, bool muted) => new(muted ? Set.Add(s) : Set.Remove(s));
+
+    public static MutedSignals Effective(MutedSignals global, MutedSignals node)
+        => node.IsEmpty ? global : global.IsEmpty ? node : new(global.Set.Union(node.Set));
+
+    public static string Name(AlertSignal s)
+    {
+        var n = s.ToString();
+        return char.ToLowerInvariant(n[0]) + n[1..];
+    }
+
+    public static AlertSignal? Parse(string? name)
+        => name is { Length: > 0 } && char.IsLower(name[0])
+           && Enum.TryParse<AlertSignal>(char.ToUpperInvariant(name[0]) + name[1..], out var s) ? s : null;
+
+    // Record equality compares the set by reference.
+    public bool Equals(MutedSignals? other) => other is not null && Set.SetEquals(other.Set);
+
+    public override int GetHashCode() => Set.Aggregate(0, (h, s) => h ^ (1 << (int)s));
+}
+
+/// <summary>
+/// Reads a string array and skips unknown names. A bad value reads as <see cref="MutedSignals.None"/>,
+/// so one bad value does not drop all settings. Writes the names in sorted order.
+/// </summary>
+public sealed class MutedSignalsJsonConverter : JsonConverter<MutedSignals>
+{
+    public override MutedSignals Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType != JsonTokenType.StartArray)
+        {
+            reader.Skip();
+            return MutedSignals.None;
+        }
+        var set = ImmutableHashSet.CreateBuilder<AlertSignal>();
+        while (reader.Read() && reader.TokenType != JsonTokenType.EndArray)
+        {
+            if (reader.TokenType == JsonTokenType.String && MutedSignals.Parse(reader.GetString()) is { } s)
+                set.Add(s);
+            else
+                reader.Skip();
+        }
+        return new MutedSignals(set.ToImmutable());
+    }
+
+    public override void Write(Utf8JsonWriter writer, MutedSignals value, JsonSerializerOptions options)
+    {
+        writer.WriteStartArray();
+        foreach (var n in value.Set.Select(MutedSignals.Name).OrderBy(n => n, StringComparer.Ordinal))
+            writer.WriteStringValue(n);
+        writer.WriteEndArray();
     }
 }

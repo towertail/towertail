@@ -24,6 +24,13 @@
             <Setter Property="SpinButtonPlacementMode" Value="Inline" />
             <Setter Property="Width" Value="170" />
         </Style>
+        <Style x:Key="MuteToggle" TargetType="ToggleButton">
+            <Setter Property="Width" Value="36" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="8,0,0,0" />
+        </Style>
         <Style x:Key="CountNumberBox" TargetType="NumberBox">
             <Setter Property="Minimum" Value="1" />
             <Setter Property="Maximum" Value="10000000" />
@@ -44,7 +51,7 @@
                        Margin="1,0,0,12" TextWrapping="Wrap" />
 
             <Border Style="{StaticResource SettingsRowBorder}">
-                <Grid Style="{StaticResource SettingsRowGrid}" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="16">
+                <Grid Style="{StaticResource SettingsRowGrid}" ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="16">
                     <FontIcon Grid.Column="0" Glyph="&#xE950;" FontSize="18" VerticalAlignment="Center" />
                     <TextBlock Grid.Column="1" Text="CPU" Style="{ThemeResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
                     <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
@@ -59,11 +66,13 @@
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         <NumberBox x:Name="CpuCritBox" Style="{StaticResource ThresholdNumberBox}" />
                     </StackPanel>
+                    <ToggleButton x:Name="CpuMute" Grid.Column="4" Style="{StaticResource MuteToggle}"
+                                  Checked="OnMuteToggled" Unchecked="OnMuteToggled" />
                 </Grid>
             </Border>
 
             <Border Style="{StaticResource SettingsRowBorder}">
-                <Grid Style="{StaticResource SettingsRowGrid}" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="16">
+                <Grid Style="{StaticResource SettingsRowGrid}" ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="16">
                     <FontIcon Grid.Column="0" Glyph="&#xEEA0;" FontSize="18" VerticalAlignment="Center" />
                     <TextBlock Grid.Column="1" Text="Memory" Style="{ThemeResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
                     <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
@@ -78,11 +87,13 @@
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         <NumberBox x:Name="MemCritBox" Style="{StaticResource ThresholdNumberBox}" />
                     </StackPanel>
+                    <ToggleButton x:Name="MemMute" Grid.Column="4" Style="{StaticResource MuteToggle}"
+                                  Checked="OnMuteToggled" Unchecked="OnMuteToggled" />
                 </Grid>
             </Border>
 
             <Border Style="{StaticResource SettingsRowBorder}">
-                <Grid Style="{StaticResource SettingsRowGrid}" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="16">
+                <Grid Style="{StaticResource SettingsRowGrid}" ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="16">
                     <FontIcon Grid.Column="0" Glyph="&#xEDA2;" FontSize="18" VerticalAlignment="Center" />
                     <TextBlock Grid.Column="1" Text="Disk" Style="{ThemeResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
                     <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
@@ -97,6 +108,8 @@
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         <NumberBox x:Name="DiskCritBox" Style="{StaticResource ThresholdNumberBox}" />
                     </StackPanel>
+                    <ToggleButton x:Name="DiskMute" Grid.Column="4" Style="{StaticResource MuteToggle}"
+                                  Checked="OnMuteToggled" Unchecked="OnMuteToggled" />
                 </Grid>
             </Border>
 
@@ -106,7 +119,7 @@
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                        TextWrapping="Wrap" Margin="1,0,0,8" />
             <Border Style="{StaticResource SettingsRowBorder}">
-                <Grid Style="{StaticResource SettingsRowGrid}" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="16">
+                <Grid Style="{StaticResource SettingsRowGrid}" ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="16">
                     <FontIcon Grid.Column="0" Glyph="&#xE9F5;" FontSize="18" VerticalAlignment="Center" />
                     <TextBlock Grid.Column="1" Text="Processes" Style="{ThemeResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
                     <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
@@ -121,11 +134,13 @@
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         <NumberBox x:Name="ProcsCritBox" Style="{StaticResource CountNumberBox}" />
                     </StackPanel>
+                    <ToggleButton x:Name="ProcsMute" Grid.Column="4" Style="{StaticResource MuteToggle}"
+                                  Checked="OnMuteToggled" Unchecked="OnMuteToggled" />
                 </Grid>
             </Border>
 
             <Border Style="{StaticResource SettingsRowBorder}">
-                <Grid Style="{StaticResource SettingsRowGrid}" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="16">
+                <Grid Style="{StaticResource SettingsRowGrid}" ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="16">
                     <FontIcon Grid.Column="0" Glyph="&#xE7BA;" FontSize="18" VerticalAlignment="Center" />
                     <TextBlock Grid.Column="1" Text="Zombies" Style="{ThemeResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
                     <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
@@ -140,9 +155,28 @@
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         <NumberBox x:Name="ZombiesCritBox" Style="{StaticResource CountNumberBox}" />
                     </StackPanel>
+                    <ToggleButton x:Name="ZombiesMute" Grid.Column="4" Style="{StaticResource MuteToggle}"
+                                  Checked="OnMuteToggled" Unchecked="OnMuteToggled" />
                 </Grid>
             </Border>
-            <TextBlock Text="Also checked: PID use 70/90%, open files 80/95%, inodes 85/95%, memory pressure 10/20%, I/O pressure 20/40%."
+            <TextBlock Text="Also checked: PID use 70/90%, open files 80/95%, inodes 85/95%, memory pressure 10/20% (Linux PSI) and 80/90% in use (macOS), I/O pressure 20/40%."
+                       Style="{ThemeResource CaptionTextBlockStyle}"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       TextWrapping="Wrap" Margin="1,8,0,0" />
+            <Border Style="{StaticResource SettingsRowBorder}" Margin="0,8,0,0">
+                <StackPanel Padding="16,12,16,12" Spacing="4">
+                    <TextBlock Text="Mute notifications" Style="{ThemeResource BodyStrongTextBlockStyle}" />
+                    <StackPanel Orientation="Horizontal" Spacing="16">
+                        <CheckBox x:Name="PidsMute" Content="PID use" Checked="OnMuteToggled" Unchecked="OnMuteToggled" />
+                        <CheckBox x:Name="FilesMute" Content="Open files" Checked="OnMuteToggled" Unchecked="OnMuteToggled" />
+                        <CheckBox x:Name="InodesMute" Content="Inodes" Checked="OnMuteToggled" Unchecked="OnMuteToggled" />
+                        <CheckBox x:Name="MemPressureMute" Content="Memory pressure" Checked="OnMuteToggled" Unchecked="OnMuteToggled" />
+                        <CheckBox x:Name="IoPressureMute" Content="I/O pressure" Checked="OnMuteToggled" Unchecked="OnMuteToggled" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+            <TextBlock x:Name="MuteNote"
+                       Text="A muted signal sends no notification and does not tint the tray icon. The card still shows its value. The bell mutes a signal on all servers."
                        Style="{ThemeResource CaptionTextBlockStyle}"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                        TextWrapping="Wrap" Margin="1,8,0,0" />

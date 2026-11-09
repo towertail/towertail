@@ -40,7 +40,7 @@ public sealed class ThresholdNotifier
         if (vm.CpuPct is double cpu) Check(node, vm, Metric.Cpu, AlertMetric.Cpu, cpu / 100.0);
         if (vm.MemPct is double mem) Check(node, vm, Metric.Mem, AlertMetric.Mem, mem / 100.0);
         if (vm.DiskMaxPct is double disk) Check(node, vm, Metric.Disk, AlertMetric.Disk, disk / 100.0);
-        Check(node, vm, Metric.Health, AlertMetric.Health, (double)vm.Health.Level, vm.Health.Body);
+        Check(node, vm, Metric.Health, AlertMetric.Health, (double)vm.Health.Level, vm.Health.BodyExcept(vm.Muted));
     }
 
     private void Check(Node node, ServerViewModel vm, Metric m, AlertMetric am, double value, string? body = null)

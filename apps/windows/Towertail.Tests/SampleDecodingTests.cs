@@ -30,6 +30,7 @@ public sealed class SampleDecodingTests
         sample.DiskIo!.Devices.Should().HaveCount(1);
         sample.Ports!.Items.Should().HaveCount(2);
         sample.Health!.Zombies.Should().Be(219);
+        sample.Health.MemPressurePct.Should().Be(58);
     }
 
     [Fact]

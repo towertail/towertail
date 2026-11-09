@@ -58,6 +58,8 @@ public sealed record Node
     public LongProcRule? CustomLongProc { get; init; }
     /// <summary>Process names to ignore on this host, added to the rule's list.</summary>
     public IReadOnlyList<string> IgnoredProcs { get; init; } = Array.Empty<string>();
+    /// <summary>Signals muted on this host, added to the global mutes.</summary>
+    public MutedSignals MutedSignals { get; init; } = MutedSignals.None;
 
     public AlertRules EffectiveAlerts(AlertRules global) => CustomAlerts ?? global;
 

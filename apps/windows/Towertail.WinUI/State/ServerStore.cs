@@ -84,6 +84,7 @@ public sealed partial class ServerStore : ObservableObject
         vm.Thresholds = MetricThresholds.Effective(_settings.Thresholds, vm.Node.CustomThresholds);
         vm.AlertRules = vm.Node.EffectiveAlerts(_settings.Alerts);
         vm.ApplyLongProc(vm.Node, _settings.LongProc);
+        vm.Muted = MutedSignals.Effective(_settings.MutedSignals, vm.Node.MutedSignals);
         var priorHealth = vm.Health.Level;
         vm.Ingest(sample);
         if (vm.Health.Level != priorHealth)

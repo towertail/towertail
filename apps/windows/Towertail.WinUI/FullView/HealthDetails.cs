@@ -72,7 +72,10 @@ public sealed class HealthDetails : UserControl
         if (h.MemPressure is int mp)
         {
             var label = mp switch { 4 => "critical", 2 => "warn", _ => "normal" };
-            AddRow("Memory pressure level", label, status.TintOf(HealthSignal.MemPressure));
+            var value = h.MemPressurePct is int pct
+                ? $"{pct}% used  ·  kernel {label}"
+                : $"{label} (update the sampler for a number)";
+            AddRow("Memory pressure", value, status.TintOf(HealthSignal.MemPressure));
         }
         foreach (var d in status.Disks ?? Array.Empty<DiskSample>())
         {

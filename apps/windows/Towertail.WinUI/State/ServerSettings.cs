@@ -21,6 +21,7 @@ public sealed partial class ServerSettings : ObservableObject
     [ObservableProperty] private bool _autoUpdateSamplersEnabled;
     [ObservableProperty] private int _postWakeGraceSeconds = 15;
     [ObservableProperty] private LongProcRule _longProc = LongProcRule.Defaults;
+    [ObservableProperty] private MutedSignals _mutedSignals = MutedSignals.None;
 
     private readonly string _path;
 
@@ -60,6 +61,7 @@ public sealed partial class ServerSettings : ObservableObject
             ProcsCritical = Thresholds.ProcsCritical,
             ZombiesWarn = Thresholds.ZombiesWarn,
             ZombiesCritical = Thresholds.ZombiesCritical,
+            Muted = MutedSignals,
         };
         p.LocalPollingIntervalSeconds = LocalPollingIntervalSeconds;
         p.SshPollingIntervalSeconds = SshPollingIntervalSeconds;
@@ -91,5 +93,6 @@ public sealed partial class ServerSettings : ObservableObject
         AutoUpdateSamplersEnabled = p.AutoUpdateSamplersEnabled;
         PostWakeGraceSeconds = Math.Clamp(p.PostWakeGraceSeconds, 0, 300);
         LongProc = p.LongProc;
+        MutedSignals = p.Thresholds.Muted ?? MutedSignals.None;
     }
 }

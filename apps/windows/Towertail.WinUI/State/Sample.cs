@@ -137,7 +137,8 @@ public sealed record HealthInfo(
     [property: JsonPropertyName("files_used")] long? FilesUsed = null,
     [property: JsonPropertyName("files_max")] long? FilesMax = null,
     [property: JsonPropertyName("psi")] PsiInfo? Psi = null,
-    [property: JsonPropertyName("mem_pressure")] int? MemPressure = null
+    [property: JsonPropertyName("mem_pressure")] int? MemPressure = null,
+    [property: JsonPropertyName("mem_pressure_pct")] int? MemPressurePct = null
 );
 
 public sealed record ZombieParent(

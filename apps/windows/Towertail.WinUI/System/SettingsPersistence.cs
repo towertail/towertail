@@ -81,6 +81,9 @@ public sealed class PersistedThresholds
     public int ProcsCritical { get; set; } = MetricThresholds.DefaultProcsCritical;
     public int ZombiesWarn { get; set; } = MetricThresholds.DefaultZombiesWarn;
     public int ZombiesCritical { get; set; } = MetricThresholds.DefaultZombiesCritical;
+    /// <summary>Globally muted signals. Null in files written before mutes existed.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public MutedSignals? Muted { get; set; }
 
     public static PersistedThresholds Defaults => new();
 

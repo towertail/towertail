@@ -47,6 +47,8 @@
                 <TextBlock Text="Notifications" FontWeight="SemiBold" Margin="0,4,0,0" />
                 <CheckBox x:Name="NotifyWarnCheck" Content="Notify at warn threshold" />
                 <CheckBox x:Name="NotifyCriticalCheck" Content="Notify at critical threshold" />
+                <TextBlock x:Name="MuteHeader" Text="Mute notifications for" FontSize="12" Opacity="0.7" Margin="0,4,0,0" />
+                <VariableSizedWrapGrid x:Name="MuteGrid" Orientation="Horizontal" ItemWidth="160" ItemHeight="32" />
 
                 <TextBlock Text="Thresholds" FontWeight="SemiBold" Margin="0,4,0,0" />
                 <CheckBox x:Name="CustomThresholdsCheck" Content="Customize thresholds for this server" Checked="OnCustomToggled" Unchecked="OnCustomToggled" />
