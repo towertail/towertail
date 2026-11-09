@@ -139,3 +139,81 @@ final class SamplerInvokerTests: XCTestCase {
         XCTAssertEqual(decoded.knownHostFingerprint, "SHA256:ZZZZ")
     }
 }
+
+// MARK: - Timeout
+
+/// A session whose command hangs until `close()`.
+private final class HangingSession: SamplerSession, @unchecked Sendable {
+    private let lock = NSLock()
+    private var waiter: CheckedContinuation<Data, Error>?
+    private var closedFlag = false
+
+    var closed: Bool { lock.lock(); defer { lock.unlock() }; return closedFlag }
+
+    func run(_ command: String) async throws -> Data {
+        try await withCheckedThrowingContinuation { c in
+            lock.lock()
+            if closedFlag { lock.unlock(); c.resume(throwing: CancellationError()); return }
+            waiter = c
+            lock.unlock()
+        }
+    }
+
+    func close() async {
+        lock.lock()
+        closedFlag = true
+        let w = waiter
+        waiter = nil
+        lock.unlock()
+        w?.resume(throwing: CancellationError())
+    }
+}
+
+final class SSHSamplerInvokerTimeoutTests: XCTestCase {
+    private let node = Node(displayName: "x", kind: .ssh, sshUser: "u", sshHost: "h")
+
+    private func assertTimeout(_ invoker: SSHSamplerInvoker, file: StaticString = #filePath, line: UInt = #line) async {
+        do {
+            _ = try await invoker.invokeOnce(node: node)
+            XCTFail("expected timeout", file: file, line: line)
+        } catch SamplerInvokeError.timeout {
+        } catch {
+            XCTFail("expected timeout, got \(error)", file: file, line: line)
+        }
+    }
+
+    func testHungCommandTimesOutAndClosesClient() async throws {
+        let session = HangingSession()
+        let invoker = SSHSamplerInvoker(timeout: 0.2) { _ in session }
+        let start = Date()
+        await assertTimeout(invoker)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 2)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertTrue(session.closed)
+    }
+
+    func testHungConnectTimesOutAndClosesLateClient() async throws {
+        let session = HangingSession()
+        let invoker = SSHSamplerInvoker(timeout: 0.2) { _ in
+            try await Task.sleep(nanoseconds: 600_000_000)
+            return session
+        }
+        await assertTimeout(invoker)
+        XCTAssertFalse(session.closed)
+        try await Task.sleep(nanoseconds: 800_000_000)
+        XCTAssertTrue(session.closed)
+    }
+
+    func testFastCommandIsNotAffected() async throws {
+        struct EmptySession: SamplerSession {
+            func run(_ command: String) async throws -> Data { Data() }
+            func close() async {}
+        }
+        let invoker = SSHSamplerInvoker(timeout: 5) { _ in EmptySession() }
+        do {
+            _ = try await invoker.invokeOnce(node: node)
+            XCTFail("expected emptyOutput")
+        } catch SamplerInvokeError.emptyOutput {
+        }
+    }
+}

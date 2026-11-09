@@ -16,6 +16,8 @@ final class ServerStore {
     /// than spamming every render. Not @Observable-tracked.
     @ObservationIgnored
     private var lastLoggedAggregate: AggregateState?
+    @ObservationIgnored
+    private var watchdog: Task<Void, Never>?
 
     init(
         history: HistoryStore? = nil,
@@ -133,6 +135,37 @@ final class ServerStore {
                     notifier.evaluate(vm: vm, node: node)
                 }
             }
+        }
+        logAggregateIfChanged()
+    }
+
+    /// No-data limit: three missed polls, but not less than 30 s.
+    static func staleLimit(pollSeconds: Int) -> TimeInterval {
+        max(3 * TimeInterval(pollSeconds), 30)
+    }
+
+    /// Run `checkStale` every 5 s until `stopStaleWatchdog()`.
+    func startStaleWatchdog(pollSeconds: @escaping @MainActor (NodeKind) -> Int) {
+        guard watchdog == nil else { return }
+        watchdog = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                self?.checkStale(now: Date(), pollSeconds: pollSeconds)
+            }
+        }
+    }
+
+    func stopStaleWatchdog() {
+        watchdog?.cancel()
+        watchdog = nil
+    }
+
+    func checkStale(now: Date, pollSeconds: (NodeKind) -> Int) {
+        for vm in serverVMs {
+            let node = nodeLookup?(vm.id)
+            if node?.enabled == false { continue }
+            vm.checkStale(now: now, limit: Self.staleLimit(pollSeconds: pollSeconds(vm.kind)))
+            if let notifier, let node { notifier.evaluateNoData(vm: vm, node: node) }
         }
         logAggregateIfChanged()
     }

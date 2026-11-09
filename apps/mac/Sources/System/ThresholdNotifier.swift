@@ -21,6 +21,9 @@ final class ThresholdNotifier {
     /// Used to suppress repeats while the metric stays above threshold.
     private var lastFired: [Key: Date] = [:]
     private var started = false
+    /// Hosts in the no-data state, so each episode notifies one time.
+    private var noDataActive: Set<UUID> = []
+    private var noDataFired: [UUID: Date] = [:]
 
     struct Key: Hashable {
         let hostId: UUID
@@ -79,26 +82,63 @@ final class ThresholdNotifier {
             }
             lastFired[key] = Date()
 
-            fire(host: vm, metric: metric, tint: current)
+            let level = current == .critical ? "Critical" : "Warning"
+            post(
+                host: vm, kind: metric.rawValue, metric: metric, critical: current == .critical,
+                title: "\(vm.hostname): \(metric.displayName) \(level)",
+                body: Self.bodyText(vm: vm, metric: metric)
+            )
         }
     }
 
-    private func fire(host: ServerViewModel, metric: Metric, tint: ThresholdTint) {
+    /// One critical notification when a host enters the no-data state.
+    func evaluateNoData(vm: ServerViewModel, node: Node, now: Date = Date()) {
+        guard let since = vm.noDataSince else {
+            noDataActive.remove(vm.id)
+            return
+        }
+        guard noDataActive.insert(vm.id).inserted else { return }
+        guard settings.notificationsEnabled, settings.notifyCritical, node.notifyOnCritical else { return }
+        if let r = reachability, !r.availability.notificationsAllowed { return }
+        if node.isSnoozed { return }
+        if let last = noDataFired[vm.id],
+           now.timeIntervalSince(last) < Double(settings.notifyDebounceSeconds) {
+            return
+        }
+        noDataFired[vm.id] = now
+        post(
+            host: vm, kind: "no_data", metric: .cpu, critical: true,
+            title: "\(vm.hostname): no data",
+            body: Self.noDataBody(vm: vm, since: since)
+        )
+    }
+
+    static func noDataBody(vm: ServerViewModel, since: Date) -> String {
+        let reference = vm.lastIngestAt ?? vm.staleBaseline
+        var s = "No sample for \(ShortDuration.text(since.timeIntervalSince(reference)))."
+        if let err = vm.lastError { s += " Last error: \(err)." }
+        return s
+    }
+
+    /// `metric` picks the full-view tab that a tap opens.
+    private func post(
+        host: ServerViewModel, kind: String, metric: Metric, critical: Bool,
+        title: String, body: String
+    ) {
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
 
         let content = UNMutableNotificationContent()
-        let level = tint == .critical ? "Critical" : "Warning"
-        content.title = "\(host.hostname): \(metric.displayName) \(level)"
-        content.body = Self.bodyText(vm: host, metric: metric)
-        content.sound = tint == .critical ? .defaultCritical : .default
+        content.title = title
+        content.body = body
+        content.sound = critical ? .defaultCritical : .default
         content.userInfo = [
             "hostId": host.id.uuidString,
             "metric": metric.rawValue,
         ]
 
         let req = UNNotificationRequest(
-            identifier: "towertail.\(host.id.uuidString).\(metric.rawValue).\(Int(Date().timeIntervalSince1970))",
+            identifier: "towertail.\(host.id.uuidString).\(kind).\(Int(Date().timeIntervalSince1970))",
             content: content,
             trigger: nil
         )
@@ -107,10 +147,7 @@ final class ThresholdNotifier {
             "notification: fired",
             category: "notifications",
             hostID: host.id, host: host.hostname,
-            kv: [
-                "metric": metric.rawValue,
-                "level": tint == .critical ? "critical" : "warn",
-            ]
+            kv: ["metric": kind, "level": critical ? "critical" : "warn"]
         )
     }
 

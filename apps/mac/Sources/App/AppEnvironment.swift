@@ -53,6 +53,11 @@ final class AppEnvironment {
     func start() {
         backend.start()
         updater.start()
+        let settings = serverSettings
+        store.startStaleWatchdog { settings.pollingInterval(for: $0) }
     }
-    func stop()  { backend.stop() }
+    func stop() {
+        store.stopStaleWatchdog()
+        backend.stop()
+    }
 }

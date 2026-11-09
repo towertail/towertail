@@ -193,4 +193,80 @@ final class ServerViewModelTests: XCTestCase {
         }
         XCTAssertEqual(vm.lastSeen, t)
     }
+
+    // MARK: - Stale data
+
+    private func connectedVM() -> (ServerViewModel, Date) {
+        let vm = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x", kind: .ssh)
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        vm.ingest(makeSample(cpuPct: 10, memFrac: 0.1, diskFrac: 0.1, t: t0), now: t0)
+        return (vm, t0)
+    }
+
+    func testCheckStaleMarksOfflineAfterLimit() {
+        let (vm, t0) = connectedVM()
+        vm.checkStale(now: t0.addingTimeInterval(30), limit: 30)
+        XCTAssertEqual(vm.state, .online)
+        XCTAssertNil(vm.noDataSince)
+
+        vm.checkStale(now: t0.addingTimeInterval(31), limit: 30)
+        XCTAssertEqual(vm.state, .offline(reason: "no data for 31s"))
+        XCTAssertEqual(vm.noDataSince, t0.addingTimeInterval(31))
+
+        vm.checkStale(now: t0.addingTimeInterval(68 * 3600), limit: 30)
+        XCTAssertEqual(vm.state, .offline(reason: "no data for 68h"))
+        XCTAssertEqual(vm.noDataSince, t0.addingTimeInterval(31))
+    }
+
+    func testNewSampleClearsNoData() {
+        let (vm, t0) = connectedVM()
+        vm.checkStale(now: t0.addingTimeInterval(60), limit: 30)
+        XCTAssertNotNil(vm.noDataSince)
+        let t1 = t0.addingTimeInterval(61)
+        vm.ingest(makeSample(cpuPct: 10, memFrac: 0.1, diskFrac: 0.1, t: t1), now: t1)
+        XCTAssertNil(vm.noDataSince)
+        XCTAssertEqual(vm.state, .online)
+    }
+
+    func testStaleKeepsLastError() {
+        let (vm, t0) = connectedVM()
+        vm.markOffline(reason: "timeout", at: t0.addingTimeInterval(20))
+        vm.checkStale(now: t0.addingTimeInterval(40), limit: 30)
+        XCTAssertEqual(vm.state, .offline(reason: "no data for 40s (timeout)"))
+        vm.markOffline(reason: "timeout", at: t0.addingTimeInterval(45))
+        XCTAssertEqual(vm.state, .offline(reason: "no data for 40s (timeout)"))
+    }
+
+    func testSuspendedAndNeverConnectedHostsAreSkipped() {
+        let fresh = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x", kind: .ssh)
+        fresh.checkStale(now: Date().addingTimeInterval(3600), limit: 30)
+        XCTAssertEqual(fresh.state, .unknown)
+
+        let (vm, t0) = connectedVM()
+        vm.markSuspended(reason: "asleep")
+        vm.checkStale(now: t0.addingTimeInterval(3600), limit: 30)
+        XCTAssertEqual(vm.state, .suspended(reason: "asleep"))
+        XCTAssertNil(vm.noDataSince)
+    }
+
+    func testNoFalseStaleAfterWake() {
+        let (vm, t0) = connectedVM()
+        vm.markSuspended(reason: "asleep")
+        let wake = t0.addingTimeInterval(8 * 3600)
+        vm.clearSuspended(now: wake)
+        vm.checkStale(now: wake.addingTimeInterval(10), limit: 30)
+        XCTAssertNil(vm.noDataSince)
+        vm.checkStale(now: wake.addingTimeInterval(31), limit: 30)
+        XCTAssertNotNil(vm.noDataSince)
+    }
+
+    func testOldSampleTimestampDoesNotCauseStale() {
+        let vm = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x", kind: .ssh)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let old = now.addingTimeInterval(-3 * 86_400)
+        vm.ingest(makeSample(cpuPct: 10, memFrac: 0.1, diskFrac: 0.1, t: old), now: now)
+        vm.checkStale(now: now.addingTimeInterval(10), limit: 30)
+        XCTAssertNil(vm.noDataSince)
+        XCTAssertEqual(vm.state, .online)
+    }
 }

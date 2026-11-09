@@ -41,6 +41,16 @@ final class ServerViewModel: Identifiable {
     /// `Node.lastSuccessfulConnect` on startup so a relaunch keeps the
     /// memory.
     var everConnected: Bool = false
+    /// Local clock at the last ingest. The host clock can be wrong, so the
+    /// stale check does not use `sample.ts`.
+    @ObservationIgnored private(set) var lastIngestAt: Date?
+    /// Start of the stale check when there is no newer ingest: VM creation
+    /// and each `clearSuspended()`, so a wake from sleep does not flag hosts.
+    @ObservationIgnored private(set) var staleBaseline = Date()
+    /// Set when the watchdog finds no sample for longer than the limit.
+    private(set) var noDataSince: Date?
+    /// Reason of the last `markOffline`, for the no-data notification.
+    private(set) var lastError: String?
 
     var cpu: MetricSeries
     var mem: MetricSeries
@@ -164,8 +174,12 @@ final class ServerViewModel: Identifiable {
     }
 
     @discardableResult
-    func ingest(_ s: Sample) -> HistoryPoint {
+    func ingest(_ s: Sample, now: Date = Date()) -> HistoryPoint {
         lastSeen = s.ts
+        lastIngestAt = now
+        noDataSince = nil
+        lastError = nil
+        everConnected = true
         // Pick up the OS/arch the sampler reported. Without this, remote
         // hosts stay stuck on their placeholder "—" because osArch is
         // only set at VM creation time.
@@ -335,9 +349,12 @@ final class ServerViewModel: Identifiable {
 
     func markOffline(reason: String, at t: Date) {
         resetAlerts()
+        lastSeen = t
+        lastError = reason
+        // The watchdog owns the reason text while no data arrives.
+        if noDataSince != nil { return }
         let previous = state
         state = .offline(reason: reason)
-        lastSeen = t
         if case .offline = previous { return }
         Logger.shared.warn(
             "state: \(Self.stateLabel(previous)) → offline",
@@ -370,14 +387,37 @@ final class ServerViewModel: Identifiable {
     /// Clear a suspended state back to `unknown`. The next successful
     /// ingest will push it into `online`/`warn`/`critical`; a failure
     /// will push it into `offline`. Leaves `lastSeen` alone.
-    func clearSuspended() {
+    func clearSuspended(now: Date = Date()) {
         guard case .suspended = state else { return }
         let previous = state
         state = .unknown
+        staleBaseline = now
         Logger.shared.info(
             "state: \(Self.stateLabel(previous)) → unknown",
             category: "thresholds",
             hostID: id, host: hostname
+        )
+    }
+
+    /// Watchdog step: mark the host offline when no sample arrived for
+    /// longer than `limit`. Suspended and never-connected hosts are skipped.
+    func checkStale(now: Date, limit: TimeInterval) {
+        if state.isSuspended || !everConnected { return }
+        let reference = max(lastIngestAt ?? staleBaseline, staleBaseline)
+        let age = now.timeIntervalSince(reference)
+        guard age > limit else { return }
+        var reason = "no data for \(ShortDuration.text(age))"
+        if let lastError { reason += " (\(lastError))" }
+        let previous = state
+        state = .offline(reason: reason)
+        guard noDataSince == nil else { return }
+        noDataSince = now
+        resetAlerts()
+        Logger.shared.warn(
+            "state: \(Self.stateLabel(previous)) → offline",
+            category: "thresholds",
+            hostID: id, host: hostname,
+            kv: ["reason": "no data", "age_s": String(Int(age))]
         )
     }
 
