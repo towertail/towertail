@@ -82,6 +82,23 @@ Key architectural contracts:
 
 Developing WinUI on a Mac sucks — build, run, and debug must happen on Windows. Workflow: edit on Mac, sync+build+run on the VM over SSH. All wrapped in `scripts/winvm-*.sh`.
 
+**Start and stop winvm:**
+
+winvm is the Parallels VM `Windows 11` on the Mac mini `mini`. It is usually off. If `ssh winvm` times out, start the VM from mini. Always put it back in its earlier state when you finish.
+
+1. Connect to mini over VNC: `infisical-inject VNC_PASSWORD=ocral/dev/_/MAC_PASSWORD vnc-cli -t mini <command>`. Open Terminal on mini (`key cmd-space`, `type Terminal`, `key enter`). Use `capture` to read the output.
+2. Run `prlctl status "Windows 11"`. Record the state: `stopped`, `suspended` or `running`.
+3. Start the VM: `prlctl start "Windows 11"` from `stopped`, or `prlctl resume "Windows 11"` from `suspended`. Do nothing if it is `running`.
+4. On this Mac, wait until `ssh -o ConnectTimeout=5 winvm exit` succeeds. A boot takes approximately 1–2 minutes.
+5. Do the work (`scripts/winvm-run.sh ...`).
+6. Put the VM back in the recorded state, also when the work fails:
+   - `stopped`: `prlctl stop "Windows 11"`. This is a clean shutdown. Use `--kill` only if the VM does not stop.
+   - `suspended`: `prlctl suspend "Windows 11"`.
+   - `running`: do nothing.
+7. Run `prlctl status "Windows 11"` again to make sure that the state is correct.
+
+`ssh mini '/usr/local/bin/prlctl ...'` runs the same commands without VNC. Use it when mini answers on SSH. Over SSH, give the full path, because `prlctl` is not in the PATH.
+
 **One-time setup on the VM (`winvm`):**
 
 ```bash
