@@ -79,3 +79,63 @@ extension AlertNotify {
     var notifiesWarn: Bool { self == .all }
     var notifiesCritical: Bool { self != .off }
 }
+
+/// Detect, CPU, duration and notify controls of a long-running process
+/// rule. The ignore list is separate.
+struct LongProcRuleControls: View {
+    @Binding var rule: LongProcRule
+
+    var body: some View {
+        Toggle("Detect", isOn: field(\.enabled))
+        Group {
+            LabeledContent {
+                HStack(spacing: 6) {
+                    TextField("CPU", value: field(\.cpuPct), format: .number)
+                        .labelsHidden()
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 60)
+                    Text("% of one core").foregroundStyle(.secondary)
+                }
+            } label: {
+                Text("CPU at or above")
+                Text("100% is one full core, the same as top.")
+            }
+            LabeledContent {
+                HStack(spacing: 6) {
+                    TextField("Minutes", value: minutes, format: .number)
+                        .labelsHidden()
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 60)
+                    Text("minutes").foregroundStyle(.secondary)
+                }
+            } label: {
+                Text("For at least")
+                Text("Short dips (up to 20% of the time) do not reset the timer.")
+            }
+            Picker("Notify", selection: field(\.notify)) {
+                Text("All").tag(AlertNotify.all)
+                Text("Off").tag(AlertNotify.off)
+            }
+        }
+        .disabled(!rule.enabled)
+    }
+
+    private var minutes: Binding<Int> {
+        Binding(get: { rule.sustainSeconds / 60 }, set: { m in
+            rule = rebuilt { $0.sustainSeconds = m * 60 }
+        })
+    }
+
+    private func field<T>(_ path: WritableKeyPath<LongProcRule, T>) -> Binding<T> {
+        Binding(get: { rule[keyPath: path] }, set: { v in
+            rule = rebuilt { $0[keyPath: path] = v }
+        })
+    }
+
+    /// Goes through the init, so the values stay in range.
+    private func rebuilt(_ change: (inout LongProcRule) -> Void) -> LongProcRule {
+        var r = rule
+        change(&r)
+        return LongProcRule(enabled: r.enabled, cpuPct: r.cpuPct, sustainSeconds: r.sustainSeconds, notify: r.notify, ignore: r.ignore)
+    }
+}

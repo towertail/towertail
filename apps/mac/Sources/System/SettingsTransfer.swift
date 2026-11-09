@@ -18,6 +18,8 @@ struct SettingsExport: Codable, Equatable {
 
     var general: GeneralSection
     var globalThresholds: PersistedThresholds
+    /// Imported with `globalThresholds`. Nil in files from older builds.
+    var longProc: LongProcRule?
     var notifications: NotificationsSection
     var nodes: [Node]
     /// Foreign `platform.<os>` blocks carried verbatim from the source file.
@@ -68,6 +70,7 @@ struct SettingsExport: Codable, Equatable {
                 menuBarIconStyle: p.menuBarIconStyle
             ),
             globalThresholds: p.thresholds,
+            longProc: p.longProc,
             notifications: NotificationsSection(
                 notificationsEnabled: p.notificationsEnabled,
                 notifyWarn: p.notifyWarn,
@@ -217,6 +220,7 @@ enum SettingsTransfer {
                 out.thresholds.alerts = currentAlerts
                 out.thresholds.legacySustain = nil
             }
+            if let rule = imported.longProc { out.longProc = rule }
             report.globalThresholdsApplied = true
         }
 
@@ -262,9 +266,13 @@ enum SettingsTransfer {
                 let idx = byId[inc.id] ?? byName[inc.displayName]
                 guard let i = idx else { continue }
                 if out.nodes[i].thresholdOverrides != inc.thresholdOverrides
-                    || out.nodes[i].customAlerts != inc.customAlerts {
+                    || out.nodes[i].customAlerts != inc.customAlerts
+                    || out.nodes[i].customLongProc != inc.customLongProc
+                    || out.nodes[i].ignoredProcs != inc.ignoredProcs {
                     out.nodes[i].thresholdOverrides = inc.thresholdOverrides
                     out.nodes[i].customAlerts = inc.customAlerts
+                    out.nodes[i].customLongProc = inc.customLongProc
+                    out.nodes[i].ignoredProcs = inc.ignoredProcs
                     updated += 1
                 }
                 // Reindex in case displayName was the match path and

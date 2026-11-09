@@ -292,9 +292,10 @@ final class HistoryStore: @unchecked Sendable {
 
     /// Load persisted process snapshots for a node, oldest first. Only
     /// rows newer than `procRetention` are returned — we don't want to
-    /// hydrate an hour of empty space before whatever's fresh.
+    /// hydrate an hour of empty space before whatever's fresh. The JSON
+    /// decodes outside the queue, so main-thread reads do not wait on it.
     func loadRecentProcs(nodeID: UUID) -> [ProcHistoryRow] {
-        queue.sync {
+        let raw: [(ts: Double, root: Bool, data: Data)] = queue.sync {
             guard let db else { return [] }
             let cutoff = Date().timeIntervalSince1970 - Self.procRetention
             let sql = """
@@ -310,21 +311,22 @@ final class HistoryStore: @unchecked Sendable {
                 sqlite3_bind_text(stmt, 1, cstr, -1, Self.sqliteTransient)
             }
             sqlite3_bind_double(stmt, 2, cutoff)
-            var out: [ProcHistoryRow] = []
+            var out: [(ts: Double, root: Bool, data: Data)] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
                 let ts = sqlite3_column_double(stmt, 0)
                 let root = sqlite3_column_int(stmt, 1) != 0
                 guard let bytes = sqlite3_column_blob(stmt, 2) else { continue }
                 let n = Int(sqlite3_column_bytes(stmt, 2))
-                let data = Data(bytes: bytes, count: n)
-                let items = (try? Self.procDecoder.decode([ProcSample].self, from: data)) ?? []
-                out.append(ProcHistoryRow(
-                    t: Date(timeIntervalSince1970: ts),
-                    root: root,
-                    items: items
-                ))
+                out.append((ts, root, Data(bytes: bytes, count: n)))
             }
             return out
+        }
+        return raw.map { r in
+            ProcHistoryRow(
+                t: Date(timeIntervalSince1970: r.ts),
+                root: r.root,
+                items: (try? Self.procDecoder.decode([ProcSample].self, from: r.data)) ?? []
+            )
         }
     }
 

@@ -324,6 +324,7 @@ final class RealCollector: Collector {
             // is genuinely a problem worth escalating, not a fresh
             // never-tried install.
             vm.everConnected = node.lastSuccessfulConnect != nil || node.kind == .local
+            vm.applyLongProc(node: node, global: settings.longProc)
             store.register(vm)
         }
         // On every sync, push the currently-effective thresholds per VM —
@@ -334,6 +335,7 @@ final class RealCollector: Collector {
             let override = byID[vm.id]?.thresholdOverrides
             vm.thresholds = MetricThresholds.effective(global: settings.thresholds, override: override)
             vm.alertRules = byID[vm.id]?.customAlerts ?? settings.alertRules
+            if let node = byID[vm.id] { vm.applyLongProc(node: node, global: settings.longProc) }
             // Refresh the warm flag from the persisted node — handles the
             // case where the node was added in this session and just got
             // its first stamp (the pacer also flips the in-memory flag,

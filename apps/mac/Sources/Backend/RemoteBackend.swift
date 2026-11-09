@@ -121,6 +121,7 @@ final class RemoteBackend: Backend {
             if let wrap = try? decoder.decode(NodeWrap.self, from: data) {
                 let n = Node(remote: wrap.node)
                 nodes.update(n)
+                applyLongProc()
             }
         case "settings_updated":
             struct SettingsWrap: Decodable { let settings: RemoteServerSettings }
@@ -151,6 +152,15 @@ final class RemoteBackend: Backend {
         serverSettings.notifyDebounceSeconds = rs.notifyDebounceSeconds
         serverSettings.autoUpdateSamplersEnabled = rs.autoUpdateSamplersEnabled
         serverSettings.postWakeGraceSeconds = rs.postWakeGraceSeconds
+        if let rule = rs.longProc { serverSettings.longProc = rule }
+        applyLongProc()
+    }
+
+    private func applyLongProc() {
+        for vm in servers.serverVMs {
+            guard let node = nodes.node(withId: vm.id) else { continue }
+            vm.applyLongProc(node: node, global: serverSettings.longProc)
+        }
     }
 
     // MARK: - Backend mutations
@@ -167,6 +177,7 @@ final class RemoteBackend: Backend {
     func updateNode(_ node: Node) async throws {
         let updated = try await client.updateNode(node.toRemote(global: serverSettings.thresholds))
         nodes.update(Node(remote: updated))
+        applyLongProc()
     }
 
     func removeNode(id: UUID) async throws {
@@ -213,7 +224,8 @@ final class RemoteBackend: Backend {
             notifyCritical: settings.notifyCritical,
             notifyDebounceSeconds: settings.notifyDebounceSeconds,
             autoUpdateSamplersEnabled: settings.autoUpdateSamplersEnabled,
-            postWakeGraceSeconds: settings.postWakeGraceSeconds
+            postWakeGraceSeconds: settings.postWakeGraceSeconds,
+            longProc: settings.longProc
         )
         let saved = try await client.putSettings(rs)
         applyRemoteSettings(saved)

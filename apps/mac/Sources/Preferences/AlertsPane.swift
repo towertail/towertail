@@ -56,6 +56,15 @@ struct AlertsPane: View {
             }
 
             Section {
+                LongProcRuleControls(rule: binding(\.longProc))
+                LabeledContent("Ignore on all hosts") {
+                    TagEditor(tags: binding(\.longProc.ignore), prompt: "Add…")
+                }
+            } header: {
+                sectionHeader("Long-running processes", detail: "One process with high CPU for a long time.")
+            }
+
+            Section {
                 AlertToleranceControl(tolerance: Binding(get: { settings.alertRules.tolerance }, set: {
                     settings.alertRules.tolerance = $0
                     settings.persist()
@@ -96,6 +105,10 @@ struct AlertsPane: View {
                     Button("Restore Defaults") {
                         settings.thresholds = .defaults
                         settings.alertRules = .defaults
+                        // The ignore list is user data; keep it.
+                        let ignore = settings.longProc.ignore
+                        settings.longProc = .defaults
+                        settings.longProc.ignore = ignore
                         settings.persist()
                     }
                     Spacer()
@@ -214,7 +227,7 @@ struct AlertsPane: View {
     }
 
     private var overriddenNodes: [Node] {
-        nodeStore.nodes.filter { $0.thresholdOverrides != nil || $0.customAlerts != nil }
+        nodeStore.nodes.filter { $0.thresholdOverrides != nil || $0.customAlerts != nil || $0.customLongProc != nil }
     }
 
     private func overrideSummary(_ node: Node) -> String {
@@ -223,6 +236,7 @@ struct AlertsPane: View {
             return "\(m.title) \(m.format(p.warn)) / \(m.format(p.critical))"
         }
         if node.customAlerts != nil { parts.append("custom alert timing") }
+        if node.customLongProc != nil { parts.append("custom long-running rule") }
         return parts.joined(separator: ", ")
     }
 

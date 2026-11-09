@@ -275,4 +275,36 @@ final class AlertRulesTests: XCTestCase {
         XCTAssertEqual(node.thresholdOverrides?.cpu?.warn, 0.5)
         XCTAssertNil(node.customAlerts)
     }
+
+    // MARK: long-running process rule
+
+    func testLongProcRulePartialDecodeUsesDefaults() throws {
+        let r = try JSONDecoder().decode(LongProcRule.self, from: Data(#"{"cpuPct": 120, "notify": "bogus"}"#.utf8))
+        XCTAssertEqual(r.cpuPct, 120)
+        XCTAssertEqual(r.notify, LongProcRule.defaults.notify)
+        XCTAssertEqual(r.sustainSeconds, 1800)
+        XCTAssertTrue(r.enabled)
+        XCTAssertEqual(r.ignore, [])
+    }
+
+    func testLongProcRuleClamps() throws {
+        let r = try JSONDecoder().decode(LongProcRule.self, from: Data(#"{"cpuPct": 5000, "sustainSeconds": 5}"#.utf8))
+        XCTAssertEqual(r.cpuPct, 800)
+        XCTAssertEqual(r.sustainSeconds, 60)
+        XCTAssertEqual(LongProcRule(enabled: true, cpuPct: 1, sustainSeconds: 999_999, notify: .all, ignore: []).cpuPct, 10)
+        XCTAssertEqual(LongProcRule(enabled: true, cpuPct: 1, sustainSeconds: 999_999, notify: .all, ignore: []).sustainSeconds, 86_400)
+    }
+
+    func testLongProcRuleRoundTripUsesSharedKeys() throws {
+        let r = LongProcRule(enabled: false, cpuPct: 75, sustainSeconds: 600, notify: .off, ignore: ["postgres"])
+        let data = try JSONEncoder().encode(r)
+        let keys = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        XCTAssertEqual(Set(keys.keys), ["enabled", "cpuPct", "sustainSeconds", "notify", "ignore"])
+        XCTAssertEqual(try JSONDecoder().decode(LongProcRule.self, from: data), r)
+    }
+
+    func testIgnoreSetIsCaseInsensitiveUnion() {
+        let r = LongProcRule(enabled: true, cpuPct: 50, sustainSeconds: 60, notify: .all, ignore: ["Postgres"])
+        XCTAssertEqual(r.ignoreSet(adding: ["node"], ["YES"]), ["postgres", "node", "yes"])
+    }
 }

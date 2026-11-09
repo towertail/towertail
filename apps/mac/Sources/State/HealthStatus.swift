@@ -4,7 +4,7 @@ import Foundation
 /// All limits come from `MetricThresholds`.
 struct HealthStatus: Sendable, Equatable {
     enum Signal: Sendable, Equatable {
-        case procs, zombies, pids, files, memPressure, ioPressure, inodes
+        case procs, zombies, pids, files, memPressure, ioPressure, inodes, longProc
     }
 
     struct Reason: Sendable, Equatable {
@@ -25,9 +25,10 @@ struct HealthStatus: Sendable, Equatable {
         return .nominal
     }
 
-    /// Inodes alert at once like disk space, so the sustain rule skips them.
-    var tintExcludingInodes: ThresholdTint {
-        let rest = reasons.filter { $0.signal != .inodes }
+    /// Tint for the health sustain window. Inodes alert at once like disk
+    /// space, and long processes have their own sustain time.
+    var alertTint: ThresholdTint {
+        let rest = reasons.filter { $0.signal != .inodes && $0.signal != .longProc }
         if rest.contains(where: { $0.tint == .critical }) { return .critical }
         if rest.contains(where: { $0.tint == .warn }) { return .warn }
         return .nominal
@@ -38,7 +39,10 @@ struct HealthStatus: Sendable, Equatable {
         self.info = info
     }
 
-    init(info: HealthInfo?, disks: [DiskSample]?, thresholds t: MetricThresholds) {
+    init(
+        info: HealthInfo?, disks: [DiskSample]?, thresholds t: MetricThresholds,
+        longProcs: [LongProc] = [], now: Date = Date()
+    ) {
         var out: [Reason] = []
         func add(_ signal: Signal, _ tint: ThresholdTint, _ text: String) {
             if tint != .nominal { out.append(Reason(signal: signal, tint: tint, text: text)) }
@@ -85,6 +89,10 @@ struct HealthStatus: Sendable, Equatable {
             }
         }
 
+        for p in longProcs {
+            add(.longProc, .warn, Self.longProcText(p, now: now))
+        }
+
         self.reasons = out.filter { $0.tint == .critical } + out.filter { $0.tint == .warn }
         self.info = info
     }
@@ -98,6 +106,11 @@ struct HealthStatus: Sendable, Equatable {
     var summary: String? {
         guard let first = reasons.first else { return nil }
         return reasons.count > 1 ? "\(first.text) +\(reasons.count - 1) more" : first.text
+    }
+
+    /// "OrbStack Helper 85% for 3h".
+    static func longProcText(_ p: LongProc, now: Date) -> String {
+        "\(p.shortName) \(Int(p.cpuPct.rounded()))% for \(ShortDuration.text(p.highFor(at: now)))"
     }
 
     static func fraction(_ used: Int64?, _ max: Int64?) -> Double? {

@@ -5,8 +5,20 @@ import SwiftUI
 struct HealthDetails: View {
     let health: HealthStatus
     let thresholds: MetricThresholds
+    var longProcs: [LongProc] = []
+    var onShow: (LongProc) -> Void = { _ in }
+    var onIgnore: (String, LongProcIgnore.Scope) -> Void = { _, _ in }
+    var hostId: UUID?
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            values
+            if !longProcs.isEmpty { longProcList }
+        }
+    }
+
+    @ViewBuilder
+    private var values: some View {
         if let h = health.info {
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 4) {
                 row("Processes", HealthStatus.count(h.procs),
@@ -47,6 +59,43 @@ struct HealthDetails: View {
             Text("No health data from this host's sampler.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private var longProcList: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Long-running processes", systemImage: "clock")
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(ThresholdTint.warn.color)
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 4) {
+                GridRow {
+                    ForEach(["Process", "PID", "CPU", "High for", "Started", ""], id: \.self) {
+                        Text($0).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                ForEach(longProcs) { p in
+                    GridRow {
+                        Text(p.name).lineLimit(1).help(p.cmd ?? p.name)
+                        Text(verbatim: String(p.pid)).monospacedDigit()
+                        Text("\(Int(p.cpuPct.rounded()))%").monospacedDigit()
+                        Text(ShortDuration.long(p.highFor(at: Date()))).monospacedDigit()
+                        Text(p.startTS.map { ShortDuration.age(Date().timeIntervalSince($0)) + " ago" } ?? "—")
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: 6) {
+                            Button("Show") { onShow(p) }
+                            Menu("Ignore") {
+                                Button("Ignore \"\(p.name)\" on all hosts") { onIgnore(p.name, .allHosts) }
+                                if let hostId {
+                                    Button("Ignore \"\(p.name)\" on this host") { onIgnore(p.name, .host(hostId)) }
+                                }
+                            }
+                            .fixedSize()
+                        }
+                        .controlSize(.small)
+                    }
+                }
+            }
+            .font(.callout)
         }
     }
 

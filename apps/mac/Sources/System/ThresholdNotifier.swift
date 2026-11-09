@@ -24,6 +24,14 @@ final class ThresholdNotifier {
     /// Hosts in the no-data state, so each episode notifies one time.
     private var noDataActive: Set<UUID> = []
     private var noDataFired: [UUID: Date] = [:]
+    /// Keys flagged at the last evaluation, so each process notifies one time.
+    private var longProcSeen: [UUID: Set<LongProcKey>] = [:]
+    private var longProcFired: [FiredKey: Date] = [:]
+
+    struct FiredKey: Hashable {
+        let hostId: UUID
+        let proc: LongProcKey
+    }
 
     struct Key: Hashable {
         let hostId: UUID
@@ -111,6 +119,43 @@ final class ThresholdNotifier {
             title: "\(vm.hostname): no data",
             body: Self.noDataBody(vm: vm, since: since)
         )
+    }
+
+    /// One warn notification for each newly flagged long-running process.
+    func evaluateLongProcs(vm: ServerViewModel, node: Node, now: Date = Date()) {
+        let current = Set(vm.longProcs.map(\.key))
+        let previous = longProcSeen[vm.id] ?? []
+        longProcSeen[vm.id] = current
+        for key in longProcFired.keys where key.hostId == vm.id && !current.contains(key.proc) {
+            if let t = longProcFired[key], now.timeIntervalSince(t) >= Double(settings.notifyDebounceSeconds) {
+                longProcFired[key] = nil
+            }
+        }
+        let fresh = vm.longProcs.filter { !previous.contains($0.key) }
+        guard !fresh.isEmpty, vm.longProcRule.notifies else { return }
+        guard settings.notificationsEnabled, settings.notifyWarn, node.notifyOnWarn else { return }
+        if let r = reachability, !r.availability.notificationsAllowed { return }
+        if node.isSnoozed { return }
+        for p in fresh {
+            let key = FiredKey(hostId: vm.id, proc: p.key)
+            if let last = longProcFired[key],
+               now.timeIntervalSince(last) < Double(settings.notifyDebounceSeconds) {
+                continue
+            }
+            longProcFired[key] = now
+            post(
+                host: vm, kind: "long_proc", metric: .cpu, critical: false,
+                title: "\(vm.hostname): long-running process",
+                body: Self.longProcBody(p, now: now)
+            )
+        }
+    }
+
+    /// "OrbStack Helper (pid 812) at 85% CPU for 32m. Started 3d ago."
+    static func longProcBody(_ p: LongProc, now: Date) -> String {
+        var s = "\(p.shortName) (pid \(p.pid)) at \(Int(p.cpuPct.rounded()))% CPU for \(ShortDuration.text(p.highFor(at: now)))."
+        if let start = p.startTS { s += " Started \(ShortDuration.age(now.timeIntervalSince(start))) ago." }
+        return s
     }
 
     static func noDataBody(vm: ServerViewModel, since: Date) -> String {

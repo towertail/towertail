@@ -252,4 +252,49 @@ final class SettingsTransferTests: XCTestCase {
         XCTAssertEqual(merged.nodes.first?.thresholdOverrides?.cpu?.warn, 0.3)
         XCTAssertEqual(report.serverThresholdsUpdated, 1)
     }
+
+    func testLongProcRoundTripsAndImports() throws {
+        var p = base(nodes: [Node(displayName: "db", kind: .ssh, customLongProc: .defaults, ignoredProcs: ["postgres"])])
+        p.longProc.cpuPct = 120
+        p.longProc.ignore = ["clickhouse-server"]
+        let ex = SettingsExport.from(p)
+        let back = try SettingsTransfer.decode(SettingsTransfer.encode(ex))
+        XCTAssertEqual(back.longProc, p.longProc)
+        XCTAssertEqual(back.nodes.first?.ignoredProcs, ["postgres"])
+        XCTAssertEqual(back.nodes.first?.customLongProc, .defaults)
+        let (merged, _) = SettingsTransfer.apply(back, to: base(), selection: .allDefaults)
+        XCTAssertEqual(merged.longProc.cpuPct, 120)
+    }
+
+    func testOldExportKeepsCurrentLongProc() throws {
+        var b = base()
+        b.longProc.cpuPct = 200
+        var json = try JSONSerialization.jsonObject(with: SettingsTransfer.encode(makeExport(nodes: []))) as! [String: Any]
+        json["longProc"] = nil
+        let ex = try SettingsTransfer.decode(JSONSerialization.data(withJSONObject: json))
+        XCTAssertNil(ex.longProc)
+        XCTAssertEqual(SettingsTransfer.apply(ex, to: b, selection: .allDefaults).merged.longProc.cpuPct, 200)
+    }
+
+    func testPersistedSettingsWithoutLongProcDecodesDefaults() throws {
+        var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(base(nodes: [Node(displayName: "db", kind: .ssh)]))) as! [String: Any]
+        json["longProc"] = nil
+        let p = try JSONDecoder().decode(PersistedSettings.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(p.longProc, .defaults)
+        XCTAssertNil(p.nodes.first?.customLongProc)
+        XCTAssertEqual(p.nodes.first?.ignoredProcs, [])
+    }
+
+    func testImportServerThresholdsCopiesLongProcFields() {
+        let existing = Node(displayName: "db", kind: .ssh, sshUser: "ops", sshHost: "db")
+        var incoming = existing
+        incoming.customLongProc = .defaults
+        incoming.ignoredProcs = ["postgres"]
+        var sel = ImportSelection.allDefaults
+        sel.servers = false
+        let (merged, report) = SettingsTransfer.apply(makeExport(nodes: [incoming]), to: base(nodes: [existing]), selection: sel)
+        XCTAssertEqual(merged.nodes.first?.ignoredProcs, ["postgres"])
+        XCTAssertEqual(merged.nodes.first?.customLongProc, .defaults)
+        XCTAssertEqual(report.serverThresholdsUpdated, 1)
+    }
 }

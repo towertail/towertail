@@ -22,6 +22,12 @@ struct ProcessTable: View {
     let node: Node?
     /// Process count when the latest sample skipped the per-process scan.
     var skippedTotal: Int? = nil
+    /// Flagged rows get a clock badge.
+    var longProcs: [LongProc] = []
+    /// Nil hides the Ignore actions.
+    var onIgnore: ((String, LongProcIgnore.Scope) -> Void)? = nil
+    /// Health details "Show" sets it.
+    @Binding var selection: Set<ProcRow.ID>
 
     @State private var sort: [KeyPathComparator<ProcRow>] = [
         KeyPathComparator(\ProcRow.cpuPct, order: .reverse),
@@ -62,7 +68,7 @@ struct ProcessTable: View {
             } else if displayed.isEmpty {
                 unavailable("Waiting for first process sample…")
             } else {
-                Table(displayed, sortOrder: $sort) {
+                Table(displayed, selection: $selection, sortOrder: $sort) {
                     TableColumn("PID", value: \.pid) { r in
                         PIDCell(
                             pid: r.pid,
@@ -80,8 +86,15 @@ struct ProcessTable: View {
                     .width(min: 60, ideal: 90)
 
                     TableColumn("Name", value: \.name) { r in
-                        Text(r.name).lineLimit(1)
-                            .textSelection(.enabled)
+                        HStack(spacing: 4) {
+                            if let p = longProcByPid[r.pid] {
+                                Image(systemName: "clock")
+                                    .foregroundStyle(ThresholdTint.warn.color)
+                                    .help("High CPU for \(ShortDuration.long(p.highFor(at: Date())))")
+                            }
+                            Text(r.name).lineLimit(1)
+                                .textSelection(.enabled)
+                        }
                     }
                     .width(min: 100, ideal: 180)
 
@@ -114,6 +127,11 @@ struct ProcessTable: View {
                             .textSelection(.enabled)
                     }
                     .width(min: 50, ideal: 70)
+                }
+                .contextMenu(forSelectionType: ProcRow.ID.self) { ids in
+                    if let row = displayed.first(where: { ids.contains($0.id) }) {
+                        rowMenu(row)
+                    }
                 }
                 .onChange(of: sort) { _, newSort in
                     displayed.sort(using: newSort)
@@ -172,6 +190,24 @@ struct ProcessTable: View {
             case .failure(let message):
                 Text(message)
             }
+        }
+    }
+
+    private var longProcByPid: [Int32: LongProc] {
+        Dictionary(longProcs.map { ($0.pid, $0) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    @ViewBuilder
+    private func rowMenu(_ row: ProcRow) -> some View {
+        if let onIgnore {
+            Button("Ignore \"\(row.name)\" on all hosts") { onIgnore(row.name, .allHosts) }
+            if let node {
+                Button("Ignore \"\(row.name)\" on this host") { onIgnore(row.name, .host(node.id)) }
+            }
+        }
+        if node != nil {
+            Divider()
+            Button("Kill process…") { killCandidate = row }
         }
     }
 

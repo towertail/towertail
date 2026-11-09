@@ -269,4 +269,68 @@ final class ServerViewModelTests: XCTestCase {
         XCTAssertNil(vm.noDataSince)
         XCTAssertEqual(vm.state, .online)
     }
+
+    // MARK: long-running processes
+
+    private func procSample(at t: Date, cpu: Double) -> Sample {
+        Sample(
+            v: 1, ts: t,
+            host: HostInfo(name: "h", os: "linux", arch: "arm64", kernel: "k", uptimeS: 1, sampler: "x", machineID: nil),
+            cpu: CPUInfo(pct: 10, load1: 0, load5: 0, load15: 0, cores: 4),
+            mem: MemInfo(used: 1, total: 10),
+            swap: MemInfo(used: 0, total: 0),
+            procs: ProcList(root: false, topN: 20, total: 1, visible: 1,
+                            items: [ProcSample(pid: 9, name: "yes", cpuPct: cpu, rss: 1, startTS: Date(timeIntervalSince1970: 1))]),
+            health: HealthInfo(procs: 100),
+            errors: []
+        )
+    }
+
+    func testLongProcMakesWarnWithoutHealthAlert() {
+        let vm = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x")
+        let node = Node(displayName: "h", kind: .ssh)
+        var rule = LongProcRule.defaults
+        rule.sustainSeconds = 120
+        vm.applyLongProc(node: node, global: rule)
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        for s in stride(from: 0, through: 120, by: 10) {
+            vm.ingest(procSample(at: t0.addingTimeInterval(Double(s)), cpu: 100), now: t0.addingTimeInterval(Double(s)))
+        }
+        XCTAssertEqual(vm.longProcs.map(\.name), ["yes"])
+        XCTAssertEqual(vm.state, .warn)
+        XCTAssertEqual(vm.health.summary, "yes 100% for 2m")
+        XCTAssertEqual(vm.alertTint(for: .health), .nominal)
+        XCTAssertEqual(vm.alertLevel, .warn)
+
+        var hostIgnore = node
+        hostIgnore.ignoredProcs = ["YES"]
+        vm.applyLongProc(node: hostIgnore, global: rule)
+        XCTAssertTrue(vm.longProcs.isEmpty)
+        XCTAssertEqual(vm.alertLevel, .nominal)
+    }
+
+    func testGlobalIgnoreAppliesUnderCustomRule() {
+        let vm = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x")
+        var node = Node(displayName: "h", kind: .ssh)
+        node.customLongProc = LongProcRule(enabled: true, cpuPct: 20, sustainSeconds: 60, notify: .all, ignore: [])
+        var global = LongProcRule.defaults
+        global.ignore = ["Yes"]
+        vm.applyLongProc(node: node, global: global)
+        XCTAssertEqual(vm.longProcRule.cpuPct, 20)
+        XCTAssertEqual(vm.ignoredProcs, ["yes"])
+    }
+
+    func testNotifyOffKeepsCardWarnButNotIcon() {
+        let vm = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x")
+        var rule = LongProcRule.defaults
+        rule.sustainSeconds = 60
+        rule.notify = .off
+        vm.applyLongProc(node: Node(displayName: "h", kind: .ssh), global: rule)
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        for s in stride(from: 0, through: 60, by: 10) {
+            vm.ingest(procSample(at: t0.addingTimeInterval(Double(s)), cpu: 100), now: t0.addingTimeInterval(Double(s)))
+        }
+        XCTAssertEqual(vm.state, .warn)
+        XCTAssertEqual(vm.alertLevel, .nominal)
+    }
 }

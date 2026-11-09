@@ -3,6 +3,7 @@ import SwiftUI
 /// Tag chips with a remove button each and a field to add one.
 struct TagEditor: View {
     @Binding var tags: [String]
+    var prompt = "Add tag"
     @State private var newTag = ""
 
     var body: some View {
@@ -25,7 +26,7 @@ struct TagEditor: View {
                 .background(Capsule().fill(Color.accentColor.opacity(0.15)))
                 .foregroundStyle(Color.accentColor)
             }
-            TextField("Tag", text: $newTag, prompt: Text("Add tag"))
+            TextField("Tag", text: $newTag, prompt: Text(prompt))
                 .labelsHidden()
                 .textFieldStyle(.plain)
                 .font(.callout)
@@ -37,7 +38,7 @@ struct TagEditor: View {
     private func add() {
         let t = newTag.trimmingCharacters(in: .whitespaces)
         newTag = ""
-        guard !t.isEmpty, !tags.contains(t) else { return }
+        guard !t.isEmpty, !tags.contains(where: { $0.caseInsensitiveCompare(t) == .orderedSame }) else { return }
         tags.append(t)
     }
 }

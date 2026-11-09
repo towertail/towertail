@@ -273,6 +273,9 @@ struct RemoteNode: Codable, Sendable, Identifiable {
     var favorite: Bool
     /// Nil when the server is older than disk scans.
     var allowDiskScan: Bool?
+    /// Nil when the server is older than long-running process alerts.
+    var customLongProc: LongProcRule?
+    var ignoredProcs: [String]?
 }
 
 struct RemoteServerSettings: Codable, Sendable {
@@ -285,6 +288,8 @@ struct RemoteServerSettings: Codable, Sendable {
     var notifyDebounceSeconds: Int
     var autoUpdateSamplersEnabled: Bool
     var postWakeGraceSeconds: Int
+    /// Nil when the server is older than long-running process alerts.
+    var longProc: LongProcRule?
 }
 
 extension Node {
@@ -302,6 +307,8 @@ extension Node {
             notifyOnWarn: r.notifyOnWarn,
             notifyOnCritical: r.notifyOnCritical,
             thresholdOverrides: r.customThresholds.map(ThresholdOverrides.init(legacy:)),
+            customLongProc: r.customLongProc,
+            ignoredProcs: r.ignoredProcs ?? [],
             snoozedUntil: r.snoozedUntil,
             favorite: r.favorite,
             allowDiskScan: r.allowDiskScan ?? false
@@ -326,7 +333,9 @@ extension Node {
             customThresholds: thresholdOverrides?.applied(to: global),
             snoozedUntil: snoozedUntil,
             favorite: favorite,
-            allowDiskScan: allowDiskScan
+            allowDiskScan: allowDiskScan,
+            customLongProc: customLongProc,
+            ignoredProcs: ignoredProcs
         )
     }
 }

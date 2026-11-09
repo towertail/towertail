@@ -45,6 +45,10 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
     /// Per-node alert rules. Nil inherits the global rules. Separate from
     /// `thresholdOverrides` so old overrides do not pin old sustain values.
     var customAlerts: AlertRules?
+    /// Per-node long-running process rule. Nil inherits the global rule.
+    var customLongProc: LongProcRule?
+    /// Process names to ignore on this host, added to the rule's list.
+    var ignoredProcs: [String]
     /// If set to a future date, notifications for this node are suppressed
     /// until that time. Past dates are ignored (the notifier does a <=
     /// check), so we don't have to actively clear expired snoozes — they
@@ -78,6 +82,8 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         notifyOnCritical: Bool = true,
         thresholdOverrides: ThresholdOverrides? = nil,
         customAlerts: AlertRules? = nil,
+        customLongProc: LongProcRule? = nil,
+        ignoredProcs: [String] = [],
         snoozedUntil: Date? = nil,
         favorite: Bool = false,
         allowDiskScan: Bool = false,
@@ -99,6 +105,8 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         self.notifyOnCritical = notifyOnCritical
         self.thresholdOverrides = thresholdOverrides?.isEmpty == true ? nil : thresholdOverrides
         self.customAlerts = customAlerts
+        self.customLongProc = customLongProc
+        self.ignoredProcs = ignoredProcs
         self.snoozedUntil = snoozedUntil
         self.favorite = favorite
         self.allowDiskScan = allowDiskScan
@@ -111,6 +119,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         case tags, enabled
         case iconOnWarn, iconOnCritical, notifyOnWarn, notifyOnCritical
         case thresholdOverrides, customAlerts, snoozedUntil, favorite
+        case customLongProc, ignoredProcs
         case allowDiskScan
         case customThresholds
         case lastSuccessfulConnect
@@ -139,6 +148,8 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         try c.encode(notifyOnCritical, forKey: .notifyOnCritical)
         try c.encodeIfPresent(thresholdOverrides, forKey: .thresholdOverrides)
         try c.encodeIfPresent(customAlerts, forKey: .customAlerts)
+        try c.encodeIfPresent(customLongProc, forKey: .customLongProc)
+        if !ignoredProcs.isEmpty { try c.encode(ignoredProcs, forKey: .ignoredProcs) }
         try c.encodeIfPresent(snoozedUntil, forKey: .snoozedUntil)
         try c.encode(favorite, forKey: .favorite)
         try c.encode(allowDiskScan, forKey: .allowDiskScan)
@@ -175,6 +186,8 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
                 .map(ThresholdOverrides.init(legacy:))
         }
         self.customAlerts = try c.decodeIfPresent(AlertRules.self, forKey: .customAlerts)
+        self.customLongProc = try? c.decodeIfPresent(LongProcRule.self, forKey: .customLongProc)
+        self.ignoredProcs = (try? c.decodeIfPresent([String].self, forKey: .ignoredProcs)) ?? []
         self.snoozedUntil = try c.decodeIfPresent(Date.self, forKey: .snoozedUntil)
         self.favorite = try c.decodeIfPresent(Bool.self, forKey: .favorite) ?? false
         self.allowDiskScan = try c.decodeIfPresent(Bool.self, forKey: .allowDiskScan) ?? false
@@ -205,6 +218,8 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
             && lhs.notifyOnCritical == rhs.notifyOnCritical
             && lhs.thresholdOverrides == rhs.thresholdOverrides
             && lhs.customAlerts == rhs.customAlerts
+            && lhs.customLongProc == rhs.customLongProc
+            && lhs.ignoredProcs == rhs.ignoredProcs
             && lhs.snoozedUntil == rhs.snoozedUntil
             && lhs.favorite == rhs.favorite
             && lhs.allowDiskScan == rhs.allowDiskScan

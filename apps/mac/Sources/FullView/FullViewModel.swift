@@ -52,6 +52,8 @@ final class FullViewModel {
     var metric: Metric
     var mode: FullViewMode = .live
     var hoverAt: Date?
+    /// Rows selected in the process table.
+    var selectedPids: Set<Int32> = []
 
     /// DISK tab — capacity chart mount picker. "Max" is the default so
     /// the tab opens with the same headline number users have seen since

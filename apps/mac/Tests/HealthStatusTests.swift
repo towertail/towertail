@@ -285,4 +285,27 @@ final class HealthStatusTests: XCTestCase {
         XCTAssertNil(rows.first?.procs)
         XCTAssertEqual(rows.last?.procs, 34983)
     }
+
+    // MARK: long-running processes
+
+    private func longProc(_ name: String, cpu: Double = 85, highFor: TimeInterval = 3 * 3600, now: Date) -> LongProc {
+        let p = ProcSample(pid: 812, name: name, cpuPct: cpu, rss: 1)
+        return LongProc(key: LongProcKey(p), pid: 812, name: name, cmd: nil, cpuPct: cpu,
+                        highSince: now.addingTimeInterval(-highFor), startTS: nil)
+    }
+
+    func testLongProcReasonTextAndCut() {
+        let now = Date()
+        let h = HealthStatus(
+            info: HealthInfo(procs: 300), disks: nil, thresholds: defaults,
+            longProcs: [longProc("OrbStack Helper", now: now), longProc(String(repeating: "x", count: 30), cpu: 62, highFor: 41 * 60, now: now)],
+            now: now
+        )
+        XCTAssertEqual(h.reasons.map(\.signal), [.longProc, .longProc])
+        XCTAssertEqual(h.reasons.first?.text, "OrbStack Helper 85% for 3h")
+        XCTAssertEqual(h.reasons.last?.text, String(repeating: "x", count: 23) + "… 62% for 41m")
+        XCTAssertEqual(h.summary, "OrbStack Helper 85% for 3h +1 more")
+        XCTAssertEqual(h.tint, .warn)
+        XCTAssertEqual(h.alertTint, .nominal, "the .health alert window excludes long processes")
+    }
 }

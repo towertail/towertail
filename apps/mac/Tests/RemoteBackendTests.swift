@@ -208,6 +208,12 @@ final class RemoteBackendTests: XCTestCase {
         return last
     }
 
+    private func jsonDecoder() -> JSONDecoder {
+        let d = JSONDecoder()
+        d.dateDecodingStrategy = .iso8601
+        return d
+    }
+
     private func jsonEncoder() -> JSONEncoder {
         let e = JSONEncoder()
         e.dateEncodingStrategy = .iso8601
@@ -264,5 +270,43 @@ final class RemoteBackendTests: XCTestCase {
         }
         XCTFail("condition not met within \(seconds)s")
     }
-}
 
+    // MARK: - Long-running process fields
+
+    func testRemoteLongProcFieldsMapBothWays() throws {
+        var node = Node(displayName: "db", kind: .ssh, sshUser: "u", sshHost: "h")
+        node.customLongProc = LongProcRule(enabled: true, cpuPct: 90, sustainSeconds: 600, notify: .off, ignore: [])
+        node.ignoredProcs = ["postgres"]
+        let remote = node.toRemote(global: .defaults)
+        XCTAssertEqual(remote.customLongProc, node.customLongProc)
+        XCTAssertEqual(remote.ignoredProcs, ["postgres"])
+        let back = Node(remote: try jsonDecoder().decode(RemoteNode.self, from: jsonEncoder().encode(remote)))
+        XCTAssertEqual(back.customLongProc, node.customLongProc)
+        XCTAssertEqual(back.ignoredProcs, ["postgres"])
+    }
+
+    func testOldServerWithoutLongProcFieldsDecodesDefaults() throws {
+        let node = Node(remote: try jsonDecoder().decode(RemoteNode.self, from: jsonEncoder().encode(sampleRemoteNode(name: "x"))))
+        XCTAssertNil(node.customLongProc)
+        XCTAssertEqual(node.ignoredProcs, [])
+        let rs = try jsonDecoder().decode(RemoteServerSettings.self, from: jsonEncoder().encode(sampleRemoteSettings()))
+        XCTAssertNil(rs.longProc)
+    }
+
+    func testSettingsUpdatePushesLongProcToViewModels() async throws {
+        let node = sampleRemoteNode(name: "node-lp")
+        let nodesPayload = try jsonEncoder().encode([node])
+        server.on("GET", "/v1/nodes") { _ in .json(200, nodesPayload) }
+        var rs = sampleRemoteSettings()
+        rs.longProc = LongProcRule(enabled: true, cpuPct: 300, sustainSeconds: 600, notify: .all, ignore: ["Yes"])
+        let settingsPayload = try jsonEncoder().encode(rs)
+        server.on("GET", "/v1/settings") { _ in .json(200, settingsPayload) }
+
+        let backend = RemoteBackend(endpoint: server.baseURL, token: token)
+        backend.start()
+        try await waitFor(timeout: 5) { backend.servers.serverVMs.first?.longProcRule.cpuPct == 300 }
+        XCTAssertEqual(backend.serverSettings.longProc.cpuPct, 300)
+        XCTAssertEqual(backend.servers.serverVMs.first?.ignoredProcs, ["yes"])
+        backend.stop()
+    }
+}

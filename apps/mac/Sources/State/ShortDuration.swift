@@ -21,4 +21,9 @@ enum ShortDuration {
         let h = (s % 86_400) / 3600
         return h == 0 ? "\(s / 86_400)d" : "\(s / 86_400)d \(h)h"
     }
+
+    /// "41m", "5h", "3d": the age of a process.
+    static func age(_ seconds: TimeInterval) -> String {
+        seconds < 86_400 ? text(seconds) : "\(Int(seconds) / 86_400)d"
+    }
 }

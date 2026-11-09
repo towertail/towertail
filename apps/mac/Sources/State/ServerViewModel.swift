@@ -108,6 +108,14 @@ final class ServerViewModel: Identifiable {
 
     var hoverDate: Date?
 
+    /// Processes over the long-running rule, sorted by CPU.
+    private(set) var longProcs: [LongProc] = []
+    @ObservationIgnored private var longProcTracker = LongProcTracker()
+    /// Effective rule for this host: `node.customLongProc ?? settings.longProc`.
+    private(set) var longProcRule: LongProcRule = .defaults
+    /// Lowercased `rule.ignore ∪ node.ignoredProcs`.
+    private(set) var ignoredProcs: Set<String> = []
+
     /// Latest host health, re-evaluated on every ingest.
     var health: HealthStatus = .empty
     /// Process count per sample, raw (not a fraction).
@@ -246,6 +254,10 @@ final class ServerViewModel: Identifiable {
         }
 
         if let ps = s.procs {
+            longProcs = longProcTracker.observe(
+                ps.items, skipped: ps.skipped == true, at: s.ts,
+                rule: longProcRule, ignored: ignoredProcs
+            )
             procsSkippedTotal = ps.skipped == true ? ps.total : nil
             if procsSkippedTotal == nil {
                 procs.append(ProcSeries.Snapshot(t: s.ts, items: ps.items))
@@ -254,7 +266,7 @@ final class ServerViewModel: Identifiable {
             procsRoot = ps.root
         }
 
-        health = HealthStatus(info: s.health, disks: s.disks, thresholds: thresholds)
+        health = HealthStatus(info: s.health, disks: s.disks, thresholds: thresholds, longProcs: longProcs, now: s.ts)
         let procsV = (s.health?.procs ?? s.procs?.total).map(Double.init)
         if let procsV {
             procCount.append(MetricPoint(t: s.ts, v: procsV))
@@ -269,8 +281,8 @@ final class ServerViewModel: Identifiable {
         record(.cpu, tint(for: .cpu), at: s.ts)
         record(.mem, tint(for: .mem), at: s.ts)
         record(.disk, tint(for: .disk), at: s.ts)
-        record(.health, health.tintExcludingInodes, at: s.ts)
-        alertLevel = [Metric.cpu, .mem, .disk, .health].map(alertTint(for:)).max { $0.rank < $1.rank } ?? .nominal
+        record(.health, health.alertTint, at: s.ts)
+        updateAlertLevel()
 
         let previous = state
         state = computeState()
@@ -322,6 +334,11 @@ final class ServerViewModel: Identifiable {
     func hydrateProcs(from rows: [HistoryStore.ProcHistoryRow]) {
         let snapshots = rows.map { ProcSeries.Snapshot(t: $0.t, items: $0.items) }
         procs.replace(with: snapshots)
+        longProcTracker.reset()
+        for r in rows where !r.items.isEmpty {
+            longProcs = longProcTracker.observe(r.items, skipped: false, at: r.t, rule: longProcRule, ignored: ignoredProcs)
+        }
+        updateAlertLevel()
         if let last = rows.last {
             procsAvailable = true
             procsRoot = last.root
@@ -502,7 +519,28 @@ final class ServerViewModel: Identifiable {
         windows[metric, default: SustainWindow()].record(level, at: t, keep: alertRules[metric].sustainSeconds)
     }
 
+    /// Push the effective long-running rule. The global ignore list applies
+    /// also under a custom rule. Ignored names leave the list at once.
+    func applyLongProc(node: Node, global: LongProcRule) {
+        let rule = node.customLongProc ?? global
+        let ignored = rule.ignoreSet(adding: global.ignore, node.ignoredProcs)
+        guard rule != longProcRule || ignored != ignoredProcs else { return }
+        longProcRule = rule
+        ignoredProcs = ignored
+        if !rule.enabled { longProcTracker.reset() }
+        longProcs = rule.enabled ? longProcs.filter { !ignored.contains($0.name.lowercased()) } : []
+        updateAlertLevel()
+    }
+
+    private func updateAlertLevel() {
+        let metrics = [Metric.cpu, .mem, .disk, .health].map(alertTint(for:))
+        let long: ThresholdTint = !longProcs.isEmpty && longProcRule.notifies ? .warn : .nominal
+        alertLevel = (metrics + [long]).max { $0.rank < $1.rank } ?? .nominal
+    }
+
     private func resetAlerts() {
+        longProcTracker.reset()
+        longProcs = []
         windows.removeAll()
         prevSwap = nil
         memPressured = nil

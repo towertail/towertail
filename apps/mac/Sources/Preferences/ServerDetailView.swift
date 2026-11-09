@@ -280,6 +280,28 @@ struct ServerDetailView: View {
                 }
             }
 
+            Section("Long-running processes") {
+                Toggle("Use custom long-running rule", isOn: Binding(get: { draft.customLongProc != nil }, set: {
+                    var rule = settings.longProc
+                    rule.ignore = []
+                    draft.customLongProc = $0 ? rule : nil
+                    commit()
+                }))
+                .help("When off, this server uses the rule from the Alerts tab.")
+                if let rule = draft.customLongProc {
+                    LongProcRuleControls(rule: Binding(get: { rule }, set: {
+                        draft.customLongProc = $0
+                        commit()
+                    }))
+                }
+                LabeledContent("Ignore on this host") {
+                    TagEditor(tags: Binding(get: { draft.ignoredProcs }, set: {
+                        draft.ignoredProcs = $0
+                        commit()
+                    }), prompt: "Add…")
+                }
+            }
+
             Section {
                 Picker("Notify on", selection: Binding(
                     get: { AlertNotify(warn: draft.notifyOnWarn, critical: draft.notifyOnCritical) },

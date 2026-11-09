@@ -285,8 +285,14 @@ struct FullViewWindow: View {
                     chartArea(vm: vm)
                 }
                 if model.metric == .health {
-                    HealthDetails(health: vm.health, thresholds: vm.thresholds)
-                        .padding(.horizontal, 16)
+                    HealthDetails(
+                        health: vm.health, thresholds: vm.thresholds,
+                        longProcs: vm.longProcs,
+                        onShow: { model.selectedPids = [$0.pid] },
+                        onIgnore: ignoreProc,
+                        hostId: vm.id
+                    )
+                    .padding(.horizontal, 16)
                 }
                 if !(model.metric == .disk && model.diskSubTab == .usage) {
                     bottomTable(vm: vm)
@@ -638,8 +644,16 @@ struct FullViewWindow: View {
             isRootSampler: vm.procsRoot,
             metric: model.metric,
             node: nodeStore.node(withId: activeHostId),
-            skippedTotal: vm.procsSkippedTotal
+            skippedTotal: vm.procsSkippedTotal,
+            longProcs: vm.longProcs,
+            onIgnore: ignoreProc,
+            selection: $model.selectedPids
         )
+    }
+
+    private func ignoreProc(_ name: String, scope: LongProcIgnore.Scope) {
+        let action = LongProcIgnore(settings: settings, nodes: nodeStore, servers: store, backend: backend)
+        Task { await action.ignore(name, on: scope) }
     }
 
     /// Picks the table beneath the chart. Outside NET this is always the

@@ -15,6 +15,7 @@ struct PersistedSettings: Codable, Equatable {
     var defaultTerminalApp: String
     var postWakeGraceSeconds: Int
     var menuBarIconStyle: String
+    var longProc: LongProcRule
     /// Platform-specific blocks preserved verbatim from the on-disk file so a
     /// cross-OS round trip never loses the other OS's settings. `platform.darwin`
     /// is our own; `platform.windows` / `platform.linux` come from the Windows
@@ -36,6 +37,7 @@ struct PersistedSettings: Codable, Equatable {
         defaultTerminalApp: "Terminal",
         postWakeGraceSeconds: 15,
         menuBarIconStyle: "pulse",
+        longProc: .defaults,
         platformBlocks: .init(foreign: [:])
     )
 
@@ -48,6 +50,7 @@ struct PersistedSettings: Codable, Equatable {
         case autoUpdateSamplersEnabled
         case defaultTerminalApp
         case postWakeGraceSeconds
+        case longProc
         case pollingIntervalSeconds // legacy single-value field
         case platform              // new envelope { darwin: {...}, windows: {...} }
         case schemaVersion
@@ -66,6 +69,7 @@ struct PersistedSettings: Codable, Equatable {
             ?? PersistedSettings.defaults.autoUpdateSamplersEnabled
         self.postWakeGraceSeconds = try c.decodeIfPresent(Int.self, forKey: .postWakeGraceSeconds)
             ?? PersistedSettings.defaults.postWakeGraceSeconds
+        self.longProc = (try? c.decodeIfPresent(LongProcRule.self, forKey: .longProc)) ?? .defaults
 
         if let local = try c.decodeIfPresent(Int.self, forKey: .localPollingIntervalSeconds) {
             self.localPollingIntervalSeconds = local
@@ -131,6 +135,7 @@ struct PersistedSettings: Codable, Equatable {
         try c.encode(notifyDebounceSeconds, forKey: .notifyDebounceSeconds)
         try c.encode(autoUpdateSamplersEnabled, forKey: .autoUpdateSamplersEnabled)
         try c.encode(postWakeGraceSeconds, forKey: .postWakeGraceSeconds)
+        try c.encode(longProc, forKey: .longProc)
         // Legacy flat fields are still emitted so older Mac binaries keep
         // working if the user downgrades. They duplicate platform.darwin; the
         // loader prefers platform.darwin when both are present.
@@ -167,6 +172,7 @@ struct PersistedSettings: Codable, Equatable {
         defaultTerminalApp: String,
         postWakeGraceSeconds: Int,
         menuBarIconStyle: String = "pulse",
+        longProc: LongProcRule = .defaults,
         platformBlocks: PlatformBlocks = .init(foreign: [:])
     ) {
         self.nodes = nodes
@@ -183,6 +189,7 @@ struct PersistedSettings: Codable, Equatable {
         self.defaultTerminalApp = defaultTerminalApp
         self.postWakeGraceSeconds = postWakeGraceSeconds
         self.menuBarIconStyle = menuBarIconStyle
+        self.longProc = longProc
         self.platformBlocks = platformBlocks
     }
 }

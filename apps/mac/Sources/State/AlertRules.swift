@@ -175,3 +175,56 @@ struct SustainWindow: Sendable {
         return .nominal
     }
 }
+
+/// Finds one process that uses a lot of CPU for a long time. `cpuPct`
+/// uses the `top` convention: 100 is one full core. Stored globally as
+/// `longProc` and per node as `customLongProc`.
+struct LongProcRule: Codable, Sendable, Equatable {
+    var enabled: Bool
+    var cpuPct: Double
+    var sustainSeconds: Int
+    /// Only `off` and `all` apply: a long process is a warning.
+    var notify: AlertNotify
+    /// Process names, matched exactly without case.
+    var ignore: [String]
+
+    /// Fraction of the window that must be high. Fixed in all products.
+    static let tolerance = 0.8
+    static let cpuRange = 10.0...800.0
+    static let sustainRange = 60...86_400
+
+    static let defaults = LongProcRule(enabled: true, cpuPct: 50, sustainSeconds: 1800, notify: .all, ignore: [])
+
+    init(enabled: Bool, cpuPct: Double, sustainSeconds: Int, notify: AlertNotify, ignore: [String]) {
+        self.enabled = enabled
+        self.cpuPct = min(max(cpuPct, Self.cpuRange.lowerBound), Self.cpuRange.upperBound)
+        self.sustainSeconds = min(max(sustainSeconds, Self.sustainRange.lowerBound), Self.sustainRange.upperBound)
+        self.notify = notify
+        self.ignore = ignore
+    }
+
+    enum CodingKeys: String, CodingKey { case enabled, cpuPct, sustainSeconds, notify, ignore }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = Self.defaults
+        self.init(
+            enabled: (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? d.enabled,
+            cpuPct: (try? c.decodeIfPresent(Double.self, forKey: .cpuPct)) ?? d.cpuPct,
+            sustainSeconds: (try? c.decodeIfPresent(Int.self, forKey: .sustainSeconds)) ?? d.sustainSeconds,
+            notify: (try? c.decodeIfPresent(AlertNotify.self, forKey: .notify)) ?? d.notify,
+            ignore: (try? c.decodeIfPresent([String].self, forKey: .ignore)) ?? d.ignore
+        )
+    }
+
+    var notifies: Bool { notify != .off }
+
+    var logValue: String {
+        enabled ? "\(Int(cpuPct))%/\(sustainSeconds)s/\(notify.rawValue)" : "off"
+    }
+
+    /// Lowercased union of the rule list and the other lists.
+    func ignoreSet(adding other: [String]...) -> Set<String> {
+        Set((ignore + other.joined()).map { $0.lowercased() })
+    }
+}

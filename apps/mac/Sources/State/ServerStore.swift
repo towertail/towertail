@@ -44,12 +44,10 @@ final class ServerStore {
             vm.hydrateDiskIO(from: ioRows)
         }
         serverVMs.append(vm)
-        // Proc history is deliberately NOT hydrated here. The popover and
-        // cards never read it — only the full-view process table does —
-        // and decoding ~5 MB of JSON per host at launch was pinning the
-        // main thread for seconds while users were just trying to open
-        // the menu bar. We hydrate lazily in `ensureProcsHydrated(for:)`
-        // when the full view actually opens.
+        // Proc history decodes off the main thread (~5 MB of JSON per
+        // host). The long-running process tracker needs it at launch, so
+        // a relaunch does not wait the full sustain time again.
+        ensureProcsHydrated(for: vm.id)
     }
 
     /// One-shot, on-demand hydration of a single host's proc history
@@ -93,6 +91,7 @@ final class ServerStore {
         }
         if let notifier, let node = nodeLookup?(id) {
             notifier.evaluate(vm: vm, node: node)
+            notifier.evaluateLongProcs(vm: vm, node: node)
         }
         logAggregateIfChanged()
     }
@@ -133,6 +132,7 @@ final class ServerStore {
             for (id, vm) in lastVMByID {
                 if let node = nodeLookup?(id) {
                     notifier.evaluate(vm: vm, node: node)
+                    notifier.evaluateLongProcs(vm: vm, node: node)
                 }
             }
         }

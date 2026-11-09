@@ -22,6 +22,7 @@ final class ServerSettings {
     /// lets DHCP + Tailscale resettle without paging on the first failed
     /// post-wake dial. 0 disables the grace period entirely.
     var postWakeGraceSeconds: Int
+    var longProc: LongProcRule
 
     private let url: URL
 
@@ -38,6 +39,7 @@ final class ServerSettings {
         self.notifyDebounceSeconds = p.notifyDebounceSeconds
         self.autoUpdateSamplersEnabled = p.autoUpdateSamplersEnabled
         self.postWakeGraceSeconds = max(0, min(300, p.postWakeGraceSeconds))
+        self.longProc = p.longProc
     }
 
     static func loadFromDisk() -> ServerSettings {
@@ -56,6 +58,7 @@ final class ServerSettings {
         self.notifyDebounceSeconds = p.notifyDebounceSeconds
         self.autoUpdateSamplersEnabled = p.autoUpdateSamplersEnabled
         self.postWakeGraceSeconds = max(0, min(300, p.postWakeGraceSeconds))
+        self.longProc = p.longProc
     }
 
     func pollingInterval(for kind: NodeKind) -> Int {
@@ -77,6 +80,7 @@ final class ServerSettings {
         p.notifyDebounceSeconds = notifyDebounceSeconds
         p.autoUpdateSamplersEnabled = autoUpdateSamplersEnabled
         p.postWakeGraceSeconds = postWakeGraceSeconds
+        p.longProc = longProc
         SettingsPersistence.save(p, to: url)
         logSettingsDiff(before: before, after: p, fields: Self.diffFields)
     }
@@ -105,5 +109,7 @@ final class ServerSettings {
         SettingsField("notifyDebounceSec") { "\($0.notifyDebounceSeconds)" },
         SettingsField("autoUpdateSamplers") { "\($0.autoUpdateSamplersEnabled)" },
         SettingsField("postWakeGraceSec") { "\($0.postWakeGraceSeconds)" },
+        SettingsField("longProc") { $0.longProc.logValue },
+        SettingsField("longProcIgnore") { $0.longProc.ignore.joined(separator: ",") },
     ]
 }
