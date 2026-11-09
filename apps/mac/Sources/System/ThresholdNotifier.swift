@@ -7,7 +7,8 @@ import AppKit
 /// notification on warn/critical escalation. Uses the sustained alert level
 /// and the metric's notify rule, plus per-node opt-in (notifyOnWarn,
 /// notifyOnCritical), the global on/off, and a debounce so a metric that
-/// flaps around the line doesn't buzz the user continuously.
+/// flaps around the line doesn't buzz the user continuously. A muted signal
+/// (`ServerViewModel.mutedSignals`) never escalates.
 ///
 /// Tap routing: each notification carries the hostId + metric in userInfo.
 /// A tap posts to `NotificationTapRouter`, which invokes a handler
@@ -196,7 +197,7 @@ final class ThresholdNotifier {
         )
     }
 
-    private static func bodyText(vm: ServerViewModel, metric: Metric) -> String {
+    static func bodyText(vm: ServerViewModel, metric: Metric) -> String {
         switch metric {
         case .cpu:
             if let v = vm.cpu.latest?.v {
@@ -217,7 +218,7 @@ final class ThresholdNotifier {
         case .disk:
             if let v = vm.disk.latest?.v { return "Disk at \(Int(round(v * 100)))%" }
         case .health:
-            let text = vm.health.reasons.map(\.text).joined(separator: " · ")
+            let text = vm.health.reasons(unmuted: vm.mutedSignals).map(\.text).joined(separator: " · ")
             if !text.isEmpty { return text }
         case .net:
             break

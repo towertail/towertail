@@ -170,6 +170,7 @@ struct HealthInfo: Codable, Sendable, Equatable {
     var filesMax: Int64? = nil
     var psi: PSIInfo? = nil
     var memPressure: Int? = nil
+    var memPressurePct: Int? = nil
 
     enum CodingKeys: String, CodingKey {
         case procs, zombies
@@ -180,6 +181,7 @@ struct HealthInfo: Codable, Sendable, Equatable {
         case filesMax = "files_max"
         case psi
         case memPressure = "mem_pressure"
+        case memPressurePct = "mem_pressure_pct"
     }
 }
 

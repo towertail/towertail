@@ -116,13 +116,6 @@ final class HealthStatusTests: XCTestCase {
             disks: nil, thresholds: defaults)
         XCTAssertEqual(linux.tint(of: .memPressure), .critical)
         XCTAssertEqual(linux.reasons.filter { $0.signal == .memPressure }.count, 1)
-
-        let macWarn = HealthStatus(info: HealthInfo(procs: 1, memPressure: 2), disks: nil, thresholds: defaults)
-        XCTAssertEqual(macWarn.tint, .warn)
-        let macCrit = HealthStatus(info: HealthInfo(procs: 1, memPressure: 4), disks: nil, thresholds: defaults)
-        XCTAssertEqual(macCrit.tint, .critical)
-        let macOK = HealthStatus(info: HealthInfo(procs: 1, memPressure: 1), disks: nil, thresholds: defaults)
-        XCTAssertEqual(macOK.tint, .nominal)
     }
 
     func testCriticalReasonsComeFirstAndSummary() {
@@ -306,6 +299,87 @@ final class HealthStatusTests: XCTestCase {
         XCTAssertEqual(h.reasons.last?.text, String(repeating: "x", count: 23) + "… 62% for 41m")
         XCTAssertEqual(h.summary, "OrbStack Helper 85% for 3h +1 more")
         XCTAssertEqual(h.tint, .warn)
-        XCTAssertEqual(h.alertTint, .nominal, "the .health alert window excludes long processes")
+        XCTAssertEqual(h.alertTint(muted: .empty), .nominal, "the .health alert window excludes long processes")
+    }
+
+    // MARK: macOS memory pressure number
+
+    private func mac(_ pct: Int?, level: Int? = nil, thresholds: MetricThresholds? = nil, criticalOnly: Bool = false) -> HealthStatus {
+        HealthStatus(info: HealthInfo(procs: 1, memPressure: level, memPressurePct: pct), disks: nil,
+                     thresholds: thresholds ?? defaults, kernelCriticalOnly: criticalOnly)
+    }
+
+    func testMacPressureNumberUsesMacThresholds() {
+        let warn = mac(85)
+        XCTAssertEqual(warn.tint(of: .memPressure), .warn)
+        XCTAssertEqual(warn.reasons.first?.text, "Memory pressure 85%")
+        XCTAssertEqual(mac(92).tint(of: .memPressure), .critical)
+        XCTAssertEqual(mac(58, level: 2).tint, .nominal, "the number wins over the kernel level")
+    }
+
+    func testMacPressureOverrideAppliesToNumber() {
+        let o = ThresholdOverrides(memPressure: ThresholdPair(warn: 98, critical: 99))
+        let t = MetricThresholds.effective(global: defaults, override: o)
+        let h = mac(97, level: 4, thresholds: t)
+        XCTAssertFalse(h.reasons.contains { $0.signal == .memPressure })
+    }
+
+    func testMacPressureFallsBackToKernelLevel() {
+        let warn = mac(nil, level: 2)
+        XCTAssertEqual(warn.tint, .warn)
+        XCTAssertEqual(warn.reasons.first?.text, "Memory pressure high")
+        XCTAssertEqual(mac(nil, level: 4).tint, .critical)
+        XCTAssertEqual(mac(nil, level: 1).tint, .nominal)
+    }
+
+    func testOldSamplerWithOverrideOnlyCritical() {
+        XCTAssertTrue(mac(nil, level: 2, criticalOnly: true).reasons.isEmpty)
+        let crit = mac(nil, level: 4, criticalOnly: true)
+        XCTAssertEqual(crit.tint, .critical)
+        XCTAssertEqual(crit.reasons.first?.text, "Memory pressure critical")
+    }
+
+    func testMacNumberKeepsIOPressure() {
+        let info = HealthInfo(procs: 1, psi: PSIInfo(cpuSome: 0, memSome: 50, memFull: 50, ioSome: 0, ioFull: 50), memPressurePct: 10)
+        let h = HealthStatus(info: info, disks: nil, thresholds: defaults)
+        XCTAssertEqual(h.tint(of: .ioPressure), .critical)
+        XCTAssertEqual(h.tint(of: .memPressure), .nominal)
+    }
+
+    func testOverrideSetsBothPressurePairs() {
+        let p = ThresholdPair(warn: 98, critical: 99)
+        let t = ThresholdOverrides(memPressure: p).applied(to: .defaults)
+        XCTAssertEqual(t.health.memPressure, p)
+        XCTAssertEqual(t.health.macMemPressure, p)
+    }
+
+    func testHealthLimitsWithoutMacKeyLoadDefault() throws {
+        let json = #"{"pids":{"warn":0.5,"critical":0.6},"memPressure":{"warn":11,"critical":22}}"#
+        let h = try JSONDecoder().decode(HealthLimits.self, from: Data(json.utf8))
+        XCTAssertEqual(h.macMemPressure, ThresholdPair(warn: 80, critical: 90))
+        XCTAssertEqual(h.pids, ThresholdPair(warn: 0.5, critical: 0.6))
+        XCTAssertEqual(h.memPressure, ThresholdPair(warn: 11, critical: 22))
+        XCTAssertEqual(h.ioPressure, HealthLimits.defaults.ioPressure)
+    }
+
+    func testPairForHostOS() {
+        XCTAssertEqual(defaults.pair(for: .memPressure, hostOS: "darwin"), defaults.health.macMemPressure)
+        XCTAssertEqual(defaults.pair(for: .memPressure, hostOS: "linux"), defaults.health.memPressure)
+        XCTAssertEqual(defaults.pair(for: .memPressure, hostOS: ""), defaults.health.memPressure)
+        for os in ["darwin", "linux", ""] {
+            XCTAssertEqual(defaults.pair(for: .cpu, hostOS: os), defaults[.cpu])
+        }
+    }
+
+    func testAlertTintSkipsMutedSignals() {
+        var t = defaults
+        t.zombiesWarn = 1
+        t.zombiesCritical = 1000
+        let h = HealthStatus(info: HealthInfo(procs: 1, zombies: 5, memPressurePct: 95), disks: nil, thresholds: t)
+        let muted = MutedSignals([.memPressure])
+        XCTAssertEqual(h.alertTint(muted: muted), .warn)
+        XCTAssertFalse(h.reasons(unmuted: muted).contains { $0.signal == .memPressure })
+        XCTAssertEqual(h.tint, .critical)
+        XCTAssertEqual(h.alertTint(of: .memPressure, muted: muted), .nominal)
     }
 }

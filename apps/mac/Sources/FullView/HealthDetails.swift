@@ -45,9 +45,18 @@ struct HealthDetails: View {
                         limit: "share of the last 10 s with stalled tasks",
                         tint: worst(health.tint(of: .memPressure), health.tint(of: .ioPressure)))
                 }
-                if let lvl = h.memPressure {
+                if let pct = h.memPressurePct {
+                    let mac = thresholds.health.macMemPressure
+                    row("Memory pressure", "\(pct)% used",
+                        limit: "warn \(Int(mac.warn))% · critical \(Int(mac.critical))%",
+                        tint: health.tint(of: .memPressure))
+                    if let lvl = h.memPressure {
+                        row("Kernel level", lvl == 4 ? "critical" : lvl == 2 ? "warn" : "normal",
+                            limit: "macOS, for reference", tint: .nominal)
+                    }
+                } else if let lvl = h.memPressure {
                     row("Memory pressure", lvl == 4 ? "critical" : lvl == 2 ? "high" : "normal",
-                        limit: "macOS",
+                        limit: "Update the sampler (1.3.0) to see a number",
                         tint: health.tint(of: .memPressure))
                 }
                 ForEach(inodeReasons, id: \.text) { r in

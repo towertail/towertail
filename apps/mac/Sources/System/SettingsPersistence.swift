@@ -306,6 +306,8 @@ struct PersistedThresholds: Codable, Equatable {
     var zombiesCritical: Int
     var health: HealthLimits
     var alerts: AlertRules
+    /// Global mutes. Nil when the file has no `muted` key.
+    var muted: MutedSignals?
     /// Old `*SustainSamples` values, set only when the file has no `alerts`.
     /// Read for migration, never written.
     var legacySustain: LegacySustain?
@@ -330,7 +332,7 @@ struct PersistedThresholds: Codable, Equatable {
         case cpuWarn, cpuCritical, memWarn, memCritical, diskWarn, diskCritical
         case procsWarn, procsCritical, zombiesWarn, zombiesCritical
         case health
-        case alerts
+        case alerts, muted
         case cpuSustainSamples, memSustainSamples, diskSustainSamples
     }
 
@@ -343,7 +345,8 @@ struct PersistedThresholds: Codable, Equatable {
         zombiesWarn: Int = MetricThresholds.defaultZombiesWarn,
         zombiesCritical: Int = MetricThresholds.defaultZombiesCritical,
         health: HealthLimits = .defaults,
-        alerts: AlertRules = .defaults
+        alerts: AlertRules = .defaults,
+        muted: MutedSignals? = nil
     ) {
         self.cpuWarn = cpuWarn
         self.cpuCritical = cpuCritical
@@ -357,9 +360,10 @@ struct PersistedThresholds: Codable, Equatable {
         self.zombiesCritical = max(self.zombiesWarn, zombiesCritical)
         self.health = health
         self.alerts = alerts
+        self.muted = muted
     }
 
-    init(_ t: MetricThresholds, alerts: AlertRules) {
+    init(_ t: MetricThresholds, alerts: AlertRules, muted: MutedSignals = .empty) {
         self.init(
             cpuWarn: t.cpuWarn, cpuCritical: t.cpuCritical,
             memWarn: t.memWarn, memCritical: t.memCritical,
@@ -367,7 +371,8 @@ struct PersistedThresholds: Codable, Equatable {
             procsWarn: t.procsWarn, procsCritical: t.procsCritical,
             zombiesWarn: t.zombiesWarn, zombiesCritical: t.zombiesCritical,
             health: t.health,
-            alerts: alerts
+            alerts: alerts,
+            muted: muted
         )
     }
 
@@ -384,7 +389,9 @@ struct PersistedThresholds: Codable, Equatable {
             procsCritical: try c.decodeIfPresent(Int.self, forKey: .procsCritical) ?? MetricThresholds.defaultProcsCritical,
             zombiesWarn: try c.decodeIfPresent(Int.self, forKey: .zombiesWarn) ?? MetricThresholds.defaultZombiesWarn,
             zombiesCritical: try c.decodeIfPresent(Int.self, forKey: .zombiesCritical) ?? MetricThresholds.defaultZombiesCritical,
-            health: try c.decodeIfPresent(HealthLimits.self, forKey: .health) ?? .defaults
+            health: try c.decodeIfPresent(HealthLimits.self, forKey: .health) ?? .defaults,
+            // A bad value must not drop all settings.
+            muted: try? c.decodeIfPresent(MutedSignals.self, forKey: .muted)
         )
         if let alerts = try c.decodeIfPresent(AlertRules.self, forKey: .alerts) {
             self.alerts = alerts
@@ -413,6 +420,7 @@ struct PersistedThresholds: Codable, Equatable {
         try c.encode(zombiesCritical, forKey: .zombiesCritical)
         try c.encode(health, forKey: .health)
         try c.encode(alerts, forKey: .alerts)
+        try c.encodeIfPresent(muted, forKey: .muted)
     }
 }
 

@@ -12,14 +12,19 @@ struct ThresholdPair: Codable, Sendable, Equatable {
 }
 
 /// Host health limits other than process and zombie counts.
-/// PID use, open files and inodes are fractions; pressure is PSI avg10 percent.
+/// PID use, open files and inodes are fractions. Linux pressure is PSI avg10
+/// percent. macOS pressure is the percent of memory in use.
 struct HealthLimits: Codable, Sendable, Equatable {
     var pids: ThresholdPair
     var files: ThresholdPair
     var inodes: ThresholdPair
-    /// Warns on PSI `some`, goes critical on `full`.
+    /// Linux PSI avg10. Warns on some, goes critical on full.
     var memPressure: ThresholdPair
     var ioPressure: ThresholdPair
+    /// macOS memory in use (`mem_pressure_pct`), in percent.
+    var macMemPressure: ThresholdPair
+
+    static let macMemPressureDefault = ThresholdPair(warn: 80, critical: 90)
 
     static let defaults = HealthLimits(
         pids: ThresholdPair(warn: 0.70, critical: 0.90),
@@ -30,15 +35,17 @@ struct HealthLimits: Codable, Sendable, Equatable {
     )
 
     init(pids: ThresholdPair, files: ThresholdPair, inodes: ThresholdPair,
-         memPressure: ThresholdPair, ioPressure: ThresholdPair) {
+         memPressure: ThresholdPair, ioPressure: ThresholdPair,
+         macMemPressure: ThresholdPair = HealthLimits.macMemPressureDefault) {
         self.pids = pids
         self.files = files
         self.inodes = inodes
         self.memPressure = memPressure
         self.ioPressure = ioPressure
+        self.macMemPressure = macMemPressure
     }
 
-    enum CodingKeys: String, CodingKey { case pids, files, inodes, memPressure, ioPressure }
+    enum CodingKeys: String, CodingKey { case pids, files, inodes, memPressure, ioPressure, macMemPressure }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -48,7 +55,8 @@ struct HealthLimits: Codable, Sendable, Equatable {
             files: try c.decodeIfPresent(ThresholdPair.self, forKey: .files) ?? d.files,
             inodes: try c.decodeIfPresent(ThresholdPair.self, forKey: .inodes) ?? d.inodes,
             memPressure: try c.decodeIfPresent(ThresholdPair.self, forKey: .memPressure) ?? d.memPressure,
-            ioPressure: try c.decodeIfPresent(ThresholdPair.self, forKey: .ioPressure) ?? d.ioPressure
+            ioPressure: try c.decodeIfPresent(ThresholdPair.self, forKey: .ioPressure) ?? d.ioPressure,
+            macMemPressure: try c.decodeIfPresent(ThresholdPair.self, forKey: .macMemPressure) ?? d.macMemPressure
         )
     }
 }
@@ -80,9 +88,17 @@ enum ThresholdMetric: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    var help: String? {
+    /// An empty or unknown `hostOS` gives the help for all OSes.
+    func help(hostOS: String?) -> String? {
         switch self {
-        case .memPressure: return "PSI avg10. Warns on some, goes critical on full."
+        case .memPressure:
+            let mac = "Memory in use from the macOS memory status (100 − free %)."
+            let linux = "PSI avg10. Warns on some, goes critical on full."
+            switch hostOS {
+            case "darwin": return mac
+            case "linux": return linux
+            default: return "\(mac) \(linux)"
+            }
         case .ioPressure: return "PSI avg10, full."
         default: return nil
         }
@@ -110,6 +126,15 @@ enum ThresholdMetric: String, CaseIterable, Identifiable, Sendable {
         case .mem: return .mem
         case .disk: return .disk
         default: return .health
+        }
+    }
+
+    init?(_ metric: Metric) {
+        switch metric {
+        case .cpu: self = .cpu
+        case .mem: self = .mem
+        case .disk: self = .disk
+        default: return nil
         }
     }
 
@@ -241,6 +266,13 @@ struct MetricThresholds: Sendable, Equatable, Codable {
         }
     }
 
+    /// The pair that applies to a host. On macOS, memory pressure uses the
+    /// memory-in-use pair.
+    func pair(for metric: ThresholdMetric, hostOS: String?) -> ThresholdPair {
+        if metric == .memPressure && hostOS == "darwin" { return health.macMemPressure }
+        return self[metric]
+    }
+
     /// Effective thresholds for a host: each overridden metric replaces the
     /// global pair.
     static func effective(global: MetricThresholds, override: ThresholdOverrides?) -> MetricThresholds {
@@ -322,6 +354,8 @@ struct ThresholdOverrides: Codable, Sendable, Equatable {
         for m in ThresholdMetric.allCases {
             if let pair = self[m] { t[m] = pair }
         }
+        // One host has one OS, so the one key sets both pressure pairs.
+        if let p = memPressure { t.health.macMemPressure = p }
         return t
     }
 }

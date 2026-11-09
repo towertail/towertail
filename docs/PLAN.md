@@ -499,7 +499,9 @@ Each metric has an alert rule: a **sustain** duration and a **notify** level (Of
 | Unreachable | 3 poll fails    | Yes              | Edge-triggered, with a "reachable again" edge.                        |
 
 - **Sustain window.** The client keeps the per-sample levels of the last sustain period. Each sample holds its level until the next sample. A level alerts when it covers at least the **tolerance** share of the window (default 80 %), so one short dip does not restart the timer. The window resets when the host goes offline or suspended.
-- **Memory pressure** comes from Linux PSI (`mem_full` ≥ 5 % or `mem_some` ≥ 20 %), then the macOS pressure level (critical), then swap growth ≥ 1 MiB/s.
+- **Memory pressure** comes from Linux PSI (`mem_full` ≥ 5 % or `mem_some` ≥ 20 %), then the macOS memory-in-use number (`mem_pressure_pct` ≥ the macOS critical value, 90 % by default), then the macOS kernel level (critical) when the sampler is older than 1.3.0, then swap growth ≥ 1 MiB/s.
+- **Host health memory pressure.** Linux compares PSI with the `memPressure` pair (10 / 20). macOS compares `mem_pressure_pct` with the `macMemPressure` pair (warn 80 % / critical 90 %). A node override of `memPressure` sets both pairs. With a sampler older than 1.3.0, macOS uses the kernel level. A node with a `memPressure` override then alerts only on the kernel critical level.
+- **Mute.** Each threshold signal (CPU, Memory, Disk, each host-health check) has a mute, global (`thresholds.muted`) and per node (`mutedSignals`). The effective set is the union. A muted signal sends no notification and does not tint the menu-bar icon. The card still shows the value and its tint. Remote mode does not support mutes yet.
 - **Scope.** Sustain gates notifications and the menu-bar icon only. Cards always show the live value.
 - **Per-server override.** `customAlerts` on a node replaces the global rules (`thresholds.alerts` in `settings.json`). It is separate from `customThresholds`.
 

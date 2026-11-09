@@ -49,6 +49,8 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
     var customLongProc: LongProcRule?
     /// Process names to ignore on this host, added to the rule's list.
     var ignoredProcs: [String]
+    /// Signals muted on this host, added to the global mutes.
+    var mutedSignals: MutedSignals
     /// If set to a future date, notifications for this node are suppressed
     /// until that time. Past dates are ignored (the notifier does a <=
     /// check), so we don't have to actively clear expired snoozes — they
@@ -84,6 +86,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         customAlerts: AlertRules? = nil,
         customLongProc: LongProcRule? = nil,
         ignoredProcs: [String] = [],
+        mutedSignals: MutedSignals = .empty,
         snoozedUntil: Date? = nil,
         favorite: Bool = false,
         allowDiskScan: Bool = false,
@@ -107,6 +110,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         self.customAlerts = customAlerts
         self.customLongProc = customLongProc
         self.ignoredProcs = ignoredProcs
+        self.mutedSignals = mutedSignals
         self.snoozedUntil = snoozedUntil
         self.favorite = favorite
         self.allowDiskScan = allowDiskScan
@@ -119,7 +123,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         case tags, enabled
         case iconOnWarn, iconOnCritical, notifyOnWarn, notifyOnCritical
         case thresholdOverrides, customAlerts, snoozedUntil, favorite
-        case customLongProc, ignoredProcs
+        case customLongProc, ignoredProcs, mutedSignals
         case allowDiskScan
         case customThresholds
         case lastSuccessfulConnect
@@ -150,6 +154,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         try c.encodeIfPresent(customAlerts, forKey: .customAlerts)
         try c.encodeIfPresent(customLongProc, forKey: .customLongProc)
         if !ignoredProcs.isEmpty { try c.encode(ignoredProcs, forKey: .ignoredProcs) }
+        if !mutedSignals.isEmpty { try c.encode(mutedSignals, forKey: .mutedSignals) }
         try c.encodeIfPresent(snoozedUntil, forKey: .snoozedUntil)
         try c.encode(favorite, forKey: .favorite)
         try c.encode(allowDiskScan, forKey: .allowDiskScan)
@@ -188,6 +193,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         self.customAlerts = try c.decodeIfPresent(AlertRules.self, forKey: .customAlerts)
         self.customLongProc = try? c.decodeIfPresent(LongProcRule.self, forKey: .customLongProc)
         self.ignoredProcs = (try? c.decodeIfPresent([String].self, forKey: .ignoredProcs)) ?? []
+        self.mutedSignals = (try? c.decodeIfPresent(MutedSignals.self, forKey: .mutedSignals)) ?? .empty
         self.snoozedUntil = try c.decodeIfPresent(Date.self, forKey: .snoozedUntil)
         self.favorite = try c.decodeIfPresent(Bool.self, forKey: .favorite) ?? false
         self.allowDiskScan = try c.decodeIfPresent(Bool.self, forKey: .allowDiskScan) ?? false
@@ -220,6 +226,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
             && lhs.customAlerts == rhs.customAlerts
             && lhs.customLongProc == rhs.customLongProc
             && lhs.ignoredProcs == rhs.ignoredProcs
+            && lhs.mutedSignals == rhs.mutedSignals
             && lhs.snoozedUntil == rhs.snoozedUntil
             && lhs.favorite == rhs.favorite
             && lhs.allowDiskScan == rhs.allowDiskScan

@@ -10,6 +10,7 @@ import SwiftUI
 final class ServerSettings {
     var thresholds: MetricThresholds
     var alertRules: AlertRules
+    var mutedSignals: MutedSignals
     var localPollingIntervalSeconds: Int
     var sshPollingIntervalSeconds: Int
     var notificationsEnabled: Bool
@@ -31,6 +32,7 @@ final class ServerSettings {
         let p = SettingsPersistence.load(from: url)
         self.thresholds = MetricThresholds(p.thresholds)
         self.alertRules = p.thresholds.alerts
+        self.mutedSignals = p.thresholds.muted ?? .empty
         self.localPollingIntervalSeconds = max(1, min(300, p.localPollingIntervalSeconds))
         self.sshPollingIntervalSeconds = max(1, min(300, p.sshPollingIntervalSeconds))
         self.notificationsEnabled = p.notificationsEnabled
@@ -50,6 +52,7 @@ final class ServerSettings {
         let p = SettingsPersistence.load(from: url)
         self.thresholds = MetricThresholds(p.thresholds)
         self.alertRules = p.thresholds.alerts
+        self.mutedSignals = p.thresholds.muted ?? .empty
         self.localPollingIntervalSeconds = max(1, min(300, p.localPollingIntervalSeconds))
         self.sshPollingIntervalSeconds = max(1, min(300, p.sshPollingIntervalSeconds))
         self.notificationsEnabled = p.notificationsEnabled
@@ -71,7 +74,7 @@ final class ServerSettings {
     func persist() {
         let before = SettingsPersistence.load(from: url)
         var p = before
-        p.thresholds = PersistedThresholds(thresholds, alerts: alertRules)
+        p.thresholds = PersistedThresholds(thresholds, alerts: alertRules, muted: mutedSignals)
         p.localPollingIntervalSeconds = localPollingIntervalSeconds
         p.sshPollingIntervalSeconds = sshPollingIntervalSeconds
         p.notificationsEnabled = notificationsEnabled
@@ -101,6 +104,11 @@ final class ServerSettings {
         SettingsField("procsCritical") { "\($0.thresholds.procsCritical)" },
         SettingsField("zombiesWarn") { "\($0.thresholds.zombiesWarn)" },
         SettingsField("zombiesCritical") { "\($0.thresholds.zombiesCritical)" },
+        SettingsField("macMemPressure") {
+            let p = $0.thresholds.health.macMemPressure
+            return "\(p.warn)/\(p.critical)"
+        },
+        SettingsField("muted") { ($0.thresholds.muted ?? .empty).metrics.map(\.rawValue).sorted().joined(separator: ",") },
         SettingsField("localPollSec") { "\($0.localPollingIntervalSeconds)" },
         SettingsField("sshPollSec") { "\($0.sshPollingIntervalSeconds)" },
         SettingsField("notificationsEnabled") { "\($0.notificationsEnabled)" },

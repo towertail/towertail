@@ -126,11 +126,16 @@ final class ServerViewModel: Identifiable {
 
     var thresholds: MetricThresholds
     var alertRules: AlertRules
+    /// True when the node overrides memory pressure. With an old sampler
+    /// (no pressure number), only the kernel critical level then alerts.
+    var memPressureOverridden = false
+    /// Signals that do not notify or tint the menu-bar icon.
+    private(set) var mutedSignals: MutedSignals = .empty
     /// Worst sustained alert level across metrics. Drives the menu-bar icon;
     /// the card uses the raw `state`.
     private(set) var alertLevel: ThresholdTint = .nominal
-    /// True when the host shows memory pressure (PSI, macOS pressure, or
-    /// fast swap growth). Nil when the sample has no signal for it.
+    /// True when the host shows memory pressure (PSI, the macOS pressure
+    /// number or level, or fast swap growth). Nil when the sample has no signal for it.
     private(set) var memPressured: Bool?
 
     private var prevCPUTotalMs: Int64?
@@ -266,7 +271,10 @@ final class ServerViewModel: Identifiable {
             procsRoot = ps.root
         }
 
-        health = HealthStatus(info: s.health, disks: s.disks, thresholds: thresholds, longProcs: longProcs, now: s.ts)
+        health = HealthStatus(
+            info: s.health, disks: s.disks, thresholds: thresholds, longProcs: longProcs, now: s.ts,
+            kernelCriticalOnly: memPressureOverridden
+        )
         let procsV = (s.health?.procs ?? s.procs?.total).map(Double.init)
         if let procsV {
             procCount.append(MetricPoint(t: s.ts, v: procsV))
@@ -281,7 +289,7 @@ final class ServerViewModel: Identifiable {
         record(.cpu, tint(for: .cpu), at: s.ts)
         record(.mem, tint(for: .mem), at: s.ts)
         record(.disk, tint(for: .disk), at: s.ts)
-        record(.health, health.alertTint, at: s.ts)
+        record(.health, health.alertTint(muted: mutedSignals), at: s.ts)
         updateAlertLevel()
 
         let previous = state
@@ -532,6 +540,14 @@ final class ServerViewModel: Identifiable {
         updateAlertLevel()
     }
 
+    /// The health window holds levels of the old set, so it starts again.
+    func applyMuted(_ muted: MutedSignals) {
+        guard muted != mutedSignals else { return }
+        mutedSignals = muted
+        windows[.health] = nil
+        updateAlertLevel()
+    }
+
     private func updateAlertLevel() {
         let metrics = [Metric.cpu, .mem, .disk, .health].map(alertTint(for:))
         let long: ThresholdTint = !longProcs.isEmpty && longProcRule.notifies ? .warn : .nominal
@@ -547,11 +563,15 @@ final class ServerViewModel: Identifiable {
         alertLevel = .nominal
     }
 
-    /// PSI first, then the macOS pressure level, then swap growth.
+    /// PSI first, then the macOS pressure number, then the macOS pressure
+    /// level, then swap growth.
     private func memoryPressure(_ s: Sample) -> Bool? {
         defer { prevSwap = (s.swap.used, s.ts) }
         if let psi = s.health?.psi {
             return psi.memFull >= Self.psiMemFullPressure || psi.memSome >= Self.psiMemSomePressure
+        }
+        if let pct = s.health?.memPressurePct {
+            return Double(pct) >= thresholds.health.macMemPressure.critical
         }
         if let level = s.health?.memPressure {
             return level == 4
@@ -593,6 +613,7 @@ final class ServerViewModel: Identifiable {
     /// Sustained per-metric level after `alertRules`. Notifications and the
     /// menu-bar icon use it.
     func alertTint(for metric: Metric) -> ThresholdTint {
+        if mutedSignals.mutes(metric) { return .nominal }
         let rule = alertRules[metric]
         let sustained = windows[metric]?.level(sustain: rule.sustainSeconds, tolerance: alertRules.tolerance) ?? .nominal
         switch metric {
@@ -606,7 +627,7 @@ final class ServerViewModel: Identifiable {
             case nil: return sustained
             }
         case .health:
-            let inodes = health.tint(of: .inodes)
+            let inodes = health.alertTint(of: .inodes, muted: mutedSignals)
             return inodes.rank > sustained.rank ? inodes : sustained
         case .cpu, .disk, .net:
             return sustained

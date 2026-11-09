@@ -307,4 +307,64 @@ final class AlertRulesTests: XCTestCase {
         let r = LongProcRule(enabled: true, cpuPct: 50, sustainSeconds: 60, notify: .all, ignore: ["Postgres"])
         XCTAssertEqual(r.ignoreSet(adding: ["node"], ["YES"]), ["postgres", "node", "yes"])
     }
+
+    // MARK: mutes
+
+    func testMutedCPUKeepsCardTintButNotAlert() {
+        let v = vm(rules(cpu: 60))
+        v.applyMuted(MutedSignals([.cpu]))
+        for s in stride(from: 0, through: 60, by: 10) { v.ingest(sample(at: s, cpu: 97)) }
+        XCTAssertEqual(v.tint(for: .cpu), .critical)
+        XCTAssertEqual(v.alertTint(for: .cpu), .nominal)
+        XCTAssertEqual(v.alertLevel, .nominal)
+    }
+
+    func testMutedHealthSignalDoesNotTintIcon() {
+        let node = Node(displayName: "h", kind: .ssh)
+        let store = ServerStore(nodeLookup: { _ in node })
+        let v = ServerViewModel(id: node.id, hostname: "h", dnsName: "h", osArch: "x", alertRules: rules(health: 0))
+        store.register(v)
+        v.applyMuted(MutedSignals([.memPressure]))
+        v.ingest(sample(at: 0, health: HealthInfo(procs: 100, memPressurePct: 95)))
+        XCTAssertEqual(store.aggregateState, .nominal)
+        v.applyMuted(.empty)
+        v.ingest(sample(at: 10, health: HealthInfo(procs: 100, memPressurePct: 95)))
+        XCTAssertEqual(store.aggregateState, .critical)
+    }
+
+    func testApplyMutedResetsHealthWindow() {
+        let v = vm(rules(health: 60))
+        let h = HealthInfo(procs: 100, memPressurePct: 85)
+        for s in stride(from: 0, through: 60, by: 10) { v.ingest(sample(at: s, health: h)) }
+        XCTAssertEqual(v.alertTint(for: .health), .warn)
+        v.applyMuted(MutedSignals([.cpu]))
+        XCTAssertEqual(v.alertTint(for: .health), .nominal)
+        for s in stride(from: 70, through: 130, by: 10) { v.ingest(sample(at: s, health: h)) }
+        XCTAssertEqual(v.alertTint(for: .health), .warn)
+    }
+
+    func testMacPressureNumberDrivesMemoryEscalation() {
+        let v = vm(rules(mem: 120))
+        v.ingest(sample(at: 0, mem: 0.8, health: HealthInfo(procs: 100, memPressurePct: 92)))
+        XCTAssertEqual(v.memPressured, true)
+        XCTAssertEqual(v.alertTint(for: .mem), .critical)
+
+        let calm = vm(rules(mem: 60))
+        for s in stride(from: 0, through: 60, by: 10) {
+            calm.ingest(sample(at: s, mem: 0.95, health: HealthInfo(procs: 100, memPressure: 4, memPressurePct: 85)))
+        }
+        XCTAssertEqual(calm.memPressured, false)
+        XCTAssertEqual(calm.alertTint(for: .mem), .warn)
+    }
+
+    func testMutedSignalsCodable() throws {
+        let m = try JSONDecoder().decode(MutedSignals.self, from: Data(#"["memPressure","bogus","cpu"]"#.utf8))
+        XCTAssertEqual(m, MutedSignals([.cpu, .memPressure]))
+        XCTAssertEqual(String(data: try JSONEncoder().encode(m), encoding: .utf8), #"["cpu","memPressure"]"#)
+    }
+
+    func testEffectiveMutedIsUnion() {
+        let e = MutedSignals.effective(global: MutedSignals([.cpu]), node: MutedSignals([.zombies]))
+        XCTAssertEqual(e, MutedSignals([.cpu, .zombies]))
+    }
 }

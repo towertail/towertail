@@ -228,3 +228,53 @@ struct LongProcRule: Codable, Sendable, Equatable {
         Set((ignore + other.joined()).map { $0.lowercased() })
     }
 }
+
+/// Signals that send no notification and do not tint the menu-bar icon.
+/// The card still shows the value. Stored globally under `thresholds.muted`
+/// and per node as `mutedSignals`.
+struct MutedSignals: Codable, Sendable, Equatable {
+    private(set) var metrics: Set<ThresholdMetric>
+
+    static let empty = MutedSignals()
+
+    init(_ metrics: Set<ThresholdMetric> = []) {
+        self.metrics = metrics
+    }
+
+    var isEmpty: Bool { metrics.isEmpty }
+
+    func contains(_ metric: ThresholdMetric) -> Bool { metrics.contains(metric) }
+
+    /// Only CPU, memory and disk. Health is filtered per reason.
+    func mutes(_ metric: Metric) -> Bool {
+        guard let m = ThresholdMetric(metric) else { return false }
+        return metrics.contains(m)
+    }
+
+    func mutes(_ signal: HealthStatus.Signal) -> Bool {
+        guard let m = signal.metric else { return false }
+        return metrics.contains(m)
+    }
+
+    mutating func set(_ metric: ThresholdMetric, muted: Bool) {
+        if muted { metrics.insert(metric) } else { metrics.remove(metric) }
+    }
+
+    static func effective(global: MutedSignals, node: MutedSignals) -> MutedSignals {
+        MutedSignals(global.metrics.union(node.metrics))
+    }
+
+    /// Titles in the order of `ThresholdMetric.allCases`.
+    var titles: [String] { ThresholdMetric.allCases.filter(metrics.contains).map(\.title) }
+
+    /// Unknown names are skipped, so a newer client can add signals.
+    init(from decoder: Decoder) throws {
+        let names = try decoder.singleValueContainer().decode([String].self)
+        self.init(Set(names.compactMap(ThresholdMetric.init(rawValue:))))
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        try c.encode(metrics.map(\.rawValue).sorted())
+    }
+}

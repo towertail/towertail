@@ -153,6 +153,7 @@ final class SampleDecodingTests: XCTestCase {
         XCTAssertEqual(sample.procs?.items.count, 2)
         XCTAssertEqual(sample.ports?.items.count, 2)
         XCTAssertEqual(sample.health?.zombies, 219)
+        XCTAssertEqual(sample.health?.memPressurePct, 58)
     }
 
     func testRejectsNewerSchemaVersion() {
@@ -165,5 +166,14 @@ final class SampleDecodingTests: XCTestCase {
             }
             XCTAssertTrue(ctx.debugDescription.contains("v=2"), ctx.debugDescription)
         }
+    }
+
+    func testDecodesMemPressurePct() throws {
+        let base = #"{"v":1,"ts":"2026-04-20T12:00:00Z","host":{"name":"h","os":"darwin","arch":"arm64","kernel":"24","uptime_s":1,"sampler":"x"},"cpu":{"pct":10,"load_1":0,"load_5":0,"load_15":0,"cores":4},"mem":{"used":1,"total":2},"swap":{"used":0,"total":0},"health":{"procs":1,"mem_pressure":2HEALTH},"errors":[]}"#
+        let with = try SampleCodec.decode(Data(base.replacingOccurrences(of: "HEALTH", with: #","mem_pressure_pct":58"#).utf8))
+        XCTAssertEqual(with.health?.memPressurePct, 58)
+        let without = try SampleCodec.decode(Data(base.replacingOccurrences(of: "HEALTH", with: "").utf8))
+        XCTAssertNil(without.health?.memPressurePct)
+        XCTAssertEqual(without.health?.memPressure, 2)
     }
 }

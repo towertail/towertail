@@ -26,9 +26,10 @@ struct HealthStatus: Sendable, Equatable {
     }
 
     /// Tint for the health sustain window. Inodes alert at once like disk
-    /// space, and long processes have their own sustain time.
-    var alertTint: ThresholdTint {
-        let rest = reasons.filter { $0.signal != .inodes && $0.signal != .longProc }
+    /// space, and long processes have their own sustain time. Muted signals
+    /// do not count.
+    func alertTint(muted: MutedSignals) -> ThresholdTint {
+        let rest = reasons(unmuted: muted).filter { $0.signal != .inodes && $0.signal != .longProc }
         if rest.contains(where: { $0.tint == .critical }) { return .critical }
         if rest.contains(where: { $0.tint == .warn }) { return .warn }
         return .nominal
@@ -39,9 +40,19 @@ struct HealthStatus: Sendable, Equatable {
         self.info = info
     }
 
+    func reasons(unmuted muted: MutedSignals) -> [Reason] {
+        reasons.filter { !muted.mutes($0.signal) }
+    }
+
+    func alertTint(of signal: Signal, muted: MutedSignals) -> ThresholdTint {
+        muted.mutes(signal) ? .nominal : tint(of: signal)
+    }
+
+    /// `kernelCriticalOnly`: with no pressure number, only the kernel
+    /// critical level alerts. Use it when the host overrides memory pressure.
     init(
         info: HealthInfo?, disks: [DiskSample]?, thresholds t: MetricThresholds,
-        longProcs: [LongProc] = [], now: Date = Date()
+        longProcs: [LongProc] = [], now: Date = Date(), kernelCriticalOnly: Bool = false
     ) {
         var out: [Reason] = []
         func add(_ signal: Signal, _ tint: ThresholdTint, _ text: String) {
@@ -67,19 +78,27 @@ struct HealthStatus: Sendable, Equatable {
                 add(.files, level(f, warn: t.health.files.warn, critical: t.health.files.critical),
                     "Open files \(Self.pct(f)) of limit")
             }
-            if let p = h.psi {
+            if let pct = h.memPressurePct {
+                let mac = t.health.macMemPressure
+                add(.memPressure, level(Double(pct), warn: mac.warn, critical: mac.critical),
+                    "Memory pressure \(pct)%")
+            } else if let p = h.psi {
                 if p.memFull >= t.health.memPressure.critical {
                     add(.memPressure, .critical, "Memory pressure \(Int(p.memFull.rounded()))%")
                 } else if p.memSome >= t.health.memPressure.warn {
                     add(.memPressure, .warn, "Memory pressure \(Int(p.memSome.rounded()))%")
                 }
+            } else {
+                // A sampler older than 1.3.0 sends only the kernel level.
+                switch h.memPressure {
+                case 4: add(.memPressure, .critical, "Memory pressure critical")
+                case 2 where !kernelCriticalOnly: add(.memPressure, .warn, "Memory pressure high")
+                default: break
+                }
+            }
+            if let p = h.psi {
                 add(.ioPressure, level(p.ioFull, warn: t.health.ioPressure.warn, critical: t.health.ioPressure.critical),
                     "I/O pressure \(Int(p.ioFull.rounded()))%")
-            }
-            switch h.memPressure {
-            case 4: add(.memPressure, .critical, "Memory pressure critical")
-            case 2: add(.memPressure, .warn, "Memory pressure high")
-            default: break
             }
         }
         for d in disks ?? [] {
@@ -124,5 +143,21 @@ struct HealthStatus: Sendable, Equatable {
 
     private static func pct(_ f: Double) -> String {
         "\(Int((f * 100).rounded()))%"
+    }
+}
+
+extension HealthStatus.Signal {
+    /// The threshold metric of the signal. `.longProc` has none.
+    var metric: ThresholdMetric? {
+        switch self {
+        case .procs: return .procs
+        case .zombies: return .zombies
+        case .pids: return .pids
+        case .files: return .files
+        case .memPressure: return .memPressure
+        case .ioPressure: return .ioPressure
+        case .inodes: return .inodes
+        case .longProc: return nil
+        }
     }
 }

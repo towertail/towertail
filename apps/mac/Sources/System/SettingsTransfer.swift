@@ -214,7 +214,10 @@ enum SettingsTransfer {
 
         if selection.globalThresholds {
             let currentAlerts = out.thresholds.alerts
+            let currentMuted = out.thresholds.muted
             out.thresholds = imported.globalThresholds
+            // An export from before mutes keeps the current mutes.
+            if imported.globalThresholds.muted == nil { out.thresholds.muted = currentMuted }
             // An export from before alert rules keeps the current rules.
             if imported.globalThresholds.legacySustain != nil {
                 out.thresholds.alerts = currentAlerts
@@ -268,11 +271,13 @@ enum SettingsTransfer {
                 if out.nodes[i].thresholdOverrides != inc.thresholdOverrides
                     || out.nodes[i].customAlerts != inc.customAlerts
                     || out.nodes[i].customLongProc != inc.customLongProc
-                    || out.nodes[i].ignoredProcs != inc.ignoredProcs {
+                    || out.nodes[i].ignoredProcs != inc.ignoredProcs
+                    || out.nodes[i].mutedSignals != inc.mutedSignals {
                     out.nodes[i].thresholdOverrides = inc.thresholdOverrides
                     out.nodes[i].customAlerts = inc.customAlerts
                     out.nodes[i].customLongProc = inc.customLongProc
                     out.nodes[i].ignoredProcs = inc.ignoredProcs
+                    out.nodes[i].mutedSignals = inc.mutedSignals
                     updated += 1
                 }
                 // Reindex in case displayName was the match path and

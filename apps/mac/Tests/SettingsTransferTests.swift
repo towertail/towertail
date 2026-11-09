@@ -297,4 +297,48 @@ final class SettingsTransferTests: XCTestCase {
         XCTAssertEqual(merged.nodes.first?.customLongProc, .defaults)
         XCTAssertEqual(report.serverThresholdsUpdated, 1)
     }
+
+    func testMutedSignalsRoundTrip() throws {
+        var p = base(nodes: [Node(displayName: "db", kind: .ssh, mutedSignals: MutedSignals([.zombies]))])
+        p.thresholds.muted = MutedSignals([.cpu])
+        let back = try SettingsTransfer.decode(SettingsTransfer.encode(SettingsExport.from(p)))
+        XCTAssertEqual(back.globalThresholds.muted, MutedSignals([.cpu]))
+        XCTAssertEqual(back.nodes.first?.mutedSignals, MutedSignals([.zombies]))
+    }
+
+    func testImportWithoutMutedKeepsCurrentGlobalMutes() throws {
+        var b = base()
+        b.thresholds.muted = MutedSignals([.memPressure])
+        var json = try JSONSerialization.jsonObject(with: SettingsTransfer.encode(makeExport(nodes: []))) as! [String: Any]
+        var t = json["globalThresholds"] as! [String: Any]
+        t["muted"] = nil
+        json["globalThresholds"] = t
+        let ex = try SettingsTransfer.decode(JSONSerialization.data(withJSONObject: json))
+        XCTAssertNil(ex.globalThresholds.muted)
+        var sel = ImportSelection.allDefaults
+        sel.globalThresholds = true
+        XCTAssertEqual(SettingsTransfer.apply(ex, to: b, selection: sel).merged.thresholds.muted, MutedSignals([.memPressure]))
+    }
+
+    func testBadMutedValueKeepsSettings() throws {
+        var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(base())) as! [String: Any]
+        var t = json["thresholds"] as! [String: Any]
+        t["muted"] = 42
+        json["thresholds"] = t
+        let p = try JSONDecoder().decode(PersistedSettings.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertNil(p.thresholds.muted)
+        XCTAssertEqual(p.thresholds.cpuWarn, 0.5)
+    }
+
+    func testImportServerThresholdsCopiesMutedSignals() {
+        let existing = Node(displayName: "db", kind: .ssh, sshUser: "ops", sshHost: "db")
+        var incoming = existing
+        incoming.mutedSignals = MutedSignals([.cpu])
+        var sel = ImportSelection.allDefaults
+        sel.servers = false
+        sel.serverThresholds = true
+        let (merged, report) = SettingsTransfer.apply(makeExport(nodes: [incoming]), to: base(nodes: [existing]), selection: sel)
+        XCTAssertEqual(merged.nodes.first?.mutedSignals, MutedSignals([.cpu]))
+        XCTAssertEqual(report.serverThresholdsUpdated, 1)
+    }
 }

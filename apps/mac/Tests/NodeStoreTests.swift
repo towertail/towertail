@@ -59,4 +59,23 @@ final class NodeStoreTests: XCTestCase {
         let reloaded = NodeStore.loadFromDisk(url: url)
         XCTAssertEqual(reloaded.nodes.first?.enabled, false)
     }
+
+    func testMutedSignalsRoundTripAndOldNodeDecodesEmpty() throws {
+        let url = tempURL()
+        let store = NodeStore(nodes: [], url: url)
+        let n = Node(displayName: "db", kind: .ssh, sshUser: "ops", sshHost: "db", mutedSignals: MutedSignals([.memPressure]))
+        store.add(n)
+        XCTAssertEqual(NodeStore.loadFromDisk(url: url).nodes.first?.mutedSignals, MutedSignals([.memPressure]))
+
+        let plain = try JSONEncoder().encode(Node(displayName: "db", kind: .ssh))
+        XCTAssertFalse(String(decoding: plain, as: UTF8.self).contains("mutedSignals"))
+        XCTAssertEqual(try JSONDecoder().decode(Node.self, from: plain).mutedSignals, .empty)
+    }
+
+    func testNodeEqualityIncludesMutedSignals() {
+        let a = Node(displayName: "db", kind: .ssh)
+        var b = a
+        b.mutedSignals = MutedSignals([.cpu])
+        XCTAssertNotEqual(a, b)
+    }
 }

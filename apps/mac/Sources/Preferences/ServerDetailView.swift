@@ -26,10 +26,11 @@ struct ServerDetailView: View {
     enum Tab: Hashable { case connection, alerts }
     private enum Field: Hashable { case name, user, host, port, password }
 
-    init(node: Node, tester: ServerTester, onEditDefaults: (() -> Void)? = nil) {
+    init(node: Node, tester: ServerTester, onEditDefaults: (() -> Void)? = nil, tab: Tab = .connection) {
         self.tester = tester
         self.onEditDefaults = onEditDefaults
         _draft = State(initialValue: node)
+        _tab = State(initialValue: tab)
         _portText = State(initialValue: node.sshPort.map(String.init) ?? "")
     }
 
@@ -256,10 +257,16 @@ struct ServerDetailView: View {
                 }
             }
 
-            Section("Host health") {
+            Section {
                 ForEach(ThresholdMetric.health) { m in
                     overrideRow(m)
                 }
+            } header: {
+                Text("Host health")
+            } footer: {
+                Text("A muted signal sends no notification and does not tint the menu-bar icon. The card still shows its value.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section {
@@ -333,13 +340,21 @@ struct ServerDetailView: View {
     }
 
     private func overrideRow(_ m: ThresholdMetric) -> some View {
-        let global = settings.thresholds[m]
-        let defaultText = "\(m.format(global.warn)) / \(m.format(global.critical))"
+        let os = vm?.hostOS ?? ""
+        let global = settings.thresholds.pair(for: m, hostOS: os)
+        var defaultText = "\(m.format(global.warn)) / \(m.format(global.critical))"
+        if m == .memPressure && os != "darwin" && os != "linux" {
+            let mac = settings.thresholds.health.macMemPressure
+            defaultText = "PSI \(defaultText) · macOS \(m.format(mac.warn)) / \(m.format(mac.critical))"
+        }
         let override = draft.thresholdOverrides?[m]
+        let inherited = settings.mutedSignals.contains(m)
+        let muted = inherited || draft.mutedSignals.contains(m)
         return HStack(spacing: 10) {
             Text(m.title)
+                .foregroundStyle(muted ? .secondary : .primary)
                 .frame(width: 116, alignment: .leading)
-                .help(m.help ?? "")
+                .help(m.help(hostOS: os) ?? "")
             if override != nil {
                 ThresholdPairFields(
                     pair: Binding(get: { draft.thresholdOverrides?[m] ?? global }, set: { setOverride(m, $0) }),
@@ -355,6 +370,9 @@ struct ServerDetailView: View {
                 Text("default").font(.caption).foregroundStyle(.tertiary)
             }
             Spacer()
+            if muted {
+                Text("muted").font(.caption).foregroundStyle(ThresholdTint.warn.color)
+            }
             if override != nil {
                 Button("Revert") { setOverride(m, nil) }
                     .buttonStyle(.link)
@@ -362,6 +380,14 @@ struct ServerDetailView: View {
                 Button("Override") { setOverride(m, global) }
                     .controlSize(.small)
             }
+            MuteToggle(
+                muted: Binding(get: { draft.mutedSignals.contains(m) }, set: {
+                    draft.mutedSignals.set(m, muted: $0)
+                    commit()
+                }),
+                inheritedMute: inherited,
+                unsupported: backend is RemoteBackend
+            )
         }
     }
 
@@ -430,6 +456,9 @@ struct ServerDetailView: View {
         n.notifyOnCritical = draft.notifyOnCritical
         n.thresholdOverrides = draft.thresholdOverrides
         n.customAlerts = draft.customAlerts
+        n.customLongProc = draft.customLongProc
+        n.ignoredProcs = draft.ignoredProcs
+        n.mutedSignals = draft.mutedSignals
 
         var passwordChanged = false
         if n.kind == .ssh, n.authMethod == .password, !password.isEmpty, password != savedPassword {

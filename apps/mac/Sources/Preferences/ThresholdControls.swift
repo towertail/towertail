@@ -175,3 +175,36 @@ struct FleetBar: View {
             .offset(x: x - 1, y: 3)
     }
 }
+
+/// Bell that mutes one signal: no notification and no menu-bar tint.
+struct MuteToggle: View {
+    @Binding var muted: Bool
+    /// Muted in the global defaults. The host cannot unmute it.
+    var inheritedMute: Bool = false
+    /// The backend cannot store mutes (Remote mode).
+    var unsupported: Bool = false
+
+    static let width: CGFloat = 26
+
+    private var shown: Bool { muted || inheritedMute }
+
+    var body: some View {
+        Button { muted.toggle() } label: {
+            Image(systemName: shown ? "bell.slash" : "bell")
+                .foregroundStyle(shown ? ThresholdTint.warn.color : Color.secondary)
+                .frame(width: Self.width, height: 22)
+                .background(RoundedRectangle(cornerRadius: 5).fill(shown ? ThresholdTint.warn.color.opacity(0.18) : .clear))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .disabled(inheritedMute || unsupported)
+        .help(helpText)
+        .accessibilityLabel(shown ? "Unmute notifications" : "Mute notifications")
+    }
+
+    private var helpText: String {
+        if unsupported { return "Not supported by this server" }
+        if inheritedMute { return "Muted in the Alerts defaults" }
+        return "Mute notifications and the menu-bar tint for this signal. The card still shows the value."
+    }
+}

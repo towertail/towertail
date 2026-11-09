@@ -211,7 +211,7 @@ private struct ServerRow: View {
                     .foregroundStyle(ThresholdTint.warn.color)
                     .help("Sampler auto-update failed")
             }
-            if node.thresholdOverrides != nil || node.customAlerts != nil {
+            if node.thresholdOverrides != nil || node.customAlerts != nil || !node.mutedSignals.isEmpty {
                 Text("custom")
                     .font(.caption2)
                     .padding(.horizontal, 4)

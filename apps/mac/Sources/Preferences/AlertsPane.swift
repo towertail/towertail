@@ -8,7 +8,13 @@ struct AlertsPane: View {
     @Environment(ServerSettings.self) private var settings
     @Environment(ServerStore.self) private var serverStore
     @Environment(NodeStore.self) private var nodeStore
-    @State private var showMoreHealth = false
+    @Environment(\.backend) private var backend
+    @State private var showMoreHealth: Bool
+
+    init(onShowServer: @escaping (UUID) -> Void, showMoreHealth: Bool = false) {
+        self.onShowServer = onShowServer
+        _showMoreHealth = State(initialValue: showMoreHealth)
+    }
 
     private static let repeatChoices = [0, 30, 60, 300, 900, 1800, 3600]
 
@@ -37,7 +43,7 @@ struct AlertsPane: View {
             } header: {
                 sectionHeader("Default thresholds", detail: "Every server uses these unless it overrides a metric.")
             } footer: {
-                Text("Memory goes critical at once under memory pressure. Without pressure, high memory only warns.")
+                Text("Memory goes critical at once under memory pressure. Without pressure, high memory only warns. The bell mutes a signal on all servers.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -48,11 +54,21 @@ struct AlertsPane: View {
                 metricRow(.zombies, rule: nil)
                 DisclosureGroup("More checks", isExpanded: $showMoreHealth) {
                     ForEach(ThresholdMetric.moreHealth) { m in
-                        healthRow(m, note: m == .inodes ? "At once" : nil)
+                        if m == .memPressure {
+                            healthRow(m, title: "Memory pressure · Linux PSI", help: "PSI avg10. Warns on some, goes critical on full.", note: nil)
+                            healthRow(m, title: "Memory pressure · macOS", help: "Memory in use (100 − free %)",
+                                      pair: macPressureBinding, note: nil)
+                        } else {
+                            healthRow(m, note: m == .inodes ? "At once" : nil)
+                        }
                     }
                 }
             } header: {
                 sectionHeader("Host health", detail: "Process counts use a log scale.")
+            } footer: {
+                Text("On macOS, pressure is the share of memory in use.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section {
@@ -124,11 +140,12 @@ struct AlertsPane: View {
     private var columnHeader: some View {
         HStack(spacing: ThresholdColumns.spacing) {
             Text("Metric").frame(width: ThresholdColumns.name, alignment: .leading)
-            Text("Fleet now").frame(maxWidth: .infinity, alignment: .leading)
+            Text("Fleet now").lineLimit(1).frame(minWidth: 72, maxWidth: .infinity, alignment: .leading)
             Text("Warn").frame(width: ThresholdColumns.value)
             Text("Critical").frame(width: ThresholdColumns.value)
             Text("Alert after").frame(width: ThresholdColumns.sustain, alignment: .leading)
             Text("Notify").frame(width: ThresholdColumns.notify, alignment: .leading)
+            Text("").frame(width: MuteToggle.width)
         }
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -145,7 +162,7 @@ struct AlertsPane: View {
                     .foregroundStyle(summary.tint == .stale ? Color.secondary : summary.tint.color)
             }
             .frame(width: ThresholdColumns.name, alignment: .leading)
-            bar.frame(maxWidth: .infinity)
+            bar.frame(minWidth: 72, maxWidth: .infinity)
             ThresholdPairFields(
                 pair: pairBinding(m),
                 scale: m.scale,
@@ -153,6 +170,7 @@ struct AlertsPane: View {
                 range: m.range
             )
             timingControls(rule)
+            muteToggle(m)
         }
     }
 
@@ -161,6 +179,7 @@ struct AlertsPane: View {
             Text(title).frame(width: ThresholdColumns.name, alignment: .leading)
             Spacer()
             timingControls(rule)
+            Color.clear.frame(width: MuteToggle.width, height: 1)
         }
     }
 
@@ -178,17 +197,29 @@ struct AlertsPane: View {
         }
     }
 
-    private func healthRow(_ m: ThresholdMetric, note: String?) -> some View {
+    private func healthRow(_ m: ThresholdMetric, title: String? = nil, help: String? = nil,
+                           pair: Binding<ThresholdPair>? = nil, note: String?) -> some View {
         HStack(spacing: ThresholdColumns.spacing) {
-            Text(m.title)
-                .help(m.help ?? "")
+            Text(title ?? m.title)
+                .help(help ?? m.help(hostOS: nil) ?? "")
             Spacer()
-            ThresholdPairFields(pair: pairBinding(m), scale: m.scale, unit: m.unit, range: m.range)
+            ThresholdPairFields(pair: pair ?? pairBinding(m), scale: m.scale, unit: m.unit, range: m.range)
             Text(note ?? "")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(width: ThresholdColumns.sustain + ThresholdColumns.spacing + ThresholdColumns.notify, alignment: .leading)
+            muteToggle(m)
         }
+    }
+
+    private func muteToggle(_ m: ThresholdMetric) -> some View {
+        MuteToggle(
+            muted: Binding(get: { settings.mutedSignals.contains(m) }, set: {
+                settings.mutedSignals.set(m, muted: $0)
+                settings.persist()
+            }),
+            unsupported: backend is RemoteBackend
+        )
     }
 
     private func sectionHeader(_ title: String, detail: String) -> some View {
@@ -227,7 +258,9 @@ struct AlertsPane: View {
     }
 
     private var overriddenNodes: [Node] {
-        nodeStore.nodes.filter { $0.thresholdOverrides != nil || $0.customAlerts != nil || $0.customLongProc != nil }
+        nodeStore.nodes.filter {
+            $0.thresholdOverrides != nil || $0.customAlerts != nil || $0.customLongProc != nil || !$0.mutedSignals.isEmpty
+        }
     }
 
     private func overrideSummary(_ node: Node) -> String {
@@ -237,6 +270,7 @@ struct AlertsPane: View {
         }
         if node.customAlerts != nil { parts.append("custom alert timing") }
         if node.customLongProc != nil { parts.append("custom long-running rule") }
+        if !node.mutedSignals.isEmpty { parts.append("muted: " + node.mutedSignals.titles.joined(separator: ", ")) }
         return parts.joined(separator: ", ")
     }
 
@@ -270,6 +304,13 @@ struct AlertsPane: View {
     private func pairBinding(_ m: ThresholdMetric) -> Binding<ThresholdPair> {
         Binding(get: { settings.thresholds[m] }, set: {
             settings.thresholds[m] = $0
+            settings.persist()
+        })
+    }
+
+    private var macPressureBinding: Binding<ThresholdPair> {
+        Binding(get: { settings.thresholds.health.macMemPressure }, set: {
+            settings.thresholds.health.macMemPressure = $0
             settings.persist()
         })
     }
