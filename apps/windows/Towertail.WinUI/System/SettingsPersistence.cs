@@ -24,6 +24,8 @@ public sealed class PersistedSettings
     public int NotifyDebounceSeconds { get; set; } = 60;
     public bool AutoUpdateSamplersEnabled { get; set; }
     public int PostWakeGraceSeconds { get; set; } = 15;
+    /// <summary>Global long-running process rule. Same key as the Mac.</summary>
+    public LongProcRule LongProc { get; set; } = LongProcRule.Defaults;
 
     /// <summary>
     /// Per-OS sub-objects. We read our own (<c>windows</c>) and preserve all others verbatim

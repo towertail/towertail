@@ -116,7 +116,8 @@ public sealed class RemoteBackend : IBackend, IDiskScanUpdates
             NotifyCritical: ServerSettings.NotifyCritical,
             NotifyDebounceSeconds: ServerSettings.NotifyDebounceSeconds,
             AutoUpdateSamplersEnabled: ServerSettings.AutoUpdateSamplersEnabled,
-            PostWakeGraceSeconds: ServerSettings.PostWakeGraceSeconds);
+            PostWakeGraceSeconds: ServerSettings.PostWakeGraceSeconds,
+            LongProc: ServerSettings.LongProc);
         var applied = await _client.PutSettingsAsync(wire, ct).ConfigureAwait(false);
         ApplyServerSettings(applied);
     }
@@ -159,6 +160,7 @@ public sealed class RemoteBackend : IBackend, IDiskScanUpdates
         ServerSettings.NotifyDebounceSeconds = s.NotifyDebounceSeconds;
         ServerSettings.AutoUpdateSamplersEnabled = s.AutoUpdateSamplersEnabled;
         ServerSettings.PostWakeGraceSeconds = s.PostWakeGraceSeconds;
+        if (s.LongProc is { } rule) ServerSettings.LongProc = rule;
     }
 
     private Node ToNode(RemoteNode rn)
@@ -177,6 +179,8 @@ public sealed class RemoteBackend : IBackend, IDiskScanUpdates
         Tags = rn.Tags?.ToList() ?? new List<string>(),
         Enabled = rn.Enabled,
         Favorite = rn.Favorite,
+        CustomLongProc = rn.CustomLongProc,
+        IgnoredProcs = rn.IgnoredProcs ?? Array.Empty<string>(),
     };
 
     private RemoteNode ToRemote(Node n) => new(
@@ -188,7 +192,9 @@ public sealed class RemoteBackend : IBackend, IDiskScanUpdates
         Tags: n.Tags,
         Enabled: n.Enabled,
         Favorite: n.Favorite,
-        AllowDiskScan: AllowsDiskScan(n.Id));
+        AllowDiskScan: AllowsDiskScan(n.Id),
+        CustomLongProc: n.CustomLongProc,
+        IgnoredProcs: n.IgnoredProcs);
 
     public async ValueTask DisposeAsync()
     {

@@ -87,6 +87,7 @@ public sealed class AppEnvironment
         }
         collector.Start();
         servers.StartStaleWatchdog(collector.UiMarshaller);
+        _ = servers.HydrateAllProcsAsync(collector.UiMarshaller);
 
         // Disk scans go through the server only in remote mode.
         var remote = backend as RemoteBackend;

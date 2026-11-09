@@ -18,6 +18,9 @@ public sealed class SettingsExport
     public string SourcePlatform { get; set; } = "windows";
     public GeneralBlock General { get; set; } = new();
     public PersistedThresholds GlobalThresholds { get; set; } = PersistedThresholds.Defaults;
+    /// <summary>Imported with <c>globalThresholds</c>. Null in files from older builds.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public LongProcRule? LongProc { get; set; }
     public NotificationsBlock Notifications { get; set; } = new();
     public List<Node> Nodes { get; set; } = new();
 
@@ -99,6 +102,7 @@ public static class SettingsTransfer
                 MenuBarIconStyle = p.Platform.Windows.TrayIconStyle,
             },
             GlobalThresholds = p.Thresholds,
+            LongProc = p.LongProc,
             Notifications = new SettingsExport.NotificationsBlock
             {
                 NotificationsEnabled = p.NotificationsEnabled,
@@ -130,6 +134,7 @@ public static class SettingsTransfer
             var alerts = export.GlobalThresholds.Alerts ?? p.Thresholds.AlertsOrMigrated(p.SshPollingIntervalSeconds);
             p.Thresholds = export.GlobalThresholds;
             p.Thresholds.Alerts = alerts;
+            if (export.LongProc is { } rule) p.LongProc = rule;
         }
         if (options.ImportNotifications)
         {

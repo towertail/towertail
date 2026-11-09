@@ -9,7 +9,7 @@ namespace Towertail.WinUI.SystemServices;
 public sealed class ThresholdNotifier
 {
     public enum Severity { Nominal, Warn, Critical }
-    public enum Metric { Cpu, Mem, Disk, Health, NoData }
+    public enum Metric { Cpu, Mem, Disk, Health, NoData, LongProc }
 
     private readonly ServerSettings _settings;
     private readonly NodeStore _nodes;
@@ -18,6 +18,9 @@ public sealed class ThresholdNotifier
     private readonly object _lock = new();
     /// <summary>Hosts in the no-data state, so each episode notifies one time.</summary>
     private readonly HashSet<Guid> _noDataActive = new();
+    /// <summary>Keys flagged at the last evaluation, so each process notifies one time.</summary>
+    private readonly Dictionary<Guid, HashSet<LongProcKey>> _longProcSeen = new();
+    private readonly Dictionary<(Guid, LongProcKey), DateTime> _longProcFired = new();
 
     public event EventHandler<NotifyPayload>? Raised;
 
@@ -94,6 +97,47 @@ public sealed class ThresholdNotifier
         }
         var age = since - (vm.LastIngestAt ?? vm.StaleBaseline);
         Raised?.Invoke(this, new NotifyPayload(node.Id, Metric.NoData, Severity.Critical, age.TotalSeconds, NoDataBody(vm, since)));
+    }
+
+    /// <summary>One warn notification for each newly flagged long-running process.</summary>
+    public void EvaluateLongProcs(ServerViewModel vm, DateTime? at = null)
+    {
+        var now = at ?? DateTime.UtcNow;
+        var node = vm.Node;
+        var current = vm.LongProcs.Select(p => p.Key).ToHashSet();
+        List<LongProc> fresh;
+        lock (_lock)
+        {
+            var previous = _longProcSeen.GetValueOrDefault(node.Id) ?? new HashSet<LongProcKey>();
+            _longProcSeen[node.Id] = current;
+            foreach (var key in _longProcFired.Keys.ToList())
+                if (key.Item1 == node.Id && !current.Contains(key.Item2)
+                    && (now - _longProcFired[key]).TotalSeconds >= _settings.NotifyDebounceSeconds)
+                    _longProcFired.Remove(key);
+            fresh = vm.LongProcs.Where(p => !previous.Contains(p.Key)).ToList();
+        }
+        if (fresh.Count == 0 || !vm.LongProcRule.Notifies) return;
+        if (!_settings.NotificationsEnabled || !_settings.NotifyWarn || !node.NotifyOnWarn) return;
+        if (node.IsSnoozed) return;
+        foreach (var p in fresh)
+        {
+            lock (_lock)
+            {
+                if (_longProcFired.TryGetValue((node.Id, p.Key), out var last)
+                    && (now - last).TotalSeconds < _settings.NotifyDebounceSeconds)
+                    continue;
+                _longProcFired[(node.Id, p.Key)] = now;
+            }
+            Raised?.Invoke(this, new NotifyPayload(node.Id, Metric.LongProc, Severity.Warn, p.CpuPct, LongProcBody(p, now)));
+        }
+    }
+
+    /// <summary>"OrbStack Helper (pid 812) at 85% CPU for 32m. Started 3d ago."</summary>
+    public static string LongProcBody(LongProc p, DateTime now)
+    {
+        var s = $"{p.ShortName} (pid {p.Pid}) at {Math.Round(p.CpuPct):0}% CPU for {ShortDuration.Text(p.HighFor(now))}.";
+        if (p.StartTs is DateTime start) s += $" Started {ShortDuration.Age(now - start.ToUniversalTime())} ago.";
+        return s;
     }
 
     /// <summary>"No sample for 3m. Last error: timeout."</summary>

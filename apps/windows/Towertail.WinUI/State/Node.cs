@@ -53,6 +53,11 @@ public sealed record Node
     public AlertRules? CustomAlerts { get; init; }
     public DateTime? SnoozedUntil { get; init; }
     public bool Favorite { get; init; }
+    /// <summary>Per-node long-running process rule; null inherits the global rule.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public LongProcRule? CustomLongProc { get; init; }
+    /// <summary>Process names to ignore on this host, added to the rule's list.</summary>
+    public IReadOnlyList<string> IgnoredProcs { get; init; } = Array.Empty<string>();
 
     public AlertRules EffectiveAlerts(AlertRules global) => CustomAlerts ?? global;
 

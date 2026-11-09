@@ -4,7 +4,7 @@ namespace Towertail.WinUI.State;
 
 public enum HealthLevel { Nominal, Warn, Critical }
 
-public enum HealthSignal { Procs, Zombies, Pids, Files, MemPressure, IoPressure, Inodes }
+public enum HealthSignal { Procs, Zombies, Pids, Files, MemPressure, IoPressure, Inodes, LongProc }
 
 public sealed record HealthReason(HealthSignal Signal, HealthLevel Level, string Text);
 
@@ -45,7 +45,16 @@ public sealed record HealthStatus(
     public HealthLevel LevelExcluding(HealthSignal signal)
         => Reasons.Where(r => r.Signal != signal).Select(r => r.Level).DefaultIfEmpty(HealthLevel.Nominal).Max();
 
-    public static HealthStatus Evaluate(HealthInfo? h, IReadOnlyList<DiskSample>? disks, MetricThresholds t)
+    /// <summary>
+    /// Level for the health sustain window. Inodes alert at once like disk space, and long
+    /// processes have their own sustain time.
+    /// </summary>
+    public HealthLevel AlertWindowLevel
+        => Reasons.Where(r => r.Signal is not (HealthSignal.Inodes or HealthSignal.LongProc))
+            .Select(r => r.Level).DefaultIfEmpty(HealthLevel.Nominal).Max();
+
+    public static HealthStatus Evaluate(HealthInfo? h, IReadOnlyList<DiskSample>? disks, MetricThresholds t,
+        IReadOnlyList<LongProc>? longProcs = null, DateTime? now = null)
     {
         var reasons = new List<HealthReason>();
 
@@ -89,11 +98,18 @@ public sealed record HealthStatus(
             }
         }
 
+        foreach (var p in longProcs ?? Array.Empty<LongProc>())
+            Add(reasons, HealthSignal.LongProc, HealthLevel.Warn, LongProcText(p, now ?? DateTime.UtcNow));
+
         // Stable sort: critical first, rule order kept within a level.
         var ordered = reasons.OrderByDescending(r => r.Level).ToList();
         var level = ordered.Count == 0 ? HealthLevel.Nominal : ordered[0].Level;
         return new HealthStatus(level, ordered, h, disks);
     }
+
+    /// <summary>"OrbStack Helper 85% for 3h".</summary>
+    public static string LongProcText(LongProc p, DateTime now)
+        => $"{p.ShortName} {Math.Round(p.CpuPct):0}% for {ShortDuration.Text(p.HighFor(now))}";
 
     /// <summary>Level for one disk's inode use (fraction 0–1).</summary>
     public static HealthLevel InodeLevel(double frac) => Ratio(frac, InodesWarn, InodesCritical);

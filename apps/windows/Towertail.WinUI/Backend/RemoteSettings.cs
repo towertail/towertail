@@ -21,7 +21,13 @@ public sealed record RemoteNode(
     [property: JsonPropertyName("enabled")] bool Enabled,
     [property: JsonPropertyName("favorite")] bool Favorite,
     // Opt-in for disk scans through the server. Default off.
-    [property: JsonPropertyName("allowDiskScan")] bool AllowDiskScan = false);
+    [property: JsonPropertyName("allowDiskScan")] bool AllowDiskScan = false,
+    // Null when the server is older than long-running process alerts. Null is not
+    // sent, so the server keeps its stored values.
+    [property: JsonPropertyName("customLongProc"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    Towertail.WinUI.State.LongProcRule? CustomLongProc = null,
+    [property: JsonPropertyName("ignoredProcs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<string>? IgnoredProcs = null);
 
 public sealed record RemoteServerSettings(
     [property: JsonPropertyName("thresholds")] RemoteThresholds Thresholds,
@@ -32,7 +38,10 @@ public sealed record RemoteServerSettings(
     [property: JsonPropertyName("notifyCritical")] bool NotifyCritical,
     [property: JsonPropertyName("notifyDebounceSeconds")] int NotifyDebounceSeconds,
     [property: JsonPropertyName("autoUpdateSamplersEnabled")] bool AutoUpdateSamplersEnabled,
-    [property: JsonPropertyName("postWakeGraceSeconds")] int PostWakeGraceSeconds);
+    [property: JsonPropertyName("postWakeGraceSeconds")] int PostWakeGraceSeconds,
+    // Null when the server is older than long-running process alerts.
+    [property: JsonPropertyName("longProc"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    Towertail.WinUI.State.LongProcRule? LongProc = null);
 
 public sealed record RemoteThresholds(
     [property: JsonPropertyName("cpuWarn")] double CpuWarn,

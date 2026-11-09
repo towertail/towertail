@@ -112,14 +112,14 @@ public sealed class AlertRulesJsonConverter : JsonConverter<AlertRules>
         writer.WriteEndObject();
     }
 
-    public static string NotifyName(AlertNotify n) => n switch
+    internal static string NotifyName(AlertNotify n) => n switch
     {
         AlertNotify.Off => "off",
         AlertNotify.Critical => "critical",
         _ => "all",
     };
 
-    private static AlertNotify? ParseNotify(string? s) => s switch
+    internal static AlertNotify? ParseNotify(string? s) => s switch
     {
         "off" => AlertNotify.Off,
         "critical" => AlertNotify.Critical,
@@ -127,14 +127,91 @@ public sealed class AlertRulesJsonConverter : JsonConverter<AlertRules>
         _ => null,
     };
 
-    private static int? TryInt(JsonNode? n)
+    internal static int? TryInt(JsonNode? n)
         => n is JsonValue v && v.TryGetValue<double>(out var d) ? (int)Math.Round(d) : null;
 
-    private static double? TryDouble(JsonNode? n)
+    internal static double? TryDouble(JsonNode? n)
         => n is JsonValue v && v.TryGetValue<double>(out var d) ? d : null;
 
-    private static string? TryString(JsonNode? n)
+    internal static string? TryString(JsonNode? n)
         => n is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
+}
+
+/// <summary>
+/// Finds one process that uses a lot of CPU for a long time (settings.json <c>longProc</c>
+/// and <c>nodes[].customLongProc</c>). <c>CpuPct</c> uses the <c>top</c> convention: 100 is
+/// one full core. Mirrors LongProcRule in the Mac app and the server.
+/// </summary>
+[JsonConverter(typeof(LongProcRuleJsonConverter))]
+public sealed record LongProcRule
+{
+    /// <summary>Fraction of the window that must be high. Fixed in all products.</summary>
+    public const double Tolerance = 0.8;
+    public const double MinCpuPct = 10, MaxCpuPct = 800;
+    public const int MinSustainSeconds = 60, MaxSustainSeconds = 86_400;
+
+    public bool Enabled { get; init; } = true;
+    public double CpuPct { get; init; } = 50;
+    public int SustainSeconds { get; init; } = 1800;
+    /// <summary>Only Off and All apply: a long process is a warning.</summary>
+    public AlertNotify Notify { get; init; } = AlertNotify.All;
+    /// <summary>Process names, matched exactly without case.</summary>
+    public IReadOnlyList<string> Ignore { get; init; } = Array.Empty<string>();
+
+    public static LongProcRule Defaults => new();
+
+    public LongProcRule Clamped() => this with
+    {
+        CpuPct = Math.Clamp(CpuPct, MinCpuPct, MaxCpuPct),
+        SustainSeconds = Math.Clamp(SustainSeconds, MinSustainSeconds, MaxSustainSeconds),
+    };
+
+    public bool Notifies => Notify != AlertNotify.Off;
+
+    public string LogValue => Enabled ? $"{(int)CpuPct}%/{SustainSeconds}s/{AlertRulesJsonConverter.NotifyName(Notify)}" : "off";
+
+    /// <summary>Lowercase union of the rule list and the other lists.</summary>
+    public IReadOnlySet<string> IgnoreSet(params IEnumerable<string>[] other)
+        => Ignore.Concat(other.SelectMany(o => o)).Select(n => n.ToLowerInvariant()).ToHashSet();
+
+    public bool Equals(LongProcRule? other)
+        => other is not null && Enabled == other.Enabled && CpuPct == other.CpuPct
+           && SustainSeconds == other.SustainSeconds && Notify == other.Notify && Ignore.SequenceEqual(other.Ignore);
+
+    public override int GetHashCode() => HashCode.Combine(Enabled, CpuPct, SustainSeconds, Notify, Ignore.Count);
+}
+
+/// <summary>Each field decodes on its own, so one bad value keeps the defaults of the others.</summary>
+public sealed class LongProcRuleJsonConverter : JsonConverter<LongProcRule>
+{
+    public override LongProcRule Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (JsonNode.Parse(ref reader) is not JsonObject obj) return LongProcRule.Defaults;
+        var d = LongProcRule.Defaults;
+        return new LongProcRule
+        {
+            Enabled = obj["enabled"] is JsonValue e && e.TryGetValue<bool>(out var b) ? b : d.Enabled,
+            CpuPct = AlertRulesJsonConverter.TryDouble(obj["cpuPct"]) ?? d.CpuPct,
+            SustainSeconds = AlertRulesJsonConverter.TryInt(obj["sustainSeconds"]) ?? d.SustainSeconds,
+            Notify = AlertRulesJsonConverter.ParseNotify(AlertRulesJsonConverter.TryString(obj["notify"])) ?? d.Notify,
+            Ignore = obj["ignore"] is JsonArray a
+                ? a.Select(AlertRulesJsonConverter.TryString).OfType<string>().ToArray()
+                : d.Ignore,
+        }.Clamped();
+    }
+
+    public override void Write(Utf8JsonWriter writer, LongProcRule value, JsonSerializerOptions options)
+    {
+        writer.WriteStartObject();
+        writer.WriteBoolean("enabled", value.Enabled);
+        writer.WriteNumber("cpuPct", value.CpuPct);
+        writer.WriteNumber("sustainSeconds", value.SustainSeconds);
+        writer.WriteString("notify", AlertRulesJsonConverter.NotifyName(value.Notify));
+        writer.WriteStartArray("ignore");
+        foreach (var n in value.Ignore) writer.WriteStringValue(n);
+        writer.WriteEndArray();
+        writer.WriteEndObject();
+    }
 }
 
 /// <summary>

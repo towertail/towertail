@@ -35,6 +35,12 @@ public sealed partial class ServerStore : ObservableObject
         _settings = settings;
         _history = history;
         foreach (var n in nodes.Nodes) Servers.Add(CreateVm(n));
+        settings.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName != nameof(ServerSettings.LongProc)) return;
+            foreach (var vm in Servers) vm.ApplyLongProc(vm.Node, _settings.LongProc);
+            UpdateAggregateLevel();
+        };
 
         nodes.NodeAdded += (_, id) =>
         {
@@ -50,7 +56,12 @@ public sealed partial class ServerStore : ObservableObject
         nodes.NodeUpdated += (_, id) =>
         {
             var n = nodes.ById(id); if (n == null) return;
-            var vm = Find(id); if (vm != null) vm.UpdateNode(n);
+            var vm = Find(id);
+            if (vm != null)
+            {
+                vm.UpdateNode(n);
+                vm.ApplyLongProc(n, _settings.LongProc);
+            }
             UpdateAggregateLevel();
         };
     }
@@ -72,6 +83,7 @@ public sealed partial class ServerStore : ObservableObject
 
         vm.Thresholds = MetricThresholds.Effective(_settings.Thresholds, vm.Node.CustomThresholds);
         vm.AlertRules = vm.Node.EffectiveAlerts(_settings.Alerts);
+        vm.ApplyLongProc(vm.Node, _settings.LongProc);
         var priorHealth = vm.Health.Level;
         vm.Ingest(sample);
         if (vm.Health.Level != priorHealth)
@@ -106,6 +118,7 @@ public sealed partial class ServerStore : ObservableObject
             _history.AppendProcs(nodeId, sample.Ts, p.Root, p.Items);
 
         _notifier?.Evaluate(vm);
+        _notifier?.EvaluateLongProcs(vm);
         UpdateAggregateLevel();
     }
 
@@ -181,14 +194,26 @@ public sealed partial class ServerStore : ObservableObject
         foreach (var vm in Servers)
         {
             if (vm.Node.IsSnoozed) continue;
-            var host = Enum.GetValues<AlertMetric>().Max(vm.AlertLevel);
+            var host = vm.HostAlertLevel();
             if (host == HealthLevel.Critical && vm.Node.IconOnCritical) { level = HealthLevel.Critical; break; }
             if (host == HealthLevel.Warn && vm.Node.IconOnWarn) level = HealthLevel.Warn;
         }
         AggregateLevel = level;
     }
 
-    public async Task EnsureProcsHydratedAsync(Guid nodeId)
+    /// <summary>
+    /// Hydrates the process history of all hosts. The long-running tracker needs it at launch.
+    /// <paramref name="marshal"/> moves each replay to the UI thread; null runs it in place.
+    /// </summary>
+    public async Task HydrateAllProcsAsync(Func<Action, Task>? marshal)
+    {
+        foreach (var vm in Servers.ToList())
+            await EnsureProcsHydratedAsync(vm.Node.Id, marshal).ConfigureAwait(false);
+        if (marshal is null) UpdateAggregateLevel();
+        else await marshal(UpdateAggregateLevel).ConfigureAwait(false);
+    }
+
+    public async Task EnsureProcsHydratedAsync(Guid nodeId, Func<Action, Task>? marshal = null)
     {
         lock (_hydrationLock)
             if (!_hydratedProcs.Add(nodeId)) return;
@@ -196,13 +221,14 @@ public sealed partial class ServerStore : ObservableObject
         var vm = Find(nodeId);
         if (vm == null) return;
         var rows = await Task.Run(() => _history.LoadRecentProcs(nodeId)).ConfigureAwait(false);
-        vm.Procs.Replace(rows.Select(r => new ProcSeries.Snapshot(r.T, r.Root, r.Items)));
-        vm.Procs.Hydrated = true;
+        if (marshal is null) vm.HydrateProcs(rows);
+        else await marshal(() => vm.HydrateProcs(rows)).ConfigureAwait(false);
     }
 
     private ServerViewModel CreateVm(Node n)
     {
         var vm = new ServerViewModel(n);
+        vm.ApplyLongProc(n, _settings.LongProc);
         // Rehydrate metric series from disk so a restart doesn't look "cold".
         var points = _history.LoadRecent(n.Id);
         // A host with history counts as connected, so the watchdog checks it after a restart.

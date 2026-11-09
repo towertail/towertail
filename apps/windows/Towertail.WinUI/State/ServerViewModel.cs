@@ -26,6 +26,14 @@ public sealed partial class ServerViewModel : ObservableObject
     [ObservableProperty] private int? _procsSkippedTotal;
     /// <summary>Set when the watchdog finds no sample for longer than the limit.</summary>
     [ObservableProperty] private DateTime? _noDataSince;
+    /// <summary>Processes over the long-running rule, sorted by CPU.</summary>
+    [ObservableProperty] private IReadOnlyList<LongProc> _longProcs = Array.Empty<LongProc>();
+
+    /// <summary>Effective rule for this host: <c>Node.CustomLongProc ?? settings.LongProc</c>.</summary>
+    public LongProcRule LongProcRule { get; private set; } = LongProcRule.Defaults;
+    /// <summary>Lowercase <c>rule.Ignore ∪ global.Ignore ∪ Node.IgnoredProcs</c>.</summary>
+    public IReadOnlySet<string> IgnoredProcs { get; private set; } = new HashSet<string>();
+    private readonly LongProcTracker _longProcTracker = new();
 
     /// <summary>Local clock (UTC) at the last ingest. The host clock can be wrong, so the stale check does not use <c>sample.ts</c>.</summary>
     public DateTime? LastIngestAt { get; private set; }
@@ -148,15 +156,16 @@ public sealed partial class ServerViewModel : ObservableObject
 
         if (s.Procs is { } p)
         {
+            LongProcs = _longProcTracker.Observe(p.Items, p.Skipped == true, now, LongProcRule, IgnoredProcs);
             ProcsSkippedTotal = p.Skipped == true ? p.Total : null;
             if (p.Skipped != true) Procs.Append(now, p.Root, p.Items);
         }
 
         if (s.Health is { } h)
             ProcCountSeries.Append(now, h.Procs);
-        Health = HealthStatus.Evaluate(s.Health, s.Disks, Thresholds);
+        Health = HealthStatus.Evaluate(s.Health, s.Disks, Thresholds, LongProcs, now);
         foreach (var (m, w) in _windows)
-            w.Record(now, m == AlertMetric.Health ? Health.LevelExcluding(HealthSignal.Inodes) : RawLevel(m),
+            w.Record(now, m == AlertMetric.Health ? Health.AlertWindowLevel : RawLevel(m),
                      AlertRules.For(m).SustainSeconds);
 
         if (s.Ports is { } pl)
@@ -192,6 +201,42 @@ public sealed partial class ServerViewModel : ObservableObject
             AlertMetric.Health => (HealthLevel)Math.Max((int)sustained, (int)Health.TintOf(HealthSignal.Inodes)),
             _ => sustained,
         };
+    }
+
+    /// <summary>Worst sustained level of the host, with a warn for long processes when the rule notifies.</summary>
+    public HealthLevel HostAlertLevel()
+    {
+        var level = Enum.GetValues<AlertMetric>().Max(AlertLevel);
+        return LongProcs.Count > 0 && LongProcRule.Notifies && level < HealthLevel.Warn ? HealthLevel.Warn : level;
+    }
+
+    /// <summary>
+    /// Push the effective long-running rule. The global ignore list applies also under a
+    /// custom rule. Ignored names leave the list at once. Returns true on a change.
+    /// </summary>
+    public bool ApplyLongProc(Node node, LongProcRule global)
+    {
+        var rule = node.CustomLongProc ?? global;
+        var ignored = rule.IgnoreSet(global.Ignore, node.IgnoredProcs);
+        if (rule == LongProcRule && ignored.SetEquals(IgnoredProcs)) return false;
+        LongProcRule = rule;
+        IgnoredProcs = ignored;
+        if (!rule.Enabled) _longProcTracker.Reset();
+        LongProcs = rule.Enabled
+            ? LongProcs.Where(p => !ignored.Contains(p.Name.ToLowerInvariant())).ToList()
+            : Array.Empty<LongProc>();
+        return true;
+    }
+
+    /// <summary>Load stored process history and replay it, so a restart does not wait the sustain time again.</summary>
+    public void HydrateProcs(IReadOnlyList<HistoryStore.ProcHistoryRow> rows)
+    {
+        Procs.Replace(rows.Select(r => new ProcSeries.Snapshot(r.T, r.Root, r.Items)));
+        Procs.Hydrated = true;
+        _longProcTracker.Reset();
+        foreach (var r in rows)
+            if (r.Items.Count > 0)
+                LongProcs = _longProcTracker.Observe(r.Items, false, r.T, LongProcRule, IgnoredProcs);
     }
 
     /// <summary>A failed poll: the host is offline with this reason.</summary>
@@ -230,6 +275,8 @@ public sealed partial class ServerViewModel : ObservableObject
     {
         foreach (var w in _windows.Values) w.Reset();
         _lastSwapUsed = null;
+        _longProcTracker.Reset();
+        LongProcs = Array.Empty<LongProc>();
     }
 
     private static HealthLevel Level(double? pct, double warn, double critical)

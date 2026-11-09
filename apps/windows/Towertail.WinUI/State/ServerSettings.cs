@@ -20,6 +20,7 @@ public sealed partial class ServerSettings : ObservableObject
     [ObservableProperty] private int _notifyDebounceSeconds = 60;
     [ObservableProperty] private bool _autoUpdateSamplersEnabled;
     [ObservableProperty] private int _postWakeGraceSeconds = 15;
+    [ObservableProperty] private LongProcRule _longProc = LongProcRule.Defaults;
 
     private readonly string _path;
 
@@ -68,6 +69,7 @@ public sealed partial class ServerSettings : ObservableObject
         p.NotifyDebounceSeconds = NotifyDebounceSeconds;
         p.AutoUpdateSamplersEnabled = AutoUpdateSamplersEnabled;
         p.PostWakeGraceSeconds = PostWakeGraceSeconds;
+        p.LongProc = LongProc;
         SettingsPersistence.Save(p, _path);
     }
 
@@ -88,5 +90,6 @@ public sealed partial class ServerSettings : ObservableObject
         NotifyDebounceSeconds = p.NotifyDebounceSeconds;
         AutoUpdateSamplersEnabled = p.AutoUpdateSamplersEnabled;
         PostWakeGraceSeconds = Math.Clamp(p.PostWakeGraceSeconds, 0, 300);
+        LongProc = p.LongProc;
     }
 }
