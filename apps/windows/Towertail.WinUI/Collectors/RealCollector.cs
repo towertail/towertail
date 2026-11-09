@@ -150,8 +150,9 @@ public sealed class RealCollector : ICollector, IAsyncDisposable
                     {
                         _failureStreak = Math.Min(_failureStreak + 1, 10);
                         _logger.Warning($"collector[{_node.DisplayName}] fail #{_failureStreak}: {ex.Message}");
-                        if (_marshal is null) _servers.MarkUnreachable(_id);
-                        else await _marshal(() => _servers.MarkUnreachable(_id)).ConfigureAwait(false);
+                        var reason = ex.Message;
+                        if (_marshal is null) _servers.MarkUnreachable(_id, reason);
+                        else await _marshal(() => _servers.MarkUnreachable(_id, reason)).ConfigureAwait(false);
                     }
                 }
 

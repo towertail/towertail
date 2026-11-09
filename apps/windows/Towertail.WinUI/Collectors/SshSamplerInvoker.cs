@@ -1,4 +1,5 @@
 using Renci.SshNet;
+using Renci.SshNet.Common;
 using Towertail.WinUI.State;
 
 namespace Towertail.WinUI.Collectors;
@@ -27,15 +28,41 @@ public sealed class SshSamplerInvoker : ISamplerInvoker
         _onTrust = onTrust;
     }
 
+    /// <summary>Limit for one remote command. The connect has its own 15 s limit.</summary>
+    public static readonly TimeSpan CommandTimeout = TimeSpan.FromSeconds(20);
+    /// <summary>Limit for one whole poll: connect, run and read.</summary>
+    public static readonly TimeSpan PollDeadline = TimeSpan.FromSeconds(25);
+
     public Task<Sample> RunOnceAsync(CancellationToken ct = default)
-        => RunOnThreadPool(() =>
+        => WithDeadline(RunOnThreadPool(() =>
         {
             using var client = Connect();
-            var output = client.RunCommand($"{_remotePath} --once");
-            if (output.ExitStatus != 0)
-                throw new InvalidOperationException($"sampler exit {output.ExitStatus}: {output.Error.Trim()}");
-            return SampleCodec.Decode(output.Result);
-        }, ct);
+            using var cmd = client.CreateCommand($"{_remotePath} --once");
+            cmd.CommandTimeout = CommandTimeout;
+            var result = cmd.Execute();
+            if (cmd.ExitStatus != 0)
+                throw new InvalidOperationException($"sampler exit {cmd.ExitStatus}: {cmd.Error.Trim()}");
+            return SampleCodec.Decode(result);
+        }, ct), PollDeadline, ct);
+
+    /// <summary>
+    /// Waits for the poll at most <paramref name="deadline"/>. All timeouts
+    /// become one <see cref="TimeoutException"/> with the message "timeout",
+    /// so the collector reports the same reason as the Mac app.
+    /// </summary>
+    public static async Task<T> WithDeadline<T>(Task<T> work, TimeSpan deadline, CancellationToken ct)
+    {
+        try
+        {
+            return await work.WaitAsync(deadline, ct).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is TimeoutException or SshOperationTimeoutException)
+        {
+            // The abandoned poll ends on its own at CommandTimeout.
+            _ = work.ContinueWith(t => _ = t.Exception, TaskScheduler.Default);
+            throw new TimeoutException("timeout", e);
+        }
+    }
 
     public async IAsyncEnumerable<Sample> StreamAsync(
         TimeSpan interval,

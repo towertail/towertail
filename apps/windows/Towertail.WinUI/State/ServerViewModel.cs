@@ -24,6 +24,20 @@ public sealed partial class ServerViewModel : ObservableObject
     [ObservableProperty] private HealthStatus _health = HealthStatus.Nominal;
     /// <summary>Latest <c>procs.total</c> when the sampler skipped the per-process scan.</summary>
     [ObservableProperty] private int? _procsSkippedTotal;
+    /// <summary>Set when the watchdog finds no sample for longer than the limit.</summary>
+    [ObservableProperty] private DateTime? _noDataSince;
+
+    /// <summary>Local clock (UTC) at the last ingest. The host clock can be wrong, so the stale check does not use <c>sample.ts</c>.</summary>
+    public DateTime? LastIngestAt { get; private set; }
+    /// <summary>
+    /// Start of the stale check when there is no newer ingest: VM creation and
+    /// each wake from sleep, so a wake does not flag hosts.
+    /// </summary>
+    public DateTime StaleBaseline { get; private set; } = DateTime.UtcNow;
+    /// <summary>Reason of the last failed poll, for the no-data text.</summary>
+    public string? LastError { get; private set; }
+    /// <summary>True after one good sample (or stored history). The watchdog skips other hosts.</summary>
+    public bool EverConnected { get; set; }
 
     /// <summary>Effective thresholds for this host. Set by <see cref="ServerStore"/> before each ingest.</summary>
     public MetricThresholds Thresholds { get; set; } = MetricThresholds.Defaults;
@@ -75,8 +89,13 @@ public sealed partial class ServerViewModel : ObservableObject
 
     public void UpdateNode(Node node) => Node = node;
 
-    public void Ingest(Sample s)
+    public void Ingest(Sample s, DateTime? receivedAt = null)
     {
+        LastIngestAt = receivedAt ?? DateTime.UtcNow;
+        NoDataSince = null;
+        LastError = null;
+        OfflineReason = null;
+        EverConnected = true;
         var now = s.Ts;
         LastSeen = now;
         SamplerVersion = s.Host.Sampler;
@@ -173,6 +192,37 @@ public sealed partial class ServerViewModel : ObservableObject
             AlertMetric.Health => (HealthLevel)Math.Max((int)sustained, (int)Health.TintOf(HealthSignal.Inodes)),
             _ => sustained,
         };
+    }
+
+    /// <summary>A failed poll: the host is offline with this reason.</summary>
+    public void MarkOffline(string reason)
+    {
+        ResetAlerts();
+        LastError = reason;
+        // The watchdog owns the reason text while no data arrives.
+        if (NoDataSince == null) OfflineReason = reason;
+    }
+
+    /// <summary>Restart the stale check from <paramref name="now"/>, e.g. after a wake from sleep.</summary>
+    public void ResetStaleBaseline(DateTime now) => StaleBaseline = now;
+
+    /// <summary>
+    /// Watchdog step: mark the host offline when no sample arrived for longer
+    /// than <paramref name="limit"/>. Returns true when this call starts the no-data state.
+    /// </summary>
+    public bool CheckStale(DateTime now, TimeSpan limit)
+    {
+        if (!EverConnected) return false;
+        var reference = LastIngestAt is DateTime l && l > StaleBaseline ? l : StaleBaseline;
+        var age = now - reference;
+        if (age <= limit) return false;
+        var reason = $"no data for {ShortDuration.Text(age)}";
+        if (LastError is { Length: > 0 } err) reason += $" ({err})";
+        OfflineReason = reason;
+        if (NoDataSince != null) return false;
+        NoDataSince = now;
+        ResetAlerts();
+        return true;
     }
 
     /// <summary>Drop sustain history, e.g. after the host was unreachable.</summary>

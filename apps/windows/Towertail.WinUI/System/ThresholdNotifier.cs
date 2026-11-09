@@ -9,13 +9,15 @@ namespace Towertail.WinUI.SystemServices;
 public sealed class ThresholdNotifier
 {
     public enum Severity { Nominal, Warn, Critical }
-    public enum Metric { Cpu, Mem, Disk, Health }
+    public enum Metric { Cpu, Mem, Disk, Health, NoData }
 
     private readonly ServerSettings _settings;
     private readonly NodeStore _nodes;
     private readonly Dictionary<(Guid, Metric), Severity> _state = new();
     private readonly Dictionary<(Guid, Metric), DateTime> _lastNotified = new();
     private readonly object _lock = new();
+    /// <summary>Hosts in the no-data state, so each episode notifies one time.</summary>
+    private readonly HashSet<Guid> _noDataActive = new();
 
     public event EventHandler<NotifyPayload>? Raised;
 
@@ -69,6 +71,37 @@ public sealed class ThresholdNotifier
         }
 
         Raised?.Invoke(this, new NotifyPayload(node.Id, m, sev, value, body));
+    }
+
+    /// <summary>One critical notification when a host enters the no-data state.</summary>
+    public void EvaluateNoData(ServerViewModel vm, DateTime now)
+    {
+        var node = vm.Node;
+        if (vm.NoDataSince is not DateTime since)
+        {
+            lock (_lock) _noDataActive.Remove(node.Id);
+            return;
+        }
+        lock (_lock)
+            if (!_noDataActive.Add(node.Id)) return;
+        if (!_settings.NotificationsEnabled || !_settings.NotifyCritical || !node.NotifyOnCritical) return;
+        if (node.IsSnoozed) return;
+        lock (_lock)
+        {
+            var last = _lastNotified.GetValueOrDefault((node.Id, Metric.NoData), DateTime.MinValue);
+            if ((now - last).TotalSeconds < _settings.NotifyDebounceSeconds) return;
+            _lastNotified[(node.Id, Metric.NoData)] = now;
+        }
+        var age = since - (vm.LastIngestAt ?? vm.StaleBaseline);
+        Raised?.Invoke(this, new NotifyPayload(node.Id, Metric.NoData, Severity.Critical, age.TotalSeconds, NoDataBody(vm, since)));
+    }
+
+    /// <summary>"No sample for 3m. Last error: timeout."</summary>
+    public static string NoDataBody(ServerViewModel vm, DateTime since)
+    {
+        var s = $"No sample for {ShortDuration.Text(since - (vm.LastIngestAt ?? vm.StaleBaseline))}.";
+        if (vm.LastError is { Length: > 0 } err) s += $" Last error: {err}.";
+        return s;
     }
 
     public sealed record NotifyPayload(Guid NodeId, Metric Metric, Severity Severity, double Value, string? Body = null);

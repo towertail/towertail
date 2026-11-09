@@ -23,6 +23,11 @@ public sealed partial class ServerStore : ObservableObject
     private Logger? _logger;
     private readonly object _hydrationLock = new();
     private readonly HashSet<Guid> _hydratedProcs = new();
+    private CancellationTokenSource? _watchdog;
+    private DateTime? _lastStaleCheck;
+
+    /// <summary>Watchdog period.</summary>
+    public static readonly TimeSpan StaleCheckEvery = TimeSpan.FromSeconds(5);
 
     public ServerStore(NodeStore nodes, ServerSettings settings, HistoryStore history)
     {
@@ -105,10 +110,65 @@ public sealed partial class ServerStore : ObservableObject
     }
 
     /// <summary>A failed poll breaks the sample stream, so sustain must start again.</summary>
-    public void MarkUnreachable(Guid nodeId)
+    public void MarkUnreachable(Guid nodeId, string? reason = null)
     {
-        Find(nodeId)?.ResetAlerts();
+        var vm = Find(nodeId);
+        if (vm == null) return;
+        if (reason is { Length: > 0 }) vm.MarkOffline(reason);
+        else vm.ResetAlerts();
         UpdateAggregateLevel();
+    }
+
+    /// <summary>No-data limit: three missed polls, but not less than 30 s.</summary>
+    public static TimeSpan StaleLimit(int pollSeconds) => TimeSpan.FromSeconds(Math.Max(3 * pollSeconds, 30));
+
+    /// <summary>
+    /// Watchdog step for all enabled hosts. A tick that comes much later than
+    /// the period means the PC slept, so each host starts its check again.
+    /// </summary>
+    public void CheckStale(DateTime now)
+    {
+        if (_lastStaleCheck is DateTime last && now - last > 3 * StaleCheckEvery)
+            foreach (var vm in Servers) vm.ResetStaleBaseline(now);
+        _lastStaleCheck = now;
+        foreach (var vm in Servers)
+        {
+            if (!vm.Node.Enabled) continue;
+            var limit = StaleLimit(_settings.PollingInterval(vm.Node.Kind));
+            if (vm.CheckStale(now, limit))
+                _logger?.Warning($"state host={vm.Node.DisplayName} -> offline reason=\"no data\" age_s={(int)(now - (vm.LastIngestAt ?? vm.StaleBaseline)).TotalSeconds}");
+            _notifier?.EvaluateNoData(vm, now);
+        }
+        UpdateAggregateLevel();
+    }
+
+    /// <summary>
+    /// Runs <see cref="CheckStale"/> every 5 s until <see cref="StopStaleWatchdog"/>.
+    /// <paramref name="marshal"/> moves each check to the UI thread; null runs it in place.
+    /// </summary>
+    public void StartStaleWatchdog(Func<Action, Task>? marshal)
+    {
+        if (_watchdog != null) return;
+        var cts = _watchdog = new CancellationTokenSource();
+        _ = Task.Run(async () =>
+        {
+            using var timer = new PeriodicTimer(StaleCheckEvery);
+            try
+            {
+                while (await timer.WaitForNextTickAsync(cts.Token).ConfigureAwait(false))
+                {
+                    if (marshal is null) CheckStale(DateTime.UtcNow);
+                    else await marshal(() => CheckStale(DateTime.UtcNow)).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException) { }
+        });
+    }
+
+    public void StopStaleWatchdog()
+    {
+        _watchdog?.Cancel();
+        _watchdog = null;
     }
 
     /// <summary>
@@ -145,6 +205,8 @@ public sealed partial class ServerStore : ObservableObject
         var vm = new ServerViewModel(n);
         // Rehydrate metric series from disk so a restart doesn't look "cold".
         var points = _history.LoadRecent(n.Id);
+        // A host with history counts as connected, so the watchdog checks it after a restart.
+        vm.EverConnected = points.Count > 0;
         foreach (var p in points)
         {
             if (p.Cpu is double c) vm.CpuSeries.Append(p.T, c);
