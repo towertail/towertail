@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,6 +30,10 @@ type Node struct {
 	Favorite         bool              `json:"favorite"`
 	// AllowDiskScan lets a user start a disk scan on the node. It is off by default.
 	AllowDiskScan bool `json:"allowDiskScan"`
+	// CustomLongProc replaces the org rule for this node.
+	CustomLongProc *LongProcRule `json:"customLongProc,omitempty"`
+	// IgnoredProcs is added to the ignore lists of the rule and the org.
+	IgnoredProcs []string `json:"ignoredProcs,omitempty"`
 }
 
 // MarshalJSON ensures Tags is always an array on the wire — never
@@ -67,9 +72,97 @@ type ServerSettings struct {
 	NotifyDebounceSeconds       int              `json:"notifyDebounceSeconds"`
 	// NotifyCooldownSeconds is the minimum time between two alerts with
 	// the same node, metric and tint. 0 means the default (10 min).
-	NotifyCooldownSeconds     int  `json:"notifyCooldownSeconds"`
-	AutoUpdateSamplersEnabled bool `json:"autoUpdateSamplersEnabled"`
-	PostWakeGraceSeconds      int  `json:"postWakeGraceSeconds"`
+	NotifyCooldownSeconds     int          `json:"notifyCooldownSeconds"`
+	AutoUpdateSamplersEnabled bool         `json:"autoUpdateSamplersEnabled"`
+	PostWakeGraceSeconds      int          `json:"postWakeGraceSeconds"`
+	LongProc                  LongProcRule `json:"longProc"`
+}
+
+// UnmarshalJSON sets the default long-process rule when the JSON has no
+// longProc key and the target has no rule yet.
+func (s *ServerSettings) UnmarshalJSON(b []byte) error {
+	type alias ServerSettings
+	a := alias(*s)
+	if a.LongProc.CPUPct == 0 {
+		a.LongProc = DefaultLongProcRule()
+	}
+	if err := json.Unmarshal(b, &a); err != nil {
+		return err
+	}
+	*s = ServerSettings(a)
+	return nil
+}
+
+// LongProcRule finds a process that stays over a CPU limit for a long
+// time. It mirrors the Swift LongProcRule.
+type LongProcRule struct {
+	Enabled        bool    `json:"enabled"`
+	CPUPct         float64 `json:"cpuPct"`
+	SustainSeconds int     `json:"sustainSeconds"`
+	// Notify is "off" or "all".
+	Notify string `json:"notify"`
+	// Ignore holds process names, matched exactly without case.
+	Ignore []string `json:"ignore"`
+}
+
+// LongProcTolerance is the fraction of the window that must be high.
+const LongProcTolerance = 0.8
+
+const (
+	longProcCPUMin, longProcCPUMax         = 10.0, 800.0
+	longProcSustainMin, longProcSustainMax = 60, 86_400
+)
+
+func DefaultLongProcRule() LongProcRule {
+	return LongProcRule{Enabled: true, CPUPct: 50, SustainSeconds: 1800, Notify: "all", Ignore: []string{}}
+}
+
+// Clamped gives the rule with the values in their ranges.
+func (r LongProcRule) Clamped() LongProcRule {
+	r.CPUPct = min(max(r.CPUPct, longProcCPUMin), longProcCPUMax)
+	r.SustainSeconds = min(max(r.SustainSeconds, longProcSustainMin), longProcSustainMax)
+	if r.Notify != "off" {
+		r.Notify = "all"
+	}
+	if r.Ignore == nil {
+		r.Ignore = []string{}
+	}
+	return r
+}
+
+func (r LongProcRule) Notifies() bool { return r.Notify != "off" }
+
+// IgnoreSet gives the lowercase union of the rule list and the other lists.
+func (r LongProcRule) IgnoreSet(other ...[]string) map[string]bool {
+	out := map[string]bool{}
+	for _, l := range append([][]string{r.Ignore}, other...) {
+		for _, n := range l {
+			out[strings.ToLower(n)] = true
+		}
+	}
+	return out
+}
+
+// UnmarshalJSON decodes each field on its own. A missing or bad field
+// gets the default, so an old or partial rule stays usable.
+func (r *LongProcRule) UnmarshalJSON(b []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	out := DefaultLongProcRule()
+	field := func(key string, v any) {
+		if m, ok := raw[key]; ok {
+			_ = json.Unmarshal(m, v)
+		}
+	}
+	field("enabled", &out.Enabled)
+	field("cpuPct", &out.CPUPct)
+	field("sustainSeconds", &out.SustainSeconds)
+	field("notify", &out.Notify)
+	field("ignore", &out.Ignore)
+	*r = out.Clamped()
+	return nil
 }
 
 // DefaultServerSettings returns the factory defaults documented in
@@ -90,6 +183,7 @@ func DefaultServerSettings() ServerSettings {
 		NotifyCooldownSeconds:       600,
 		AutoUpdateSamplersEnabled:   true,
 		PostWakeGraceSeconds:        30,
+		LongProc:                    DefaultLongProcRule(),
 	}
 }
 

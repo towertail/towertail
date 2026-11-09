@@ -282,4 +282,7 @@ func (s *Server) evalAlerter(ctx context.Context, orgID, nodeID uuid.UUID, b cli
 		n = &node
 	}
 	s.alerter.Evaluate(ctx, orgID, nodeID, n, cpu, mem, maxDisk)
+	if len(b.Procs) > 0 {
+		s.alerter.EvaluateProcs(ctx, orgID, nodeID, n, b.Procs, b.Sample.TS)
+	}
 }

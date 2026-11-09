@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -85,7 +86,7 @@ func contractSettings(t *testing.T, h storeHarness) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != DefaultServerSettings() {
+	if !reflect.DeepEqual(got, DefaultServerSettings()) {
 		t.Errorf("first read: %+v, want defaults", got)
 	}
 	got.Thresholds.CPUWarn = 0.5
@@ -97,10 +98,10 @@ func contractSettings(t *testing.T, h storeHarness) {
 	if err := h.s.PutSettings(ctx, org, got); err != nil {
 		t.Fatal(err)
 	}
-	if again, _ := h.s.GetSettings(ctx, org); again != got {
+	if again, _ := h.s.GetSettings(ctx, org); !reflect.DeepEqual(again, got) {
 		t.Errorf("read: %+v, want %+v", again, got)
 	}
-	if o, _ := h.s.GetSettings(ctx, other); o != DefaultServerSettings() {
+	if o, _ := h.s.GetSettings(ctx, other); !reflect.DeepEqual(o, DefaultServerSettings()) {
 		t.Errorf("other org: %+v", o)
 	}
 }

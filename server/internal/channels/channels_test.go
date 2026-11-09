@@ -112,6 +112,36 @@ func TestSlack(t *testing.T) {
 	}
 }
 
+// Each channel shows the Detail of a long-process alert.
+func TestLongProcDetail(t *testing.T) {
+	const detail = "OrbStack Helper (pid 812) at 85% CPU for 32m."
+	slack, discord, pd, wh := newHook(t), newHook(t), newHook(t), newHook(t)
+	r := newTestRouter(channel(store.ChannelSlack, slack.srv.URL), channel(store.ChannelDiscord, discord.srv.URL),
+		channel(store.ChannelPagerDuty, "key"), channel(store.ChannelWebhook, wh.srv.URL))
+	r.senders[store.ChannelPagerDuty] = pagerDuty{p: newPoster(false), url: pd.srv.URL}
+	a := testAlert()
+	a.Metric, a.Instance, a.From, a.To, a.Value, a.Detail = "long_proc", "812/1799000000", wire.TintOK, wire.TintWarn, 85, detail
+	if err := r.Notify(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	if att := slack.json(t, 0)["attachments"].([]any)[0].(map[string]any); att["text"] != detail {
+		t.Errorf("slack: %v", att)
+	}
+	if e := discord.json(t, 0)["embeds"].([]any)[0].(map[string]any); e["description"] != detail {
+		t.Errorf("discord: %v", e)
+	}
+	m := pd.json(t, 0)
+	if p := m["payload"].(map[string]any); p["summary"] != "web-1: long-running process - "+detail {
+		t.Errorf("pagerduty: %v", p)
+	}
+	if !strings.HasSuffix(m["dedup_key"].(string), ":long_proc:812/1799000000") {
+		t.Errorf("pagerduty dedup key: %v", m["dedup_key"])
+	}
+	if w := wh.json(t, 0); w["text"] != detail || w["metric"] != "long_proc" {
+		t.Errorf("webhook: %v", w)
+	}
+}
+
 func TestDiscord(t *testing.T) {
 	h := newHook(t)
 	r := newTestRouter(channel(store.ChannelDiscord, h.srv.URL))

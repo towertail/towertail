@@ -2,6 +2,7 @@ package alerter
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -170,5 +171,82 @@ func TestAlerter_PerNodeThresholdsOverrideGlobal(t *testing.T) {
 	}
 	if events[0].Tint != string(TintWarn) || events[0].Metric != "cpu" {
 		t.Errorf("expected CPU warn, got %+v", events[0])
+	}
+}
+
+// runProcs sends one sample each minute, with the clock at the sample time.
+func runProcs(e *Engine, clock *testClock, org, id uuid.UUID, node *store.Node, from, through int, items func(int) []clickhouse.ProcRow) {
+	for m := from; m <= through; m++ {
+		clock.mu.Lock()
+		clock.t = lpAt(m)
+		clock.mu.Unlock()
+		e.EvaluateProcs(context.Background(), org, id, node, items(m), lpAt(m))
+	}
+}
+
+func TestAlerter_LongProcEvents(t *testing.T) {
+	clock := newClock()
+	sink := &capturingSink{}
+	st := &recordingStore{}
+	e := New(nil, clock, sink, st, newFakeConfig(store.DefaultServerSettings()))
+	org, id := uuid.New(), uuid.New()
+	high := func(int) []clickhouse.ProcRow { return []clickhouse.ProcRow{orb(85)} }
+
+	runProcs(e, clock, org, id, nil, 0, 29, high)
+	if got := sink.snapshot(); len(got) != 0 {
+		t.Fatalf("before the sustain time: %+v", got)
+	}
+	runProcs(e, clock, org, id, nil, 30, 40, high)
+	got := sink.snapshot()
+	if len(got) != 1 || got[0].Kind != "long_process" || got[0].Metric != "long_proc" || got[0].Tint != string(TintWarn) {
+		t.Fatalf("want one long_process warn event, got %+v", got)
+	}
+	runProcs(e, clock, org, id, nil, 41, 41, func(int) []clickhouse.ProcRow { return []clickhouse.ProcRow{lpProc(1, 1, "sh", lpStarted)} })
+	got = sink.snapshot()
+	if len(got) != 2 || got[1].Kind != "long_process" || got[1].Tint != string(TintOK) {
+		t.Fatalf("want an ok event on clear, got %+v", got)
+	}
+
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if len(st.events) != 2 || st.events[0].Metric != "long_proc/812/1799000000" {
+		t.Fatalf("events = %+v", st.events)
+	}
+	for _, key := range []string{`"pid":812`, `"name":"OrbStack Helper"`, `"cmd":"/usr/bin/OrbStack Helper"`, `"cpu_pct":85`, `"high_since":"2027-01-15T08:00:00Z"`, `"start_ts":"2027-01-03T18:13:20Z"`} {
+		if !strings.Contains(st.events[0].Payload, key) {
+			t.Errorf("payload %s has no %s", st.events[0].Payload, key)
+		}
+	}
+}
+
+func TestAlerter_LongProcNodeRuleAndIgnoreLists(t *testing.T) {
+	cfg := store.DefaultServerSettings()
+	cfg.LongProc.Ignore = []string{"postgres"}
+	clock := newClock()
+	sink := &capturingSink{}
+	e := New(nil, clock, sink, nopStore{}, newFakeConfig(cfg))
+	org := uuid.New()
+	items := func(int) []clickhouse.ProcRow {
+		return []clickhouse.ProcRow{
+			lpProc(60, 1, "Postgres", lpStarted), lpProc(60, 2, "node", lpStarted),
+			lpProc(60, 3, "OrbStack Helper", lpStarted), lpProc(30, 4, "java", lpStarted),
+		}
+	}
+
+	// The org rule: postgres is ignored on all hosts, java is under 50%.
+	a := uuid.New()
+	nodeA := store.Node{ID: a, IgnoredProcs: []string{"NODE"}}
+	runProcs(e, clock, org, a, &nodeA, 0, 30, items)
+	if got := sink.snapshot(); len(got) != 1 {
+		t.Fatalf("host A: want only OrbStack Helper, got %+v", got)
+	}
+
+	// A custom rule with a lower limit still uses the org ignore list.
+	b := uuid.New()
+	custom := store.LongProcRule{Enabled: true, CPUPct: 25, SustainSeconds: 1800, Notify: "all", Ignore: []string{"orbstack helper"}}
+	nodeB := store.Node{ID: b, CustomLongProc: &custom}
+	runProcs(e, clock, org, b, &nodeB, 31, 61, items)
+	if got := sink.snapshot(); len(got) != 3 {
+		t.Fatalf("host B: want node and java, got %+v", got[1:])
 	}
 }

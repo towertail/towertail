@@ -24,6 +24,10 @@ func (s *Server) handleGetSettings(c echo.Context) error {
 func (s *Server) handlePutSettings(c echo.Context) error {
 	t, _ := authctx.TokenFrom(c)
 	var cfg store.ServerSettings
+	// A client that does not know longProc keeps the stored rule.
+	if old, err := s.store.GetSettings(c.Request().Context(), t.OrgID); err == nil {
+		cfg.LongProc = old.LongProc
+	}
 	if err := c.Bind(&cfg); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}

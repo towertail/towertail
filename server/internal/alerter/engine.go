@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"maps"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,6 +22,7 @@ const (
 	// notifyTimeout covers the retries of the channel router.
 	notifyTimeout   = 30 * time.Second
 	defaultCooldown = 10 * time.Minute
+	maxSent         = 4096
 )
 
 // Clock abstracts time.Now for deterministic tests.
@@ -78,6 +81,7 @@ type Engine struct {
 	states  map[stateKey]*metricState
 	seen    map[nodeKey]*nodeSeen
 	sent    map[sentKey]time.Time
+	procs   map[nodeKey]*procTracker
 }
 
 type cachedSettings struct {
@@ -103,6 +107,7 @@ func New(log *slog.Logger, clock Clock, sink EventSink, st Store, cfg Config, no
 		states:    map[stateKey]*metricState{},
 		seen:      map[nodeKey]*nodeSeen{},
 		sent:      map[sentKey]time.Time{},
+		procs:     map[nodeKey]*procTracker{},
 	}
 }
 
@@ -173,6 +178,59 @@ func (e *Engine) Evaluate(ctx context.Context, orgID, nodeID uuid.UUID, node *st
 	}
 }
 
+// EvaluateProcs follows the processes of one sample and emits a
+// long_process event when a process is newly flagged or cleared.
+func (e *Engine) EvaluateProcs(ctx context.Context, orgID, nodeID uuid.UUID, node *store.Node, procs []clickhouse.ProcRow, at time.Time) {
+	cfg := e.settings(ctx, orgID)
+	rule := cfg.LongProc
+	var nodeIgnore []string
+	if node != nil {
+		if node.CustomLongProc != nil {
+			rule = *node.CustomLongProc
+		}
+		nodeIgnore = node.IgnoredProcs
+	}
+	ignored := rule.IgnoreSet(cfg.LongProc.Ignore, nodeIgnore)
+
+	nk := nodeKey{org: orgID, node: nodeID}
+	e.stateMu.Lock()
+	t := e.procs[nk]
+	if t == nil {
+		if !rule.Enabled {
+			e.stateMu.Unlock()
+			return
+		}
+		t = newProcTracker()
+		e.procs[nk] = t
+	}
+	pcs := t.observe(procs, at, rule, ignored)
+	if t.empty() {
+		delete(e.procs, nk)
+	}
+	e.stateMu.Unlock()
+
+	for _, pc := range pcs {
+		e.emit(ctx, cfg, node, procEvent(nk, pc, at, !rule.Notifies()))
+	}
+}
+
+func procEvent(nk nodeKey, pc procChange, at time.Time, quiet bool) change {
+	c := change{
+		key:     stateKey{org: nk.org, node: nk.node, metric: pc.key.metric()},
+		from:    TintWarn,
+		to:      TintOK,
+		value:   float64(pc.proc.CPUPct),
+		at:      at,
+		detail:  pc.detail(at),
+		payload: pc.payload(),
+		quiet:   quiet,
+	}
+	if pc.flagged {
+		c.from, c.to = TintOK, TintWarn
+	}
+	return c
+}
+
 // evalMetric runs under stateMu.
 func (e *Engine) evalMetric(k stateKey, value, warn, critical float64, now time.Time, debounce time.Duration) (change, bool) {
 	newTint := TintOK
@@ -204,28 +262,51 @@ type change struct {
 	from, to Tint
 	value    float64
 	at       time.Time
+	// detail, payload and quiet are for long_proc changes. quiet sends
+	// no notification.
+	detail  string
+	payload map[string]any
+	quiet   bool
 }
 
 func (c change) kind() string {
-	if c.key.metric == metricReachability {
+	switch c.metric() {
+	case metricReachability:
 		return "reachability_changed"
+	case metricLongProc:
+		return "long_process"
 	}
 	return "threshold_crossed"
 }
 
+// metric is the metric of the key without the instance: "long_proc" for
+// "long_proc/<pid>/<start_unix>".
+func (c change) metric() string {
+	m, _, _ := strings.Cut(c.key.metric, "/")
+	return m
+}
+
+// instance is the part of the key after the metric, if any.
+func (c change) instance() string {
+	_, inst, _ := strings.Cut(c.key.metric, "/")
+	return inst
+}
+
 // emit publishes, persists and notifies one change.
 func (e *Engine) emit(ctx context.Context, cfg store.ServerSettings, node *store.Node, c change) {
-	payload, _ := json.Marshal(map[string]any{
-		"metric":   c.key.metric,
+	body := map[string]any{
+		"metric":   c.metric(),
 		"previous": c.from,
 		"value":    c.value,
-	})
+	}
+	maps.Copy(body, c.payload)
+	payload, _ := json.Marshal(body)
 	evt := wire.Event{
 		ID:     uuid.New(),
 		TS:     c.at,
 		Kind:   c.kind(),
 		NodeID: c.key.node,
-		Metric: c.key.metric,
+		Metric: c.metric(),
 		Tint:   string(c.to),
 	}
 	if e.sink != nil {
@@ -255,7 +336,7 @@ func (e *Engine) emit(ctx context.Context, cfg store.ServerSettings, node *store
 // and the cooldown. A change to ok uses the flags of the tint that it
 // ends.
 func (e *Engine) shouldNotify(cfg store.ServerSettings, node *store.Node, c change) bool {
-	if len(e.notifiers) == 0 || !cfg.NotificationsEnabled {
+	if len(e.notifiers) == 0 || !cfg.NotificationsEnabled || c.quiet {
 		return false
 	}
 	tint := c.to
@@ -287,6 +368,10 @@ func (e *Engine) shouldNotify(cfg store.ServerSettings, node *store.Node, c chan
 	if last, ok := e.sent[k]; ok && c.at.Sub(last) < cooldown {
 		return false
 	}
+	// Each process has its own keys, so drop the old ones.
+	if len(e.sent) > maxSent {
+		maps.DeleteFunc(e.sent, func(_ sentKey, t time.Time) bool { return c.at.Sub(t) >= cooldown })
+	}
 	e.sent[k] = c.at
 	return true
 }
@@ -294,14 +379,16 @@ func (e *Engine) shouldNotify(cfg store.ServerSettings, node *store.Node, c chan
 // notify calls each notifier in its own goroutine with a timeout.
 func (e *Engine) notify(eventID uuid.UUID, c change, node *store.Node) {
 	a := notify.Alert{
-		EventID: eventID,
-		OrgID:   c.key.org,
-		NodeID:  c.key.node,
-		Metric:  c.key.metric,
-		From:    c.from,
-		To:      c.to,
-		Value:   c.value,
-		At:      c.at,
+		EventID:  eventID,
+		OrgID:    c.key.org,
+		NodeID:   c.key.node,
+		Metric:   c.metric(),
+		Instance: c.instance(),
+		From:     c.from,
+		To:       c.to,
+		Value:    c.value,
+		Detail:   c.detail,
+		At:       c.at,
 	}
 	if node != nil {
 		a.NodeName = node.DisplayName

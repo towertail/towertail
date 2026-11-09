@@ -156,7 +156,7 @@ func (c *Client) historySQL(t tier, metric string, step time.Duration) (string, 
 var ErrNoAlert = errors.New("clickhouse: alert not found")
 
 // alertKinds are the event kinds that open or close an alert.
-const alertKinds = "kind IN ('threshold_crossed', 'reachability_changed')"
+const alertKinds = "kind IN ('threshold_crossed', 'reachability_changed', 'long_process')"
 
 // TintRow is the last tint of one (org, node, metric).
 type TintRow struct {

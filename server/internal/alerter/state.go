@@ -2,6 +2,7 @@ package alerter
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -93,6 +94,10 @@ func (e *Engine) Load(ctx context.Context) error {
 	e.stateMu.Lock()
 	defer e.stateMu.Unlock()
 	for _, r := range tints {
+		// The process trackers start empty, so their states are not kept.
+		if strings.HasPrefix(r.Metric, metricLongProc+"/") {
+			continue
+		}
 		k := stateKey{org: r.OrgID, node: r.NodeID, metric: r.Metric}
 		if _, ok := e.states[k]; !ok {
 			e.states[k] = &metricState{tint: Tint(r.Tint), changed: r.TS}

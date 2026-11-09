@@ -517,3 +517,36 @@ func TestDiskScanEndToEnd(t *testing.T) {
 		}
 	})
 }
+
+func TestUpdateNodeKeepsLongProcForOldClients(t *testing.T) {
+	e := newScanEnv(t)
+	path := "/v1/nodes/" + e.on.String()
+	rec := e.do(http.MethodPut, path, e.user, []byte(`{"displayName":"on","kind":"ssh","customLongProc":{"cpuPct":90},"ignoredProcs":["node"]}`))
+	wantCode(t, rec, http.StatusOK)
+	wantCode(t, e.do(http.MethodPut, path, e.user, []byte(`{"displayName":"renamed","kind":"ssh"}`)), http.StatusOK)
+	var n store.Node
+	decode(t, e.do(http.MethodGet, path, e.user, nil).Body.Bytes(), &n)
+	if n.CustomLongProc == nil || n.CustomLongProc.CPUPct != 90 || len(n.IgnoredProcs) != 1 {
+		t.Fatalf("an old client cleared the long-process fields: %+v", n)
+	}
+	wantCode(t, e.do(http.MethodPut, path, e.user, []byte(`{"displayName":"renamed","kind":"ssh","ignoredProcs":[]}`)), http.StatusOK)
+	n = store.Node{}
+	decode(t, e.do(http.MethodGet, path, e.user, nil).Body.Bytes(), &n)
+	if n.CustomLongProc != nil || len(n.IgnoredProcs) != 0 {
+		t.Fatalf("a new client cannot clear the fields: %+v", n)
+	}
+}
+
+func TestPutSettingsKeepsLongProcForOldClients(t *testing.T) {
+	e := newScanEnv(t)
+	cfg := store.DefaultServerSettings()
+	cfg.LongProc.Ignore = []string{"postgres"}
+	body, _ := json.Marshal(cfg)
+	wantCode(t, e.do(http.MethodPut, "/v1/settings", e.user, body), http.StatusOK)
+	wantCode(t, e.do(http.MethodPut, "/v1/settings", e.user, []byte(`{"notifyWarn":false}`)), http.StatusOK)
+	var got store.ServerSettings
+	decode(t, e.do(http.MethodGet, "/v1/settings", e.user, nil).Body.Bytes(), &got)
+	if got.NotifyWarn || len(got.LongProc.Ignore) != 1 {
+		t.Fatalf("settings: %+v", got)
+	}
+}

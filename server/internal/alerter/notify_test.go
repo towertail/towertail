@@ -295,3 +295,103 @@ func TestAlerter_SweepSkipsDeletedAndDisabledNodes(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 }
+
+func TestAlerter_LongProcNotify(t *testing.T) {
+	clock := newClock()
+	cfg := newFakeConfig(store.DefaultServerSettings())
+	org, id := uuid.New(), uuid.New()
+	node := notifyNode(id)
+	n := newCountingNotifier()
+	e := New(nil, clock, nil, nopStore{}, cfg, n)
+	high := func(int) []clickhouse.ProcRow { return []clickhouse.ProcRow{orb(85)} }
+	gone := func(int) []clickhouse.ProcRow { return []clickhouse.ProcRow{lpProc(1, 1, "sh", lpStarted)} }
+
+	runProcs(e, clock, org, id, &node, 0, 32, high)
+	got := n.wait(1)
+	if len(got) != 1 {
+		t.Fatalf("want one alert, got %+v", got)
+	}
+	a := got[0]
+	if a.Metric != "long_proc" || a.Instance != "812/1799000000" || a.To != TintWarn || a.Value != 85 {
+		t.Fatalf("alert = %+v", a)
+	}
+	if a.Detail != "OrbStack Helper (pid 812) at 85% CPU for 30m." || a.Text() != a.Detail {
+		t.Errorf("detail = %q, text = %q", a.Detail, a.Text())
+	}
+	if a.Title() != "web-1: long-running process" {
+		t.Errorf("title = %q", a.Title())
+	}
+
+	// The clear sends an ok alert. A flag again inside the cooldown sends nothing.
+	runProcs(e, clock, org, id, &node, 33, 33, gone)
+	if got := n.wait(1); len(got) != 1 || got[0].To != TintOK {
+		t.Fatalf("want one ok alert, got %+v", got)
+	}
+	runProcs(e, clock, org, id, &node, 34, 34, high)
+	if got := n.wait(0); len(got) != 0 {
+		t.Fatalf("cooldown: got %+v", got)
+	}
+
+	// A second process has its own cooldown.
+	runProcs(e, clock, org, id, &node, 35, 70, func(int) []clickhouse.ProcRow {
+		return []clickhouse.ProcRow{orb(85), lpProc(70, 9, "node", lpStarted)}
+	})
+	if got := n.wait(1); len(got) != 1 || got[0].Instance != "9/1799000000" {
+		t.Fatalf("want one alert for node, got %+v", got)
+	}
+}
+
+func TestAlerter_LongProcNotifyOff(t *testing.T) {
+	clock := newClock()
+	s := store.DefaultServerSettings()
+	s.LongProc.Notify = "off"
+	sink := &capturingSink{}
+	org, id := uuid.New(), uuid.New()
+	node := notifyNode(id)
+	n := newCountingNotifier()
+	e := New(nil, clock, sink, nopStore{}, newFakeConfig(s), n)
+	runProcs(e, clock, org, id, &node, 0, 31, func(int) []clickhouse.ProcRow { return []clickhouse.ProcRow{orb(85)} })
+	if got := n.wait(0); len(got) != 0 {
+		t.Fatalf("notify off: got %+v", got)
+	}
+	if got := sink.snapshot(); len(got) != 1 {
+		t.Fatalf("the event still goes to the clients: %+v", got)
+	}
+}
+
+func TestAlerter_SweepDropsProcTracker(t *testing.T) {
+	clock := newClock()
+	cfg := newFakeConfig(store.DefaultServerSettings())
+	org, id := uuid.New(), uuid.New()
+	cfg.nodes[id] = notifyNode(id)
+	node := cfg.nodes[id]
+	sink := &capturingSink{}
+	n := newCountingNotifier()
+	e := New(nil, clock, sink, nopStore{}, cfg, n)
+	ctx := context.Background()
+
+	for m := 0; m <= 31; m++ {
+		clock.mu.Lock()
+		clock.t = lpAt(m)
+		clock.mu.Unlock()
+		e.Evaluate(ctx, org, id, &node, 0.1, 0.1, 0.1)
+		e.EvaluateProcs(ctx, org, id, &node, []clickhouse.ProcRow{orb(85)}, lpAt(m))
+	}
+	if got := n.wait(1); len(got) != 1 || got[0].Metric != "long_proc" {
+		t.Fatalf("want the long_proc alert, got %+v", got)
+	}
+	clock.advance(10 * time.Minute)
+	e.Sweep(ctx)
+	if got := n.wait(1); len(got) != 1 || got[0].Metric != "reachability" {
+		t.Fatalf("want only the reachability alert, got %+v", got)
+	}
+	evs := sink.snapshot()
+	if last := evs[len(evs)-1]; last.Kind != "long_process" || last.Tint != string(TintOK) {
+		t.Fatalf("want a quiet long_process ok event, got %+v", evs)
+	}
+	e.stateMu.Lock()
+	defer e.stateMu.Unlock()
+	if len(e.procs) != 0 {
+		t.Fatal("the tracker is not dropped")
+	}
+}

@@ -89,7 +89,18 @@ func (e *Engine) Sweep(ctx context.Context) {
 			continue
 		}
 		c := st.set(k, TintCritical, now.Sub(s.at).Seconds(), now)
+		var cleared []procChange
+		if t := e.procs[nk]; t != nil {
+			cleared = t.drop(now)
+			delete(e.procs, nk)
+		}
 		e.stateMu.Unlock()
-		e.emit(ctx, e.settings(ctx, nk.org), &node, c)
+		cfg := e.settings(ctx, nk.org)
+		e.emit(ctx, cfg, &node, c)
+		// The reachability alert covers the processes, so their clear
+		// events send no notification.
+		for _, pc := range cleared {
+			e.emit(ctx, cfg, &node, procEvent(nk, pc, now, true))
+		}
 	}
 }

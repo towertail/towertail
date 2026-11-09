@@ -91,3 +91,39 @@ func TestAlertsAckSnoozeRoundTrip(t *testing.T) {
 		t.Fatalf("last tints = %v", got)
 	}
 }
+
+// Each process of a long_process event is its own open alert.
+func TestLongProcessAlerts(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	org, node := uuid.New(), uuid.New()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	write := func(metric, tint string, ts time.Time) uuid.UUID {
+		t.Helper()
+		id := uuid.New()
+		err := client.WriteEvent(ctx, EventRow{
+			TS: ts, OrgID: org, NodeID: node, EventID: id, Kind: "long_process",
+			Metric: metric, Tint: tint, Payload: `{"value":85,"pid":812}`,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	open := write("long_proc/812/1799000000", "warn", now.Add(-2*time.Minute))
+	write("long_proc/9/1799000000", "warn", now.Add(-2*time.Minute))
+	write("long_proc/9/1799000000", "ok", now.Add(-time.Minute))
+
+	alerts, err := client.OpenAlerts(ctx, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(alerts) != 1 || alerts[0].EventID != open || alerts[0].Kind != "long_process" {
+		t.Fatalf("open alerts = %+v", alerts)
+	}
+	if recent, _ := client.RecentAlerts(ctx, org, now.Add(-time.Hour), 10); len(recent) != 3 {
+		t.Fatalf("recent alerts = %+v", recent)
+	}
+}

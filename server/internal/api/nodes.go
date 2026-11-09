@@ -100,14 +100,22 @@ func (s *Server) handleUpdateNode(c echo.Context) error {
 	if err := json.Unmarshal(body, &n); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
-	// A client that does not know allowDiskScan keeps the stored value.
+	// A client that does not know allowDiskScan or ignoredProcs keeps the
+	// stored values. Such a client also does not know customLongProc.
 	var opt struct {
-		AllowDiskScan *bool `json:"allowDiskScan"`
+		AllowDiskScan *bool           `json:"allowDiskScan"`
+		IgnoredProcs  json.RawMessage `json:"ignoredProcs"`
 	}
 	_ = json.Unmarshal(body, &opt)
-	if opt.AllowDiskScan == nil {
+	if opt.AllowDiskScan == nil || opt.IgnoredProcs == nil {
 		if old, err := s.store.GetNode(c.Request().Context(), t.OrgID, id); err == nil {
-			n.AllowDiskScan = old.AllowDiskScan
+			if opt.AllowDiskScan == nil {
+				n.AllowDiskScan = old.AllowDiskScan
+			}
+			if opt.IgnoredProcs == nil {
+				n.IgnoredProcs = old.IgnoredProcs
+				n.CustomLongProc = old.CustomLongProc
+			}
 		}
 	}
 	n.ID = id

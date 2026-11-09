@@ -20,13 +20,19 @@ type Alert struct {
 	NodeID   uuid.UUID
 	NodeName string
 	// Tags are the tags of the node, for routing.
-	Tags     []string
-	Metric   string // cpu, mem, disk, reachability
+	Tags   []string
+	Metric string // cpu, mem, disk, reachability, long_proc
+	// Instance tells apart the alerts of one metric, for example one
+	// process of long_proc. It is empty for the other metrics.
+	Instance string
 	From, To wire.Tint
 	// Value is a ratio (0..1) for cpu, mem and disk. For reachability it
-	// is the seconds since the last sample.
+	// is the seconds since the last sample. For long_proc it is the CPU
+	// percent of the process (top convention).
 	Value float64
-	At    time.Time
+	// Detail replaces the default Text when it is set.
+	Detail string
+	At     time.Time
 	// Test is true for a test send from the API.
 	Test bool
 }
@@ -51,6 +57,7 @@ var metricLabels = map[string]string{
 	"mem":          "Memory",
 	"disk":         "Disk",
 	"reachability": "Reachability",
+	"long_proc":    "Long-running process",
 }
 
 // Title is one short line, for example "web-1: CPU critical".
@@ -65,6 +72,10 @@ func (a Alert) Title() string {
 		what = "reachable again"
 	case a.Metric == "reachability":
 		what = "unreachable"
+	case a.Metric == "long_proc" && a.To == wire.TintOK:
+		what = "long-running process ended"
+	case a.Metric == "long_proc":
+		what = "long-running process"
 	case a.To == wire.TintOK:
 		what = a.MetricLabel() + " back to ok"
 	default:
@@ -79,6 +90,9 @@ func (a Alert) Title() string {
 // Text gives the value and the previous tint, for example
 // "CPU 93% (was warn)".
 func (a Alert) Text() string {
+	if a.Detail != "" {
+		return a.Detail
+	}
 	if a.Metric == "reachability" {
 		if a.To == wire.TintOK {
 			return "Samples come in again."
@@ -96,7 +110,12 @@ func (a Alert) MetricLabel() string {
 	return a.Metric
 }
 
-// DedupKey is the same for all alerts of one metric of one node.
+// DedupKey is the same for all alerts of one metric (and instance) of
+// one node.
 func (a Alert) DedupKey() string {
-	return a.OrgID.String() + ":" + a.NodeID.String() + ":" + a.Metric
+	k := a.OrgID.String() + ":" + a.NodeID.String() + ":" + a.Metric
+	if a.Instance != "" {
+		k += ":" + a.Instance
+	}
+	return k
 }
