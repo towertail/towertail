@@ -38,11 +38,12 @@ struct SettingsExport: Codable, Equatable {
         var defaultTerminalApp: String
         var postWakeGraceSeconds: Int?
         var menuBarIconStyle: String?
+        var popoverLayout: String?
 
         enum CodingKeys: String, CodingKey {
             case localPollingIntervalSeconds, sshPollingIntervalSeconds
             case cardDensity, launchAtLogin, autoUpdateSamplersEnabled
-            case defaultTerminalApp, postWakeGraceSeconds, menuBarIconStyle
+            case defaultTerminalApp, postWakeGraceSeconds, menuBarIconStyle, popoverLayout
         }
     }
 
@@ -67,7 +68,8 @@ struct SettingsExport: Codable, Equatable {
                 autoUpdateSamplersEnabled: p.autoUpdateSamplersEnabled,
                 defaultTerminalApp: p.defaultTerminalApp,
                 postWakeGraceSeconds: p.postWakeGraceSeconds,
-                menuBarIconStyle: p.menuBarIconStyle
+                menuBarIconStyle: p.menuBarIconStyle,
+                popoverLayout: p.popoverLayout
             ),
             globalThresholds: p.thresholds,
             longProc: p.longProc,
@@ -208,6 +210,9 @@ enum SettingsTransfer {
             }
             if let style = imported.general.menuBarIconStyle {
                 out.menuBarIconStyle = style
+            }
+            if let layout = imported.general.popoverLayout {
+                out.popoverLayout = layout
             }
             report.generalApplied = true
         }

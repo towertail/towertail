@@ -5,6 +5,11 @@ enum CardDensity: String, CaseIterable, Sendable {
     case a, b
 }
 
+/// Body of the menu-bar popover: one card for each server, or one compact row.
+enum PopoverLayout: String, CaseIterable, Sendable {
+    case cards, rows
+}
+
 /// `pulse` colors only the LEDs and the pulse line. `full` also colors the rack at warn and critical.
 enum MenuBarIconStyle: String, CaseIterable, Sendable {
     case pulse, full
@@ -21,6 +26,7 @@ final class ClientSettings {
     var launchAtLogin: Bool
     var defaultTerminalApp: String
     var menuBarIconStyle: MenuBarIconStyle
+    var popoverLayout: PopoverLayout
 
     private let url: URL
 
@@ -31,6 +37,7 @@ final class ClientSettings {
         self.launchAtLogin = p.launchAtLogin
         self.defaultTerminalApp = p.defaultTerminalApp
         self.menuBarIconStyle = MenuBarIconStyle(rawValue: p.menuBarIconStyle) ?? .pulse
+        self.popoverLayout = PopoverLayout(rawValue: p.popoverLayout) ?? .cards
     }
 
     static func loadFromDisk() -> ClientSettings {
@@ -43,6 +50,7 @@ final class ClientSettings {
         self.launchAtLogin = p.launchAtLogin
         self.defaultTerminalApp = p.defaultTerminalApp
         self.menuBarIconStyle = MenuBarIconStyle(rawValue: p.menuBarIconStyle) ?? .pulse
+        self.popoverLayout = PopoverLayout(rawValue: p.popoverLayout) ?? .cards
     }
 
     func persist() {
@@ -52,6 +60,7 @@ final class ClientSettings {
         p.launchAtLogin = launchAtLogin
         p.defaultTerminalApp = defaultTerminalApp
         p.menuBarIconStyle = menuBarIconStyle.rawValue
+        p.popoverLayout = popoverLayout.rawValue
         SettingsPersistence.save(p, to: url)
         logSettingsDiff(before: before, after: p, fields: Self.diffFields)
     }
@@ -61,5 +70,6 @@ final class ClientSettings {
         SettingsField("launchAtLogin") { "\($0.launchAtLogin)" },
         SettingsField("defaultTerminalApp") { $0.defaultTerminalApp },
         SettingsField("menuBarIconStyle") { $0.menuBarIconStyle },
+        SettingsField("popoverLayout") { $0.popoverLayout },
     ]
 }

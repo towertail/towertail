@@ -185,6 +185,32 @@ final class SettingsTransferTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(PersistedSettings.self, from: data).menuBarIconStyle, "pulse")
     }
 
+    func testPopoverLayoutRoundTrip() throws {
+        var b = base()
+        b.popoverLayout = "rows"
+        let ex = SettingsExport.from(b)
+        XCTAssertEqual(ex.general.popoverLayout, "rows")
+        let decoded = try JSONDecoder().decode(SettingsExport.self, from: JSONEncoder().encode(ex))
+        let (merged, _) = SettingsTransfer.apply(decoded, to: base(), selection: .allDefaults)
+        XCTAssertEqual(merged.popoverLayout, "rows")
+    }
+
+    func testImportWithoutPopoverLayoutKeepsCurrent() throws {
+        var b = base()
+        b.popoverLayout = "rows"
+        var ex = makeExport(nodes: [])
+        ex.general.popoverLayout = nil
+        let (merged, _) = SettingsTransfer.apply(ex, to: b, selection: .allDefaults)
+        XCTAssertEqual(merged.popoverLayout, "rows")
+    }
+
+    func testPopoverLayoutDefaultsToCards() throws {
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(base())) as? [String: Any])
+        json.removeValue(forKey: "popoverLayout")
+        let data = try JSONSerialization.data(withJSONObject: json)
+        XCTAssertEqual(try JSONDecoder().decode(PersistedSettings.self, from: data).popoverLayout, "cards")
+    }
+
     func testExportCarriesSourcePlatform() {
         let ex = makeExport(nodes: [])
         XCTAssertEqual(ex.sourcePlatform, "darwin")

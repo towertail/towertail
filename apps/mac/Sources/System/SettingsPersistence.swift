@@ -15,6 +15,7 @@ struct PersistedSettings: Codable, Equatable {
     var defaultTerminalApp: String
     var postWakeGraceSeconds: Int
     var menuBarIconStyle: String
+    var popoverLayout: String
     var longProc: LongProcRule
     /// Platform-specific blocks preserved verbatim from the on-disk file so a
     /// cross-OS round trip never loses the other OS's settings. `platform.darwin`
@@ -37,6 +38,7 @@ struct PersistedSettings: Codable, Equatable {
         defaultTerminalApp: "Terminal",
         postWakeGraceSeconds: 15,
         menuBarIconStyle: "pulse",
+        popoverLayout: "cards",
         longProc: .defaults,
         platformBlocks: .init(foreign: [:])
     )
@@ -50,6 +52,7 @@ struct PersistedSettings: Codable, Equatable {
         case autoUpdateSamplersEnabled
         case defaultTerminalApp
         case postWakeGraceSeconds
+        case popoverLayout
         case longProc
         case pollingIntervalSeconds // legacy single-value field
         case platform              // new envelope { darwin: {...}, windows: {...} }
@@ -69,6 +72,8 @@ struct PersistedSettings: Codable, Equatable {
             ?? PersistedSettings.defaults.autoUpdateSamplersEnabled
         self.postWakeGraceSeconds = try c.decodeIfPresent(Int.self, forKey: .postWakeGraceSeconds)
             ?? PersistedSettings.defaults.postWakeGraceSeconds
+        self.popoverLayout = try c.decodeIfPresent(String.self, forKey: .popoverLayout)
+            ?? PersistedSettings.defaults.popoverLayout
         self.longProc = (try? c.decodeIfPresent(LongProcRule.self, forKey: .longProc)) ?? .defaults
 
         if let local = try c.decodeIfPresent(Int.self, forKey: .localPollingIntervalSeconds) {
@@ -135,6 +140,7 @@ struct PersistedSettings: Codable, Equatable {
         try c.encode(notifyDebounceSeconds, forKey: .notifyDebounceSeconds)
         try c.encode(autoUpdateSamplersEnabled, forKey: .autoUpdateSamplersEnabled)
         try c.encode(postWakeGraceSeconds, forKey: .postWakeGraceSeconds)
+        try c.encode(popoverLayout, forKey: .popoverLayout)
         try c.encode(longProc, forKey: .longProc)
         // Legacy flat fields are still emitted so older Mac binaries keep
         // working if the user downgrades. They duplicate platform.darwin; the
@@ -172,6 +178,7 @@ struct PersistedSettings: Codable, Equatable {
         defaultTerminalApp: String,
         postWakeGraceSeconds: Int,
         menuBarIconStyle: String = "pulse",
+        popoverLayout: String = "cards",
         longProc: LongProcRule = .defaults,
         platformBlocks: PlatformBlocks = .init(foreign: [:])
     ) {
@@ -189,6 +196,7 @@ struct PersistedSettings: Codable, Equatable {
         self.defaultTerminalApp = defaultTerminalApp
         self.postWakeGraceSeconds = postWakeGraceSeconds
         self.menuBarIconStyle = menuBarIconStyle
+        self.popoverLayout = popoverLayout
         self.longProc = longProc
         self.platformBlocks = platformBlocks
     }
