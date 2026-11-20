@@ -22,6 +22,7 @@ struct TowertailApp: App {
                 .environment(env.nodeStore)
                 .environment(env.samplerUpdater)
                 .environment(\.backend, env.backend)
+                .environment(\.viewLease, env.viewLease)
                 .environment(env.cloud)
         } label: {
             // The menu-bar label is instantiated eagerly at launch (unlike
@@ -74,6 +75,7 @@ struct TowertailApp: App {
                         .environment(env.serverSettings)
                         .environment(env.nodeStore)
                         .environment(\.backend, env.backend)
+                        .environment(\.viewLease, env.viewLease)
                         .environment(env.cloud)
                 } else {
                     ContentUnavailableView("No host", systemImage: "server.rack")

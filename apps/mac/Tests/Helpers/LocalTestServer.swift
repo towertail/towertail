@@ -67,6 +67,8 @@ final class LocalTestServer: @unchecked Sendable {
     /// Active WS connections — tests push frames via `sendToAllWebSockets`.
     private var wsConnections: [NWConnection] = []
     private let wsLock = NSLock()
+    private var _receivedWebSocketTexts: [String] = []
+    private var _lastWebSocketPath: String?
 
     var port: UInt16 { listener.port?.rawValue ?? 0 }
 
@@ -169,7 +171,7 @@ final class LocalTestServer: @unchecked Sendable {
 
             // WebSocket upgrade?
             if method == "GET" && path.hasPrefix("/v1/stream") {
-                self.completeWebSocketUpgrade(connection: connection, headers: headers)
+                self.completeWebSocketUpgrade(connection: connection, headers: headers, path: path)
                 return
             }
 
@@ -252,7 +254,7 @@ final class LocalTestServer: @unchecked Sendable {
 
     // MARK: - WebSocket
 
-    private func completeWebSocketUpgrade(connection: NWConnection, headers: [String: String]) {
+    private func completeWebSocketUpgrade(connection: NWConnection, headers: [String: String], path: String) {
         let expected = "Bearer \(expectedToken)"
         guard headers["authorization"] == expected else {
             writeHTTP(connection: connection, status: 401, body: Data(),
@@ -273,16 +275,20 @@ final class LocalTestServer: @unchecked Sendable {
             guard err == nil, let self else { connection.cancel(); return }
             self.wsLock.lock()
             self.wsConnections.append(connection)
+            self._lastWebSocketPath = path
             self.wsLock.unlock()
-            // Start reading frames so we don't block the peer; we ignore
-            // incoming frames in the tests we run today.
-            self.drainWSFrames(connection: connection)
+            self.drainWSFrames(connection: connection, buffer: Data())
         })
     }
 
-    private func drainWSFrames(connection: NWConnection) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] _, _, isEOF, _ in
+    /// Reads client frames. It keeps the text frames in `receivedWebSocketTexts`
+    /// and ignores the other kinds, such as pings.
+    private func drainWSFrames(connection: NWConnection, buffer: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isEOF, _ in
             guard let self else { return }
+            var buf = buffer
+            if let data { buf.append(data) }
+            self.parseClientFrames(&buf)
             if isEOF {
                 self.wsLock.lock()
                 self.wsConnections.removeAll { $0 === connection }
@@ -290,8 +296,55 @@ final class LocalTestServer: @unchecked Sendable {
                 connection.cancel()
                 return
             }
-            self.drainWSFrames(connection: connection)
+            self.drainWSFrames(connection: connection, buffer: buf)
         }
+    }
+
+    /// Takes the whole frames off `buf` (RFC 6455, masked client frames).
+    private func parseClientFrames(_ buf: inout Data) {
+        while buf.count >= 2 {
+            let bytes = [UInt8](buf.prefix(14))
+            let opcode = bytes[0] & 0x0F
+            let masked = bytes[1] & 0x80 != 0
+            var length = Int(bytes[1] & 0x7F)
+            var offset = 2
+            if length == 126 {
+                guard bytes.count >= 4 else { return }
+                length = Int(bytes[2]) << 8 | Int(bytes[3])
+                offset = 4
+            } else if length == 127 {
+                guard bytes.count >= 10 else { return }
+                length = bytes[2..<10].reduce(0) { $0 << 8 | Int($1) }
+                offset = 10
+            }
+            let maskLength = masked ? 4 : 0
+            guard buf.count >= offset + maskLength + length else { return }
+            var payload = [UInt8](buf[buf.startIndex + offset + maskLength ..< buf.startIndex + offset + maskLength + length])
+            if masked {
+                let key = [UInt8](buf[buf.startIndex + offset ..< buf.startIndex + offset + 4])
+                for i in payload.indices { payload[i] ^= key[i % 4] }
+            }
+            buf.removeFirst(offset + maskLength + length)
+            if opcode == 0x1, let text = String(bytes: payload, encoding: .utf8) {
+                wsLock.lock()
+                _receivedWebSocketTexts.append(text)
+                wsLock.unlock()
+            }
+        }
+    }
+
+    /// Text frames that clients sent, in receipt order.
+    var receivedWebSocketTexts: [String] {
+        wsLock.lock()
+        defer { wsLock.unlock() }
+        return _receivedWebSocketTexts
+    }
+
+    /// Path and query of the last WebSocket upgrade request.
+    var lastWebSocketPath: String? {
+        wsLock.lock()
+        defer { wsLock.unlock() }
+        return _lastWebSocketPath
     }
 
     var hasWebSocketClient: Bool {

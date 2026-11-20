@@ -12,6 +12,7 @@ struct PopoverRoot: View {
     @Environment(NodeStore.self) private var nodeStore
     @Environment(ClientSettings.self) private var clientSettings
     @Environment(CloudSession.self) private var cloud: CloudSession?
+    @Environment(\.viewLease) private var viewLease
     /// `MenuBarExtra(style: .window)` keeps its popover content view tree
     /// alive even after the user dismisses the popover (window ordered
     /// out, not destroyed) so the next click feels instant. The downside:
@@ -37,13 +38,19 @@ struct PopoverRoot: View {
     private static let searchDebounce: Duration = .milliseconds(400)
 
     var body: some View {
-        if scenePhase == .background {
-            // Same fixed size as the active body so AppKit's window
-            // measurement doesn't churn when the popover reopens.
-            Color.clear.frame(width: 360, height: 620)
-        } else {
-            activeBody
+        // A ZStack, not a Group: a Group applies the modifiers to each branch.
+        ZStack {
+            if scenePhase == .background {
+                // Same fixed size as the active body so AppKit's window
+                // measurement doesn't churn when the popover reopens.
+                Color.clear.frame(width: 360, height: 620)
+            } else {
+                activeBody
+            }
         }
+        // Outside the `if`: the active body is gone while the popover is hidden.
+        .onAppear { viewLease?.setPopover(visible: scenePhase != .background) }
+        .onChange(of: scenePhase) { _, phase in viewLease?.setPopover(visible: phase != .background) }
     }
 
     @ViewBuilder
@@ -57,6 +64,8 @@ struct PopoverRoot: View {
                     LazyVStack(spacing: 10) {
                         ForEach(filteredVMs) { vm in
                             ServerCardView(vm: vm)
+                                .onAppear { viewLease?.setCard(vm.id, visible: true) }
+                                .onDisappear { viewLease?.setCard(vm.id, visible: false) }
                         }
                     }
                     .padding(10)
@@ -93,6 +102,8 @@ struct PopoverRoot: View {
                 ForEach(vms) { vm in
                     Divider().opacity(0.4)
                     ServerRowView(vm: vm)
+                        .onAppear { viewLease?.setCard(vm.id, visible: true) }
+                        .onDisappear { viewLease?.setCard(vm.id, visible: false) }
                 }
             }
         }

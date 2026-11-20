@@ -126,6 +126,34 @@ final class CloudFeedTests: XCTestCase {
         try await waitFor { self.servers.serverVMs.first?.state.isOffline == false }
     }
 
+    func testFeedConnectsInLeaseModeAndSendsTheView() async throws {
+        let node = Node(displayName: "web", kind: .ssh, sshUser: "u", sshHost: "h", cloud: CloudLink(enrolledAt: Date()))
+        serveNodes([node])
+        addHost(node)
+        feed.stop()
+        var target: CloudFeed?
+        let lease = ViewLeaseController(send: { target?.send($0) })
+        let leased = CloudFeed(client: RemoteClient(config: .init(endpoint: server.baseURL, token: token)),
+                               servers: servers, nodes: nodes, viewLease: lease)
+        target = leased
+        defer { leased.stop() }
+        leased.start()
+        try await waitFor { self.server.hasWebSocketClient }
+        XCTAssertEqual(server.lastWebSocketPath?.hasSuffix("?lease=1"), true)
+
+        server.sendToAllWebSockets(text: #"{"type":"hello","hello":{"lease":true,"renew_s":30,"max_ttl_s":120}}"#)
+        try await waitFor { self.servers.serverVMs.first?.liveSource == .cloud }
+
+        lease.setPopover(visible: true)
+        lease.setCard(node.id, visible: true)
+        try await waitFor { self.server.receivedWebSocketTexts.contains { $0.contains(node.id.uuidString) } }
+        let text = try XCTUnwrap(server.receivedWebSocketTexts.first { $0.contains("\"view\"") })
+        XCTAssertTrue(text.contains("\"hosts\""))
+
+        leased.stop()
+        XCTAssertEqual(servers.serverVMs.first?.liveSource, .poll)
+    }
+
     func testSampleForSSHNodeIsIgnored() async throws {
         let cloud = Node(displayName: "web", kind: .ssh, sshUser: "u", sshHost: "h", cloud: CloudLink(enrolledAt: Date()))
         let plain = Node(displayName: "db", kind: .ssh, sshUser: "u", sshHost: "d")

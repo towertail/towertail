@@ -266,6 +266,58 @@ final class RemoteBackendTests: XCTestCase {
         backend.stop()
     }
 
+    // MARK: - View lease
+
+    private func viewFrames() -> [[String: Any]] {
+        server.receivedWebSocketTexts.compactMap {
+            (try? JSONSerialization.jsonObject(with: Data($0.utf8))) as? [String: Any]
+        }.filter { $0["type"] as? String == "view" }
+    }
+
+    func testStreamConnectsInLeaseMode() async throws {
+        let (backend, _) = try await startBackend()
+        XCTAssertEqual(server.lastWebSocketPath?.hasSuffix("?lease=1"), true)
+        backend.stop()
+    }
+
+    func testViewSentOnConnect() async throws {
+        let (backend, node) = try await startBackend()
+        backend.viewLease.setPopover(visible: true)
+        backend.viewLease.setCard(node.id, visible: true)
+        try await waitFor(timeout: 5) { self.viewFrames().count == 1 }
+        // The first frame of a new connection, here `hello`, sends the view again.
+        server.sendToAllWebSockets(text: #"{"type":"hello","hello":{"lease":true,"renew_s":30,"max_ttl_s":120}}"#)
+        try await waitFor(timeout: 5) { self.viewFrames().count == 2 }
+        let view = try XCTUnwrap(viewFrames().last)
+        XCTAssertEqual(view["hosts"] as? [String], [node.id.uuidString])
+        XCTAssertNil(view["detail"])
+        backend.stop()
+    }
+
+    func testEmptyViewOnHide() async throws {
+        let (backend, node) = try await startBackend()
+        backend.viewLease.setPopover(visible: true)
+        backend.viewLease.setCard(node.id, visible: true)
+        try await waitFor(timeout: 5) { self.viewFrames().count == 1 }
+        backend.viewLease.setPopover(visible: false)
+        try await waitFor(timeout: 5) { self.viewFrames().count == 2 }
+        XCTAssertEqual((viewFrames().last?["hosts"] as? [Any])?.count, 0)
+        backend.stop()
+    }
+
+    func testHelloSetsCloudLiveSource() async throws {
+        let (backend, node) = try await startBackend()
+        let vm = try XCTUnwrap(backend.servers.serverVMs.first)
+        // An old server sends samples and no hello.
+        server.sendToAllWebSockets(text: try frame(["type": "sample", "nodeId": node.id.uuidString, "sample": sampleJSON()]))
+        try await waitFor(timeout: 5) { vm.lastSeen != nil }
+        XCTAssertEqual(vm.liveSource, .poll)
+        server.sendToAllWebSockets(text: #"{"type":"hello","hello":{"lease":true,"renew_s":30,"max_ttl_s":120}}"#)
+        try await waitFor(timeout: 5) { vm.liveSource == .cloud }
+        XCTAssertTrue(backend.leaseMode)
+        backend.stop()
+    }
+
     // MARK: - Helpers
 
     private func lastRequest() throws -> LocalTestServer.CapturedRequest {

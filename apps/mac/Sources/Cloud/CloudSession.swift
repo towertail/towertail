@@ -10,6 +10,12 @@ final class CloudSession {
     private(set) var client: RemoteClient?
     private(set) var feed: CloudFeed?
 
+    /// Reports what the user looks at. It outlives the feed, so a
+    /// sign-in while the popover is open sends the view.
+    @ObservationIgnored private(set) lazy var viewLease = ViewLeaseController(send: { [weak self] view in
+        self?.feed?.send(view)
+    })
+
     @ObservationIgnored private let servers: ServerStore
     @ObservationIgnored private let nodes: NodeStore
 
@@ -46,7 +52,7 @@ final class CloudSession {
         if let client, client.config.token == token, feed != nil { return }
         stopFeed()
         let client = RemoteClient(config: .init(endpoint: account.endpoint, token: token))
-        let feed = CloudFeed(client: client, servers: servers, nodes: nodes)
+        let feed = CloudFeed(client: client, servers: servers, nodes: nodes, viewLease: viewLease)
         self.client = client
         self.feed = feed
         feed.start()

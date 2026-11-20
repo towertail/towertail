@@ -246,6 +246,12 @@ struct ServerCardView: View {
         }
     }
 
+    /// Cloud sends a point every 30 s when nobody looks (5 s while the
+    /// popover shows the card), so the sparkline spans 30 min.
+    private var sparklineInterval: Int {
+        vm.liveSource == .cloud ? 30 : serverSettings.pollingInterval(for: vm.kind)
+    }
+
     private var metricGrid: some View {
         Grid(horizontalSpacing: 8, verticalSpacing: 8) {
             GridRow {
@@ -257,7 +263,7 @@ struct ServerCardView: View {
                     warn: vm.thresholds.cpuWarn,
                     critical: vm.thresholds.cpuCritical,
                     hoverValue: hoverValue(for: vm.cpu),
-                    pollingIntervalSeconds: serverSettings.pollingInterval(for: vm.kind)
+                    pollingIntervalSeconds: sparklineInterval
                 )
                 .onTapGesture { openFullView(metric: .cpu) }
                 .pointingHandOnHover()
@@ -269,7 +275,7 @@ struct ServerCardView: View {
                     warn: vm.thresholds.memWarn,
                     critical: vm.thresholds.memCritical,
                     hoverValue: hoverValue(for: vm.mem),
-                    pollingIntervalSeconds: serverSettings.pollingInterval(for: vm.kind)
+                    pollingIntervalSeconds: sparklineInterval
                 )
                 .onTapGesture { openFullView(metric: .mem) }
                 .pointingHandOnHover()
@@ -283,7 +289,7 @@ struct ServerCardView: View {
                     warn: vm.thresholds.diskWarn,
                     critical: vm.thresholds.diskCritical,
                     hoverValue: hoverValue(for: vm.disk),
-                    pollingIntervalSeconds: serverSettings.pollingInterval(for: vm.kind)
+                    pollingIntervalSeconds: sparklineInterval
                 )
                 .onTapGesture { openFullView(metric: .disk) }
                 .pointingHandOnHover()
@@ -296,7 +302,7 @@ struct ServerCardView: View {
                     critical: 0.9,
                     rxMBps: vm.netRxMBps,
                     txMBps: vm.netTxMBps,
-                    pollingIntervalSeconds: serverSettings.pollingInterval(for: vm.kind)
+                    pollingIntervalSeconds: sparklineInterval
                 )
                 .onTapGesture { openFullView(metric: .net) }
                 .pointingHandOnHover()

@@ -13,25 +13,29 @@ final class CloudFeed {
     @ObservationIgnored private let client: RemoteClient
     @ObservationIgnored private let servers: ServerStore
     @ObservationIgnored private let nodes: NodeStore
+    @ObservationIgnored private let viewLease: ViewLeaseController?
     @ObservationIgnored private var stream: RemoteStream?
     /// Reachability events since the last connect. They win over the
     /// open alerts, which can be older than the events.
     @ObservationIgnored private var eventAlerts: [UUID: Bool] = [:]
 
-    init(client: RemoteClient, servers: ServerStore, nodes: NodeStore) {
+    init(client: RemoteClient, servers: ServerStore, nodes: NodeStore, viewLease: ViewLeaseController? = nil) {
         self.client = client
         self.servers = servers
         self.nodes = nodes
+        self.viewLease = viewLease
     }
 
     func start() {
         guard stream == nil else { return }
         stream = client.openStream(
+            lease: true,
             onConnect: { [weak self] in
                 Task { @MainActor in
                     guard let self else { return }
                     self.connected = true
                     self.eventAlerts = [:]
+                    self.viewLease?.streamDidConnect()
                     await self.syncNodes()
                     await self.loadAlerts()
                 }
@@ -49,6 +53,14 @@ final class CloudFeed {
         stream?.cancel()
         stream = nil
         connected = false
+        // Without the feed no data comes, so the stale check takes over.
+        for vm in servers.serverVMs where vm.liveSource == .cloud { vm.liveSource = .poll }
+    }
+
+    /// Sends a `view` frame. The stream drops it when there is no connection.
+    func send(_ view: LiveView) {
+        guard let stream else { return }
+        Task { await stream.send(view) }
     }
 
     /// Adds hosts that only Cloud knows. Removes the Cloud link of hosts
@@ -99,7 +111,14 @@ final class CloudFeed {
                   node.displayName != remote.displayName else { return }
             node.displayName = remote.displayName
             nodes.update(node)
-        case .settingsUpdated, .diskScan, .hello, .lease, .other:
+        case .hello:
+            // The server runs in lease mode: no data comes while no view is open.
+            for vm in servers.serverVMs where nodes.node(withId: vm.id)?.isCloud == true {
+                vm.liveSource = .cloud
+            }
+        case .lease(let notice):
+            if notice.isLimit { viewLease?.didReceiveLimit() }
+        case .settingsUpdated, .diskScan, .other:
             break
         }
     }

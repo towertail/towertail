@@ -71,6 +71,17 @@ final class FullViewModel {
     /// DISK tab: Capacity & I/O charts or the Usage scan.
     var diskSubTab: DiskSubTab = .capacity
 
+    /// The detail that Cloud sends for the open tab. The Usage tab has none:
+    /// disk scans use their own route.
+    var detailTab: DetailTab? {
+        switch metric {
+        case .cpu, .mem: return .processes
+        case .net: return netSubTab == .ports ? .ports : .processes
+        case .disk: return diskSubTab == .usage ? nil : .disks
+        case .health: return .health
+        }
+    }
+
     /// One Usage model per node, so that a scan continues when the
     /// window shows another host.
     @ObservationIgnored private var usageModels: [UUID: DiskUsageModel] = [:]

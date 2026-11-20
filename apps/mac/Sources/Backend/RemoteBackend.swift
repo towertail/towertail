@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// Phase 3 remote backend. Implements the `Backend` protocol against a
@@ -15,6 +16,9 @@ final class RemoteBackend: Backend {
     /// Changes of server scan jobs, for `RemoteDiskScanner`.
     let scanJobs = DiskScanJobFeed()
 
+    /// Reports what the user looks at.
+    private(set) var viewLease: ViewLeaseController!
+
     private let client: RemoteClient
     private var stream: RemoteStream?
     /// True after a `hello` frame: the server runs in lease mode.
@@ -30,10 +34,15 @@ final class RemoteBackend: Backend {
         self.samplerUpdater = SamplerUpdateCoordinator(manifest: nil)
         self.client = RemoteClient(config: .init(endpoint: endpoint, token: token))
         self.diskScans = DiskScanStore(url: HistoryStore.defaultURL())
+        self.viewLease = ViewLeaseController(send: { [weak self] view in
+            guard let stream = self?.stream else { return }
+            Task { await stream.send(view) }
+        })
     }
 
     func start() {
         Logger.shared.info("remote: starting", category: "lifecycle")
+        viewLease.startObservingSleep()
         Task { [weak self] in
             await self?.initialLoad()
             await self?.openStream()
@@ -41,6 +50,7 @@ final class RemoteBackend: Backend {
     }
 
     func stop() {
+        viewLease.stopObservingSleep()
         stream?.cancel()
         stream = nil
     }
@@ -79,10 +89,11 @@ final class RemoteBackend: Backend {
         let onConnect: @Sendable () -> Void = { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
+                self.viewLease.streamDidConnect()
                 await self.scanJobs.refetch(using: self.client)
             }
         }
-        stream = client.openStream(onConnect: onConnect) { [weak self] raw in
+        stream = client.openStream(lease: true, onConnect: onConnect) { [weak self] raw in
             guard let self else { return }
             Task { @MainActor in
                 self.handleStreamMessage(raw)
@@ -103,12 +114,13 @@ final class RemoteBackend: Backend {
             scanJobs.publish(job)
         case .hello:
             leaseMode = true
+            for vm in servers.serverVMs { vm.liveSource = .cloud }
         case .summary(let id, let summary):
             servers.ingest(summary: summary, for: id)
         case .detail(let id, let tab, let detail):
             servers.apply(detail: detail, tab: tab, for: id)
-        case .lease:
-            break
+        case .lease(let notice):
+            if notice.isLimit { viewLease.didReceiveLimit() }
         case .event(let event):
             if event.kind == "reachability_changed" {
                 servers.apply(reachability: event)

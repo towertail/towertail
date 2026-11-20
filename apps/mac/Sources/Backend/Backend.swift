@@ -100,3 +100,17 @@ extension EnvironmentValues {
         set { self[BackendEnvironmentKey.self] = newValue }
     }
 }
+
+/// Reports what is on screen, so Cloud sends data for it. Nil when the app
+/// has no Cloud stream.
+@MainActor
+private struct ViewLeaseEnvironmentKey: @preconcurrency EnvironmentKey {
+    static let defaultValue: ViewLeaseController? = nil
+}
+
+extension EnvironmentValues {
+    var viewLease: ViewLeaseController? {
+        get { self[ViewLeaseEnvironmentKey.self] }
+        set { self[ViewLeaseEnvironmentKey.self] = newValue }
+    }
+}

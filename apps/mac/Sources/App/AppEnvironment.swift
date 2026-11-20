@@ -25,6 +25,11 @@ final class AppEnvironment {
         return .local
     }
 
+    /// The lease of the Cloud stream, or of the remote backend.
+    var viewLease: ViewLeaseController? {
+        cloud?.viewLease ?? (backend as? RemoteBackend)?.viewLease
+    }
+
     var store: ServerStore { backend.servers }
     var nodeStore: NodeStore { backend.nodes }
     var clientSettings: ClientSettings { backend.clientSettings }
@@ -70,6 +75,7 @@ final class AppEnvironment {
     func start() {
         backend.start()
         updater.start()
+        cloud?.viewLease.startObservingSleep()
         if let account = cloud?.account {
             Task { await account.restore() }
         }

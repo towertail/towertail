@@ -13,6 +13,7 @@ struct FullViewWindow: View {
     @Environment(ServerSettings.self) private var settings
     @Environment(NodeStore.self) private var nodeStore
     @Environment(\.backend) private var backend
+    @Environment(\.viewLease) private var viewLease
     /// SwiftUI's WindowGroup retains scene state after the user closes the
     /// window (ordered-out, not destroyed) so a re-open is fast. AppKit
     /// still includes the offscreen NSWindow in its layout cycle, which
@@ -29,6 +30,8 @@ struct FullViewWindow: View {
     /// host picker can swap the view between servers without re-opening
     /// the window.
     @State private var activeHostId: UUID
+    /// Names this window in the view lease.
+    @State private var leaseWindowID = UUID()
     /// Throttle rate for chart + process-table rebuilds. Ingests can
     /// arrive at 0.5s (local) or faster; rebuilding SwiftUI Charts +
     /// Table on every ingest is wasted work. 5Hz is smooth visually and
@@ -58,11 +61,29 @@ struct FullViewWindow: View {
         // even though the window is offscreen. The placeholder reads no
         // observable state, so no invalidations are scheduled until the
         // user reopens the window and scenePhase flips back to .active.
-        if scenePhase == .background {
-            Color.clear.frame(minWidth: 860, minHeight: 520)
-        } else {
-            activeBody
+        // A ZStack, not a Group: a Group applies the modifiers to each branch.
+        ZStack {
+            if scenePhase == .background {
+                Color.clear.frame(minWidth: 860, minHeight: 520)
+            } else {
+                activeBody
+            }
         }
+        // Outside the `if`: the active body is gone while the window is hidden.
+        .onAppear { reportLease() }
+        .onDisappear { reportLease(visible: false) }
+        .onChange(of: scenePhase) { _, _ in reportLease() }
+        .onChange(of: activeHostId) { _, _ in reportLease() }
+        .onChange(of: model.metric) { _, _ in reportLease() }
+        .onChange(of: model.netSubTab) { _, _ in reportLease() }
+        .onChange(of: model.diskSubTab) { _, _ in reportLease() }
+    }
+
+    private func reportLease(visible: Bool? = nil) {
+        viewLease?.setFullView(
+            window: leaseWindowID, host: activeHostId, tab: model.detailTab,
+            visible: visible ?? (scenePhase != .background)
+        )
     }
 
     @ViewBuilder
