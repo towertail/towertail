@@ -5,14 +5,27 @@ import Citadel
 /// One open SSH connection that can run a command. The seam lets tests
 /// replace Citadel with a fake that hangs.
 protocol SamplerSession: Sendable {
+    /// Returns stdout. A non-zero exit throws `RemoteCommandFailed`.
     func run(_ command: String) async throws -> Data
+    /// Writes a file at an absolute remote path over SFTP.
+    func put(_ data: Data, path: String, mode: Int) async throws
     func close() async
+}
+
+/// A remote command that exited with a non-zero code.
+struct RemoteCommandFailed: LocalizedError, Sendable {
+    let exitCode: Int
+    let stderr: String
+
+    var errorDescription: String? {
+        stderr.isEmpty ? "The command exited with code \(exitCode)." : stderr
+    }
 }
 
 /// Invokes `towertail-sampler --once` on a remote host over SSH via Citadel.
 /// No shell-out — connect, exec, collect stdout, decode.
 struct SSHSamplerInvoker: SamplerInvoker {
-    static let remoteSamplerPath = "~/.towertail/towertail-sampler"
+    static let remoteSamplerPath = SSHBootstrap.remoteSamplerPath
     /// Deadline for connect plus `--once`. Without it a hung host blocks
     /// the pacer forever and the card keeps its last state.
     static let timeout: TimeInterval = 20
@@ -103,11 +116,18 @@ struct SSHSamplerInvoker: SamplerInvoker {
         }
     }
 
+    /// Exit code 127 means that the shell did not find the sampler.
+    private static func commandFailure(code: Int, stderr: String) -> SamplerInvokeError {
+        code == 127 ? .remoteBinaryMissing : .sshFailed(stderr: stderr, exitCode: Int32(code))
+    }
+
     /// Errors of the command; connect errors pass through unchanged.
     private static func map(_ error: Error) -> Error {
         switch error {
         case is SamplerInvokeError: return error
         case let e as DecodingError: return SamplerInvokeError.decodeFailed(underlying: e)
+        case let e as RemoteCommandFailed: return commandFailure(code: e.exitCode, stderr: e.stderr)
+        case let e as SSHClient.CommandFailed: return commandFailure(code: e.exitCode, stderr: "")
         default: return SamplerInvokeError.sshFailed(stderr: SSHErrorRenderer.describe(error), exitCode: -1)
         }
     }
@@ -169,11 +189,28 @@ private final class OneShot<T: Sendable>: @unchecked Sendable {
     }
 }
 
-private struct CitadelSession: SamplerSession {
+struct CitadelSession: SamplerSession {
     let client: SSHClient
 
     func run(_ command: String) async throws -> Data {
-        Data(buffer: try await client.executeCommand(command))
+        var out = Data()
+        var err = Data()
+        do {
+            for try await chunk in try await client.executeCommandStream(command) {
+                switch chunk {
+                case .stdout(let buf): out.append(contentsOf: buf.readableBytesView)
+                case .stderr(let buf): err.append(contentsOf: buf.readableBytesView)
+                }
+            }
+        } catch let failed as SSHClient.CommandFailed {
+            let text = String(decoding: err, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            throw RemoteCommandFailed(exitCode: failed.exitCode, stderr: text)
+        }
+        return out
+    }
+
+    func put(_ data: Data, path: String, mode: Int) async throws {
+        try await SSHBootstrap.writeFile(client: client, path: path, data: data, mode: UInt32(mode))
     }
 
     /// Detached so a canceled pacer still tears the channel down.

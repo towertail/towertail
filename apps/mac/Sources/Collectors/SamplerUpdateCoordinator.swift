@@ -85,13 +85,28 @@ final class SamplerUpdateCoordinator {
             return
         }
         if updatingNodeIDs.contains(node.id) { return }
-        // Per-node cooldown: shorter after success so the next tick picks
-        // up the fresh version promptly.
-        if let last = lastAttempt[node.id] {
-            let hadError = lastUpdateError[node.id] != nil
-            let cd = hadError ? cooldownFailure : cooldownSuccess
-            if Date().timeIntervalSince(last) < cd { return }
-        }
+        guard !inCooldown(node.id) else { return }
+        startPush(node: node, from: reportedSampler, to: manifest.expectedSamplerField)
+    }
+
+    /// Called when `--once` fails because the host has no sampler at the
+    /// expected path (a host with the old path). It pushes the bundled one.
+    /// A missing sampler is a repair, so it does not need the auto-update setting.
+    func repairMissing(node: Node) {
+        guard node.kind == .ssh, let manifest else { return }
+        guard !updatingNodeIDs.contains(node.id), !inCooldown(node.id) else { return }
+        startPush(node: node, from: "missing", to: manifest.expectedSamplerField)
+    }
+
+    /// Per-node cooldown: shorter after success so the next tick picks
+    /// up the fresh version promptly.
+    private func inCooldown(_ id: UUID) -> Bool {
+        guard let last = lastAttempt[id] else { return false }
+        let cd = lastUpdateError[id] != nil ? cooldownFailure : cooldownSuccess
+        return Date().timeIntervalSince(last) < cd
+    }
+
+    private func startPush(node: Node, from fromVersion: String, to expected: String) {
         guard let user = node.sshUser, !user.isEmpty,
               let host = node.sshHost, !host.isEmpty
         else { return }
@@ -101,8 +116,6 @@ final class SamplerUpdateCoordinator {
         lastAttempt[node.id] = Date()
         let nodeID = node.id
         let nodeHostname = node.displayName
-        let fromVersion = reportedSampler
-        let expected = manifest.expectedSamplerField
         let nodeCopy = node
         Logger.shared.info(
             "auto-update: push starting", hostID: nodeID, host: nodeHostname,

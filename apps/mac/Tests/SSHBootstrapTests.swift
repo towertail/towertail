@@ -21,4 +21,9 @@ final class SSHBootstrapTests: XCTestCase {
         XCTAssertThrowsError(try SSHBootstrap.triple(fromUname: "Linux mips"))
         XCTAssertThrowsError(try SSHBootstrap.triple(fromUname: "garbage"))
     }
+
+    func testRemoteSamplerPathIsBin() {
+        XCTAssertEqual(SSHBootstrap.remoteSamplerPath, "~/.towertail/bin/towertail-sampler")
+        XCTAssertEqual(SSHSamplerInvoker.remoteSamplerPath, SSHBootstrap.remoteSamplerPath)
+    }
 }

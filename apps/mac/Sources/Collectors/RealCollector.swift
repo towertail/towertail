@@ -216,6 +216,9 @@ final class RealCollector: Collector {
                     )
                 }
             } catch {
+                if case SamplerInvokeError.remoteBinaryMissing = error {
+                    await MainActor.run { samplerUpdater?.repairMissing(node: node) }
+                }
                 let reason = shortReason(for: error)
                 let permanent = isPermanentError(error)
                 let attempt = permanent ? 0 : transientFailures + 1
@@ -354,6 +357,7 @@ private func shortReason(for error: Error) -> String {
     if let samplerErr = error as? SamplerInvokeError {
         switch samplerErr {
         case .binaryMissing: return "sampler binary missing"
+        case .remoteBinaryMissing: return "sampler missing on host"
         case .timeout: return "timeout"
         case .emptyOutput: return "no output"
         case .sshFailed(let stderr, let code):

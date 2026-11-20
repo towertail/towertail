@@ -159,6 +159,8 @@ private final class HangingSession: SamplerSession, @unchecked Sendable {
         }
     }
 
+    func put(_ data: Data, path: String, mode: Int) async throws {}
+
     func close() async {
         lock.lock()
         closedFlag = true
@@ -207,6 +209,7 @@ final class SSHSamplerInvokerTimeoutTests: XCTestCase {
     func testFastCommandIsNotAffected() async throws {
         struct EmptySession: SamplerSession {
             func run(_ command: String) async throws -> Data { Data() }
+            func put(_ data: Data, path: String, mode: Int) async throws {}
             func close() async {}
         }
         let invoker = SSHSamplerInvoker(timeout: 5) { _ in EmptySession() }
@@ -214,6 +217,34 @@ final class SSHSamplerInvokerTimeoutTests: XCTestCase {
             _ = try await invoker.invokeOnce(node: node)
             XCTFail("expected emptyOutput")
         } catch SamplerInvokeError.emptyOutput {
+        }
+    }
+
+    func testExit127MapsToRemoteBinaryMissing() async {
+        let session = FakeSamplerSession()
+        session.fail("--once", RemoteCommandFailed(exitCode: 127, stderr: "not found"))
+        let invoker = SSHSamplerInvoker(timeout: 5) { _ in session }
+        do {
+            _ = try await invoker.invokeOnce(node: node)
+            XCTFail("expected remoteBinaryMissing")
+        } catch SamplerInvokeError.remoteBinaryMissing {
+        } catch {
+            XCTFail("got \(error)")
+        }
+    }
+
+    func testOtherExitCodeKeepsCodeAndStderr() async {
+        let session = FakeSamplerSession()
+        session.fail("--once", RemoteCommandFailed(exitCode: 2, stderr: "boom"))
+        let invoker = SSHSamplerInvoker(timeout: 5) { _ in session }
+        do {
+            _ = try await invoker.invokeOnce(node: node)
+            XCTFail("expected sshFailed")
+        } catch SamplerInvokeError.sshFailed(let stderr, let code) {
+            XCTAssertEqual(stderr, "boom")
+            XCTAssertEqual(code, 2)
+        } catch {
+            XCTFail("got \(error)")
         }
     }
 }

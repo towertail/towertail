@@ -11,6 +11,10 @@ final class AppEnvironment {
     let updater = Updater()
     /// The Cloud account and data path. Nil in remote mode.
     let cloud: CloudSession?
+    /// Installs samplers that report to Cloud. Nil in remote mode.
+    let installer: CloudInstaller?
+    /// Restarts stopped samplers of Cloud hosts. Nil in remote mode.
+    let keeper: SamplerKeeper?
 
     /// Remote mode is a developer override. It needs the env vars
     /// `TOWERTAIL_REMOTE_URL` and `TOWERTAIL_REMOTE_TOKEN` and a debug
@@ -41,7 +45,12 @@ final class AppEnvironment {
         case .local:
             let local = LocalBackend()
             self.backend = local
-            self.cloud = Self.makeCloud(backend: local)
+            let cloud = Self.makeCloud(backend: local)
+            self.cloud = cloud
+            self.installer = CloudInstaller(
+                session: cloud, servers: local.servers, nodes: local.nodes, settings: local.serverSettings
+            )
+            self.keeper = SamplerKeeper(session: cloud, nodes: local.nodes, manifest: SamplerManifestLoader.load())
         case .remote:
             let env = ProcessInfo.processInfo.environment
             guard
@@ -55,10 +64,14 @@ final class AppEnvironment {
                 )
                 self.backend = LocalBackend()
                 self.cloud = nil
+                self.installer = nil
+                self.keeper = nil
                 return
             }
             self.backend = RemoteBackend(endpoint: url, token: token)
             self.cloud = nil
+            self.installer = nil
+            self.keeper = nil
         }
     }
 
@@ -76,6 +89,7 @@ final class AppEnvironment {
         backend.start()
         updater.start()
         cloud?.viewLease.startObservingSleep()
+        keeper?.start()
         if let account = cloud?.account {
             Task { await account.restore() }
         }

@@ -13,6 +13,8 @@ struct CloudLink: Codable, Equatable, Sendable {
     var enrolledAt: Date
     var reboot: String?
     var samplerVersion: String?
+    /// The last `status` of the sampler that the app read over SSH.
+    var lastStatus: SamplerStatus?
 }
 
 /// How we authenticate to an SSH host. "Key" covers both on-disk private

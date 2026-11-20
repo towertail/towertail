@@ -65,6 +65,68 @@ final class ServerTester {
         }
     }
 
+    /// Moves hosts to the Cloud sampler. The install table is in `CloudInstaller`.
+    func turnOn(_ nodes: [Node], installer: CloudInstaller) {
+        let nodes = nodes.filter { $0.kind == .ssh && $0.cloud == nil }
+        guard !nodes.isEmpty, !running else { return }
+        running = true
+        outcome = Outcome(ok: true, message: "Turning on 24/7 monitoring…")
+        Task {
+            await installer.run(nodes: nodes)
+            running = false
+            let lines = nodes.compactMap { n in installer.results[n.id].map { "\(n.displayName): \($0)" } }
+            let failed = nodes.contains { n in installer.rows[n.id]?.values.contains { if case .failed = $0 { return true }; return false } == true }
+            outcome = Outcome(ok: !failed, message: lines.joined(separator: " · "))
+        }
+    }
+
+    func checkSampler(_ node: Node, installer: CloudInstaller) {
+        guard !running else { return }
+        running = true
+        outcome = Outcome(ok: true, message: "Checking the sampler on \(node.displayName)…")
+        Task {
+            do {
+                let s = try await installer.status(node: node)
+                let state = s.running ? "running, pid \(s.pid ?? 0)" : "stopped"
+                let error = s.lastError.flatMap { $0.isEmpty ? nil : " · last error: \($0)" } ?? ""
+                outcome = Outcome(ok: s.running, message: "\(node.displayName): sampler \(state)\(error)")
+            } catch {
+                outcome = Outcome(ok: false, message: "\(node.displayName): \(Self.describe(error))")
+            }
+            running = false
+        }
+    }
+
+    func restartSampler(_ node: Node, installer: CloudInstaller) {
+        guard !running else { return }
+        running = true
+        outcome = Outcome(ok: true, message: "Restarting the sampler on \(node.displayName)…")
+        Task {
+            do {
+                let line = try await installer.restart(node: node)
+                outcome = Outcome(ok: true, message: "\(node.displayName): \(line)")
+            } catch {
+                outcome = Outcome(ok: false, message: "\(node.displayName): \(Self.describe(error))")
+            }
+            running = false
+        }
+    }
+
+    func turnOff(_ node: Node, installer: CloudInstaller) {
+        guard !running else { return }
+        running = true
+        outcome = Outcome(ok: true, message: "Turning off 24/7 monitoring…")
+        Task {
+            do {
+                try await installer.turnOff(node: node)
+                outcome = Outcome(ok: true, message: "\(node.displayName): back on SSH polling")
+            } catch {
+                outcome = Outcome(ok: false, message: "\(node.displayName): \(Self.describe(error))")
+            }
+            running = false
+        }
+    }
+
     private static func sample(_ node: Node) async throws -> String {
         if node.kind == .ssh {
             let r = try await SSHBootstrap.bootstrapAndVerify(node: node)

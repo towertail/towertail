@@ -6,6 +6,8 @@ protocol SamplerInvoker: Sendable {
 
 enum SamplerInvokeError: LocalizedError {
     case binaryMissing
+    /// The host has no sampler at the expected path.
+    case remoteBinaryMissing
     case sshFailed(stderr: String, exitCode: Int32)
     case decodeFailed(underlying: Error)
     case timeout
@@ -16,6 +18,8 @@ enum SamplerInvokeError: LocalizedError {
         switch self {
         case .binaryMissing:
             return "Bundled sampler binary not found."
+        case .remoteBinaryMissing:
+            return "The sampler is missing on the host."
         case .sshFailed(let stderr, let code):
             let trimmed = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             return "ssh exit \(code): \(trimmed.isEmpty ? "(no stderr)" : trimmed)"

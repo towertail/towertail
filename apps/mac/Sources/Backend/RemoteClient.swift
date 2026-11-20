@@ -426,3 +426,23 @@ extension Node {
         )
     }
 }
+
+extension RemoteClient: Enroller {
+    func enroll(nodeID: UUID, displayName: String, machineID: String?) async throws -> Enrollment {
+        struct Body: Encodable {
+            let displayName: String
+            let nodeId: UUID
+            let machineId: String?
+
+            enum CodingKeys: String, CodingKey {
+                case displayName = "display_name"
+                case nodeId = "node_id"
+                case machineId = "machine_id"
+            }
+        }
+        return try await send(
+            "POST", "/v1/sampler/enroll",
+            body: Body(displayName: displayName, nodeId: nodeID, machineId: machineID)
+        )
+    }
+}

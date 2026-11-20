@@ -13,6 +13,8 @@ struct ServerDetailView: View {
     @Environment(ClientSettings.self) private var clientSettings
     @Environment(SamplerUpdateCoordinator.self) private var samplerUpdater
     @Environment(\.backend) private var backend
+    @Environment(CloudSession.self) private var cloud: CloudSession?
+    @Environment(CloudInstaller.self) private var installer: CloudInstaller?
 
     @State private var draft: Node
     @State private var portText: String
@@ -191,8 +193,11 @@ struct ServerDetailView: View {
                             samplerStatus
                             Button("Reinstall") { tester.reinstall([draft]) }
                                 .disabled(tester.running)
-                                .help("Force-upload the bundled sampler to ~/.towertail/towertail-sampler.")
+                                .help("Force-upload the bundled sampler to ~/.towertail/bin/towertail-sampler.")
                         }
+                    }
+                    if cloud?.isSignedIn == true, let installer {
+                        monitoringRow(installer)
                     }
                     if let fp = draft.knownHostFingerprint {
                         LabeledContent("Host key") {
@@ -218,6 +223,24 @@ struct ServerDetailView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private func monitoringRow(_ installer: CloudInstaller) -> some View {
+        let link = nodeStore.node(withId: draft.id)?.cloud
+        return LabeledContent("24/7 monitoring") {
+            HStack(spacing: 8) {
+                if let link {
+                    Text(link.lastStatus.map { $0.running ? "Running" : "Stopped" } ?? "On")
+                        .foregroundStyle(.secondary)
+                    Button("Check") { tester.checkSampler(draft, installer: installer) }
+                    Button("Restart") { tester.restartSampler(draft, installer: installer) }
+                    Button("Turn off") { tester.turnOff(draft, installer: installer) }
+                } else {
+                    Button("Turn on") { tester.turnOn([draft], installer: installer) }
+                }
+            }
+            .disabled(tester.running)
+        }
     }
 
     @ViewBuilder

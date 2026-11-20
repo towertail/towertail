@@ -8,6 +8,8 @@ struct ServersPane: View {
 
     @Environment(NodeStore.self) private var nodeStore
     @Environment(\.backend) private var backend
+    @Environment(CloudSession.self) private var cloud: CloudSession?
+    @Environment(CloudInstaller.self) private var installer: CloudInstaller?
 
     @State private var tester = ServerTester()
     @State private var filter = ""
@@ -50,7 +52,11 @@ struct ServersPane: View {
         .sheet(isPresented: $showAdd) {
             AddServerSheet { node in
                 let b = backend
-                Task { try? await b?.addNode(node) }
+                let t = tester
+                Task {
+                    try? await b?.addNode(node)
+                    t.reinstall([node])
+                }
                 selection = [node.id]
                 showAdd = false
             } onCancel: {
@@ -103,6 +109,7 @@ struct ServersPane: View {
                         tester.reinstall(selectedNodes)
                     }
                     .disabled(!selectedNodes.contains { $0.kind == .ssh } || tester.running)
+                    cloudActions
                     Divider()
                     AutoUpdateToggle()
                 } label: {
@@ -115,6 +122,29 @@ struct ServersPane: View {
             .buttonStyle(.borderless)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
+        }
+    }
+
+    /// Actions for 24/7 monitoring. They need a signed-in Cloud account.
+    @ViewBuilder
+    private var cloudActions: some View {
+        let ssh = selectedNodes.filter { $0.kind == .ssh }
+        if cloud?.isSignedIn == true, let installer {
+            let off = ssh.filter { $0.cloud == nil }
+            let on = ssh.filter { $0.cloud != nil }
+            Divider()
+            if !off.isEmpty {
+                Button("Turn on 24/7 Monitoring") { tester.turnOn(off, installer: installer) }
+                    .disabled(tester.running)
+            }
+            if on.count == 1, let node = on.first {
+                Button("Check Sampler") { tester.checkSampler(node, installer: installer) }
+                    .disabled(tester.running)
+                Button("Restart Sampler") { tester.restartSampler(node, installer: installer) }
+                    .disabled(tester.running)
+                Button("Turn off 24/7 Monitoring") { tester.turnOff(node, installer: installer) }
+                    .disabled(tester.running)
+            }
         }
     }
 
@@ -175,7 +205,10 @@ struct ServersPane: View {
     private func removeSelected() {
         let ids = selection
         let b = backend
+        let cloudNodes = selectedNodes.filter { $0.cloud != nil }
+        let installer = installer
         Task {
+            for node in cloudNodes { try? await installer?.remove(node: node) }
             for id in ids { try? await b?.removeNode(id: id) }
         }
         selection = []

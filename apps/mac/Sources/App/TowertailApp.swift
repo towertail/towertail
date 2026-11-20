@@ -55,6 +55,7 @@ struct TowertailApp: App {
                 .environment(env.samplerUpdater)
                 .environment(\.backend, env.backend)
                 .environment(env.cloud)
+                .environment(env.installer)
                 // Settings is an .accessory-policy scene by default, so
                 // without flipping activation policy the app never gets a
                 // Dock icon while it's open — meaning the user can't ⌘-Tab
@@ -97,6 +98,7 @@ struct TowertailApp: App {
                 .environment(env.samplerUpdater)
                 .environment(\.backend, env.backend)
                 .environment(env.cloud)
+                .environment(env.installer)
                 .onAppear { ActivationPolicyCoordinator.shared.acquire() }
                 .onDisappear { ActivationPolicyCoordinator.shared.release() }
         }

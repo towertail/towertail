@@ -9,6 +9,8 @@ import Citadel
 enum SSHBootstrap {
     static let remoteSamplerDir = ".towertail"
     static let remoteSamplerName = "towertail-sampler"
+    static let remoteBinDir = ".towertail/bin"
+    static let remoteSamplerPath = "~/.towertail/bin/towertail-sampler"
 
     /// Probes `uname -sm` on the remote and maps it to a bundled triple.
     static func detectTriple(client: SSHClient) async throws -> String {
@@ -99,8 +101,9 @@ enum SSHBootstrap {
         return nil
     }
 
-    /// Ensures `<home>/.towertail/` exists, uploads the binary, chmod's it
-    /// 0755. Returns the absolute remote path.
+    /// Ensures `<home>/.towertail/bin/` exists, uploads the binary, chmod's it
+    /// 0755 and removes the old binary of `<home>/.towertail/`. Returns the
+    /// absolute remote path.
     ///
     /// The binary is gzipped in-memory before SFTP transfer, then decompressed
     /// on the remote with `gunzip` — cuts the wire payload by ~60% (8 MB → 3.3 MB)
@@ -111,7 +114,7 @@ enum SSHBootstrap {
         localBinary: URL
     ) async throws -> String {
         let home = try await resolveHome(client: client)
-        let remoteDir = "\(home)/\(remoteSamplerDir)"
+        let remoteDir = "\(home)/\(remoteBinDir)"
         let remotePath = "\(remoteDir)/\(remoteSamplerName)"
 
         // mkdir (via exec; SFTP createDirectory errors if it exists).
@@ -129,20 +132,7 @@ enum SSHBootstrap {
             uploadPath = remotePath
         }
 
-        let sftp = try await client.openSFTP()
-        defer { Task { try? await sftp.close() } }
-
-        var attrs = SFTPFileAttributes()
-        attrs.permissions = 0o755
-        try await sftp.withFile(
-            filePath: uploadPath,
-            flags: [.write, .create, .truncate],
-            attributes: attrs
-        ) { file in
-            var buffer = ByteBufferAllocator().buffer(capacity: payload.count)
-            buffer.writeBytes(payload)
-            try await file.write(buffer)
-        }
+        try await writeFile(client: client, path: uploadPath, data: payload, mode: 0o755)
 
         if uploadPath != remotePath {
             // `-f` overwrites any existing decompressed file from a prior push.
@@ -151,7 +141,31 @@ enum SSHBootstrap {
         // Some servers ignore the attribute on create — belt-and-suspenders
         // chmod via exec so the binary is guaranteed executable.
         _ = try? await client.executeCommand("chmod +x \(remotePath)")
+        do {
+            _ = try await client.executeCommand("test -x \(remotePath)")
+        } catch {
+            throw SamplerInvokeError.misconfigured("The sampler is not executable at \(remotePath).")
+        }
+        _ = try? await client.executeCommand("rm -f \(home)/\(remoteSamplerDir)/\(remoteSamplerName)")
         return remotePath
+    }
+
+    /// Writes `data` to the absolute remote `path` over SFTP.
+    static func writeFile(client: SSHClient, path: String, data: Data, mode: UInt32) async throws {
+        let sftp = try await client.openSFTP()
+        defer { Task { try? await sftp.close() } }
+
+        var attrs = SFTPFileAttributes()
+        attrs.permissions = mode
+        try await sftp.withFile(
+            filePath: path,
+            flags: [.write, .create, .truncate],
+            attributes: attrs
+        ) { file in
+            var buffer = ByteBufferAllocator().buffer(capacity: data.count)
+            buffer.writeBytes(data)
+            try await file.write(buffer)
+        }
     }
 
     /// Probes the remote for a working `gunzip`. Returns false on any error so
@@ -170,7 +184,7 @@ enum SSHBootstrap {
     static func runOnce(client: SSHClient) async throws -> Sample {
         let out: ByteBuffer
         do {
-            out = try await client.executeCommand("~/\(remoteSamplerDir)/\(remoteSamplerName) --once")
+            out = try await client.executeCommand("\(remoteSamplerPath) --once")
         } catch {
             throw SamplerInvokeError.sshFailed(
                 stderr: SSHErrorRenderer.describe(error), exitCode: -1
