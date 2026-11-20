@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -25,6 +26,10 @@ type Options struct {
 	// LegacySamples keeps the full sample frames for clients without
 	// ?lease=1. When false, those clients get events only.
 	LegacySamples bool
+	// MaxLeasesPerUser is the most active leases of one user. A new lease
+	// over the limit ends the lease with the oldest renewal. 0 means no
+	// limit.
+	MaxLeasesPerUser int
 	// Now is the clock. Nil means time.Now.
 	Now func() time.Time
 }
@@ -309,6 +314,10 @@ func (h *Hub) ReplayFor(c *Client) {
 // empty view clears it. The hub then sends the last summary of each host
 // that the old lease did not cover, and the last detail when the detail
 // host or tab changed. A renewal of the same view sends nothing.
+//
+// A client with no active lease that starts one over MaxLeasesPerUser ends
+// the lease of the same user with the oldest renewal. That client gets a
+// lease frame with the reason "limit".
 func (h *Hub) SetView(c *Client, m wire.ClientMessage) error {
 	if !c.lease {
 		return ErrLegacyClient
@@ -316,10 +325,16 @@ func (h *Hub) SetView(c *Client, m wire.ClientMessage) error {
 	now := h.now()
 	next := newLease(m, now)
 
-	// The read lock keeps PublishSample from storing a sample between the
+	// The lock keeps PublishSample from storing a sample between the
 	// replay and the swap, so a replay never arrives after a newer frame.
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+	// It also makes the count and the end of the oldest lease one step.
+	// The lease frame goes out under the lock: Unregister closes the send
+	// channel only after it takes the lock.
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if next.active(now) && !c.liveView(now).active(now) {
+		h.endOldestOverLimit(c.userKey, now)
+	}
 	old := c.swapView(next)
 	if !next.active(now) {
 		return nil
@@ -361,6 +376,56 @@ func (h *Hub) SetView(c *Client, m wire.ClientMessage) error {
 		}
 	}
 	return nil
+}
+
+// endOldestOverLimit ends the lease with the oldest renewal of the user
+// when the user is at the limit. The caller holds h.mu.
+func (h *Hub) endOldestOverLimit(userKey uuid.UUID, now time.Time) {
+	if h.opts.MaxLeasesPerUser <= 0 {
+		return
+	}
+	active := h.activeLeases(userKey, now)
+	if len(active) < h.opts.MaxLeasesPerUser {
+		return
+	}
+	oldest := active[0]
+	oldest.swapView(nil)
+	streamLeaseEnds.WithLabelValues(wire.LeaseEndedLimit).Inc()
+	msg := wire.WSMessage{Type: "lease", Lease: &wire.LeaseNotice{State: "ended", Reason: wire.LeaseEndedLimit}}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		h.log.Error("hub: marshal lease", "err", err)
+		return
+	}
+	if !h.enqueue(oldest, "lease", data) {
+		h.log.Warn("hub: lease notice dropped", "client", oldest.id)
+	}
+}
+
+// activeLeases returns the clients of the user with an active lease, in
+// all orgs, oldest renewal first. The caller holds h.mu.
+func (h *Hub) activeLeases(userKey uuid.UUID, now time.Time) []*Client {
+	type held struct {
+		c       *Client
+		renewed time.Time
+	}
+	var all []held
+	for _, set := range h.clients {
+		for c := range set {
+			if c.userKey != userKey || !c.lease {
+				continue
+			}
+			if v := c.liveView(now); v.active(now) {
+				all = append(all, held{c, v.renewed})
+			}
+		}
+	}
+	slices.SortFunc(all, func(a, b held) int { return a.renewed.Compare(b.renewed) })
+	out := make([]*Client, len(all))
+	for i, x := range all {
+		out[i] = x.c
+	}
+	return out
 }
 
 // Covered reports whether an active lease of a client of the org covers

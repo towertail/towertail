@@ -14,6 +14,10 @@ var (
 		Name: "towertail_stream_leases_active",
 		Help: "Leases that a client holds. An expired lease leaves the count at the next sample of the org or the next view frame.",
 	})
+	streamLeaseEnds = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "towertail_stream_lease_ends_total",
+		Help: "Leases that the server ended, by reason (limit).",
+	}, []string{"reason"})
 	streamFrames = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "towertail_stream_frames_total",
 		Help: "Frames queued for stream clients, by frame type.",

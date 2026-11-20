@@ -359,7 +359,7 @@ Ratios have 4 decimals.
 | `disks` | `disks`, `disk_io`, `procs` |
 | `health` | `health`, `procs` |
 
-**`lease`.** `state` is `ended`. `reason` is `limit` when the server ends the lease because of a limit of leases for each user. A new `view` can start a lease again. The server does not send this frame yet; the type is reserved.
+**`lease`.** `state` is `ended`. `reason` is `limit` when the server ends the lease because of a limit of leases for each user. The server ends the lease with the oldest renewal of the user when the user starts a new lease over the limit. The new lease works. The client does not renew on its timer after `limit`. It sends a new `view` only after a user action (the window or tab becomes visible, a click, a change of host). This rule stops two visible clients from ending each other in turns. A server with no limit never sends this frame.
 
 **Replay.**
 

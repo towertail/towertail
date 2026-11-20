@@ -439,3 +439,153 @@ func TestSlowConsumerKeepsOthers(t *testing.T) {
 	e.publish(a, 1, "s", false)
 	e.wantTypes(fast, "summary")
 }
+
+func limitEnv(t *testing.T, max int) *env {
+	e := newEnv(t, true)
+	e.h.opts.MaxLeasesPerUser = max
+	return e
+}
+
+func (e *env) userClient(key uuid.UUID) *Client {
+	return e.h.Register(e.org, nil, ClientOptions{Lease: true, UserKey: key})
+}
+
+// viewAt sets a view, then moves the clock so renewals have distinct times.
+func (e *env) viewAt(c *Client, hosts ...uuid.UUID) {
+	e.t.Helper()
+	e.mustView(c, view(60, hosts...))
+	e.clock.add(time.Second)
+}
+
+func wantLimit(t *testing.T, msgs []wire.WSMessage) {
+	t.Helper()
+	for _, m := range msgs {
+		if m.Type == "lease" {
+			if m.Lease == nil || m.Lease.State != "ended" || m.Lease.Reason != "limit" {
+				t.Fatalf("lease frame: %+v", m.Lease)
+			}
+			return
+		}
+	}
+	t.Fatalf("no lease frame in %v", types(msgs))
+}
+
+func TestLeaseLimitEndsOldest(t *testing.T) {
+	e := limitEnv(t, 2)
+	user, node := uuid.New(), uuid.New()
+	a, b, c := e.userClient(user), e.userClient(user), e.userClient(user)
+	e.viewAt(a, node)
+	e.viewAt(b, node)
+	drain(a)
+	drain(b)
+	e.viewAt(c, node)
+	wantLimit(t, drain(a))
+	drain(b)
+	drain(c)
+	e.publish(node, 1, "s", false)
+	e.wantTypes(a)
+	e.wantTypes(b, "summary")
+	e.wantTypes(c, "summary")
+}
+
+func TestLeaseLimitRenewalDoesNotEvict(t *testing.T) {
+	e := limitEnv(t, 2)
+	user, node := uuid.New(), uuid.New()
+	a, b := e.userClient(user), e.userClient(user)
+	e.viewAt(a, node)
+	e.viewAt(b, node)
+	e.viewAt(a, node)
+	e.viewAt(b, node)
+	e.wantTypes(a)
+	e.wantTypes(b)
+}
+
+func TestLeaseLimitIgnoresExpiredAndEmpty(t *testing.T) {
+	e := limitEnv(t, 2)
+	user, node := uuid.New(), uuid.New()
+	a, b, c := e.userClient(user), e.userClient(user), e.userClient(user)
+	e.mustView(a, view(10, node))
+	e.clock.add(20 * time.Second)
+	e.viewAt(b, node)
+	e.viewAt(b)
+	e.viewAt(c, node)
+	e.wantTypes(a)
+	e.wantTypes(b)
+	e.wantTypes(c)
+}
+
+func TestLeaseLimitCountsByUserNotOrg(t *testing.T) {
+	e := limitEnv(t, 2)
+	u1, u2, node := uuid.New(), uuid.New(), uuid.New()
+	var all []*Client
+	for _, u := range []uuid.UUID{u1, u2} {
+		for range 2 {
+			c := e.userClient(u)
+			e.viewAt(c, node)
+			all = append(all, c)
+		}
+	}
+	for _, c := range all {
+		for _, m := range drain(c) {
+			if m.Type == "lease" {
+				t.Fatal("a lease ended")
+			}
+		}
+	}
+}
+
+func TestLeaseLimitCountsAllOrgsOfTheUser(t *testing.T) {
+	e := limitEnv(t, 1)
+	user, node := uuid.New(), uuid.New()
+	a := e.userClient(user)
+	b := e.h.Register(uuid.New(), nil, ClientOptions{Lease: true, UserKey: user})
+	e.viewAt(a, node)
+	e.viewAt(b, node)
+	wantLimit(t, drain(a))
+}
+
+func TestLeaseLimitZeroMeansNone(t *testing.T) {
+	e := limitEnv(t, 0)
+	user, node := uuid.New(), uuid.New()
+	var all []*Client
+	for range 10 {
+		c := e.userClient(user)
+		e.viewAt(c, node)
+		all = append(all, c)
+	}
+	for _, c := range all {
+		for _, m := range drain(c) {
+			if m.Type == "lease" {
+				t.Fatal("a lease ended")
+			}
+		}
+	}
+}
+
+func TestLeaseLimitSeparateKeys(t *testing.T) {
+	e := limitEnv(t, 1)
+	node := uuid.New()
+	a, b := e.userClient(uuid.New()), e.userClient(uuid.New())
+	e.publish(node, 1, "s", false)
+	e.viewAt(a, node)
+	e.viewAt(b, node)
+	e.wantTypes(a, "summary")
+	e.wantTypes(b, "summary")
+}
+
+func TestLeaseLimitUpdatesCoverage(t *testing.T) {
+	e := limitEnv(t, 1)
+	user, x, y := uuid.New(), uuid.New(), uuid.New()
+	a, b := e.userClient(user), e.userClient(user)
+	e.viewAt(a, x)
+	if !e.h.Covered(e.org, x) {
+		t.Fatal("x not covered")
+	}
+	e.viewAt(b, y)
+	if e.h.Covered(e.org, x) {
+		t.Error("x covered after the end")
+	}
+	if !e.h.Covered(e.org, y) {
+		t.Error("y not covered")
+	}
+}

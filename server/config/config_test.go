@@ -115,3 +115,22 @@ func TestStreamIntervalRejectsBadValues(t *testing.T) {
 		})
 	}
 }
+
+func TestStreamMaxLeasesRejectsNegative(t *testing.T) {
+	t.Setenv("TT_STREAM__MAX_LEASES_PER_USER", "-1")
+	if _, err := Load(""); err == nil {
+		t.Error("Load accepted -1")
+	}
+}
+
+func TestStreamMaxLeasesFromEnv(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil || cfg.Stream.MaxLeasesPerUser != 0 {
+		t.Fatalf("default: %v, %v", cfg.Stream.MaxLeasesPerUser, err)
+	}
+	t.Setenv("TT_STREAM__MAX_LEASES_PER_USER", "5")
+	cfg, err = Load("")
+	if err != nil || cfg.Stream.MaxLeasesPerUser != 5 {
+		t.Fatalf("env: %v, %v", cfg.Stream.MaxLeasesPerUser, err)
+	}
+}

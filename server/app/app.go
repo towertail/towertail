@@ -105,7 +105,10 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 		a.eager = append(a.eager, c.Name())
 	}
 
-	a.hub = hub.New(a.log, hub.Options{LegacySamples: cfg.Stream.LegacySamples})
+	a.hub = hub.New(a.log, hub.Options{
+		LegacySamples:    cfg.Stream.LegacySamples,
+		MaxLeasesPerUser: cfg.Stream.MaxLeasesPerUser,
+	})
 	gate, _ := b.limits.(ChannelLimits)
 	router := channels.NewRouter(a.store, cfg.Notify, b.mailer, gate, a.log)
 	notifiers := append([]notify.Notifier{router}, b.notifiers...)

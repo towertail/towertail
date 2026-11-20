@@ -29,10 +29,16 @@ type streamEnv struct {
 	ts      *httptest.Server
 	node    uuid.UUID
 	user    string
+	user2   string
 	sampler string
 }
 
 func newStreamEnv(t *testing.T) *streamEnv {
+	t.Helper()
+	return newStreamEnvWith(t, hub.Options{LegacySamples: true})
+}
+
+func newStreamEnvWith(t *testing.T, o hub.Options) *streamEnv {
 	t.Helper()
 	ctx := context.Background()
 	st, err := store.OpenBolt(t.TempDir())
@@ -47,7 +53,7 @@ func newStreamEnv(t *testing.T) *streamEnv {
 		Log:    log,
 		Store:  st,
 		Issuer: issuer,
-		Hub:    hub.New(log, hub.Options{LegacySamples: true}),
+		Hub:    hub.New(log, o),
 	})
 	e := &streamEnv{t: t, node: uuid.New()}
 	if err := st.PutNode(ctx, store.ZeroOrg, store.Node{ID: e.node, DisplayName: "n", Kind: "ssh", Enabled: true}); err != nil {
@@ -61,6 +67,7 @@ func newStreamEnv(t *testing.T) *streamEnv {
 		return raw
 	}
 	e.user = issue(store.TokenKindUser, nil)
+	e.user2 = issue(store.TokenKindUser, nil)
 	e.sampler = issue(store.TokenKindSampler, &e.node)
 	e.ts = httptest.NewServer(srv.Handler())
 	t.Cleanup(e.ts.Close)
@@ -69,10 +76,15 @@ func newStreamEnv(t *testing.T) *streamEnv {
 
 func (e *streamEnv) dial(query string) (*websocket.Conn, context.Context) {
 	e.t.Helper()
+	return e.dialAs(e.user, query)
+}
+
+func (e *streamEnv) dialAs(token, query string) (*websocket.Conn, context.Context) {
+	e.t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	e.t.Cleanup(cancel)
 	ws, _, err := websocket.Dial(ctx, strings.Replace(e.ts.URL, "http", "ws", 1)+"/v1/stream"+query, &websocket.DialOptions{
-		HTTPHeader: http.Header{"Authorization": {"Bearer " + e.user}},
+		HTTPHeader: http.Header{"Authorization": {"Bearer " + token}},
 	})
 	if err != nil {
 		e.t.Fatal(err)
@@ -159,5 +171,48 @@ func TestStreamViewThenIngest(t *testing.T) {
 	}
 	if m := readFrame(t, ctx, ws); m.Type != "pong" {
 		t.Fatalf("no sample frame expected, got: %+v", m)
+	}
+}
+
+// sendView sends a view and waits until the hub has handled it.
+func sendView(t *testing.T, ctx context.Context, ws *websocket.Conn, node uuid.UUID) {
+	t.Helper()
+	if err := wsjson.Write(ctx, ws, wire.ClientMessage{Type: "view", Hosts: []uuid.UUID{node}, TTL: 60}); err != nil {
+		t.Fatal(err)
+	}
+	if err := wsjson.Write(ctx, ws, wire.ClientMessage{Type: "ping"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStreamUserKeyFallsBackToTokenID(t *testing.T) {
+	e := newStreamEnvWith(t, hub.Options{MaxLeasesPerUser: 1})
+	a, actx := e.dialAs(e.user, "?lease=1")
+	b, bctx := e.dialAs(e.user2, "?lease=1")
+	for _, x := range []struct {
+		ws  *websocket.Conn
+		ctx context.Context
+	}{{a, actx}, {b, bctx}} {
+		if m := readFrame(t, x.ctx, x.ws); m.Type != "hello" {
+			t.Fatalf("frame: %+v", m)
+		}
+		sendView(t, x.ctx, x.ws, e.node)
+		if m := readFrame(t, x.ctx, x.ws); m.Type != "pong" {
+			t.Fatalf("frame: %+v", m)
+		}
+	}
+
+	// Two streams of one token share one key.
+	c, cctx := e.dialAs(e.user, "?lease=1")
+	if m := readFrame(t, cctx, c); m.Type != "hello" {
+		t.Fatalf("frame: %+v", m)
+	}
+	sendView(t, cctx, c, e.node)
+	if m := readFrame(t, cctx, c); m.Type != "pong" {
+		t.Fatalf("frame: %+v", m)
+	}
+	m := readFrame(t, actx, a)
+	if m.Type != "lease" || m.Lease == nil || m.Lease.State != "ended" || m.Lease.Reason != "limit" {
+		t.Fatalf("frame: %+v", m)
 	}
 }

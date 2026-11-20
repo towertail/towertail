@@ -44,6 +44,9 @@ type StreamConfig struct {
 	// IdleInterval is the push interval of a host with no lease. Load
 	// refuses a value under LiveInterval.
 	IdleInterval time.Duration `koanf:"idle_interval"`
+	// MaxLeasesPerUser is the most active view leases of one user. 0
+	// means no limit. Load refuses a negative value.
+	MaxLeasesPerUser int `koanf:"max_leases_per_user"`
 }
 
 // SamplerConfig is for the samplers that push to this server.
@@ -212,6 +215,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Stream.IdleInterval < cfg.Stream.LiveInterval {
 		return nil, errors.New("stream.idle_interval must not be under stream.live_interval")
+	}
+	if cfg.Stream.MaxLeasesPerUser < 0 {
+		return nil, errors.New("stream.max_leases_per_user must not be negative")
 	}
 	if cfg.ClickHouse.SpillDir == "" {
 		cfg.ClickHouse.SpillDir = filepath.Join(cfg.Storage.Path, "spill")
