@@ -12,10 +12,10 @@ struct WelcomeCloudView: View {
         ("Phone and email alerts", false, true),
     ]
 
-    private static let plans: [(name: String, hosts: String, detail: String)] = [
-        ("Free", "3 hosts", "1 day of history · email alerts"),
-        ("Solo", "25 hosts", "30 days of history · push alerts"),
-        ("Team", "100 hosts", "365 days of history · 3 or more seats"),
+    private static let plans: [(name: String, price: String, hosts: String, detail: String)] = [
+        ("Free", "$0", "3 hosts", "1 day of history · email alerts"),
+        ("Solo", "$5/mo", "25 hosts", "30 days of history · push alerts"),
+        ("Team", "$10/user/mo", "100 hosts", "365 days of history · 3 or more seats"),
     ]
 
     var body: some View {
@@ -30,7 +30,11 @@ struct WelcomeCloudView: View {
                 HStack(spacing: 12) {
                     ForEach(Self.plans, id: \.name) { plan in
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(plan.name).font(Typography.headerTitle)
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(plan.name).font(Typography.headerTitle)
+                                Spacer()
+                                Text(plan.price).font(.system(size: 11)).foregroundStyle(.secondary)
+                            }
                             Text(plan.hosts).font(Typography.rowName)
                             Text(plan.detail).font(.system(size: 11)).foregroundStyle(.secondary)
                         }
