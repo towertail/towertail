@@ -37,6 +37,8 @@ final class CloudInstaller {
     /// One line for each host, when the run ends.
     private(set) var results: [UUID: String] = [:]
     private(set) var notes: [UUID: String] = [:]
+    /// Hosts that the plan could not take.
+    private(set) var planFull: Set<UUID> = []
 
     @ObservationIgnored private let client: @MainActor () -> RemoteClient?
     @ObservationIgnored private let nodes: NodeStore
@@ -92,6 +94,7 @@ final class CloudInstaller {
             rows[node.id] = Dictionary(uniqueKeysWithValues: InstallStep.allCases.map { ($0, InstallStepState.waiting) })
             results[node.id] = nil
             notes[node.id] = nil
+            planFull.remove(node.id)
         }
         await withTaskGroup(of: Void.self) { group in
             var queue = list.makeIterator()
@@ -201,6 +204,7 @@ final class CloudInstaller {
             set(id, .register, .failed(text))
             results[id] = text
             notes[id] = "Live view over SSH still works"
+            planFull.insert(id)
             return
         } catch {
             fail(id, .register, error)

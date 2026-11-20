@@ -16,7 +16,7 @@ struct AccountPane: View {
     }
 }
 
-private struct AccountSection: View {
+struct AccountSection: View {
     let account: CloudAccount
     @Environment(\.openURL) private var openURL
     @State private var email = UserDefaults.standard.string(forKey: CloudAccount.emailKey) ?? ""

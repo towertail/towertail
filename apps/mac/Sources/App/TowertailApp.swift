@@ -32,7 +32,9 @@ struct TowertailApp: App {
             // clicked the menu-bar icon.
             ZStack {
                 MenuBarIcon(store: env.store, settings: env.clientSettings)
-                SceneTapInstaller()
+                SceneTapInstaller(showWelcome: {
+                    env.installer != nil && WelcomeState.shouldShow(nodes: env.nodeStore.nodes, settings: env.clientSettings)
+                })
             }
         }
         .menuBarExtraStyle(.window)
@@ -66,6 +68,17 @@ struct TowertailApp: App {
                 .onDisappear { ActivationPolicyCoordinator.shared.release() }
         }
         .windowResizability(.contentMinSize)
+
+        // Value-based, so that the window does not open at launch by itself.
+        WindowGroup("Welcome to Towertail", id: "welcome", for: Int.self) { _ in
+            WelcomeWindow()
+                .environment(env.clientSettings)
+                .environment(env.nodeStore)
+                .environment(env.cloud)
+                .environment(env.installer)
+        }
+        .windowResizability(.contentSize)
+        .defaultSize(width: 760, height: 540)
 
         WindowGroup(id: "full-view", for: FullViewContext.self) { $ctx in
             Group {
@@ -131,6 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// (which instantiates eagerly) so a tap immediately after launch still
 /// finds a handler.
 private struct SceneTapInstaller: View {
+    let showWelcome: () -> Bool
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -139,6 +153,10 @@ private struct SceneTapInstaller: View {
             .onAppear {
                 AppDelegate.opener = { ctx in
                     openWindow(id: "full-view", value: ctx)
+                    ActivationPolicyCoordinator.shared.bringToFront()
+                }
+                if showWelcome() {
+                    openWindow(id: "welcome", value: 0)
                     ActivationPolicyCoordinator.shared.bringToFront()
                 }
             }

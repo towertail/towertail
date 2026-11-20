@@ -7,6 +7,7 @@ struct GeneralPane: View {
     @Environment(ServerSettings.self) private var serverSettings
     @Environment(NodeStore.self) private var nodeStore
     @Environment(Updater.self) private var updater
+    @Environment(\.openWindow) private var openWindow
     @State private var launchAtLoginError: String?
     @State private var importStaged: SettingsExport?
     @State private var transferStatus: TransferStatus?
@@ -138,6 +139,13 @@ struct GeneralPane: View {
                     Text(err)
                         .font(.caption)
                         .foregroundStyle(.red)
+                }
+            }
+
+            Section("Welcome") {
+                Button("Show welcome") {
+                    openWindow(id: "welcome", value: 0)
+                    ActivationPolicyCoordinator.shared.bringToFront()
                 }
             }
 

@@ -15,6 +15,7 @@ struct PersistedSettings: Codable, Equatable {
     var defaultTerminalApp: String
     var postWakeGraceSeconds: Int
     var menuBarIconStyle: String
+    var welcomeDone: Bool
     var popoverLayout: String
     var longProc: LongProcRule
     /// Platform-specific blocks preserved verbatim from the on-disk file so a
@@ -38,6 +39,7 @@ struct PersistedSettings: Codable, Equatable {
         defaultTerminalApp: "Terminal",
         postWakeGraceSeconds: 15,
         menuBarIconStyle: "pulse",
+        welcomeDone: false,
         popoverLayout: "cards",
         longProc: .defaults,
         platformBlocks: .init(foreign: [:])
@@ -109,6 +111,7 @@ struct PersistedSettings: Codable, Equatable {
             self.launchAtLogin = darwin.launchAtLogin ?? PersistedSettings.defaults.launchAtLogin
             self.defaultTerminalApp = darwin.defaultTerminalApp ?? PersistedSettings.defaults.defaultTerminalApp
             self.menuBarIconStyle = darwin.menuBarIconStyle ?? PersistedSettings.defaults.menuBarIconStyle
+            self.welcomeDone = darwin.welcomeDone ?? PersistedSettings.defaults.welcomeDone
         } else {
             // Legacy flat form — migrate into the envelope on next save.
             self.launchAtLogin = try c.decodeIfPresent(Bool.self, forKey: .launchAtLogin)
@@ -116,6 +119,7 @@ struct PersistedSettings: Codable, Equatable {
             self.defaultTerminalApp = try c.decodeIfPresent(String.self, forKey: .defaultTerminalApp)
                 ?? PersistedSettings.defaults.defaultTerminalApp
             self.menuBarIconStyle = PersistedSettings.defaults.menuBarIconStyle
+            self.welcomeDone = PersistedSettings.defaults.welcomeDone
         }
 
         if let envelope {
@@ -154,7 +158,8 @@ struct PersistedSettings: Codable, Equatable {
             DarwinSettingsBlock(
                 launchAtLogin: launchAtLogin,
                 defaultTerminalApp: defaultTerminalApp,
-                menuBarIconStyle: menuBarIconStyle
+                menuBarIconStyle: menuBarIconStyle,
+                welcomeDone: welcomeDone
             )
         )
         for (key, raw) in platformBlocks.foreign {
@@ -178,6 +183,7 @@ struct PersistedSettings: Codable, Equatable {
         defaultTerminalApp: String,
         postWakeGraceSeconds: Int,
         menuBarIconStyle: String = "pulse",
+        welcomeDone: Bool = false,
         popoverLayout: String = "cards",
         longProc: LongProcRule = .defaults,
         platformBlocks: PlatformBlocks = .init(foreign: [:])
@@ -196,6 +202,7 @@ struct PersistedSettings: Codable, Equatable {
         self.defaultTerminalApp = defaultTerminalApp
         self.postWakeGraceSeconds = postWakeGraceSeconds
         self.menuBarIconStyle = menuBarIconStyle
+        self.welcomeDone = welcomeDone
         self.popoverLayout = popoverLayout
         self.longProc = longProc
         self.platformBlocks = platformBlocks
@@ -215,6 +222,7 @@ struct DarwinSettingsBlock: Codable, Equatable {
     var launchAtLogin: Bool?
     var defaultTerminalApp: String?
     var menuBarIconStyle: String?
+    var welcomeDone: Bool?
 }
 
 /// Sum type for a single entry in the `platform` envelope. On decode we either
@@ -243,6 +251,7 @@ enum DarwinOrForeignBlock: Codable, Equatable {
                 "launchAtLogin": b.launchAtLogin.map { .bool($0) } ?? .null,
                 "defaultTerminalApp": b.defaultTerminalApp.map { .string($0) } ?? .null,
                 "menuBarIconStyle": b.menuBarIconStyle.map { .string($0) } ?? .null,
+                "welcomeDone": b.welcomeDone.map { .bool($0) } ?? .null,
             ]
             return .object(dict)
         case .foreign(let raw): return raw
@@ -257,10 +266,12 @@ enum DarwinOrForeignBlock: Codable, Equatable {
             var launch: Bool? = nil
             var term: String? = nil
             var iconStyle: String? = nil
+            var welcome: Bool? = nil
             if case .bool(let v) = obj["launchAtLogin"] { launch = v }
             if case .string(let v) = obj["defaultTerminalApp"] { term = v }
             if case .string(let v) = obj["menuBarIconStyle"] { iconStyle = v }
-            return DarwinSettingsBlock(launchAtLogin: launch, defaultTerminalApp: term, menuBarIconStyle: iconStyle)
+            if case .bool(let v) = obj["welcomeDone"] { welcome = v }
+            return DarwinSettingsBlock(launchAtLogin: launch, defaultTerminalApp: term, menuBarIconStyle: iconStyle, welcomeDone: welcome)
         }
     }
 }

@@ -26,6 +26,7 @@ final class ClientSettings {
     var launchAtLogin: Bool
     var defaultTerminalApp: String
     var menuBarIconStyle: MenuBarIconStyle
+    var welcomeDone: Bool
     var popoverLayout: PopoverLayout
 
     private let url: URL
@@ -37,6 +38,7 @@ final class ClientSettings {
         self.launchAtLogin = p.launchAtLogin
         self.defaultTerminalApp = p.defaultTerminalApp
         self.menuBarIconStyle = MenuBarIconStyle(rawValue: p.menuBarIconStyle) ?? .pulse
+        self.welcomeDone = p.welcomeDone
         self.popoverLayout = PopoverLayout(rawValue: p.popoverLayout) ?? .cards
     }
 
@@ -50,6 +52,7 @@ final class ClientSettings {
         self.launchAtLogin = p.launchAtLogin
         self.defaultTerminalApp = p.defaultTerminalApp
         self.menuBarIconStyle = MenuBarIconStyle(rawValue: p.menuBarIconStyle) ?? .pulse
+        self.welcomeDone = p.welcomeDone
         self.popoverLayout = PopoverLayout(rawValue: p.popoverLayout) ?? .cards
     }
 
@@ -60,6 +63,7 @@ final class ClientSettings {
         p.launchAtLogin = launchAtLogin
         p.defaultTerminalApp = defaultTerminalApp
         p.menuBarIconStyle = menuBarIconStyle.rawValue
+        p.welcomeDone = welcomeDone
         p.popoverLayout = popoverLayout.rawValue
         SettingsPersistence.save(p, to: url)
         logSettingsDiff(before: before, after: p, fields: Self.diffFields)
@@ -70,6 +74,7 @@ final class ClientSettings {
         SettingsField("launchAtLogin") { "\($0.launchAtLogin)" },
         SettingsField("defaultTerminalApp") { $0.defaultTerminalApp },
         SettingsField("menuBarIconStyle") { $0.menuBarIconStyle },
+        SettingsField("welcomeDone") { "\($0.welcomeDone)" },
         SettingsField("popoverLayout") { $0.popoverLayout },
     ]
 }
