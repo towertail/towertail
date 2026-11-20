@@ -6,6 +6,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/labstack/echo/v4"
 	"github.com/towertail/towertail/server/authctx"
+	"github.com/towertail/towertail/server/internal/hub"
 )
 
 // handleStream accepts a websocket connection and hands it to the hub.
@@ -18,7 +19,14 @@ func (s *Server) handleStream(c echo.Context) error {
 		return err
 	}
 	ctx := c.Request().Context()
-	client := s.hub.Register(t.OrgID, conn)
+	userKey := t.ID
+	if t.UserID != nil {
+		userKey = *t.UserID
+	}
+	client := s.hub.Register(t.OrgID, conn, hub.ClientOptions{
+		Lease:   c.QueryParam("lease") == "1",
+		UserKey: userKey,
+	})
 	defer s.hub.Unregister(client)
 
 	s.hub.ReplayFor(client)

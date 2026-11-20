@@ -30,6 +30,14 @@ type Config struct {
 	Cloud      CloudConfig
 	Notify     NotifyConfig
 	Sampler    SamplerConfig
+	Stream     StreamConfig
+}
+
+// StreamConfig is for the /v1/stream websocket.
+type StreamConfig struct {
+	// LegacySamples sends the full sample frames to clients that do not
+	// ask for a lease (?lease=1). When false, they get events only.
+	LegacySamples bool `koanf:"legacy_samples"`
 }
 
 // SamplerConfig is for the samplers that push to this server.
@@ -257,6 +265,8 @@ func setDefaults(k *koanf.Koanf) {
 
 	_ = k.Set("log.level", "info")
 	_ = k.Set("log.format", "json")
+
+	_ = k.Set("stream.legacy_samples", true)
 
 	_ = k.Set("cloud.managed", false)
 

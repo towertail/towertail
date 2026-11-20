@@ -72,3 +72,21 @@ func TestLoadSection(t *testing.T) {
 		t.Errorf("section: %+v", out)
 	}
 }
+
+func TestStreamDefaults(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Stream.LegacySamples {
+		t.Error("legacy_samples must be true by default")
+	}
+	t.Setenv("TT_STREAM__LEGACY_SAMPLES", "false")
+	cfg, err = Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Stream.LegacySamples {
+		t.Error("TT_STREAM__LEGACY_SAMPLES=false did not apply")
+	}
+}

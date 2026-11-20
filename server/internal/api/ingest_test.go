@@ -227,12 +227,15 @@ func TestDecodeSample(t *testing.T) {
 		"errors": []
 	}`)
 	org, node := uuid.New(), uuid.New()
-	bundle, err := decodeSample(line, org, node)
+	bundle, sample, err := decodeSample(line, org, node)
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if bundle.Sample.HostName != "x" {
 		t.Errorf("host: %s", bundle.Sample.HostName)
+	}
+	if sample.CPU.Pct != 12.5 {
+		t.Errorf("sample cpu: %v", sample.CPU.Pct)
 	}
 	if bundle.Sample.CPUPct != 12.5 {
 		t.Errorf("cpu: %v", bundle.Sample.CPUPct)
@@ -244,7 +247,7 @@ func TestDecodeSample(t *testing.T) {
 
 func TestDecodeSample_RejectsUnknownVersion(t *testing.T) {
 	line := []byte(`{"v":99,"ts":"2026-04-23T10:00:00Z","host":{"name":"x"},"cpu":{},"mem":{"used":1,"total":100},"swap":{"used":0,"total":0},"errors":[]}`)
-	if _, err := decodeSample(line, uuid.New(), uuid.New()); err == nil {
+	if _, _, err := decodeSample(line, uuid.New(), uuid.New()); err == nil {
 		t.Error("expected error")
 	}
 }

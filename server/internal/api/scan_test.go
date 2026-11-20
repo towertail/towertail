@@ -54,7 +54,7 @@ func newScanEnv(t *testing.T) *scanEnv {
 		t.Fatal(err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := hub.New(log)
+	h := hub.New(log, hub.Options{})
 	ctrl := control.New(st)
 	issuer := auth.NewIssuer(st)
 	srv := New(Deps{

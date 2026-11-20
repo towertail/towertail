@@ -16,7 +16,7 @@ See also: [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs
 | Sampler → Server ingest | HTTPS POST | NDJSON body (`application/x-ndjson`), optional `Content-Encoding: gzip` | `Authorization: Bearer <sampler_token>` |
 | Sampler → Server control | HTTPS GET long-poll | JSON (single message) or 204 No Content | `Authorization: Bearer <sampler_token>` |
 | Client → Server REST | HTTPS GET/POST/PUT/DELETE | JSON | `Authorization: Bearer <user_token>` (or admin) |
-| Client ↔ Server stream | WSS, text frames | JSON `WSMessage` envelopes | `Authorization: Bearer <user_token>` at connect |
+| Client ↔ Server stream | WSS, text frames | JSON `WSMessage` envelopes. Query `?lease=1` selects lease mode (§4) | `Authorization: Bearer <user_token>` at connect |
 
 Error envelope for every REST 4xx/5xx:
 
@@ -258,14 +258,36 @@ Each org has its own alert channels. When the alerter sends an alert (the notify
 
 Endpoint: `/v1/stream`. Client presents bearer token in the `Authorization` header on the upgrade request.
 
+A connection has one of two modes. The client selects the mode at connect.
+
+| Mode | Query | Sample data |
+|---|---|---|
+| Lease | `?lease=1` | Only for the hosts that the client has leased (a `view` frame). A short `summary` for each host. A `detail` for the open tab. |
+| Legacy | none | The full `sample` of each node, as before. Old apps and old web builds use this mode. |
+
+The mode does not change after connect. The server cannot stop the replay of full samples after the first frame, so a `view` frame does not switch a legacy connection to lease mode.
+
+The config key `stream.legacy_samples` (env `TT_STREAM__LEGACY_SAMPLES`, default `true`) keeps the legacy mode. With `false`, a legacy client gets events only and no replay.
+
 ### Client → server
 
 ```json
-{ "type": "subscribe", "node_ids": ["uuid", "uuid"] }   // narrow subscription
+{ "type": "subscribe", "node_ids": ["uuid", "uuid"] }   // legacy mode only
+{ "type": "view", "hosts": ["uuid"], "detail": { "host": "uuid", "tab": "processes" }, "ttl": 60 }  // lease mode only
 { "type": "ping" }
 ```
 
-An empty `node_ids` removes the filter and subscribes to every node in the org.
+**`subscribe`** (legacy mode only). It narrows the `sample`, `event` and `disk_scan_updated` frames to a set of nodes. An empty `node_ids` removes the filter. In lease mode the server ignores it.
+
+**`view`** (lease mode only). It sets the lease of the connection. A new `view` replaces the old one. The client sends it every 30 s while the user sees the data, and sends an empty view (`{ "type": "view" }`) at once when the data is hidden. On a legacy connection the server ignores it.
+
+| Key | Meaning |
+|---|---|
+| `hosts` | The node IDs that the client watches. At most 500; the server cuts a longer list. |
+| `detail` | Optional. The one host and tab that the client has open. The host counts as a leased host. A tab that is not in the table below is dropped. |
+| `ttl` | Seconds that the lease lasts. Default 60 (when missing or 0). The server clamps it to 10 .. 120. |
+
+The lease ends when `ttl` passes without a new `view` (sleep, crash, lost network), or when the client sends an empty view, or when it disconnects. A restart of the server ends all leases: the client sends `view` again after it reconnects.
 
 ### Server → client
 
@@ -278,11 +300,50 @@ Every frame is a `WSMessage` with a `type` discriminator:
 { "type": "settings_updated", "settings": { ... } }
 { "type": "disk_scan_updated", "nodeId": "uuid", "job": { DiskScanJob } }
 { "type": "pong" }
+{ "type": "hello",   "hello":   { "lease": true, "renew_s": 30, "max_ttl_s": 120 } }
+{ "type": "summary", "nodeId": "uuid", "summary": { LiveSummary } }
+{ "type": "detail",  "nodeId": "uuid", "tab": "processes", "detail": { DetailParts } }
+{ "type": "lease",   "lease":   { "state": "ended", "reason": "limit" } }
 ```
 
-`disk_scan_updated` goes to the clients that see the node. The server sends it on each state change, and for progress at most once each 2 s for each job.
+`sample` is for legacy mode. `hello`, `summary`, `detail` and `lease` are for lease mode.
 
-On connect the server immediately replays the most recent `sample` for every node the client can see, then begins streaming new frames as they arrive. Event replays are not implemented today (clients refetch `/v1/alerts` at connect).
+Events (`event`, `node_updated`, `settings_updated`, `disk_scan_updated`) always reach a lease client, with or without a lease. A legacy client keeps its `subscribe` filter. `disk_scan_updated` goes to the clients that see the node. The server sends it on each state change, and for progress at most once each 2 s for each job.
+
+**`hello`.** The first frame of a lease connection. `renew_s` is the time between two `view` frames. `max_ttl_s` is the largest `ttl`. A client that asked for lease mode and gets no `hello` knows that the server is old. Then it uses the `sample` frames.
+
+**`summary`.** About 200 bytes. The server makes it one time for each sample, and sends it to each client whose lease covers the node (a host in `hosts`, or the detail host).
+
+| Key | Meaning |
+|---|---|
+| `ts` | The `ts` of the sample. |
+| `cpu` | Percent, 0..100 (`cpu.pct`). |
+| `mem` | Used / total, ratio 0..1. |
+| `disk` | The fullest mount, ratio 0..1. |
+| `rx`, `tx` | Bytes per second. |
+| `load` | `cpu.load_1`. |
+| `procs` | Process count. Missing when the sample has no process count. |
+| `health` | Short health data (`HealthBrief`: the keys of `health` without `zombie_parents`, plus `inodes`, the worst inode ratio of all mounts). Only when it changed since the last summary of the node, and in the replay frame. The client keeps the last value. |
+| `host` | Slow facts: `os`, `arch`, `kernel`, `cores`, `mem_total`, `uptime_s`, `sampler`. Only in the replay frame and after a change of the facts (`uptime_s` does not count). The client keeps the last value. |
+
+Ratios have 4 decimals.
+
+**`detail`.** Sent to a client whose lease has `detail.host` equal to the node, in addition to the summary. It has the `ts` and the parts of the sample for the open tab. The keys have the names and shapes of the same keys in the sample. A sample that has none of the parts of the tab gives no `detail` frame (for example, the sampler sends `ports` only each `--ports-interval`).
+
+| `tab` | Keys of `detail` |
+|---|---|
+| `processes` | `procs` |
+| `ports` | `ports` |
+| `disks` | `disks`, `disk_io`, `procs` |
+| `health` | `health`, `procs` |
+
+**`lease`.** `state` is `ended`. `reason` is `limit` when the server ends the lease because of a limit of leases for each user. A new `view` can start a lease again. The server does not send this frame yet; the type is reserved.
+
+**Replay.**
+
+- Legacy mode: on connect the server immediately replays the most recent `sample` for every node the client can see (nothing when `stream.legacy_samples` is `false`), then begins streaming new frames as they arrive.
+- Lease mode: on connect the server sends only `hello`. After each `view` that changes the lease, the server replays the last `summary` (with `host` and `health`) of each host that the old lease did not cover. If the detail host or tab changed, it also replays the last `detail` of the tab. For `ports` this is the last sample that had ports. A `view` that renews the same lease sends no replay.
+- Event replays are not implemented today (clients refetch `/v1/alerts` at connect).
 
 ---
 
@@ -299,6 +360,7 @@ The server's [`wire`](../server/wire/wire.go) package is the source of truth. No
 - `Channel` — `{ id, kind, name, enabled, target, hasSecret, route: { minTint?, metrics?, tags? }, createdAt }`. An alert channel of the org (§3.2).
 - `ChannelRequest` — `{ kind, name, enabled?, target?, secret?, route }`. On PUT, a missing `enabled`, `target` or `secret` keeps the stored value. `"secret": ""` removes the secret. `ChannelTestResponse` is `{ ok, error? }`.
 - `AlertPayload` — the body of a generic webhook (§3.2).
+- `ClientMessage` (`SubscribeMessage` is an alias), `StreamHello`, `LiveSummary`, `HealthBrief`, `HostFacts`, `DetailTab`, `ViewDetail`, `DetailParts`, `LeaseNotice` — the lease mode of the stream (§4).
 - `LoginRequest`, `LoginResponse`.
 - `EnrollRequest`, `EnrollResponse`, `JoinTokenRequest`, `JoinTokenResponse`, `JoinRequest`. `SamplerToken` is `{ id, label, nodeId?, createdAt, lastUsedAt? }`.
 - `ControlNextResponse`, `KillProcessPayload`, `DiskScanPayload`.

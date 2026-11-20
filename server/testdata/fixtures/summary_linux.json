@@ -1,0 +1,19 @@
+{
+  "ts": "2026-10-17T12:00:00.000Z",
+  "cpu": 23.4,
+  "mem": 0.352,
+  "disk": 0.3,
+  "rx": 1250000,
+  "tx": 3750000,
+  "load": 1.82,
+  "procs": 312,
+  "host": {
+    "os": "linux",
+    "arch": "amd64",
+    "kernel": "6.8.0-45-generic",
+    "cores": 8,
+    "mem_total": 33554432000,
+    "uptime_s": 1400000,
+    "sampler": "towertail-sampler/0.4.0"
+  }
+}

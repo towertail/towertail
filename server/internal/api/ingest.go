@@ -66,6 +66,7 @@ func (s *Server) handleIngest(c echo.Context) error {
 	scanner.Buffer(make([]byte, 128*1024), 4*1024*1024)
 	var (
 		bundles  []clickhouse.IngestBundle
+		samples  []wire.Sample
 		lines    [][]byte
 		rejected int
 		firstErr string
@@ -75,7 +76,7 @@ func (s *Server) handleIngest(c echo.Context) error {
 		if len(line) == 0 {
 			continue
 		}
-		bundle, err := decodeSample(line, t.OrgID, *t.NodeID)
+		bundle, sample, err := decodeSample(line, t.OrgID, *t.NodeID)
 		if err != nil {
 			rejected++
 			if firstErr == "" {
@@ -84,6 +85,7 @@ func (s *Server) handleIngest(c echo.Context) error {
 			continue
 		}
 		bundles = append(bundles, bundle)
+		samples = append(samples, sample)
 		lines = append(lines, append([]byte(nil), line...))
 	}
 	if err := scanner.Err(); err != nil {
@@ -103,7 +105,7 @@ func (s *Server) handleIngest(c echo.Context) error {
 	}
 	for i, bundle := range bundles {
 		if s.hub != nil {
-			s.hub.PublishSample(t.OrgID, *t.NodeID, lines[i])
+			s.hub.PublishSample(t.OrgID, *t.NodeID, samples[i], lines[i])
 		}
 		s.evalAlerter(c.Request().Context(), t.OrgID, *t.NodeID, &gate.node, bundle)
 	}
@@ -123,17 +125,17 @@ func (s *Server) handleIngest(c echo.Context) error {
 // decodeSample parses a single NDJSON line into the IngestBundle the
 // ClickHouse batcher expects. Returns an error for samples we can't
 // decode or that have an unsupported schema version.
-func decodeSample(line []byte, orgID, nodeID uuid.UUID) (clickhouse.IngestBundle, error) {
+func decodeSample(line []byte, orgID, nodeID uuid.UUID) (clickhouse.IngestBundle, wire.Sample, error) {
 	var s wire.Sample
 	if err := json.Unmarshal(line, &s); err != nil {
-		return clickhouse.IngestBundle{}, err
+		return clickhouse.IngestBundle{}, wire.Sample{}, err
 	}
 	if s.V != 1 {
-		return clickhouse.IngestBundle{}, echoErrorf(http.StatusBadRequest, "unsupported schema v=%d", s.V)
+		return clickhouse.IngestBundle{}, wire.Sample{}, echoErrorf(http.StatusBadRequest, "unsupported schema v=%d", s.V)
 	}
 	ts, err := parseTS(s.TS)
 	if err != nil {
-		return clickhouse.IngestBundle{}, err
+		return clickhouse.IngestBundle{}, wire.Sample{}, err
 	}
 
 	b := clickhouse.IngestBundle{}
@@ -233,7 +235,7 @@ func decodeSample(line []byte, orgID, nodeID uuid.UUID) (clickhouse.IngestBundle
 			})
 		}
 	}
-	return b, nil
+	return b, s, nil
 }
 
 func uint64Positive(v int64) uint64 {

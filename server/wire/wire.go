@@ -61,7 +61,8 @@ type Event struct {
 	Tint   string    `json:"tint,omitempty"`
 }
 
-// WSMessage is a tagged envelope for WebSocket frames.
+// WSMessage is a tagged envelope for WebSocket frames. The frame types
+// hello, summary, detail and lease are for lease mode (docs/wire.md §4).
 type WSMessage struct {
 	Type    string          `json:"type"`
 	NodeID  *uuid.UUID      `json:"nodeId,omitempty"`
@@ -71,14 +72,26 @@ type WSMessage struct {
 	Nodes   json.RawMessage `json:"nodes,omitempty"`
 	Setting json.RawMessage `json:"settings,omitempty"`
 	Job     *DiskScanJob    `json:"job,omitempty"`
+	Hello   *StreamHello    `json:"hello,omitempty"`
+	Summary *LiveSummary    `json:"summary,omitempty"`
+	Tab     DetailTab       `json:"tab,omitempty"`
+	Detail  json.RawMessage `json:"detail,omitempty"`
+	Lease   *LeaseNotice    `json:"lease,omitempty"`
 }
 
-// SubscribeMessage is sent client → server to narrow the subscription
-// to a set of nodes.
-type SubscribeMessage struct {
+// ClientMessage is sent client → server: subscribe (legacy mode), view
+// (lease mode) and ping.
+type ClientMessage struct {
 	Type    string      `json:"type"`
 	NodeIDs []uuid.UUID `json:"node_ids,omitempty"`
+	Hosts   []uuid.UUID `json:"hosts,omitempty"`
+	Detail  *ViewDetail `json:"detail,omitempty"`
+	// TTL is the lease time in seconds.
+	TTL int `json:"ttl,omitempty"`
 }
+
+// SubscribeMessage is the old name of ClientMessage.
+type SubscribeMessage = ClientMessage
 
 // APIError is the uniform error envelope.
 type APIError struct {

@@ -105,7 +105,7 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 		a.eager = append(a.eager, c.Name())
 	}
 
-	a.hub = hub.New(a.log)
+	a.hub = hub.New(a.log, hub.Options{LegacySamples: cfg.Stream.LegacySamples})
 	router := channels.NewRouter(a.store, cfg.Notify, b.mailer, a.log)
 	notifiers := append([]notify.Notifier{router}, b.notifiers...)
 	a.alerter = alerter.New(a.log, nil, a.hub, chEvents{ch: a.ch}, a.store, notifiers...)
