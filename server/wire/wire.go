@@ -104,11 +104,13 @@ type LoginResponse struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-// EnrollRequest / EnrollResponse for /v1/sampler/enroll.
+// EnrollRequest / EnrollResponse for /v1/sampler/enroll. A NodeID that
+// does not exist makes the node with that ID. An empty NodeID with a
+// known MachineID binds to the node of that machine.
 type EnrollRequest struct {
 	DisplayName string    `json:"display_name" validate:"required"`
 	MachineID   string    `json:"machine_id,omitempty"`
-	NodeID      uuid.UUID `json:"node_id,omitempty"` // optional: existing node to bind to
+	NodeID      uuid.UUID `json:"node_id,omitempty"`
 }
 
 type EnrollResponse struct {
@@ -147,6 +149,25 @@ const (
 	GoneAccountDeleted = "account_deleted"
 	GoneCloudOff       = "cloud_off"
 )
+
+// JoinTokenRequest is the body of POST /v1/sampler/join-tokens.
+type JoinTokenRequest struct {
+	DisplayName string `json:"display_name,omitempty"`
+}
+
+// JoinTokenResponse holds the one-use join token. It works for one hour.
+type JoinTokenResponse struct {
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// JoinRequest is the body of POST /v1/sampler/join. The reply is an
+// EnrollResponse.
+type JoinRequest struct {
+	JoinToken   string `json:"join_token" validate:"required"`
+	DisplayName string `json:"display_name" validate:"required"`
+	MachineID   string `json:"machine_id,omitempty"`
+}
 
 // SamplerToken is one sampler token in GET /v1/sampler/tokens. It has no
 // secret.

@@ -200,6 +200,14 @@ func (s *Server) registerRoutes() {
 	// Auth (public login).
 	v1.POST("/auth/login", s.handleLogin)
 
+	// The join route has no bearer token. The join token is in the body.
+	v1.POST("/sampler/join", s.handleJoin, middleware.RateLimiterWithConfig(middleware.RateLimiterConfig{
+		Store: middleware.NewRateLimiterMemoryStoreWithConfig(middleware.RateLimiterMemoryStoreConfig{
+			Rate: rate.Every(6 * time.Second), Burst: 10, ExpiresIn: 3 * time.Minute,
+		}),
+		IdentifierExtractor: func(c echo.Context) (string, error) { return c.RealIP(), nil },
+	}))
+
 	// User/admin-authenticated group.
 	userGroup := v1.Group("", bearerMiddleware(s.issuer, store.TokenKindUser, store.TokenKindAdmin))
 	userGroup.POST("/auth/logout", s.handleLogout)
@@ -227,6 +235,7 @@ func (s *Server) registerRoutes() {
 		userGroup.POST("/channels/:id/test", s.handleTestChannel)
 	}
 	userGroup.POST("/sampler/enroll", s.handleSamplerEnroll)
+	userGroup.POST("/sampler/join-tokens", s.handleCreateJoinToken)
 	userGroup.GET("/sampler/versions", s.handleSamplerVersions)
 	userGroup.GET("/sampler/tokens", s.handleListSamplerTokens)
 	userGroup.DELETE("/sampler/tokens/:id", s.handleRevokeSamplerToken)

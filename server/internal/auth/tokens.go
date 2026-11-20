@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -34,8 +35,23 @@ func (i *TokenIssuer) Issue(ctx context.Context, orgID uuid.UUID, kind store.Tok
 	return raw, t, nil
 }
 
+// IssueJoin creates a one-use join token that expires after ttl.
+func (i *TokenIssuer) IssueJoin(ctx context.Context, orgID uuid.UUID, userID *uuid.UUID, label string, ttl time.Duration) (string, store.Token, error) {
+	raw, t, err := store.NewToken(orgID, store.TokenKindJoin, label)
+	if err != nil {
+		return "", store.Token{}, err
+	}
+	exp := time.Now().UTC().Add(ttl)
+	t.UserID = userID
+	t.ExpiresAt = &exp
+	if err := i.store.PutToken(ctx, t); err != nil {
+		return "", store.Token{}, err
+	}
+	return raw, t, nil
+}
+
 // Verify looks up a token by the hash of the supplied secret. A match
-// requires the token to be unrevoked.
+// requires the token to be unrevoked and not expired.
 func (i *TokenIssuer) Verify(ctx context.Context, raw string) (store.Token, error) {
 	if raw == "" {
 		return store.Token{}, errors.New("auth: empty token")
@@ -47,6 +63,9 @@ func (i *TokenIssuer) Verify(ctx context.Context, raw string) (store.Token, erro
 	}
 	if t.RevokedAt != nil {
 		return store.Token{}, errors.New("auth: revoked")
+	}
+	if t.ExpiresAt != nil && !time.Now().Before(*t.ExpiresAt) {
+		return store.Token{}, errors.New("auth: expired")
 	}
 	// Constant-time compare is already implicit in the bucket lookup
 	// (hash is the key), but keep a subtle.ConstantTimeCompare here

@@ -145,6 +145,23 @@ func (s *BoltStore) PutNode(_ context.Context, orgID uuid.UUID, node Node) error
 	})
 }
 
+// FindNodeByMachineID gives the node of the org with the machine id.
+func (s *BoltStore) FindNodeByMachineID(ctx context.Context, orgID uuid.UUID, machineID string) (Node, error) {
+	if machineID == "" {
+		return Node{}, ErrNotFound
+	}
+	nodes, err := s.ListNodes(ctx, orgID)
+	if err != nil {
+		return Node{}, err
+	}
+	for _, n := range nodes {
+		if n.MachineID == machineID {
+			return n, nil
+		}
+	}
+	return Node{}, ErrNotFound
+}
+
 func (s *BoltStore) DeleteNode(_ context.Context, orgID, id uuid.UUID) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		return tx.Bucket(bucketNodes).Delete(nodeKey(orgID, id))

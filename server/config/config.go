@@ -63,6 +63,9 @@ type HTTPConfig struct {
 	// "CF-Connecting-IP" behind a Cloudflare Tunnel. Set it only when no
 	// client can reach the server past the proxy.
 	TrustedProxyHeader string `koanf:"trusted_proxy_header"`
+	// PublicURL is the address that samplers use to reach the server. It
+	// goes into the enroll reply. Empty means the host of the request.
+	PublicURL string `koanf:"public_url"`
 }
 
 type ClickHouseConfig struct {

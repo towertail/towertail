@@ -75,6 +75,18 @@ func (s *PostgresStore) GetNode(ctx context.Context, orgID, id uuid.UUID) (Node,
 	return n, notFound(err)
 }
 
+// FindNodeByMachineID gives the oldest node of the org with the machine id.
+func (s *PostgresStore) FindNodeByMachineID(ctx context.Context, orgID uuid.UUID, machineID string) (Node, error) {
+	if machineID == "" {
+		return Node{}, ErrNotFound
+	}
+	row := s.pool.QueryRow(ctx, `
+		SELECT data, created_at FROM nodes WHERE org_id = $1 AND machine_id = $2
+		ORDER BY created_at, id LIMIT 1`, orgID, machineID)
+	n, err := scanNode(row)
+	return n, notFound(err)
+}
+
 // scanNode reads a node. The column created_at wins over the copy in data.
 func scanNode(row pgx.Row) (Node, error) {
 	var (
@@ -101,9 +113,10 @@ func (s *PostgresStore) PutNode(ctx context.Context, orgID uuid.UUID, node Node)
 		return err
 	}
 	_, err = s.pool.Exec(ctx, `
-		INSERT INTO nodes (org_id, id, data) VALUES ($1, $2, $3)
-		ON CONFLICT (org_id, id) DO UPDATE SET data = EXCLUDED.data, updated_at = now()`,
-		orgID, node.ID, data)
+		INSERT INTO nodes (org_id, id, data, machine_id) VALUES ($1, $2, $3, NULLIF($4, ''))
+		ON CONFLICT (org_id, id) DO UPDATE SET
+			data = EXCLUDED.data, machine_id = EXCLUDED.machine_id, updated_at = now()`,
+		orgID, node.ID, data, node.MachineID)
 	return err
 }
 
@@ -138,7 +151,7 @@ func (s *PostgresStore) PutSettings(ctx context.Context, orgID uuid.UUID, settin
 	return err
 }
 
-const tokenCols = `id, org_id, kind, label, token_hash, node_id, user_id, created_at, last_used_at, revoked_at`
+const tokenCols = `id, org_id, kind, label, token_hash, node_id, user_id, created_at, last_used_at, revoked_at, expires_at`
 
 func (s *PostgresStore) PutToken(ctx context.Context, t Token) error {
 	if len(t.Hash) == 0 {
@@ -148,10 +161,10 @@ func (s *PostgresStore) PutToken(ctx context.Context, t Token) error {
 		t.CreatedAt = time.Now().UTC()
 	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO api_tokens (`+tokenCols+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		INSERT INTO api_tokens (`+tokenCols+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		ON CONFLICT (id) DO UPDATE SET
 			label = EXCLUDED.label, last_used_at = EXCLUDED.last_used_at, revoked_at = EXCLUDED.revoked_at`,
-		t.ID, t.OrgID, string(t.Kind), t.Label, t.Hash, t.NodeID, t.UserID, t.CreatedAt, t.LastUsedAt, t.RevokedAt)
+		t.ID, t.OrgID, string(t.Kind), t.Label, t.Hash, t.NodeID, t.UserID, t.CreatedAt, t.LastUsedAt, t.RevokedAt, t.ExpiresAt)
 	return err
 }
 
@@ -195,7 +208,7 @@ func scanToken(row pgx.Row) (Token, error) {
 		kind  string
 		label *string
 	)
-	err := row.Scan(&t.ID, &t.OrgID, &kind, &label, &t.Hash, &t.NodeID, &t.UserID, &t.CreatedAt, &t.LastUsedAt, &t.RevokedAt)
+	err := row.Scan(&t.ID, &t.OrgID, &kind, &label, &t.Hash, &t.NodeID, &t.UserID, &t.CreatedAt, &t.LastUsedAt, &t.RevokedAt, &t.ExpiresAt)
 	t.Kind = TokenKind(kind)
 	if label != nil {
 		t.Label = *label

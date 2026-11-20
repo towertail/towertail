@@ -30,13 +30,14 @@ Codes: `unauthorized`, `forbidden`, `not_found`, `bad_request`, `conflict`, `pla
 
 ## 2. Authentication
 
-Three token kinds, all opaque strings with a `tt_` prefix. Raw tokens are only ever returned at issue time; the server stores SHA-256 hashes.
+Four token kinds, all opaque strings with a `tt_` prefix. Raw tokens are only ever returned at issue time; the server stores SHA-256 hashes.
 
 | Kind | Issued by | Allowed groups |
 |---|---|---|
 | `user` | `POST /v1/auth/login` | `/v1/*` except ingest + control |
 | `admin` | `towertail-server token issue --kind=admin` (CLI) | everything in `user` + token management |
-| `sampler` | `POST /v1/sampler/enroll` | `/v1/ingest/*`, `/v1/control/next`, `/v1/disk-scans/{job}/progress`, `/v1/disk-scans/{job}/result` |
+| `sampler` | `POST /v1/sampler/enroll`, `POST /v1/sampler/join` | `/v1/ingest/*`, `/v1/control/next`, `/v1/disk-scans/{job}/progress`, `/v1/disk-scans/{job}/result` |
+| `join` | `POST /v1/sampler/join-tokens` | `POST /v1/sampler/join` only (in the body). The token starts with `tt_join_`, works for 1 hour and for one call. Any bearer route gives 403 for it |
 
 Sampler tokens are bound to one `node_id`. Ingest/control endpoints reject tokens without a binding.
 
@@ -54,6 +55,7 @@ Base path `/v1`. Authed unless otherwise marked.
 | GET | `/readyz` | — | `200 ready` or `503 starting` |
 | GET | `/metrics` | — | Prometheus text |
 | POST | `/v1/auth/login` | `LoginRequest` | `LoginResponse` |
+| POST | `/v1/sampler/join` | `JoinRequest` | `EnrollResponse`. No bearer token: the join token is in the body. 401 for an unknown, used or expired token. 402 when the plan is full (the join token stays). 10 calls each minute for each IP |
 
 ### User / admin
 
@@ -81,7 +83,8 @@ Base path `/v1`. Authed unless otherwise marked.
 | PUT | `/v1/channels/{id}` | `ChannelRequest` | `Channel` |
 | DELETE | `/v1/channels/{id}` | — | 204 |
 | POST | `/v1/channels/{id}/test` | — | `ChannelTestResponse` (200, also when the send fails) |
-| POST | `/v1/sampler/enroll` | `EnrollRequest` | `EnrollResponse` |
+| POST | `/v1/sampler/enroll` | `EnrollRequest` | `EnrollResponse` (see §3.0.1) |
+| POST | `/v1/sampler/join-tokens` | `JoinTokenRequest` | `JoinTokenResponse` (201). 402 when the plan is full |
 | GET | `/v1/sampler/versions` | — | `{ "linux-amd64": "sha256:…", … }` |
 | GET | `/v1/sampler/tokens` | — | `[SamplerToken]`: the sampler tokens of the org, with no secret |
 | DELETE | `/v1/sampler/tokens/{id}` | — | 204. The node stays. Its sampler cannot send again until it enrolls again |
@@ -118,6 +121,19 @@ The server sends its orders for a sampler in the reply to `POST /v1/ingest/sampl
 - 410 `reason` is `host_removed` (the node does not exist), `cloud_off` (the node has `enabled: false`) or `account_deleted` (reserved; the server does not send it yet).
 - 402 means that the plan is full. The nodes of the org are sorted by `createdAt`, then id. A node at or above the `MaxNodes` rank gets 402. The oldest hosts keep their place.
 - The order bodies are flat JSON. They do not use the error envelope.
+
+### 3.0.1 Enroll and join
+
+`POST /v1/sampler/enroll` and `POST /v1/sampler/join` bind a sampler to a node and give it a token. The rules are the same:
+
+- `node_id` set and the node exists: bind to it.
+- `node_id` set and the node does not exist: make the node with that ID (the Mac app sends its local node ID). A full plan gives 402.
+- `node_id` empty and `machine_id` set: bind to the node of the org with that `machineId`. If none exists, make a node and keep the `machine_id` in it. A second install on the same host makes no second node. `/v1/sampler/join` has no `node_id`.
+- Else make a node. A full plan gives 402.
+- `endpoint` in the reply is `http.public_url` of the server config. When it is empty, it is the scheme and host of the request.
+- A `PUT /v1/nodes/{id}` body without the `machineId` key keeps the stored value.
+
+A join token is for a host that has no user token. A user makes it with `POST /v1/sampler/join-tokens`, and the host sends it with `POST /v1/sampler/join`. The reply of `join-tokens` is `{ "token": "tt_join_…", "expires_at": "…" }`. The request of `join` is `{ "join_token", "display_name", "machine_id"? }`.
 
 ### 3.1 Disk scans
 
@@ -274,7 +290,7 @@ The server's [`wire`](../server/wire/wire.go) package is the source of truth. No
 
 - `Sample` — identical to `pkg/schema/sample.go` Sample in [towertail/sampler](https://github.com/towertail/sampler), just relaxed around optional fields.
 - `Event` — `{ id, ts, kind, nodeId, metric?, tint? }` where `kind` ∈ `threshold_crossed | reachability_changed | sampler_version | long_process` and `tint` ∈ `ok | warn | critical`.
-- `Node` — camelCase mirror of the Swift `Node` struct (`apps/mac/Sources/State/Node.swift`). `customLongProc` (a `LongProcRule`, optional) replaces the org rule for the node. `ignoredProcs` (process names) is added to the org ignore list. A `PUT /v1/nodes/{id}` body without the `ignoredProcs` key keeps the stored `ignoredProcs` and `customLongProc`, so an old client does not clear them. A current client always sends `ignoredProcs`.
+- `Node` — camelCase mirror of the Swift `Node` struct (`apps/mac/Sources/State/Node.swift`). The server also sets `createdAt` (it keeps the first value on each PUT) and `machineId` (optional, from enroll or join). `customLongProc` (a `LongProcRule`, optional) replaces the org rule for the node. `ignoredProcs` (process names) is added to the org ignore list. A `PUT /v1/nodes/{id}` body without the `ignoredProcs` key keeps the stored `ignoredProcs` and `customLongProc`, so an old client does not clear them. A current client always sends `ignoredProcs`.
 - `ServerSettings` — camelCase mirror of the Swift `ServerSettings` class. The server adds `notifyCooldownSeconds`: the minimum time between two alerts with the same node, metric and tint (0 means 600). `longProc` is the org `LongProcRule`. A `PUT /v1/settings` body without `longProc` keeps the stored rule.
 - `LongProcRule` — `{ enabled, cpuPct, sustainSeconds, notify, ignore }`. Defaults: `true`, `50`, `1800`, `"all"`, `[]`. `cpuPct` is 10..800 (top convention), `sustainSeconds` is 60..86400, `notify` is `"off"` or `"all"`. A missing or bad field gets its default. A process (key `pid` + `start_ts`) is flagged when, over the last `sustainSeconds`, it is at or above `cpuPct` for at least 80% of the time. A process that is not in the sample counts as low. Names in the ignore lists match without case. The server emits a `long_process` event with tint `warn` when a process is flagged, and with tint `ok` when it is cleared (also when the node becomes unreachable; that event sends no notification). The event payload is `{ metric: "long_proc", previous, value, pid, name, cmd, cpu_pct, high_since, start_ts }`. `notify: "off"` keeps the events but sends no notification.
 - `Alert` — `{ id, node_id, kind, metric, tint, ts, value, acked_by?, acked_at?, snoozed_until? }`. `id` is the event id. An alert is open while the last event of its node and metric has a tint other than `ok`. `metric` is `reachability` when a node sends no sample for 3 intervals. For `kind: long_process`, `metric` is `long_proc/<pid>/<start_unix>`, so each process is its own alert, and `value` is the CPU percent. `AlertList` is `{ alerts: [Alert] }`.
@@ -282,7 +298,7 @@ The server's [`wire`](../server/wire/wire.go) package is the source of truth. No
 - `ChannelRequest` — `{ kind, name, enabled?, target?, secret?, route }`. On PUT, a missing `enabled`, `target` or `secret` keeps the stored value. `"secret": ""` removes the secret. `ChannelTestResponse` is `{ ok, error? }`.
 - `AlertPayload` — the body of a generic webhook (§3.2).
 - `LoginRequest`, `LoginResponse`.
-- `EnrollRequest`, `EnrollResponse`. `SamplerToken` is `{ id, label, nodeId?, createdAt, lastUsedAt? }`.
+- `EnrollRequest`, `EnrollResponse`, `JoinTokenRequest`, `JoinTokenResponse`, `JoinRequest`. `SamplerToken` is `{ id, label, nodeId?, createdAt, lastUsedAt? }`.
 - `ControlNextResponse`, `KillProcessPayload`, `DiskScanPayload`.
 - `DiskScanRequest`, `DiskScanJob`, `DiskScanProgressResponse`. The scan lines are `pkg/schema/scan.go` in [towertail/sampler](https://github.com/towertail/sampler).
 - `NodeHistoryPoint`, `NodeHistoryResponse` — `{ node_id, metric, resolution, clamped?, points: [{ ts, value, max? }] }`. `metric` is `cpu`, `mem`, `net_rx`, `net_tx`, `disk_read` or `disk_write`. The length of the range selects the table: 6 h or less reads the raw samples, 7 d or less the 1 min rollup, 30 d or less the 5 min rollup, else the 1 h rollup. A `step` larger than the bucket of the table groups the points. `resolution` is `raw` (one point for each sample) or the bucket, for example `5m0s`.

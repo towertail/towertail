@@ -26,6 +26,9 @@ type ConfigStore interface {
 	GetNode(ctx context.Context, orgID, id uuid.UUID) (Node, error)
 	PutNode(ctx context.Context, orgID uuid.UUID, node Node) error
 	DeleteNode(ctx context.Context, orgID, id uuid.UUID) error
+	// FindNodeByMachineID returns ErrNotFound when no node of the org has
+	// the machine id.
+	FindNodeByMachineID(ctx context.Context, orgID uuid.UUID, machineID string) (Node, error)
 
 	// Settings
 	GetSettings(ctx context.Context, orgID uuid.UUID) (ServerSettings, error)

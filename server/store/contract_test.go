@@ -75,6 +75,26 @@ func contractNodes(t *testing.T, h storeHarness) {
 	if list, _ := h.s.ListNodes(ctx, other); len(list) != 0 {
 		t.Errorf("other org: %d nodes", len(list))
 	}
+	m := Node{ID: uuid.New(), DisplayName: "mach", MachineID: "machine-1"}
+	if err := h.s.PutNode(ctx, org, m); err != nil {
+		t.Fatal(err)
+	}
+	found, err := h.s.FindNodeByMachineID(ctx, org, "machine-1")
+	if err != nil || found.ID != m.ID || found.MachineID != "machine-1" {
+		t.Errorf("find: %+v, %v", found, err)
+	}
+	if _, err := h.s.FindNodeByMachineID(ctx, org, "unknown"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("find unknown: %v, want ErrNotFound", err)
+	}
+	if _, err := h.s.FindNodeByMachineID(ctx, other, "machine-1"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("find in other org: %v, want ErrNotFound", err)
+	}
+	if _, err := h.s.FindNodeByMachineID(ctx, org, ""); !errors.Is(err, ErrNotFound) {
+		t.Errorf("find empty: %v, want ErrNotFound", err)
+	}
+	if err := h.s.DeleteNode(ctx, org, m.ID); err != nil {
+		t.Fatal(err)
+	}
 	if err := h.s.DeleteNode(ctx, org, n.ID); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
@@ -142,6 +162,21 @@ func contractTokens(t *testing.T, h storeHarness) {
 	if got.ID != tok.ID || got.OrgID != org || got.Kind != TokenKindSampler || got.Label != "web-1" ||
 		*got.NodeID != node || *got.UserID != user.ID || !got.CreatedAt.Equal(tok.CreatedAt) || got.RevokedAt != nil {
 		t.Errorf("get: %+v", got)
+	}
+
+	exp := time.Now().Add(time.Hour).UTC().Truncate(time.Millisecond)
+	join := Token{ID: uuid.New(), OrgID: org, Kind: TokenKindJoin, Hash: []byte(uuid.NewString()), ExpiresAt: &exp}
+	if err := h.s.PutToken(ctx, join); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := h.s.GetTokenByHash(ctx, join.Hash); err != nil || got.ExpiresAt == nil || !got.ExpiresAt.Equal(exp) || got.Kind != TokenKindJoin {
+		t.Errorf("expires_at: %+v, %v", got, err)
+	}
+	if got, _ := h.s.GetTokenByHash(ctx, tok.Hash); got.ExpiresAt != nil {
+		t.Errorf("token without expiry: %v", got.ExpiresAt)
+	}
+	if err := h.s.DeleteToken(ctx, join.ID); err != nil {
+		t.Fatal(err)
 	}
 
 	revoked := time.Now().UTC().Truncate(time.Millisecond)

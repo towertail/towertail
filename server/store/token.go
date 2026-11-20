@@ -16,7 +16,11 @@ func NewToken(orgID uuid.UUID, kind TokenKind, label string) (raw string, t Toke
 	if _, err := rand.Read(b); err != nil {
 		return "", Token{}, err
 	}
-	raw = "tt_" + base64.RawURLEncoding.EncodeToString(b)
+	prefix := "tt_"
+	if kind == TokenKindJoin {
+		prefix = "tt_join_"
+	}
+	raw = prefix + base64.RawURLEncoding.EncodeToString(b)
 	return raw, Token{
 		ID:        uuid.New(),
 		OrgID:     orgID,

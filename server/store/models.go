@@ -36,6 +36,8 @@ type Node struct {
 	IgnoredProcs []string `json:"ignoredProcs,omitempty"`
 	// CreatedAt is set by the store on the first PutNode.
 	CreatedAt time.Time `json:"createdAt"`
+	// MachineID is the machine id of the host that enrolled for the node.
+	MachineID string `json:"machineId,omitempty"`
 }
 
 // MarshalJSON ensures Tags is always an array on the wire — never
@@ -203,6 +205,8 @@ type Token struct {
 	CreatedAt  time.Time  `json:"createdAt"`
 	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
 	RevokedAt  *time.Time `json:"revokedAt,omitempty"`
+	// ExpiresAt is set on join tokens. Verify rejects the token after it.
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 }
 
 type TokenKind string
@@ -211,6 +215,7 @@ const (
 	TokenKindUser    TokenKind = "user"
 	TokenKindSampler TokenKind = "sampler"
 	TokenKindAdmin   TokenKind = "admin"
+	TokenKindJoin    TokenKind = "join"
 )
 
 // User logs in with email and password. In the cloud, PasswordHash is
