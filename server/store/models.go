@@ -34,6 +34,8 @@ type Node struct {
 	CustomLongProc *LongProcRule `json:"customLongProc,omitempty"`
 	// IgnoredProcs is added to the ignore lists of the rule and the org.
 	IgnoredProcs []string `json:"ignoredProcs,omitempty"`
+	// CreatedAt is set by the store on the first PutNode.
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 // MarshalJSON ensures Tags is always an array on the wire — never

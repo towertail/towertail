@@ -4,6 +4,7 @@ import (
 	"context"
 	"io/fs"
 	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -21,6 +22,12 @@ type Limits interface {
 	// MaxNodes is the number of nodes that the org can have. A negative
 	// value means no limit.
 	MaxNodes(ctx context.Context, orgID uuid.UUID) int
+}
+
+// IntervalAdvisor gives the push interval of a host. 0 means that the
+// server sends no interval order.
+type IntervalAdvisor interface {
+	Interval(orgID, nodeID uuid.UUID) time.Duration
 }
 
 // Router gives route groups for extra routes.
@@ -44,6 +51,7 @@ type builder struct {
 	migrations []migrations
 	limits     Limits
 	mailer     notify.Mailer
+	interval   IntervalAdvisor
 }
 
 type migrations struct {
@@ -93,3 +101,7 @@ func WithMigrations(fsys fs.FS, table string) Option {
 // above MaxNodes. The history endpoints clamp "from" to
 // the history days of the org.
 func WithLimits(l Limits) Option { return func(b *builder) { b.limits = l } }
+
+// WithIntervalAdvisor sets the source of the push interval orders in the
+// ingest reply.
+func WithIntervalAdvisor(a IntervalAdvisor) Option { return func(b *builder) { b.interval = a } }

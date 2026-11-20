@@ -117,6 +117,37 @@ type EnrollResponse struct {
 	Endpoint     string    `json:"endpoint"`
 }
 
+// IngestResponse is the 202 body of POST /v1/ingest/samples. Interval
+// is a Go duration ("5s"). Update is the version that the sampler
+// should run. Both are left out when the server has no order.
+type IngestResponse struct {
+	Accepted int    `json:"accepted"`
+	Rejected int    `json:"rejected"`
+	Error    string `json:"error,omitempty"`
+	Interval string `json:"interval,omitempty"`
+	Update   string `json:"update,omitempty"`
+}
+
+// IngestPlanFull is the 402 body of POST /v1/ingest/samples. The sampler
+// pauses for RetryAfter seconds.
+type IngestPlanFull struct {
+	RetryAfter int `json:"retry_after"`
+}
+
+// IngestGone is the 410 body of POST /v1/ingest/samples. The sampler
+// exits. Action is always "exit".
+type IngestGone struct {
+	Action string `json:"action"`
+	Reason string `json:"reason"`
+}
+
+// Reasons of IngestGone.
+const (
+	GoneHostRemoved    = "host_removed"
+	GoneAccountDeleted = "account_deleted"
+	GoneCloudOff       = "cloud_off"
+)
+
 // SamplerToken is one sampler token in GET /v1/sampler/tokens. It has no
 // secret.
 type SamplerToken struct {

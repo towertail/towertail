@@ -136,6 +136,7 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 		Control:    ctrl,
 		Scans:      a.scans,
 		Limits:     b.limits,
+		Interval:   b.interval,
 		Channels:   router,
 		Middleware: b.middleware,
 		Routes:     routes,

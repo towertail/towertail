@@ -53,19 +53,15 @@ func (s *PostgresStore) Close() error {
 }
 
 func (s *PostgresStore) ListNodes(ctx context.Context, orgID uuid.UUID) ([]Node, error) {
-	rows, err := s.pool.Query(ctx, `SELECT data FROM nodes WHERE org_id = $1 ORDER BY id`, orgID)
+	rows, err := s.pool.Query(ctx, `SELECT data, created_at FROM nodes WHERE org_id = $1 ORDER BY id`, orgID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []Node
 	for rows.Next() {
-		var data []byte
-		if err := rows.Scan(&data); err != nil {
-			return nil, err
-		}
-		var n Node
-		if err := json.Unmarshal(data, &n); err != nil {
+		n, err := scanNode(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, n)
@@ -74,14 +70,26 @@ func (s *PostgresStore) ListNodes(ctx context.Context, orgID uuid.UUID) ([]Node,
 }
 
 func (s *PostgresStore) GetNode(ctx context.Context, orgID, id uuid.UUID) (Node, error) {
-	var data []byte
-	err := s.pool.QueryRow(ctx, `SELECT data FROM nodes WHERE org_id = $1 AND id = $2`, orgID, id).Scan(&data)
-	if err != nil {
-		return Node{}, notFound(err)
+	row := s.pool.QueryRow(ctx, `SELECT data, created_at FROM nodes WHERE org_id = $1 AND id = $2`, orgID, id)
+	n, err := scanNode(row)
+	return n, notFound(err)
+}
+
+// scanNode reads a node. The column created_at wins over the copy in data.
+func scanNode(row pgx.Row) (Node, error) {
+	var (
+		data []byte
+		at   time.Time
+		n    Node
+	)
+	if err := row.Scan(&data, &at); err != nil {
+		return Node{}, err
 	}
-	var n Node
-	err = json.Unmarshal(data, &n)
-	return n, err
+	if err := json.Unmarshal(data, &n); err != nil {
+		return Node{}, err
+	}
+	n.CreatedAt = at.UTC()
+	return n, nil
 }
 
 func (s *PostgresStore) PutNode(ctx context.Context, orgID uuid.UUID, node Node) error {

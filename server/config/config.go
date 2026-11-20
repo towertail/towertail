@@ -29,6 +29,14 @@ type Config struct {
 	Log        LogConfig
 	Cloud      CloudConfig
 	Notify     NotifyConfig
+	Sampler    SamplerConfig
+}
+
+// SamplerConfig is for the samplers that push to this server.
+type SamplerConfig struct {
+	// LatestVersion is the sampler version that the server asks older
+	// samplers to run, for example "0.7.1". Empty means no order.
+	LatestVersion string `koanf:"latest_version"`
 }
 
 type HTTPConfig struct {

@@ -43,6 +43,7 @@ func (s *Server) handleCreateNode(c echo.Context) error {
 	if err := s.store.PutNode(c.Request().Context(), t.OrgID, n); err != nil {
 		return err
 	}
+	s.ranks.drop(t.OrgID)
 	s.audit(c, "create", "node", n.ID, "name", n.DisplayName, "kind", n.Kind)
 	s.broadcastNode(t.OrgID, n)
 	return c.JSON(http.StatusCreated, n)
@@ -68,7 +69,7 @@ func (s *Server) checkNodeLimit(ctx context.Context, orgID, id uuid.UUID) error 
 		return err
 	}
 	if len(nodes) >= max {
-		return echo.NewHTTPError(http.StatusPaymentRequired, fmt.Sprintf("the plan allows %d nodes", max))
+		return echo.NewHTTPError(http.StatusPaymentRequired, fmt.Sprintf("the plan allows %d hosts", max))
 	}
 	return nil
 }
@@ -125,6 +126,7 @@ func (s *Server) handleUpdateNode(c echo.Context) error {
 	if err := s.store.PutNode(c.Request().Context(), t.OrgID, n); err != nil {
 		return err
 	}
+	s.ranks.drop(t.OrgID)
 	s.audit(c, "update", "node", n.ID, "name", n.DisplayName)
 	s.broadcastNode(t.OrgID, n)
 	return c.JSON(http.StatusOK, n)
@@ -139,6 +141,7 @@ func (s *Server) handleDeleteNode(c echo.Context) error {
 	if err := s.store.DeleteNode(c.Request().Context(), t.OrgID, id); err != nil {
 		return err
 	}
+	s.ranks.drop(t.OrgID)
 	s.audit(c, "delete", "node", id)
 	return c.NoContent(http.StatusNoContent)
 }

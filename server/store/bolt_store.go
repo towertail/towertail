@@ -126,12 +126,22 @@ func (s *BoltStore) PutNode(_ context.Context, orgID uuid.UUID, node Node) error
 	if node.ID == uuid.Nil {
 		return errors.New("store: node id required")
 	}
-	data, err := json.Marshal(node)
-	if err != nil {
-		return err
-	}
 	return s.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketNodes).Put(nodeKey(orgID, node.ID), data)
+		b := tx.Bucket(bucketNodes)
+		key := nodeKey(orgID, node.ID)
+		node.CreatedAt = time.Now().UTC()
+		if v := b.Get(key); v != nil {
+			var old Node
+			if err := json.Unmarshal(v, &old); err != nil {
+				return err
+			}
+			node.CreatedAt = old.CreatedAt
+		}
+		data, err := json.Marshal(node)
+		if err != nil {
+			return err
+		}
+		return b.Put(key, data)
 	})
 }
 

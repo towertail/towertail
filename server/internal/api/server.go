@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-playground/validator/v10"
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -26,6 +27,11 @@ import (
 	"github.com/towertail/towertail/server/store"
 )
 
+// IntervalAdvisor gives the push interval for a host. 0 means no order.
+type IntervalAdvisor interface {
+	Interval(orgID, nodeID uuid.UUID) time.Duration
+}
+
 // Server assembles the Echo instance and wires every dependency.
 type Server struct {
 	echo     *echo.Echo
@@ -41,6 +47,8 @@ type Server struct {
 	scans    *scan.Manager
 	limits   Limits
 	channels Channels
+	interval IntervalAdvisor
+	ranks    *rankCache
 }
 
 // Deps is the dependency bundle supplied by main.
@@ -60,6 +68,8 @@ type Deps struct {
 	// Channels checks and tests alert channels. Nil turns off the
 	// channel routes.
 	Channels Channels
+	// Interval gives the push interval of a host. Nil means no order.
+	Interval IntervalAdvisor
 	// Middleware runs after the core middleware.
 	Middleware []echo.MiddlewareFunc
 	// Routes add routes after the core routes.
@@ -131,6 +141,8 @@ func New(d Deps) *Server {
 		scans:    d.Scans,
 		limits:   d.Limits,
 		channels: d.Channels,
+		interval: d.Interval,
+		ranks:    newRankCache(),
 	}
 	s.registerRoutes()
 	for _, f := range d.Routes {

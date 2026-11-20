@@ -95,12 +95,29 @@ Base path `/v1`. Authed unless otherwise marked.
 
 | Method | Path | Request | Response |
 |---|---|---|---|
-| POST | `/v1/ingest/samples` | NDJSON of `Sample` lines (optionally gzipped) | `{ accepted, rejected, error }` |
+| POST | `/v1/ingest/samples` | NDJSON of `Sample` lines (optionally gzipped) | 202 `IngestResponse`, 402 `IngestPlanFull` or 410 `IngestGone` (see §3.0) |
 | GET | `/v1/control/next` | — | `ControlNextResponse` or 204 |
 | POST | `/v1/disk-scans/{job}/progress` | one scan line: `progress`, `error` or `cancelled` | `{ "cancel": bool }` |
 | PUT | `/v1/disk-scans/{job}/result` | the scan `result` line, gzip, 16 MiB at most | 204 |
 
 A sampler token can use the disk-scan endpoints only for jobs of its own node. Other jobs give 403.
+
+### 3.0 Ingest reply (orders for the sampler)
+
+The server sends its orders for a sampler in the reply to `POST /v1/ingest/samples`. The sampler needs no WebSocket and no extra poll. The server checks the node of the token before it reads the body.
+
+| Status | Body | The sampler must |
+|---|---|---|
+| 202 | `{ "accepted": 3, "rejected": 0, "error": "…", "interval": "5s", "update": "0.7.1" }` | Go on. `error` is the first reject reason and is left out when empty. |
+| 402 | `{ "retry_after": 3600 }` and the header `Retry-After: 3600` | Send nothing for `retry_after` seconds, then try again. |
+| 410 | `{ "action": "exit", "reason": "host_removed" }` | Stop and exit. Do not start again. |
+| 401 and 5xx | the error envelope | Retry with a back-off. A revoked token gives 401. |
+
+- `interval` is a Go duration. The sampler sets its push interval to it. The key is left out when the server has no order.
+- `update` is the version that the sampler should run. The server sets it when `sampler.latest_version` is set and is newer than the version in the header `User-Agent: towertail-sampler/<version>`. A sampler with no such header gets no `update`.
+- 410 `reason` is `host_removed` (the node does not exist), `cloud_off` (the node has `enabled: false`) or `account_deleted` (reserved; the server does not send it yet).
+- 402 means that the plan is full. The nodes of the org are sorted by `createdAt`, then id. A node at or above the `MaxNodes` rank gets 402. The oldest hosts keep their place.
+- The order bodies are flat JSON. They do not use the error envelope.
 
 ### 3.1 Disk scans
 

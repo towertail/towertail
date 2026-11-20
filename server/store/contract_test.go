@@ -51,9 +51,16 @@ func contractNodes(t *testing.T, h storeHarness) {
 		got.CustomThresholds.CPUWarn != 0.5 || !got.SnoozedUntil.Equal(until) {
 		t.Errorf("get: %+v", got)
 	}
+	if got.CreatedAt.IsZero() {
+		t.Error("created_at is not set")
+	}
 	n.DisplayName = "web-2"
+	time.Sleep(10 * time.Millisecond)
 	if err := h.s.PutNode(ctx, org, n); err != nil {
 		t.Fatalf("update: %v", err)
+	}
+	if again, _ := h.s.GetNode(ctx, org, n.ID); !again.CreatedAt.Equal(got.CreatedAt) {
+		t.Errorf("created_at changed: %v, want %v", again.CreatedAt, got.CreatedAt)
 	}
 	if err := h.s.PutNode(ctx, org, Node{ID: uuid.New(), DisplayName: "db-1"}); err != nil {
 		t.Fatal(err)

@@ -29,6 +29,13 @@ func (s *Server) handleIngest(c echo.Context) error {
 	if t.NodeID == nil {
 		return echo.NewHTTPError(http.StatusForbidden, "token missing node binding")
 	}
+	gate, err := s.ingestGate(c.Request().Context(), t)
+	if err != nil {
+		return err
+	}
+	if done, err := gate.reply(c); done {
+		return err
+	}
 	// Lazy-require clickhouse on first ingest. Skipped when CH is disabled
 	// (dev mode): samples fan out to the WS hub and through the alerter,
 	// but nothing is persisted.
@@ -98,16 +105,18 @@ func (s *Server) handleIngest(c echo.Context) error {
 		if s.hub != nil {
 			s.hub.PublishSample(t.OrgID, *t.NodeID, lines[i])
 		}
-		s.evalAlerter(c.Request().Context(), t.OrgID, *t.NodeID, bundle)
+		s.evalAlerter(c.Request().Context(), t.OrgID, *t.NodeID, &gate.node, bundle)
 	}
 	ingestRequests.WithLabelValues("202").Inc()
 	ingestLines.WithLabelValues("accepted").Add(float64(len(bundles)))
 	ingestLines.WithLabelValues("rejected").Add(float64(rejected))
 
-	return c.JSON(http.StatusAccepted, map[string]any{
-		"accepted": len(bundles),
-		"rejected": rejected,
-		"error":    firstErr,
+	return c.JSON(http.StatusAccepted, wire.IngestResponse{
+		Accepted: len(bundles),
+		Rejected: rejected,
+		Error:    firstErr,
+		Interval: s.intervalFor(t.OrgID, *t.NodeID),
+		Update:   s.updateFor(req.Header.Get("User-Agent")),
 	})
 }
 
@@ -258,7 +267,7 @@ func echoErrorf(status int, format string, args ...any) error {
 }
 
 // evalAlerter drives the in-memory threshold engine on a per-sample basis.
-func (s *Server) evalAlerter(ctx context.Context, orgID, nodeID uuid.UUID, b clickhouse.IngestBundle) {
+func (s *Server) evalAlerter(ctx context.Context, orgID, nodeID uuid.UUID, n *store.Node, b clickhouse.IngestBundle) {
 	if s.alerter == nil {
 		return
 	}
@@ -275,11 +284,6 @@ func (s *Server) evalAlerter(ctx context.Context, orgID, nodeID uuid.UUID, b cli
 				maxDisk = r
 			}
 		}
-	}
-	node, err := s.store.GetNode(ctx, orgID, nodeID)
-	var n *store.Node
-	if err == nil {
-		n = &node
 	}
 	s.alerter.Evaluate(ctx, orgID, nodeID, n, cpu, mem, maxDisk)
 	if len(b.Procs) > 0 {
