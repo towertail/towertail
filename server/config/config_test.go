@@ -148,3 +148,24 @@ func TestMCPEnabled(t *testing.T) {
 		t.Errorf("TT_MCP__ENABLED=false: enabled = %v, err = %v", cfg.MCP.Enabled, err)
 	}
 }
+
+func TestStreamCompressionDefault(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil || cfg.Stream.Compression != "no_context_takeover" {
+		t.Fatalf("default: %q, %v", cfg.Stream.Compression, err)
+	}
+	t.Setenv("TT_STREAM__COMPRESSION", "off")
+	cfg, err = Load("")
+	if err != nil || cfg.Stream.Compression != "off" {
+		t.Fatalf("env: %q, %v", cfg.Stream.Compression, err)
+	}
+}
+
+func TestStreamCompressionRejectsUnknown(t *testing.T) {
+	for _, v := range []string{"context_takeover", "zstd"} {
+		t.Setenv("TT_STREAM__COMPRESSION", v)
+		if _, err := Load(""); err == nil {
+			t.Errorf("%s: want error", v)
+		}
+	}
+}

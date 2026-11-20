@@ -54,6 +54,9 @@ type StreamConfig struct {
 	// MaxLeasesPerUser is the most active view leases of one user. 0
 	// means no limit. Load refuses a negative value.
 	MaxLeasesPerUser int `koanf:"max_leases_per_user"`
+	// Compression is the permessage-deflate mode of the stream: "off" or
+	// "no_context_takeover". Load refuses other values.
+	Compression string `koanf:"compression"`
 }
 
 // SamplerConfig is for the samplers that push to this server.
@@ -226,6 +229,11 @@ func Load(path string) (*Config, error) {
 	if cfg.Stream.MaxLeasesPerUser < 0 {
 		return nil, errors.New("stream.max_leases_per_user must not be negative")
 	}
+	switch cfg.Stream.Compression {
+	case "off", "no_context_takeover":
+	default:
+		return nil, fmt.Errorf("stream.compression %q must be off or no_context_takeover", cfg.Stream.Compression)
+	}
 	if cfg.ClickHouse.SpillDir == "" {
 		cfg.ClickHouse.SpillDir = filepath.Join(cfg.Storage.Path, "spill")
 	}
@@ -300,6 +308,7 @@ func setDefaults(k *koanf.Koanf) {
 	_ = k.Set("stream.legacy_samples", true)
 	_ = k.Set("stream.live_interval", "5s")
 	_ = k.Set("stream.idle_interval", "30s")
+	_ = k.Set("stream.compression", "no_context_takeover")
 
 	_ = k.Set("mcp.enabled", true)
 

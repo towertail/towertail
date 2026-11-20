@@ -291,6 +291,8 @@ The mode does not change after connect. The server cannot stop the replay of ful
 
 The config key `stream.legacy_samples` (env `TT_STREAM__LEGACY_SAMPLES`, default `true`) keeps the legacy mode. With `false`, a legacy client gets events only and no replay.
 
+The key `stream.compression` (env `TT_STREAM__COMPRESSION`, default `no_context_takeover`) sets the WebSocket compression. The server offers `permessage-deflate` without context takeover. Frames under 512 B are not compressed. A client that does not offer `permessage-deflate` gets plain frames. With `off`, the server does not offer it.
+
 ### Client → server
 
 ```json

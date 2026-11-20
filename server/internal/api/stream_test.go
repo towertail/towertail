@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -27,6 +28,7 @@ import (
 type streamEnv struct {
 	t       *testing.T
 	ts      *httptest.Server
+	hub     *hub.Hub
 	node    uuid.UUID
 	user    string
 	user2   string
@@ -40,6 +42,12 @@ func newStreamEnv(t *testing.T) *streamEnv {
 
 func newStreamEnvWith(t *testing.T, o hub.Options) *streamEnv {
 	t.Helper()
+	return newStreamEnvCfg(t, o, "")
+}
+
+// newStreamEnvCfg sets stream.compression of the server config.
+func newStreamEnvCfg(t *testing.T, o hub.Options, compression string) *streamEnv {
+	t.Helper()
 	ctx := context.Background()
 	st, err := store.OpenBolt(t.TempDir())
 	if err != nil {
@@ -48,14 +56,18 @@ func newStreamEnvWith(t *testing.T, o hub.Options) *streamEnv {
 	t.Cleanup(func() { _ = st.Close() })
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	issuer := auth.NewIssuer(st)
+	h := hub.New(log, o)
 	srv := New(Deps{
-		Config: &config.Config{Ingest: config.IngestConfig{MaxBodyBytes: 1 << 20}},
+		Config: &config.Config{
+			Ingest: config.IngestConfig{MaxBodyBytes: 1 << 20},
+			Stream: config.StreamConfig{Compression: compression},
+		},
 		Log:    log,
 		Store:  st,
 		Issuer: issuer,
-		Hub:    hub.New(log, o),
+		Hub:    h,
 	})
-	e := &streamEnv{t: t, node: uuid.New()}
+	e := &streamEnv{t: t, hub: h, node: uuid.New()}
 	if err := st.PutNode(ctx, store.ZeroOrg, store.Node{ID: e.node, DisplayName: "n", Kind: "ssh", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -81,16 +93,31 @@ func (e *streamEnv) dial(query string) (*websocket.Conn, context.Context) {
 
 func (e *streamEnv) dialAs(token, query string) (*websocket.Conn, context.Context) {
 	e.t.Helper()
+	ws, _, ctx := e.dialMode(token, query, websocket.CompressionDisabled)
+	return ws, ctx
+}
+
+// dialMode also returns the upgrade response.
+func (e *streamEnv) dialMode(token, query string, mode websocket.CompressionMode) (*websocket.Conn, *http.Response, context.Context) {
+	e.t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	e.t.Cleanup(cancel)
-	ws, _, err := websocket.Dial(ctx, strings.Replace(e.ts.URL, "http", "ws", 1)+"/v1/stream"+query, &websocket.DialOptions{
-		HTTPHeader: http.Header{"Authorization": {"Bearer " + token}},
+	ws, res, err := websocket.Dial(ctx, strings.Replace(e.ts.URL, "http", "ws", 1)+"/v1/stream"+query, &websocket.DialOptions{
+		HTTPHeader:      http.Header{"Authorization": {"Bearer " + token}},
+		CompressionMode: mode,
 	})
 	if err != nil {
 		e.t.Fatal(err)
 	}
 	e.t.Cleanup(func() { _ = ws.CloseNow() })
-	return ws, ctx
+	return ws, res, ctx
+}
+
+// bigNode broadcasts a node_updated frame of about 20 KB.
+func (e *streamEnv) bigNode() int {
+	blob, _ := json.Marshal(map[string]string{"pad": strings.Repeat("abcd", 5000)})
+	e.hub.BroadcastOrg(store.ZeroOrg, wire.WSMessage{Type: "node_updated", Node: blob})
+	return len(blob)
 }
 
 func (e *streamEnv) ingest() {
@@ -215,4 +242,48 @@ func TestStreamUserKeyFallsBackToTokenID(t *testing.T) {
 	if m.Type != "lease" || m.Lease == nil || m.Lease.State != "ended" || m.Lease.Reason != "limit" {
 		t.Fatalf("frame: %+v", m)
 	}
+}
+
+func checkBigNode(t *testing.T, ctx context.Context, ws *websocket.Conn, size int) {
+	t.Helper()
+	m := readFrame(t, ctx, ws)
+	if m.Type != "node_updated" || len(m.Node) != size {
+		t.Fatalf("frame: %s, %d bytes, want %d", m.Type, len(m.Node), size)
+	}
+}
+
+func TestStreamNegotiatesCompression(t *testing.T) {
+	e := newStreamEnvCfg(t, hub.Options{}, "no_context_takeover")
+	ws, res, ctx := e.dialMode(e.user, "?lease=1", websocket.CompressionNoContextTakeover)
+	if h := res.Header.Get("Sec-WebSocket-Extensions"); !strings.Contains(h, "permessage-deflate") {
+		t.Fatalf("extensions header %q", h)
+	}
+	if m := readFrame(t, ctx, ws); m.Type != "hello" {
+		t.Fatalf("frame: %+v", m)
+	}
+	checkBigNode(t, ctx, ws, e.bigNode())
+}
+
+func TestStreamCompressionOff(t *testing.T) {
+	e := newStreamEnvCfg(t, hub.Options{}, "off")
+	ws, res, ctx := e.dialMode(e.user, "?lease=1", websocket.CompressionNoContextTakeover)
+	if h := res.Header.Get("Sec-WebSocket-Extensions"); h != "" {
+		t.Fatalf("extensions header %q", h)
+	}
+	if m := readFrame(t, ctx, ws); m.Type != "hello" {
+		t.Fatalf("frame: %+v", m)
+	}
+	checkBigNode(t, ctx, ws, e.bigNode())
+}
+
+func TestStreamPlainClientWithCompressionOn(t *testing.T) {
+	e := newStreamEnvCfg(t, hub.Options{}, "no_context_takeover")
+	ws, res, ctx := e.dialMode(e.user, "?lease=1", websocket.CompressionDisabled)
+	if h := res.Header.Get("Sec-WebSocket-Extensions"); h != "" {
+		t.Fatalf("extensions header %q", h)
+	}
+	if m := readFrame(t, ctx, ws); m.Type != "hello" {
+		t.Fatalf("frame: %+v", m)
+	}
+	checkBigNode(t, ctx, ws, e.bigNode())
 }

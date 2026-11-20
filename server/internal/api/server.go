@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -64,6 +65,8 @@ type Server struct {
 	query         *query.Service
 	apiKeyRates   *keyLimiters
 	mcp           *mcp.Server
+	// streamCompression is the permessage-deflate mode of /v1/stream.
+	streamCompression websocket.CompressionMode
 }
 
 // Deps is the dependency bundle supplied by main.
@@ -177,6 +180,9 @@ func New(d Deps) *Server {
 	}
 	if d.Config.MCP.Enabled {
 		s.mcp = mcp.New(s.query, version.Version, d.Log)
+	}
+	if d.Config.Stream.Compression == "no_context_takeover" {
+		s.streamCompression = websocket.CompressionNoContextTakeover
 	}
 	s.registerRoutes()
 	for _, f := range d.Routes {

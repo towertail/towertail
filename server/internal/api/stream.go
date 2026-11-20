@@ -13,7 +13,9 @@ import (
 func (s *Server) handleStream(c echo.Context) error {
 	t, _ := authctx.TokenFrom(c)
 	conn, err := websocket.Accept(c.Response().Writer, c.Request(), &websocket.AcceptOptions{
-		InsecureSkipVerify: true,
+		InsecureSkipVerify:   true,
+		CompressionMode:      s.streamCompression,
+		CompressionThreshold: 512,
 	})
 	if err != nil {
 		return err

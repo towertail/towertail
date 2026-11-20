@@ -24,7 +24,7 @@ var (
 	}, []string{"type"})
 	streamFrameBytes = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "towertail_stream_frame_bytes_total",
-		Help: "Bytes of the frames queued for stream clients, by frame type.",
+		Help: "Bytes of the frames queued for stream clients, by frame type. The count is before compression, not wire bytes.",
 	}, []string{"type"})
 )
 
