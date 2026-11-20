@@ -263,3 +263,13 @@ func (s chEvents) LastSeen(ctx context.Context, since time.Time) ([]clickhouse.N
 	}
 	return s.ch.LastSeen(ctx, since)
 }
+
+func (s chEvents) Registrations(ctx context.Context, since time.Time) ([]clickhouse.NodeSeen, error) {
+	if s.ch == nil {
+		return nil, nil
+	}
+	if !s.ch.Ready() {
+		return nil, errCHNotReady
+	}
+	return s.ch.Registrations(ctx, since)
+}

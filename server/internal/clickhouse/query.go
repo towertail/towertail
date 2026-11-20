@@ -291,6 +291,26 @@ func (c *Client) LastSeen(ctx context.Context, since time.Time) ([]NodeSeen, err
 	return out, rows.Err()
 }
 
+// Registrations gives the last registration time of each node with a
+// registered event since the time.
+func (c *Client) Registrations(ctx context.Context, since time.Time) ([]NodeSeen, error) {
+	rows, err := c.conn.Query(ctx,
+		"SELECT org_id, node_id, max(ts) FROM "+c.table("events")+" WHERE ts >= ? AND kind = 'registered' GROUP BY org_id, node_id", since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NodeSeen
+	for rows.Next() {
+		var r NodeSeen
+		if err := rows.Scan(&r.OrgID, &r.NodeID, &r.TS); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // AlertRow is an open alert: the last event of a (node, metric) when its
 // tint is not ok.
 type AlertRow struct {

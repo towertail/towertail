@@ -146,6 +146,9 @@ func (s *Server) finishEnroll(c echo.Context, orgID uuid.UUID, node store.Node, 
 		}
 		s.ranks.drop(orgID)
 		s.broadcastNode(orgID, node)
+		if s.alerter != nil {
+			s.alerter.Expect(ctx, orgID, node.ID, time.Now().UTC())
+		}
 	}
 	raw, _, err := s.issuer.Issue(ctx, orgID, store.TokenKindSampler, node.DisplayName, &node.ID)
 	if err != nil {

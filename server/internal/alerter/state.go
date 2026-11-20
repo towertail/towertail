@@ -16,6 +16,9 @@ const (
 	// samples. A node is unreachable after 3 intervals.
 	defaultInterval = 10 * time.Second
 	maxInterval     = 5 * time.Minute
+	// neverReportedAfter is the wait for the first sample of a node
+	// that just enrolled.
+	neverReportedAfter = 10 * time.Minute
 )
 
 type stateKey struct {
@@ -50,17 +53,20 @@ type nodeSeen struct {
 func (s *nodeSeen) timeout() time.Duration { return 3 * s.interval }
 
 // markSeen records a sample of the node and gives the change back to
-// reachable, if any. It runs under stateMu.
+// reachable, if any. The change carries the down time and its start. It runs under stateMu.
 func (e *Engine) markSeen(org, node uuid.UUID, now time.Time) (change, bool) {
 	nk := nodeKey{org: org, node: node}
+	reg := e.expected[nk]
+	delete(e.expected, nk)
 	s, ok := e.seen[nk]
 	if !ok {
-		s = &nodeSeen{interval: defaultInterval}
+		s = &nodeSeen{at: reg, interval: defaultInterval}
 		e.seen[nk] = s
 	} else if gap := now.Sub(s.at); gap > 0 && gap <= s.timeout() {
 		// A gap longer than the timeout is an outage, not the interval.
 		s.interval = min(max(gap, defaultInterval), maxInterval)
 	}
+	last := s.at
 	s.at = now
 
 	k := stateKey{org: org, node: node, metric: metricReachability}
@@ -72,7 +78,13 @@ func (e *Engine) markSeen(org, node uuid.UUID, now time.Time) (change, bool) {
 	if st.tint == TintOK {
 		return change{}, false
 	}
-	return st.set(k, TintOK, 0, now), true
+	var down float64
+	if !last.IsZero() {
+		down = now.Sub(last).Seconds()
+	}
+	c := st.set(k, TintOK, down, now)
+	c.since = last
+	return c, true
 }
 
 // Load restores the last tints and the last sample times from the
@@ -88,6 +100,10 @@ func (e *Engine) Load(ctx context.Context) error {
 		return err
 	}
 	seen, err := e.store.LastSeen(ctx, since)
+	if err != nil {
+		return err
+	}
+	regs, err := e.store.Registrations(ctx, since)
 	if err != nil {
 		return err
 	}
@@ -113,6 +129,12 @@ func (e *Engine) Load(ctx context.Context) error {
 			e.states[k] = &metricState{tint: TintOK, changed: r.TS}
 		}
 	}
-	e.log.Info("alerter: state loaded", "tints", len(tints), "nodes", len(seen))
+	for _, r := range regs {
+		nk := nodeKey{org: r.OrgID, node: r.NodeID}
+		if _, ok := e.seen[nk]; !ok {
+			e.expected[nk] = r.TS
+		}
+	}
+	e.log.Info("alerter: state loaded", "tints", len(tints), "nodes", len(seen), "registrations", len(regs))
 	return nil
 }

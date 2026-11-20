@@ -180,6 +180,7 @@ type restoreStore struct {
 	nopStore
 	tints []clickhouse.TintRow
 	seen  []clickhouse.NodeSeen
+	regs  []clickhouse.NodeSeen
 }
 
 func (s restoreStore) LastTints(context.Context, time.Time) ([]clickhouse.TintRow, error) {
@@ -188,6 +189,10 @@ func (s restoreStore) LastTints(context.Context, time.Time) ([]clickhouse.TintRo
 
 func (s restoreStore) LastSeen(context.Context, time.Time) ([]clickhouse.NodeSeen, error) {
 	return s.seen, nil
+}
+
+func (s restoreStore) Registrations(context.Context, time.Time) ([]clickhouse.NodeSeen, error) {
+	return s.regs, nil
 }
 
 func TestAlerter_RestartSendsNoDuplicate(t *testing.T) {
@@ -393,5 +398,183 @@ func TestAlerter_SweepDropsProcTracker(t *testing.T) {
 	defer e.stateMu.Unlock()
 	if len(e.procs) != 0 {
 		t.Fatal("the tracker is not dropped")
+	}
+}
+
+// neverEnv is an engine with one enabled node and a counting notifier.
+func neverEnv(t *testing.T, st Store) (*Engine, *testClock, *countingNotifier, uuid.UUID, uuid.UUID, store.Node) {
+	t.Helper()
+	clock := newClock()
+	cfg := newFakeConfig(store.DefaultServerSettings())
+	org, id := uuid.New(), uuid.New()
+	cfg.nodes[id] = notifyNode(id)
+	n := newCountingNotifier()
+	return New(nil, clock, nil, st, cfg, n), clock, n, org, id, cfg.nodes[id]
+}
+
+func TestAlerter_NeverReported(t *testing.T) {
+	st := &recordingStore{}
+	e, clock, n, org, id, _ := neverEnv(t, st)
+	ctx := context.Background()
+	t0 := clock.Now()
+
+	e.Expect(ctx, org, id, t0)
+	clock.advance(9 * time.Minute)
+	e.Sweep(ctx)
+	if got := n.wait(0); len(got) != 0 {
+		t.Fatalf("before 10m: got %+v", got)
+	}
+	clock.advance(time.Minute + time.Second)
+	e.Sweep(ctx)
+	e.Sweep(ctx) // a second sweep sends nothing new
+	got := n.wait(1)
+	if len(got) != 1 || got[0].Reason != "never_reported" || got[0].To != TintCritical || !got[0].Since.Equal(t0) {
+		t.Fatalf("want one never_reported alert, got %+v", got)
+	}
+	if title := got[0].Title(); title != "web-1: never reported" {
+		t.Errorf("title = %q", title)
+	}
+
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if len(st.events) != 2 || st.events[0].Kind != "registered" || st.events[0].Tint != "ok" || st.events[1].Kind != "reachability_changed" {
+		t.Fatalf("events = %+v", st.events)
+	}
+}
+
+func TestAlerter_NeverReportedClearedBySample(t *testing.T) {
+	e, clock, n, org, id, node := neverEnv(t, nopStore{})
+	ctx := context.Background()
+
+	e.Expect(ctx, org, id, clock.Now())
+	clock.advance(2 * time.Minute)
+	for range 18 {
+		e.Evaluate(ctx, org, id, &node, 0.10, 0.10, 0.10)
+		clock.advance(30 * time.Second)
+	}
+	e.Sweep(ctx)
+	if got := n.wait(0); len(got) != 0 {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestAlerter_NeverReportedThenFirstSample(t *testing.T) {
+	e, clock, n, org, id, node := neverEnv(t, nopStore{})
+	ctx := context.Background()
+	t0 := clock.Now()
+
+	e.Expect(ctx, org, id, t0)
+	clock.advance(11 * time.Minute)
+	e.Sweep(ctx)
+	if got := n.wait(1); len(got) != 1 {
+		t.Fatalf("want the never-reported alert, got %+v", got)
+	}
+	clock.advance(2 * time.Minute)
+	e.Evaluate(ctx, org, id, &node, 0.10, 0.10, 0.10)
+	got := n.wait(1)
+	if len(got) != 1 || got[0].To != TintOK || got[0].Value != 13*60 || !got[0].Since.Equal(t0) {
+		t.Fatalf("want one reports-again alert with 780 s, got %+v", got)
+	}
+	if title := got[0].Title(); title != "web-1: reports again" {
+		t.Errorf("title = %q", title)
+	}
+}
+
+func TestAlerter_RecoveryCarriesDownTime(t *testing.T) {
+	e, clock, n, org, id, node := neverEnv(t, nopStore{})
+	ctx := context.Background()
+
+	var last time.Time
+	for range 4 {
+		e.Evaluate(ctx, org, id, &node, 0.10, 0.10, 0.10)
+		last = clock.Now()
+		clock.advance(30 * time.Second)
+	}
+	// 30 s have passed since the last sample. The sweep comes in the gap.
+	clock.advance(12*time.Minute + 10*time.Second)
+	e.Sweep(ctx)
+	got := n.wait(1)
+	if len(got) != 1 || got[0].Reason != "stopped_reporting" || !got[0].Since.Equal(last) {
+		t.Fatalf("want one stopped_reporting alert, got %+v", got)
+	}
+	e.Evaluate(ctx, org, id, &node, 0.10, 0.10, 0.10)
+	got = n.wait(1)
+	if len(got) != 1 || got[0].To != TintOK || got[0].Value != 760 || !got[0].Since.Equal(last) {
+		t.Fatalf("want one ok alert with 760 s, got %+v", got)
+	}
+}
+
+func TestAlerter_NeverReportedSkipsDeletedAndDisabled(t *testing.T) {
+	clock := newClock()
+	cfg := newFakeConfig(store.DefaultServerSettings())
+	org, deleted, disabled := uuid.New(), uuid.New(), uuid.New()
+	off := notifyNode(disabled)
+	off.Enabled = false
+	cfg.nodes[disabled] = off
+	n := newCountingNotifier()
+	e := New(nil, clock, nil, nopStore{}, cfg, n)
+	ctx := context.Background()
+
+	e.Expect(ctx, org, deleted, clock.Now())
+	e.Expect(ctx, org, disabled, clock.Now())
+	clock.advance(11 * time.Minute)
+	e.Sweep(ctx)
+	if got := n.wait(0); len(got) != 0 {
+		t.Fatalf("got %+v", got)
+	}
+	e.stateMu.Lock()
+	defer e.stateMu.Unlock()
+	if _, ok := e.expected[nodeKey{org: org, node: deleted}]; ok {
+		t.Error("the deleted node stays in expected")
+	}
+}
+
+func TestAlerter_LoadRestoresRegistrations(t *testing.T) {
+	clock := newClock()
+	cfg := newFakeConfig(store.DefaultServerSettings())
+	org, id := uuid.New(), uuid.New()
+	cfg.nodes[id] = notifyNode(id)
+	st := restoreStore{regs: []clickhouse.NodeSeen{{OrgID: org, NodeID: id, TS: clock.Now()}}}
+	n := newCountingNotifier()
+	e := New(nil, clock, nil, st, cfg, n)
+	ctx := context.Background()
+	if err := e.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	clock.advance(10*time.Minute + time.Second)
+	e.Sweep(ctx)
+	if got := n.wait(1); len(got) != 1 || got[0].Reason != "never_reported" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestAlerter_LoadSkipsAlertedRegistration(t *testing.T) {
+	clock := newClock()
+	cfg := newFakeConfig(store.DefaultServerSettings())
+	org, id := uuid.New(), uuid.New()
+	cfg.nodes[id] = notifyNode(id)
+	reg := clock.Now()
+	st := restoreStore{
+		regs:  []clickhouse.NodeSeen{{OrgID: org, NodeID: id, TS: reg}},
+		tints: []clickhouse.TintRow{{OrgID: org, NodeID: id, Metric: "reachability", Tint: "critical", TS: reg.Add(10 * time.Minute)}},
+	}
+	n := newCountingNotifier()
+	node := cfg.nodes[id]
+	e := New(nil, clock, nil, st, cfg, n)
+	ctx := context.Background()
+	if err := e.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	clock.advance(10*time.Minute + time.Second)
+	e.Sweep(ctx)
+	if got := n.wait(0); len(got) != 0 {
+		t.Fatalf("got %+v", got)
+	}
+	// The first sample still reports the down time from the registration.
+	clock.advance(time.Minute)
+	e.Evaluate(ctx, org, id, &node, 0.10, 0.10, 0.10)
+	got := n.wait(1)
+	if len(got) != 1 || got[0].To != TintOK || got[0].Value != 661 || !got[0].Since.Equal(reg) {
+		t.Fatalf("got %+v", got)
 	}
 }

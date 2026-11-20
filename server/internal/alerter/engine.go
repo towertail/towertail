@@ -47,6 +47,7 @@ type Store interface {
 	WriteEvent(ctx context.Context, e clickhouse.EventRow) error
 	LastTints(ctx context.Context, since time.Time) ([]clickhouse.TintRow, error)
 	LastSeen(ctx context.Context, since time.Time) ([]clickhouse.NodeSeen, error)
+	Registrations(ctx context.Context, since time.Time) ([]clickhouse.NodeSeen, error)
 }
 
 // Config gives the settings of each org and the nodes.
@@ -80,8 +81,10 @@ type Engine struct {
 	stateMu sync.Mutex
 	states  map[stateKey]*metricState
 	seen    map[nodeKey]*nodeSeen
-	sent    map[sentKey]time.Time
-	procs   map[nodeKey]*procTracker
+	// expected holds the registration time of nodes with no sample yet.
+	expected map[nodeKey]time.Time
+	sent     map[sentKey]time.Time
+	procs    map[nodeKey]*procTracker
 }
 
 type cachedSettings struct {
@@ -106,6 +109,7 @@ func New(log *slog.Logger, clock Clock, sink EventSink, st Store, cfg Config, no
 		cache:     map[uuid.UUID]cachedSettings{},
 		states:    map[stateKey]*metricState{},
 		seen:      map[nodeKey]*nodeSeen{},
+		expected:  map[nodeKey]time.Time{},
 		sent:      map[sentKey]time.Time{},
 		procs:     map[nodeKey]*procTracker{},
 	}
@@ -139,6 +143,33 @@ func (e *Engine) settings(ctx context.Context, orgID uuid.UUID) store.ServerSett
 	e.cache[orgID] = cachedSettings{s: s, at: now}
 	e.cacheMu.Unlock()
 	return s
+}
+
+// Expect starts the never-reported timer of a node that just enrolled.
+// The registered event lets Load restore the timer after a restart.
+func (e *Engine) Expect(ctx context.Context, orgID, nodeID uuid.UUID, at time.Time) {
+	nk := nodeKey{org: orgID, node: nodeID}
+	e.stateMu.Lock()
+	_, seen := e.seen[nk]
+	if !seen {
+		e.expected[nk] = at
+	}
+	e.stateMu.Unlock()
+	if seen || e.store == nil {
+		return
+	}
+	err := e.store.WriteEvent(ctx, clickhouse.EventRow{
+		TS:      at,
+		OrgID:   orgID,
+		NodeID:  nodeID,
+		EventID: uuid.New(),
+		Kind:    "registered",
+		Metric:  metricReachability,
+		Tint:    string(TintOK),
+	})
+	if err != nil {
+		e.log.Warn("alerter: write registered event", "node_id", nodeID, "err", err)
+	}
 }
 
 // Evaluate looks at one sample and emits events if tints change. Node
@@ -262,6 +293,9 @@ type change struct {
 	from, to Tint
 	value    float64
 	at       time.Time
+	// since and reason are for reachability changes.
+	since  time.Time
+	reason string
 	// detail, payload and quiet are for long_proc changes. quiet sends
 	// no notification.
 	detail  string
@@ -298,6 +332,12 @@ func (e *Engine) emit(ctx context.Context, cfg store.ServerSettings, node *store
 		"metric":   c.metric(),
 		"previous": c.from,
 		"value":    c.value,
+	}
+	if c.reason != "" {
+		body["reason"] = c.reason
+	}
+	if !c.since.IsZero() {
+		body["since"] = c.since
 	}
 	maps.Copy(body, c.payload)
 	payload, _ := json.Marshal(body)
@@ -387,12 +427,20 @@ func (e *Engine) notify(eventID uuid.UUID, c change, node *store.Node) {
 		From:     c.from,
 		To:       c.to,
 		Value:    c.value,
+		Reason:   c.reason,
+		Since:    c.since,
 		Detail:   c.detail,
 		At:       c.at,
 	}
 	if node != nil {
 		a.NodeName = node.DisplayName
 		a.Tags = node.Tags
+		if node.SSHHost != nil && *node.SSHHost != "" {
+			a.Host = *node.SSHHost
+			if node.SSHUser != nil && *node.SSHUser != "" {
+				a.Host = *node.SSHUser + "@" + a.Host
+			}
+		}
 	}
 	for _, n := range e.notifiers {
 		go func() {

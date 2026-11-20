@@ -6,11 +6,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/towertail/towertail/server/wire"
+)
+
+// Reasons of a reachability alert.
+const (
+	ReasonStoppedReporting = "stopped_reporting"
+	ReasonNeverReported    = "never_reported"
 )
 
 // Alert is one change of tint for one metric of one node.
@@ -27,9 +34,18 @@ type Alert struct {
 	Instance string
 	From, To wire.Tint
 	// Value is a ratio (0..1) for cpu, mem and disk. For reachability it
-	// is the seconds since the last sample. For long_proc it is the CPU
+	// is the seconds of the outage: the time without a sample, or the
+	// down time when the host is back. For long_proc it is the CPU
 	// percent of the process (top convention).
 	Value float64
+	// Reason tells apart the reachability alerts: stopped_reporting or
+	// never_reported. It is empty for the other metrics.
+	Reason string
+	// Since is the start of the outage: the last sample, or the
+	// registration of a host that never reported.
+	Since time.Time
+	// Host is user@host of the node. It can be empty.
+	Host string
 	// Detail replaces the default Text when it is set.
 	Detail string
 	At     time.Time
@@ -69,9 +85,11 @@ func (a Alert) Title() string {
 	var what string
 	switch {
 	case a.Metric == "reachability" && a.To == wire.TintOK:
-		what = "reachable again"
+		what = "reports again"
+	case a.Metric == "reachability" && a.Reason == ReasonNeverReported:
+		what = "never reported"
 	case a.Metric == "reachability":
-		what = "unreachable"
+		what = "stopped reporting"
 	case a.Metric == "long_proc" && a.To == wire.TintOK:
 		what = "long-running process ended"
 	case a.Metric == "long_proc":
@@ -94,12 +112,37 @@ func (a Alert) Text() string {
 		return a.Detail
 	}
 	if a.Metric == "reachability" {
-		if a.To == wire.TintOK {
-			return "Samples come in again."
-		}
-		return fmt.Sprintf("No sample for %s.", (time.Duration(a.Value) * time.Second).Round(time.Second))
+		return a.reachabilityText()
 	}
 	return fmt.Sprintf("%s %.0f%% (was %s)", a.MetricLabel(), a.Value*100, a.From)
+}
+
+func (a Alert) reachabilityText() string {
+	d := shortDuration(a.Value)
+	switch {
+	case a.To == wire.TintOK:
+		if a.Since.IsZero() {
+			return fmt.Sprintf("Down for %s.", d)
+		}
+		return fmt.Sprintf("Down for %s, from %s to %s UTC.", d, a.Since.UTC().Format("15:04"), a.At.UTC().Format("15:04"))
+	case a.Reason == ReasonNeverReported:
+		return fmt.Sprintf("Registered %s ago. No sample came.", d)
+	case a.Since.IsZero():
+		return fmt.Sprintf("No sample for %s.", d)
+	}
+	return fmt.Sprintf("No sample for %s. The last sample came at %s UTC.", d, a.Since.UTC().Format("15:04:05"))
+}
+
+// shortDuration writes seconds as "12m40s", and "10m" for whole minutes.
+func shortDuration(seconds float64) string {
+	s := (time.Duration(seconds) * time.Second).String()
+	if strings.HasSuffix(s, "m0s") {
+		s = s[:len(s)-2]
+	}
+	if strings.HasSuffix(s, "h0m") {
+		s = s[:len(s)-2]
+	}
+	return s
 }
 
 // MetricLabel is the name of the metric for people.

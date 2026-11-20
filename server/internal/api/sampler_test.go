@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,7 +17,9 @@ import (
 
 	"github.com/towertail/towertail/server/authctx"
 	"github.com/towertail/towertail/server/config"
+	"github.com/towertail/towertail/server/internal/alerter"
 	"github.com/towertail/towertail/server/internal/auth"
+	"github.com/towertail/towertail/server/internal/clickhouse"
 	"github.com/towertail/towertail/server/store"
 	"github.com/towertail/towertail/server/wire"
 )
@@ -365,5 +368,52 @@ func TestUpdateNode_KeepsMachineID(t *testing.T) {
 	}
 	if n.CreatedAt.IsZero() {
 		t.Error("created_at is lost")
+	}
+}
+
+// registeredStore records the events of the alerter.
+type registeredStore struct {
+	mu     sync.Mutex
+	events []clickhouse.EventRow
+}
+
+func (s *registeredStore) WriteEvent(_ context.Context, e clickhouse.EventRow) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, e)
+	return nil
+}
+
+func (*registeredStore) LastTints(context.Context, time.Time) ([]clickhouse.TintRow, error) {
+	return nil, nil
+}
+
+func (*registeredStore) LastSeen(context.Context, time.Time) ([]clickhouse.NodeSeen, error) {
+	return nil, nil
+}
+
+func (*registeredStore) Registrations(context.Context, time.Time) ([]clickhouse.NodeSeen, error) {
+	return nil, nil
+}
+
+func TestEnrollAndJoin_ExpectFirstSample(t *testing.T) {
+	e := newEnrollEnv(t, config.Config{}, nil)
+	rs := &registeredStore{}
+	e.srv.alerter = alerter.New(nil, nil, nil, rs, nil)
+
+	_, a := e.enroll(`{"display_name":"a","machine_id":"m-1"}`)
+	e.enroll(`{"display_name":"a","machine_id":"m-1"}`) // same node: no new event
+	_, b := e.join(e.joinToken(), "m-2")
+
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if len(rs.events) != 2 {
+		t.Fatalf("events = %+v", rs.events)
+	}
+	for i, id := range []uuid.UUID{a.NodeID, b.NodeID} {
+		ev := rs.events[i]
+		if ev.Kind != "registered" || ev.NodeID != id || ev.OrgID != store.ZeroOrg || ev.Tint != "ok" {
+			t.Errorf("event %d = %+v", i, ev)
+		}
 	}
 }

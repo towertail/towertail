@@ -57,6 +57,9 @@ func (nopStore) LastTints(context.Context, time.Time) ([]clickhouse.TintRow, err
 func (nopStore) LastSeen(context.Context, time.Time) ([]clickhouse.NodeSeen, error) {
 	return nil, nil
 }
+func (nopStore) Registrations(context.Context, time.Time) ([]clickhouse.NodeSeen, error) {
+	return nil, nil
+}
 
 // fakeConfig gives the settings of each org (def otherwise) and the
 // nodes.

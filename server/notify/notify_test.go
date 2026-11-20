@@ -2,6 +2,7 @@ package notify
 
 import (
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -15,8 +16,11 @@ func TestAlertText(t *testing.T) {
 	}{
 		{Alert{NodeName: "web-1", Metric: "cpu", From: wire.TintWarn, To: wire.TintCritical, Value: 0.934}, "web-1: CPU critical", "CPU 93% (was warn)"},
 		{Alert{NodeName: "web-1", Metric: "mem", From: wire.TintWarn, To: wire.TintOK, Value: 0.5}, "web-1: Memory back to ok", "Memory 50% (was warn)"},
-		{Alert{NodeName: "db", Metric: "reachability", From: wire.TintOK, To: wire.TintCritical, Value: 150.4}, "db: unreachable", "No sample for 2m30s."},
-		{Alert{NodeName: "db", Metric: "reachability", From: wire.TintCritical, To: wire.TintOK}, "db: reachable again", "Samples come in again."},
+		{Alert{NodeName: "db", Metric: "reachability", From: wire.TintOK, To: wire.TintCritical, Value: 150.4}, "db: stopped reporting", "No sample for 2m30s."},
+		{Alert{NodeName: "db", Metric: "reachability", Reason: ReasonStoppedReporting, From: wire.TintOK, To: wire.TintCritical, Value: 90, Since: time.Date(2026, 1, 2, 14, 1, 41, 0, time.UTC)}, "db: stopped reporting", "No sample for 1m30s. The last sample came at 14:01:41 UTC."},
+		{Alert{NodeName: "db", Metric: "reachability", Reason: ReasonNeverReported, From: wire.TintOK, To: wire.TintCritical, Value: 600}, "db: never reported", "Registered 10m ago. No sample came."},
+		{Alert{NodeName: "db", Metric: "reachability", From: wire.TintCritical, To: wire.TintOK, Value: 760, Since: time.Date(2026, 1, 2, 14, 1, 41, 0, time.UTC), At: time.Date(2026, 1, 2, 14, 14, 21, 0, time.UTC)}, "db: reports again", "Down for 12m40s, from 14:01 to 14:14 UTC."},
+		{Alert{NodeName: "db", Metric: "reachability", From: wire.TintCritical, To: wire.TintOK, Value: 760}, "db: reports again", "Down for 12m40s."},
 		{Alert{NodeName: "db", Metric: "disk", To: wire.TintWarn, Test: true}, "[test] db: Disk warn", "Disk 0% (was )"},
 		{Alert{NodeName: "mbp", Metric: "long_proc", From: wire.TintOK, To: wire.TintWarn, Value: 85, Detail: "OrbStack Helper (pid 812) at 85% CPU for 32m."}, "mbp: long-running process", "OrbStack Helper (pid 812) at 85% CPU for 32m."},
 		{Alert{NodeName: "mbp", Metric: "long_proc", From: wire.TintWarn, To: wire.TintOK, Detail: "x"}, "mbp: long-running process ended", "x"},

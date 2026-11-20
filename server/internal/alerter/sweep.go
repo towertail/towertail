@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/towertail/towertail/server/notify"
 	"github.com/towertail/towertail/server/store"
 )
 
@@ -39,7 +40,8 @@ func (e *Engine) Run(ctx context.Context, every time.Duration) {
 	}
 }
 
-// Sweep sets nodes with no sample for 3 intervals to unreachable.
+// Sweep sets nodes with no sample for 3 intervals to unreachable. It
+// also alerts on nodes that sent no sample since their registration.
 func (e *Engine) Sweep(ctx context.Context) {
 	now := e.clock.Now()
 	var stale []nodeKey
@@ -89,6 +91,8 @@ func (e *Engine) Sweep(ctx context.Context) {
 			continue
 		}
 		c := st.set(k, TintCritical, now.Sub(s.at).Seconds(), now)
+		c.reason = notify.ReasonStoppedReporting
+		c.since = s.at
 		var cleared []procChange
 		if t := e.procs[nk]; t != nil {
 			cleared = t.drop(now)
@@ -102,5 +106,62 @@ func (e *Engine) Sweep(ctx context.Context) {
 		for _, pc := range cleared {
 			e.emit(ctx, cfg, &node, procEvent(nk, pc, now, true))
 		}
+	}
+	e.sweepExpected(ctx, now)
+}
+
+// sweepExpected alerts on nodes with no first sample after
+// neverReportedAfter.
+func (e *Engine) sweepExpected(ctx context.Context, now time.Time) {
+	var due []nodeKey
+	e.stateMu.Lock()
+	for nk, at := range e.expected {
+		if now.Sub(at) > neverReportedAfter {
+			due = append(due, nk)
+		}
+	}
+	e.stateMu.Unlock()
+
+	for _, nk := range due {
+		node, err := e.config.GetNode(ctx, nk.org, nk.node)
+		if errors.Is(err, store.ErrNotFound) {
+			e.stateMu.Lock()
+			delete(e.expected, nk)
+			e.stateMu.Unlock()
+			continue
+		}
+		if err != nil {
+			e.log.Warn("alerter: sweep get node", "node_id", nk.node, "err", err)
+			continue
+		}
+		if !node.Enabled {
+			continue
+		}
+
+		k := stateKey{org: nk.org, node: nk.node, metric: metricReachability}
+		e.stateMu.Lock()
+		at, ok := e.expected[nk]
+		if !ok {
+			// A sample came while the node was read.
+			e.stateMu.Unlock()
+			continue
+		}
+		delete(e.expected, nk)
+		e.seen[nk] = &nodeSeen{at: at, interval: defaultInterval}
+		st := e.states[k]
+		if st == nil {
+			st = &metricState{tint: TintOK, changed: at}
+			e.states[k] = st
+		}
+		if st.tint == TintCritical {
+			// Load restored the alert, so a restart sends no duplicate.
+			e.stateMu.Unlock()
+			continue
+		}
+		c := st.set(k, TintCritical, now.Sub(at).Seconds(), now)
+		c.reason = notify.ReasonNeverReported
+		c.since = at
+		e.stateMu.Unlock()
+		e.emit(ctx, e.settings(ctx, nk.org), &node, c)
 	}
 }

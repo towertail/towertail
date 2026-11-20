@@ -127,3 +127,28 @@ func TestLongProcessAlerts(t *testing.T) {
 		t.Fatalf("recent alerts = %+v", recent)
 	}
 }
+
+func TestRegistrations(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	org, node := uuid.New(), uuid.New()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	for _, ts := range []time.Time{now.Add(-time.Hour), now.Add(-time.Minute)} {
+		err := client.WriteEvent(ctx, EventRow{
+			TS: ts, OrgID: org, NodeID: node, EventID: uuid.New(), Kind: "registered",
+			Metric: "reachability", Tint: "ok",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := client.Registrations(ctx, now.Add(-2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].OrgID != org || got[0].NodeID != node || !got[0].TS.Equal(now.Add(-time.Minute)) {
+		t.Fatalf("registrations = %+v", got)
+	}
+}
