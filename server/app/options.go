@@ -25,6 +25,13 @@ type Limits interface {
 	MaxNodes(ctx context.Context, orgID uuid.UUID) int
 }
 
+// ChannelLimits tells if the plan of an org permits a channel kind. When
+// the Limits value of WithLimits also implements it, the server uses it.
+// Else all kinds are permitted.
+type ChannelLimits interface {
+	ChannelAllowed(ctx context.Context, orgID uuid.UUID, kind store.ChannelKind) bool
+}
+
 // Roles gives the role of a user in an org.
 type Roles interface {
 	// Role returns store.ErrNoMembership when the user has no role in the
@@ -108,7 +115,8 @@ func WithMigrations(fsys fs.FS, table string) Option {
 
 // WithLimits sets the plan limits. The node create endpoints reply 402
 // above MaxNodes. The history endpoints clamp "from" to
-// the history days of the org.
+// the history days of the org. A value that implements ChannelLimits also
+// gates the alert channel kinds.
 func WithLimits(l Limits) Option { return func(b *builder) { b.limits = l } }
 
 // WithIntervalAdvisor sets the source of the push interval orders in the

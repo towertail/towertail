@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -19,12 +20,31 @@ type Channels interface {
 	Test(ctx context.Context, ch store.Channel) error
 }
 
+// ChannelLimits tells if the plan of an org permits a channel kind.
+type ChannelLimits interface {
+	ChannelAllowed(ctx context.Context, orgID uuid.UUID, kind store.ChannelKind) bool
+}
+
 // channelTestTimeout is the time limit of a test send.
 const channelTestTimeout = 15 * time.Second
 
-func toWireChannel(ch store.Channel) wire.Channel {
+// channelAllowed reports whether the plan of the org permits the kind.
+func (s *Server) channelAllowed(ctx context.Context, orgID uuid.UUID, kind store.ChannelKind) bool {
+	return s.channelLimits == nil || s.channelLimits.ChannelAllowed(ctx, orgID, kind)
+}
+
+// requireChannelKind answers 402 when the plan does not permit the kind.
+func (s *Server) requireChannelKind(ctx context.Context, orgID uuid.UUID, kind store.ChannelKind) error {
+	if s.channelAllowed(ctx, orgID, kind) {
+		return nil
+	}
+	return echo.NewHTTPError(http.StatusPaymentRequired, fmt.Sprintf("channel kind %s needs the Team plan", kind))
+}
+
+func (s *Server) toWireChannel(ctx context.Context, ch store.Channel) wire.Channel {
 	return wire.Channel{
-		ID: ch.ID, Kind: string(ch.Kind), Name: ch.Name, Enabled: ch.Enabled, Target: ch.Target,
+		Blocked: !s.channelAllowed(ctx, ch.OrgID, ch.Kind),
+		ID:      ch.ID, Kind: string(ch.Kind), Name: ch.Name, Enabled: ch.Enabled, Target: ch.Target,
 		HasSecret: ch.Secret != "",
 		Route:     wire.ChannelRoute{MinTint: ch.Route.MinTint, Metrics: ch.Route.Metrics, Tags: ch.Route.Tags},
 		CreatedAt: ch.CreatedAt,
@@ -64,7 +84,7 @@ func (s *Server) handleListChannels(c echo.Context) error {
 	}
 	out := make([]wire.Channel, 0, len(list))
 	for _, ch := range list {
-		out = append(out, toWireChannel(ch))
+		out = append(out, s.toWireChannel(c.Request().Context(), ch))
 	}
 	return c.JSON(http.StatusOK, out)
 }
@@ -75,11 +95,12 @@ func (s *Server) handleGetChannel(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	ch, err := s.store.GetChannel(c.Request().Context(), t.OrgID, id)
+	ctx := c.Request().Context()
+	ch, err := s.store.GetChannel(ctx, t.OrgID, id)
 	if err != nil {
 		return err
 	}
-	return c.JSON(http.StatusOK, toWireChannel(ch))
+	return c.JSON(http.StatusOK, s.toWireChannel(ctx, ch))
 }
 
 func (s *Server) handleCreateChannel(c echo.Context) error {
@@ -90,14 +111,18 @@ func (s *Server) handleCreateChannel(c echo.Context) error {
 	}
 	ch := store.Channel{ID: uuid.New(), OrgID: t.OrgID, Enabled: true, CreatedAt: time.Now().UTC()}
 	applyChannelRequest(&ch, req)
+	ctx := c.Request().Context()
+	if err := s.requireChannelKind(ctx, t.OrgID, ch.Kind); err != nil {
+		return err
+	}
 	if err := s.channels.Validate(ch); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
-	if err := s.store.PutChannel(c.Request().Context(), ch); err != nil {
+	if err := s.store.PutChannel(ctx, ch); err != nil {
 		return err
 	}
 	s.audit(c, "create", "channel", ch.ID, "kind", ch.Kind, "name", ch.Name)
-	return c.JSON(http.StatusCreated, toWireChannel(ch))
+	return c.JSON(http.StatusCreated, s.toWireChannel(ctx, ch))
 }
 
 func (s *Server) handleUpdateChannel(c echo.Context) error {
@@ -115,7 +140,13 @@ func (s *Server) handleUpdateChannel(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	kind := ch.Kind
 	applyChannelRequest(&ch, req)
+	if ch.Kind != kind {
+		if err := s.requireChannelKind(ctx, t.OrgID, ch.Kind); err != nil {
+			return err
+		}
+	}
 	if err := s.channels.Validate(ch); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
@@ -123,7 +154,7 @@ func (s *Server) handleUpdateChannel(c echo.Context) error {
 		return err
 	}
 	s.audit(c, "update", "channel", ch.ID, "kind", ch.Kind, "name", ch.Name)
-	return c.JSON(http.StatusOK, toWireChannel(ch))
+	return c.JSON(http.StatusOK, s.toWireChannel(ctx, ch))
 }
 
 func (s *Server) handleDeleteChannel(c echo.Context) error {
@@ -149,6 +180,9 @@ func (s *Server) handleTestChannel(c echo.Context) error {
 	}
 	ch, err := s.store.GetChannel(c.Request().Context(), t.OrgID, id)
 	if err != nil {
+		return err
+	}
+	if err := s.requireChannelKind(c.Request().Context(), t.OrgID, ch.Kind); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(c.Request().Context(), channelTestTimeout)

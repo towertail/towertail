@@ -150,7 +150,7 @@ check the sampler for jitter (CPU busy-loop on the host itself).
 ## 5. Backup and retention
 
 **ClickHouse** — `samples_raw` retained 7 days, `procs_topn` 3 days,
-rollups 30 days, `events` 90 days. All TTL-enforced per table; no
+rollups 30 days, `events` 365 days. All TTL-enforced per table; no
 external cron needed. Back up with
 `clickhouse-backup create && clickhouse-backup upload` if you need
 longer history than retention.

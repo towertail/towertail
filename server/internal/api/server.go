@@ -34,22 +34,23 @@ type IntervalAdvisor interface {
 
 // Server assembles the Echo instance and wires every dependency.
 type Server struct {
-	echo     *echo.Echo
-	cfg      *config.Config
-	log      *slog.Logger
-	runtime  *runtime.Runtime
-	store    store.ConfigStore
-	ch       *clickhouse.Client
-	issuer   *auth.TokenIssuer
-	hub      *hub.Hub
-	alerter  *alerter.Engine
-	control  *control.Queue
-	scans    *scan.Manager
-	limits   Limits
-	channels Channels
-	interval IntervalAdvisor
-	roles    Roles
-	ranks    *rankCache
+	echo          *echo.Echo
+	cfg           *config.Config
+	log           *slog.Logger
+	runtime       *runtime.Runtime
+	store         store.ConfigStore
+	ch            *clickhouse.Client
+	issuer        *auth.TokenIssuer
+	hub           *hub.Hub
+	alerter       *alerter.Engine
+	control       *control.Queue
+	scans         *scan.Manager
+	limits        Limits
+	channels      Channels
+	channelLimits ChannelLimits
+	interval      IntervalAdvisor
+	roles         Roles
+	ranks         *rankCache
 }
 
 // Deps is the dependency bundle supplied by main.
@@ -69,6 +70,8 @@ type Deps struct {
 	// Channels checks and tests alert channels. Nil turns off the
 	// channel routes.
 	Channels Channels
+	// ChannelLimits gives the channel kinds of the plan. Nil permits all.
+	ChannelLimits ChannelLimits
 	// Interval gives the push interval of a host. Nil means no order.
 	Interval IntervalAdvisor
 	// Roles gives the role of a user in an org. Nil gives the owner role
@@ -132,22 +135,23 @@ func New(d Deps) *Server {
 	e.Use(d.Middleware...)
 
 	s := &Server{
-		echo:     e,
-		cfg:      d.Config,
-		log:      d.Log,
-		runtime:  d.Runtime,
-		store:    d.Store,
-		ch:       d.CH,
-		issuer:   d.Issuer,
-		hub:      d.Hub,
-		alerter:  d.Alerter,
-		control:  d.Control,
-		scans:    d.Scans,
-		limits:   d.Limits,
-		channels: d.Channels,
-		interval: d.Interval,
-		roles:    d.Roles,
-		ranks:    newRankCache(),
+		echo:          e,
+		cfg:           d.Config,
+		log:           d.Log,
+		runtime:       d.Runtime,
+		store:         d.Store,
+		ch:            d.CH,
+		issuer:        d.Issuer,
+		hub:           d.Hub,
+		alerter:       d.Alerter,
+		control:       d.Control,
+		scans:         d.Scans,
+		limits:        d.Limits,
+		channels:      d.Channels,
+		channelLimits: d.ChannelLimits,
+		interval:      d.Interval,
+		roles:         d.Roles,
+		ranks:         newRankCache(),
 	}
 	s.registerRoutes()
 	for _, f := range d.Routes {

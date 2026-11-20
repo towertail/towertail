@@ -80,7 +80,7 @@ func (h *hook) json(t *testing.T, i int) map[string]any {
 }
 
 func newTestRouter(list ...store.Channel) *Router {
-	r := NewRouter(fakeStore{list: list}, config.NotifyConfig{}, nil, slog.New(slog.DiscardHandler))
+	r := NewRouter(fakeStore{list: list}, config.NotifyConfig{}, nil, nil, slog.New(slog.DiscardHandler))
 	r.delays = []time.Duration{time.Millisecond, time.Millisecond}
 	return r
 }
@@ -459,7 +459,7 @@ func (m *fakeMailer) SendAlert(_ context.Context, to []string, _ notify.Alert) e
 
 func TestMailer(t *testing.T) {
 	m := &fakeMailer{}
-	r := NewRouter(fakeStore{}, config.NotifyConfig{SMTP: config.SMTPConfig{Host: "smtp.example.com"}}, m, slog.New(slog.DiscardHandler))
+	r := NewRouter(fakeStore{}, config.NotifyConfig{SMTP: config.SMTPConfig{Host: "smtp.example.com"}}, m, nil, slog.New(slog.DiscardHandler))
 	ch := channel(store.ChannelEmail, "ops@example.com, Dev <dev@example.com>")
 	if err := r.Validate(ch); err != nil {
 		t.Fatal(err)
@@ -478,5 +478,37 @@ func TestMailer(t *testing.T) {
 	m.err = fmt.Errorf("bad address: %w", notify.ErrPermanent)
 	if err := s.send(context.Background(), ch, testAlert()); err == nil || retryable(err) {
 		t.Errorf("permanent error: %v", err)
+	}
+}
+
+type blockKind store.ChannelKind
+
+func (b blockKind) ChannelAllowed(_ context.Context, _ uuid.UUID, k store.ChannelKind) bool {
+	return k != store.ChannelKind(b)
+}
+
+func TestRouterSkipsBlockedKind(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		gate     Gate
+		wantHook int
+	}{
+		{"blocked", blockKind(store.ChannelWebhook), 0},
+		{"nil gate", nil, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, m := newHook(t), &fakeMailer{}
+			list := []store.Channel{channel(store.ChannelWebhook, h.srv.URL), channel(store.ChannelEmail, "ops@example.com")}
+			r := NewRouter(fakeStore{list: list}, config.NotifyConfig{}, m, tc.gate, slog.New(slog.DiscardHandler))
+			if err := r.Notify(context.Background(), testAlert()); err != nil {
+				t.Fatal(err)
+			}
+			if got := h.count(); got != tc.wantHook {
+				t.Errorf("webhook sends = %d, want %d", got, tc.wantHook)
+			}
+			if len(m.to) != 1 {
+				t.Errorf("email recipients = %v, want 1", m.to)
+			}
+		})
 	}
 }

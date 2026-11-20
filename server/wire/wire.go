@@ -311,6 +311,8 @@ type Alert struct {
 // AlertList is the body of GET /v1/alerts.
 type AlertList struct {
 	Alerts []Alert `json:"alerts"`
+	// Clamped is true when the plan history limit moved the start later.
+	Clamped bool `json:"clamped,omitempty"`
 }
 
 // DiskScanRequest is the body of POST /v1/nodes/{id}/disk-scans. All
@@ -384,6 +386,9 @@ type Channel struct {
 	HasSecret bool         `json:"hasSecret"`
 	Route     ChannelRoute `json:"route"`
 	CreatedAt time.Time    `json:"createdAt"`
+	// Blocked is true when the plan does not permit the kind. The server
+	// sends no alert to a blocked channel.
+	Blocked bool `json:"blocked,omitempty"`
 }
 
 // ChannelRequest is the body of POST /v1/channels and PUT

@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 
 	"github.com/towertail/towertail/server/store"
 	"github.com/towertail/towertail/server/wire"
@@ -99,5 +102,72 @@ func TestChannelTest(t *testing.T) {
 	decode(t, e.do(http.MethodPost, create("https://fail.example.com"), e.user, nil).Body.Bytes(), &res)
 	if res.OK || res.Error != "404 Not Found" {
 		t.Errorf("failed channel: %+v", res)
+	}
+}
+
+// blockKinds blocks the listed channel kinds.
+type blockKinds []store.ChannelKind
+
+func (b blockKinds) ChannelAllowed(_ context.Context, _ uuid.UUID, k store.ChannelKind) bool {
+	return !slices.Contains(b, k)
+}
+
+func TestCreateChannelBlocked(t *testing.T) {
+	e := newScanEnv(t)
+	e.srv.channelLimits = blockKinds{store.ChannelSlack}
+	slack := []byte(`{"kind":"slack","name":"s","target":"https://hooks.example.com/x"}`)
+
+	rec := e.do(http.MethodPost, "/v1/channels", e.user, slack)
+	wantCode(t, rec, http.StatusPaymentRequired)
+	if !strings.Contains(rec.Body.String(), "plan_limit") || !strings.Contains(rec.Body.String(), "needs the Team plan") {
+		t.Fatalf("body: %s", rec.Body)
+	}
+	rec = e.do(http.MethodPost, "/v1/channels", e.user, []byte(`{"kind":"email","name":"m","target":"ops@example.com"}`))
+	wantCode(t, rec, http.StatusCreated)
+	var mail wire.Channel
+	decode(t, rec.Body.Bytes(), &mail)
+
+	// An update that changes the kind to a blocked kind gives 402.
+	wantCode(t, e.do(http.MethodPut, "/v1/channels/"+mail.ID.String(), e.user, slack), http.StatusPaymentRequired)
+
+	// A channel of a kind that the plan blocks later stays editable, but a test send gives 402.
+	e.srv.channelLimits = nil
+	rec = e.do(http.MethodPost, "/v1/channels", e.user, slack)
+	wantCode(t, rec, http.StatusCreated)
+	var sl wire.Channel
+	decode(t, rec.Body.Bytes(), &sl)
+	e.srv.channelLimits = blockKinds{store.ChannelSlack}
+	path := "/v1/channels/" + sl.ID.String()
+	wantCode(t, e.do(http.MethodPut, path, e.user, []byte(`{"kind":"slack","name":"s2","enabled":false}`)), http.StatusOK)
+	wantCode(t, e.do(http.MethodPost, path+"/test", e.user, nil), http.StatusPaymentRequired)
+	wantCode(t, e.do(http.MethodPost, "/v1/channels/"+mail.ID.String()+"/test", e.user, nil), http.StatusOK)
+}
+
+func TestListChannelsBlocked(t *testing.T) {
+	e := newScanEnv(t)
+	create := func(body string) wire.Channel {
+		rec := e.do(http.MethodPost, "/v1/channels", e.user, []byte(body))
+		wantCode(t, rec, http.StatusCreated)
+		var ch wire.Channel
+		decode(t, rec.Body.Bytes(), &ch)
+		return ch
+	}
+	sl := create(`{"kind":"slack","name":"s","target":"https://hooks.example.com/x"}`)
+	mail := create(`{"kind":"email","name":"m","target":"ops@example.com"}`)
+	e.srv.channelLimits = blockKinds{store.ChannelSlack}
+
+	var list []wire.Channel
+	decode(t, e.do(http.MethodGet, "/v1/channels", e.user, nil).Body.Bytes(), &list)
+	blocked := map[uuid.UUID]bool{}
+	for _, ch := range list {
+		blocked[ch.ID] = ch.Blocked
+	}
+	if len(list) != 2 || !blocked[sl.ID] || blocked[mail.ID] {
+		t.Fatalf("list: %+v", list)
+	}
+	var got wire.Channel
+	decode(t, e.do(http.MethodGet, "/v1/channels/"+sl.ID.String(), e.user, nil).Body.Bytes(), &got)
+	if !got.Blocked {
+		t.Fatalf("get: %+v", got)
 	}
 }

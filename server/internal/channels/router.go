@@ -25,6 +25,11 @@ type Store interface {
 	ListChannels(ctx context.Context, orgID uuid.UUID) ([]store.Channel, error)
 }
 
+// Gate tells if the plan of an org permits a channel kind.
+type Gate interface {
+	ChannelAllowed(ctx context.Context, orgID uuid.UUID, kind store.ChannelKind) bool
+}
+
 type sender interface {
 	send(ctx context.Context, ch store.Channel, a notify.Alert) error
 }
@@ -34,6 +39,7 @@ type sender interface {
 // retries.
 type Router struct {
 	store   Store
+	gate    Gate
 	log     *slog.Logger
 	senders map[store.ChannelKind]sender
 	// delays are the waits before the second and the third attempt.
@@ -41,11 +47,13 @@ type Router struct {
 }
 
 // NewRouter makes the router. The email channel uses m when it is not
-// nil, else SMTP. It is off when there is no m and no SMTP host.
-func NewRouter(st Store, cfg config.NotifyConfig, m notify.Mailer, log *slog.Logger) *Router {
+// nil, else SMTP. It is off when there is no m and no SMTP host. A nil
+// gate permits all kinds.
+func NewRouter(st Store, cfg config.NotifyConfig, m notify.Mailer, gate Gate, log *slog.Logger) *Router {
 	p := newPoster(cfg.BlockPrivateTargets)
 	r := &Router{
 		store: st,
+		gate:  gate,
 		log:   log,
 		senders: map[store.ChannelKind]sender{
 			store.ChannelSlack:     slack{p: p},
@@ -79,6 +87,10 @@ func (r *Router) Notify(ctx context.Context, a notify.Alert) error {
 	)
 	for _, ch := range list {
 		if !ch.Enabled || !ch.Route.Match(a) {
+			continue
+		}
+		if r.gate != nil && !r.gate.ChannelAllowed(ctx, a.OrgID, ch.Kind) {
+			r.log.Debug("channels: kind blocked by plan", "channel_id", ch.ID, "kind", ch.Kind)
 			continue
 		}
 		wg.Go(func() {

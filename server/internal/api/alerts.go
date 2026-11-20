@@ -37,24 +37,36 @@ func (s *Server) handleListAlerts(c echo.Context) error {
 // recentAlertsLimit is the most rows of GET /v1/alerts/recent.
 const recentAlertsLimit = 200
 
-func (s *Server) handleRecentAlerts(c echo.Context) error {
+// recentSince reads days and gives the start of the recent alerts. The
+// plan limit clamps it.
+func (s *Server) recentSince(c echo.Context, now time.Time) (since time.Time, clamped bool, err error) {
 	t, _ := authctx.TokenFrom(c)
 	days := 7
 	if v := c.QueryParam("days"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 || n > 90 {
-			return echo.NewHTTPError(http.StatusBadRequest, "days must be 1 to 90")
+			return time.Time{}, false, echo.NewHTTPError(http.StatusBadRequest, "days must be 1 to 90")
 		}
 		days = n
 	}
-	out := wire.AlertList{Alerts: []wire.Alert{}}
+	since = now.Add(-time.Duration(days) * 24 * time.Hour)
+	since, clamped = s.clampFrom(c.Request().Context(), t.OrgID, since, now)
+	return since, clamped, nil
+}
+
+func (s *Server) handleRecentAlerts(c echo.Context) error {
+	t, _ := authctx.TokenFrom(c)
+	since, clamped, err := s.recentSince(c, time.Now())
+	if err != nil {
+		return err
+	}
+	out := wire.AlertList{Alerts: []wire.Alert{}, Clamped: clamped}
 	if s.ch == nil {
 		return c.JSON(http.StatusOK, out)
 	}
 	if !s.ch.Ready() {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "clickhouse not ready")
 	}
-	since := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
 	rows, err := s.ch.RecentAlerts(c.Request().Context(), t.OrgID, since, recentAlertsLimit)
 	if err != nil {
 		return err

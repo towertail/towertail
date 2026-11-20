@@ -106,7 +106,8 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 	}
 
 	a.hub = hub.New(a.log, hub.Options{LegacySamples: cfg.Stream.LegacySamples})
-	router := channels.NewRouter(a.store, cfg.Notify, b.mailer, a.log)
+	gate, _ := b.limits.(ChannelLimits)
+	router := channels.NewRouter(a.store, cfg.Notify, b.mailer, gate, a.log)
 	notifiers := append([]notify.Notifier{router}, b.notifiers...)
 	a.alerter = alerter.New(a.log, nil, a.hub, chEvents{ch: a.ch}, a.store, notifiers...)
 	ctrl := control.New(a.store)
@@ -125,22 +126,23 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 		routes = append(routes, func(s *api.Server) { f(s) })
 	}
 	a.api = api.New(api.Deps{
-		Config:     a.cfg,
-		Log:        a.log,
-		Runtime:    a.rt,
-		Store:      a.store,
-		CH:         a.ch,
-		Issuer:     issuer,
-		Hub:        a.hub,
-		Alerter:    a.alerter,
-		Control:    ctrl,
-		Scans:      a.scans,
-		Limits:     b.limits,
-		Interval:   b.interval,
-		Roles:      b.roles,
-		Channels:   router,
-		Middleware: b.middleware,
-		Routes:     routes,
+		Config:        a.cfg,
+		Log:           a.log,
+		Runtime:       a.rt,
+		Store:         a.store,
+		CH:            a.ch,
+		Issuer:        issuer,
+		Hub:           a.hub,
+		Alerter:       a.alerter,
+		Control:       ctrl,
+		Scans:         a.scans,
+		Limits:        b.limits,
+		ChannelLimits: gate,
+		Interval:      b.interval,
+		Roles:         b.roles,
+		Channels:      router,
+		Middleware:    b.middleware,
+		Routes:        routes,
 	})
 	return a, nil
 }

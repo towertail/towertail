@@ -292,3 +292,46 @@ func TestIssueSamplers(t *testing.T) {
 		}
 	}
 }
+
+type planLimits struct{}
+
+func (planLimits) HistoryDays(context.Context, uuid.UUID) int { return 0 }
+func (planLimits) MaxNodes(context.Context, uuid.UUID) int    { return -1 }
+
+type gatedLimits struct{ planLimits }
+
+func (gatedLimits) ChannelAllowed(_ context.Context, _ uuid.UUID, k store.ChannelKind) bool {
+	return k == store.ChannelEmail
+}
+
+func TestNewWithChannelLimits(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		limits Limits
+		want   int
+	}{
+		{"gated", gatedLimits{}, http.StatusPaymentRequired},
+		{"plain", planLimits{}, http.StatusCreated},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, err := New(testConfig(t), quietLog(), WithLimits(tc.limits))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(a.close)
+			raw, _, err := auth.NewIssuer(a.store).Issue(context.Background(), store.ZeroOrg, store.TokenKindUser, "test", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/v1/channels",
+				strings.NewReader(`{"kind":"slack","name":"s","target":"https://hooks.example.com/x"}`))
+			req.Header.Set("Authorization", "Bearer "+raw)
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			a.Handler().ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, tc.want, rec.Body)
+			}
+		})
+	}
+}
