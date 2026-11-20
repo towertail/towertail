@@ -202,6 +202,11 @@ func (s *PostgresStore) ListTokens(ctx context.Context, orgID uuid.UUID) ([]Toke
 	return out, rows.Err()
 }
 
+func (s *PostgresStore) TouchToken(ctx context.Context, hash []byte, at time.Time) error {
+	_, err := s.pool.Exec(ctx, `UPDATE api_tokens SET last_used_at = $2 WHERE token_hash = $1`, hash, at)
+	return err
+}
+
 func scanToken(row pgx.Row) (Token, error) {
 	var (
 		t     Token

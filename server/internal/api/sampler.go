@@ -150,7 +150,7 @@ func (s *Server) finishEnroll(c echo.Context, orgID uuid.UUID, node store.Node, 
 			s.alerter.Expect(ctx, orgID, node.ID, time.Now().UTC())
 		}
 	}
-	raw, _, err := s.issuer.Issue(ctx, orgID, store.TokenKindSampler, node.DisplayName, &node.ID)
+	raw, _, err := s.issuer.Issue(ctx, orgID, store.TokenKindSampler, node.DisplayName, &node.ID, nil)
 	if err != nil {
 		return err
 	}

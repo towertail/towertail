@@ -54,7 +54,7 @@ func newStreamEnv(t *testing.T) *streamEnv {
 		t.Fatal(err)
 	}
 	issue := func(kind store.TokenKind, node *uuid.UUID) string {
-		raw, _, err := issuer.Issue(ctx, store.ZeroOrg, kind, "test", node)
+		raw, _, err := issuer.Issue(ctx, store.ZeroOrg, kind, "test", node, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

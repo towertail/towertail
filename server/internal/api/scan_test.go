@@ -78,7 +78,7 @@ func newScanEnv(t *testing.T) *scanEnv {
 		}
 	}
 	issue := func(org uuid.UUID, kind store.TokenKind, node *uuid.UUID) string {
-		raw, _, err := issuer.Issue(ctx, org, kind, "test", node)
+		raw, _, err := issuer.Issue(ctx, org, kind, "test", node, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

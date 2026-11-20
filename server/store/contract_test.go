@@ -164,6 +164,17 @@ func contractTokens(t *testing.T, h storeHarness) {
 		t.Errorf("get: %+v", got)
 	}
 
+	touched := time.Now().UTC().Truncate(time.Millisecond).Add(time.Minute)
+	if err := h.s.TouchToken(ctx, tok.Hash, touched); err != nil {
+		t.Fatalf("touch: %v", err)
+	}
+	if got, _ := h.s.GetTokenByHash(ctx, tok.Hash); got.LastUsedAt == nil || !got.LastUsedAt.Equal(touched) || got.Label != "web-1" {
+		t.Errorf("after touch: %+v, want LastUsedAt %v", got, touched)
+	}
+	if err := h.s.TouchToken(ctx, []byte("unknown"), touched); err != nil {
+		t.Errorf("touch of an unknown hash: %v", err)
+	}
+
 	exp := time.Now().Add(time.Hour).UTC().Truncate(time.Millisecond)
 	join := Token{ID: uuid.New(), OrgID: org, Kind: TokenKindJoin, Hash: []byte(uuid.NewString()), ExpiresAt: &exp}
 	if err := h.s.PutToken(ctx, join); err != nil {

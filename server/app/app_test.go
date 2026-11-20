@@ -47,7 +47,7 @@ func TestWithRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(a.close)
-	raw, _, err := auth.NewIssuer(a.store).Issue(context.Background(), store.ZeroOrg, store.TokenKindUser, "test", nil)
+	raw, _, err := auth.NewIssuer(a.store).Issue(context.Background(), store.ZeroOrg, store.TokenKindUser, "test", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func TestWithNotifier(t *testing.T) {
 	if err := a.store.PutNode(ctx, store.ZeroOrg, node); err != nil {
 		t.Fatal(err)
 	}
-	raw, _, err := auth.NewIssuer(a.store).Issue(ctx, store.ZeroOrg, store.TokenKindSampler, "test", &node.ID)
+	raw, _, err := auth.NewIssuer(a.store).Issue(ctx, store.ZeroOrg, store.TokenKindSampler, "test", &node.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +319,7 @@ func TestNewWithChannelLimits(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(a.close)
-			raw, _, err := auth.NewIssuer(a.store).Issue(context.Background(), store.ZeroOrg, store.TokenKindUser, "test", nil)
+			raw, _, err := auth.NewIssuer(a.store).Issue(context.Background(), store.ZeroOrg, store.TokenKindUser, "test", nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

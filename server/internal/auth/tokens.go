@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,20 +17,31 @@ import (
 // each. The raw token is only ever returned to the caller at issue time.
 type TokenIssuer struct {
 	store store.ConfigStore
+	now   func() time.Time
+	log   *slog.Logger
+	// touched maps a token ID to the time of its last touch.
+	touched sync.Map
 }
 
+// Touch limits for LastUsedAt.
+const (
+	touchEvery   = 5 * time.Minute
+	touchTimeout = 5 * time.Second
+)
+
 func NewIssuer(s store.ConfigStore) *TokenIssuer {
-	return &TokenIssuer{store: s}
+	return &TokenIssuer{store: s, now: time.Now, log: slog.Default()}
 }
 
 // Issue creates a new token. The returned string is the raw secret the
 // caller hands to the client; the store retains only the hash.
-func (i *TokenIssuer) Issue(ctx context.Context, orgID uuid.UUID, kind store.TokenKind, label string, nodeID *uuid.UUID) (string, store.Token, error) {
+func (i *TokenIssuer) Issue(ctx context.Context, orgID uuid.UUID, kind store.TokenKind, label string, nodeID, userID *uuid.UUID) (string, store.Token, error) {
 	raw, t, err := store.NewToken(orgID, kind, label)
 	if err != nil {
 		return "", store.Token{}, err
 	}
 	t.NodeID = nodeID
+	t.UserID = userID
 	if err := i.store.PutToken(ctx, t); err != nil {
 		return "", store.Token{}, err
 	}
@@ -74,7 +87,32 @@ func (i *TokenIssuer) Verify(ctx context.Context, raw string) (store.Token, erro
 	if subtle.ConstantTimeCompare(t.Hash, expected) != 1 {
 		return store.Token{}, errors.New("auth: hash mismatch")
 	}
+	i.touch(t)
 	return t, nil
+}
+
+// touch sets LastUsedAt in the background, at most one time in each
+// touchEvery for each token.
+func (i *TokenIssuer) touch(t store.Token) {
+	now := i.now()
+	last := time.Time{}
+	if t.LastUsedAt != nil {
+		last = *t.LastUsedAt
+	}
+	if v, ok := i.touched.Load(t.ID); ok {
+		last = v.(time.Time)
+	}
+	if now.Sub(last) < touchEvery {
+		return
+	}
+	i.touched.Store(t.ID, now)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), touchTimeout)
+		defer cancel()
+		if err := i.store.TouchToken(ctx, t.Hash, now); err != nil {
+			i.log.Warn("auth: touch token", "id", t.ID, "err", err)
+		}
+	}()
 }
 
 // Revoke deletes the token by id.

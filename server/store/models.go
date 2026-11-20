@@ -216,7 +216,9 @@ const (
 	TokenKindUser    TokenKind = "user"
 	TokenKindSampler TokenKind = "sampler"
 	TokenKindAdmin   TokenKind = "admin"
-	TokenKindJoin    TokenKind = "join"
+	// TokenKindAPI is a read-only key of a user. It reads the read routes.
+	TokenKindAPI  TokenKind = "api"
+	TokenKindJoin TokenKind = "join"
 )
 
 // User logs in with email and password. In the cloud, PasswordHash is

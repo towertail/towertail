@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -42,6 +43,9 @@ type ConfigStore interface {
 	GetTokenByHash(ctx context.Context, hash []byte) (Token, error)
 	DeleteToken(ctx context.Context, id uuid.UUID) error
 	ListTokens(ctx context.Context, orgID uuid.UUID) ([]Token, error)
+	// TouchToken sets LastUsedAt of the token with the hash. An unknown
+	// hash is not an error.
+	TouchToken(ctx context.Context, hash []byte, at time.Time) error
 
 	// Users. PutUser inserts or updates by email.
 	PutUser(ctx context.Context, u User) error

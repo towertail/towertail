@@ -65,6 +65,10 @@ type HTTPConfig struct {
 	// IngestRateLimitRPS allows samplers pushing metrics to exceed the
 	// generic rate limit — a busy fleet can easily push > 10 rps/host.
 	IngestRateLimitRPS int `koanf:"ingest_rate_limit_rps"`
+	// APIKeyRateLimitRPS and APIKeyRateLimitBurst are the budget of each
+	// API key, on top of the limit of each IP.
+	APIKeyRateLimitRPS   float64 `koanf:"api_key_rate_limit_rps"`
+	APIKeyRateLimitBurst int     `koanf:"api_key_rate_limit_burst"`
 	// TrustedProxyHeader is the header with the client IP, for the rate
 	// limits and the logs. Empty means the socket address. Use
 	// "X-Forwarded-For" behind a proxy on a private address (Caddy), or
@@ -244,6 +248,8 @@ func setDefaults(k *koanf.Koanf) {
 	_ = k.Set("http.cors_allow_origins", []string{"*"})
 	_ = k.Set("http.rate_limit_rps", 100)
 	_ = k.Set("http.ingest_rate_limit_rps", 1000)
+	_ = k.Set("http.api_key_rate_limit_rps", 5)
+	_ = k.Set("http.api_key_rate_limit_burst", 20)
 
 	_ = k.Set("clickhouse.addr", "clickhouse:9000")
 	_ = k.Set("clickhouse.database", "towertail")

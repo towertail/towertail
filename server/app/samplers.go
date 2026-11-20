@@ -37,7 +37,7 @@ func IssueSamplers(ctx context.Context, st store.ConfigStore, orgID uuid.UUID, n
 		if err := st.PutNode(ctx, orgID, node); err != nil {
 			return out, fmt.Errorf("node %s: %w", name, err)
 		}
-		raw, _, err := issuer.Issue(ctx, orgID, store.TokenKindSampler, name, &node.ID)
+		raw, _, err := issuer.Issue(ctx, orgID, store.TokenKindSampler, name, &node.ID, nil)
 		if err != nil {
 			return out, fmt.Errorf("token %s: %w", name, err)
 		}

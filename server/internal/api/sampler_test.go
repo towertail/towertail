@@ -74,10 +74,10 @@ func TestSamplerTokens(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &enr)
 	// A user token and a token of another org do not show.
 	ctx := context.Background()
-	if _, _, err := issuer.Issue(ctx, store.ZeroOrg, store.TokenKindUser, "me", nil); err != nil {
+	if _, _, err := issuer.Issue(ctx, store.ZeroOrg, store.TokenKindUser, "me", nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	_, other, err := issuer.Issue(ctx, uuid.New(), store.TokenKindSampler, "other", nil)
+	_, other, err := issuer.Issue(ctx, uuid.New(), store.TokenKindSampler, "other", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestJoin_Invalid(t *testing.T) {
 	rec, _ := e.join("tt_join_unknown", "")
 	wantCode(t, rec, http.StatusUnauthorized)
 	// A sampler token is not a join token.
-	raw, _, err := e.issuer.Issue(context.Background(), store.ZeroOrg, store.TokenKindSampler, "s", nil)
+	raw, _, err := e.issuer.Issue(context.Background(), store.ZeroOrg, store.TokenKindSampler, "s", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

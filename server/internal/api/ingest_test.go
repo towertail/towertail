@@ -66,7 +66,7 @@ func (e *ingestEnv) node(mod func(*store.Node)) (store.Node, string) {
 	if err := e.st.PutNode(ctx, store.ZeroOrg, n); err != nil {
 		e.t.Fatal(err)
 	}
-	raw, _, err := e.issuer.Issue(ctx, store.ZeroOrg, store.TokenKindSampler, "t", &n.ID)
+	raw, _, err := e.issuer.Issue(ctx, store.ZeroOrg, store.TokenKindSampler, "t", &n.ID, nil)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestIngest_GateSkipsBody(t *testing.T) {
 func TestDeleteNodeKeepsSamplerToken(t *testing.T) {
 	e := newIngestEnv(t, config.Config{}, nil, nil)
 	n, tok := e.node(nil)
-	user, _, err := e.issuer.Issue(context.Background(), store.ZeroOrg, store.TokenKindUser, "u", nil)
+	user, _, err := e.issuer.Issue(context.Background(), store.ZeroOrg, store.TokenKindUser, "u", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

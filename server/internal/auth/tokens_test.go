@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,7 +21,7 @@ func TestIssuerRoundTrip(t *testing.T) {
 	defer s.Close()
 
 	issuer := NewIssuer(s)
-	raw, tok, err := issuer.Issue(context.Background(), store.ZeroOrg, store.TokenKindUser, "dev", nil)
+	raw, tok, err := issuer.Issue(context.Background(), store.ZeroOrg, store.TokenKindUser, "dev", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,5 +92,113 @@ func TestNewToken_JoinPrefix(t *testing.T) {
 	raw, _, _ = store.NewToken(store.ZeroOrg, store.TokenKindSampler, "s")
 	if strings.HasPrefix(raw, "tt_join_") {
 		t.Errorf("sampler token %q has the join prefix", raw)
+	}
+}
+
+func TestIssueWithUser(t *testing.T) {
+	s, err := store.OpenBolt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	user := uuid.New()
+	raw, tok, err := NewIssuer(s).Issue(ctx, store.ZeroOrg, store.TokenKindAPI, "ci", nil, &user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok.UserID == nil || *tok.UserID != user || tok.Kind != store.TokenKindAPI {
+		t.Fatalf("issued = %+v", tok)
+	}
+	got, err := s.GetTokenByHash(ctx, store.HashToken(raw))
+	if err != nil || got.UserID == nil || *got.UserID != user {
+		t.Fatalf("stored = %+v, %v", got, err)
+	}
+}
+
+// touchStore counts the TouchToken calls.
+type touchStore struct {
+	*store.BoltStore
+	touches atomic.Int32
+}
+
+func (s *touchStore) TouchToken(ctx context.Context, hash []byte, at time.Time) error {
+	s.touches.Add(1)
+	return s.BoltStore.TouchToken(ctx, hash, at)
+}
+
+func TestVerifyTouch(t *testing.T) {
+	bolt, err := store.OpenBolt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bolt.Close()
+	s := &touchStore{BoltStore: bolt}
+	ctx := context.Background()
+	issuer := NewIssuer(s)
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	issuer.now = func() time.Time { return now }
+	raw, tok, err := issuer.Issue(ctx, store.ZeroOrg, store.TokenKindAPI, "k", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// settle waits for the background touch and checks the count.
+	settle := func(want int32) {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for s.touches.Load() < want && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
+		time.Sleep(30 * time.Millisecond)
+		if got := s.touches.Load(); got != want {
+			t.Fatalf("touches = %d, want %d", got, want)
+		}
+	}
+	verify := func() {
+		t.Helper()
+		if _, err := issuer.Verify(ctx, raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	verify()
+	settle(1)
+	got, _ := bolt.GetTokenByHash(ctx, tok.Hash)
+	if got.LastUsedAt == nil || !got.LastUsedAt.Equal(now) {
+		t.Fatalf("LastUsedAt = %v, want %v", got.LastUsedAt, now)
+	}
+	now = now.Add(time.Minute)
+	verify()
+	settle(1)
+	now = now.Add(5 * time.Minute)
+	verify()
+	settle(2)
+}
+
+func TestVerifyTouchSkipsFresh(t *testing.T) {
+	bolt, err := store.OpenBolt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bolt.Close()
+	s := &touchStore{BoltStore: bolt}
+	ctx := context.Background()
+	issuer := NewIssuer(s)
+	raw, tok, err := issuer.Issue(ctx, store.ZeroOrg, store.TokenKindAPI, "k", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recent := time.Now().Add(-time.Minute)
+	tok.LastUsedAt = &recent
+	if err := bolt.PutToken(ctx, tok); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := issuer.Verify(ctx, raw); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := s.touches.Load(); got != 0 {
+		t.Fatalf("touches = %d, want 0 for a token used 1 minute ago", got)
 	}
 }

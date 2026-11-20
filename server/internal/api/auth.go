@@ -25,8 +25,10 @@ type Roles interface {
 // kinds may contain multiple kinds (e.g. user + admin); empty means any.
 // A token that an earlier middleware set with authctx.Set (for example a
 // cloud session cookie) counts as verified. After the check, bearer sets
-// the role of user and admin tokens, unless an earlier middleware did.
-// A token with no user, or a server with no Roles, gives owner.
+// the role of user, admin and api tokens, unless an earlier middleware
+// did. A user or admin token with no user, or a server with no Roles,
+// gives owner. An api token always gives viewer, and it needs a membership
+// when it has a user.
 func (s *Server) bearer(kinds ...store.TokenKind) echo.MiddlewareFunc {
 	allowed := map[store.TokenKind]struct{}{}
 	for _, k := range kinds {
@@ -52,16 +54,27 @@ func (s *Server) bearer(kinds ...store.TokenKind) echo.MiddlewareFunc {
 				}
 			}
 			authctx.Set(c, t)
-			if _, has := authctx.RoleFrom(c); has || (t.Kind != store.TokenKindUser && t.Kind != store.TokenKindAdmin) {
+			if _, has := authctx.RoleFrom(c); has {
 				return next(c)
 			}
-			role := store.RoleOwner
+			var role store.Role
+			switch t.Kind {
+			case store.TokenKindUser, store.TokenKindAdmin:
+				role = store.RoleOwner
+			case store.TokenKindAPI:
+				role = store.RoleViewer
+			default:
+				return next(c)
+			}
 			if s.roles != nil && t.UserID != nil {
-				var err error
-				if role, err = s.roles.Role(ctx, t.OrgID, *t.UserID); errors.Is(err, store.ErrNoMembership) {
+				member, err := s.roles.Role(ctx, t.OrgID, *t.UserID)
+				if errors.Is(err, store.ErrNoMembership) {
 					return echo.NewHTTPError(http.StatusForbidden, "no access to this org")
 				} else if err != nil {
 					return err
+				}
+				if t.Kind != store.TokenKindAPI {
+					role = member
 				}
 			}
 			authctx.SetRole(c, role)
@@ -113,7 +126,7 @@ func (s *Server) handleLogin(c echo.Context) error {
 	if err != nil || !ok {
 		return echo.NewHTTPError(http.StatusUnauthorized, "invalid credentials")
 	}
-	raw, _, err := s.issuer.Issue(c.Request().Context(), u.OrgID, store.TokenKindUser, "login", nil)
+	raw, _, err := s.issuer.Issue(c.Request().Context(), u.OrgID, store.TokenKindUser, "login", nil, &u.ID)
 	if err != nil {
 		return err
 	}

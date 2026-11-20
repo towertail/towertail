@@ -257,6 +257,26 @@ func (s *BoltStore) ListTokens(_ context.Context, orgID uuid.UUID) ([]Token, err
 	return out, err
 }
 
+func (s *BoltStore) TouchToken(_ context.Context, hash []byte, at time.Time) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketTokens)
+		v := b.Get(hash)
+		if v == nil {
+			return nil
+		}
+		var t Token
+		if err := json.Unmarshal(v, &t); err != nil {
+			return err
+		}
+		t.LastUsedAt = &at
+		data, err := json.Marshal(t)
+		if err != nil {
+			return err
+		}
+		return b.Put(hash, data)
+	})
+}
+
 // boltUser keeps the password hash, which the JSON of User leaves out.
 type boltUser struct {
 	User

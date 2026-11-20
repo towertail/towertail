@@ -54,7 +54,7 @@ func main() {
 						Name:  "issue",
 						Usage: "issue a new token",
 						Flags: []cli.Flag{
-							&cli.StringFlag{Name: "kind", Usage: "user|sampler|admin", Required: true},
+							&cli.StringFlag{Name: "kind", Usage: "user|sampler|admin|api", Required: true},
 							&cli.StringFlag{Name: "label", Usage: "human label"},
 							&cli.StringFlag{Name: "node-id", Usage: "node UUID for sampler tokens"},
 						},
@@ -161,7 +161,7 @@ func runTokenIssue(ctx context.Context, c *cli.Command) error {
 
 	kind := store.TokenKind(c.String("kind"))
 	switch kind {
-	case store.TokenKindUser, store.TokenKindSampler, store.TokenKindAdmin:
+	case store.TokenKindUser, store.TokenKindSampler, store.TokenKindAdmin, store.TokenKindAPI:
 	default:
 		return fmt.Errorf("invalid kind %q", kind)
 	}
@@ -173,7 +173,7 @@ func runTokenIssue(ctx context.Context, c *cli.Command) error {
 		}
 		nodeID = &parsed
 	}
-	raw, t, err := issuer.Issue(ctx, store.ZeroOrg, kind, c.String("label"), nodeID)
+	raw, t, err := issuer.Issue(ctx, store.ZeroOrg, kind, c.String("label"), nodeID, nil)
 	if err != nil {
 		return err
 	}
