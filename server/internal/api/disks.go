@@ -6,6 +6,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/towertail/towertail/server/authctx"
 	"github.com/towertail/towertail/server/wire"
 )
 
@@ -15,27 +16,24 @@ func (s *Server) handleDisks(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	r, err := s.parseRange(c, 24*time.Hour)
-	if err != nil {
-		return err
-	}
-	r.NodeID = id
 	if err := s.requireCH(c); err != nil {
 		return err
 	}
-	pts, bucket, err := s.ch.DiskHistory(c.Request().Context(), r.RangeQuery)
+	t, _ := authctx.TokenFrom(c)
+	from, to, _ := rangeBounds(c, 24*time.Hour)
+	res, err := s.query.Disks(c.Request().Context(), t.OrgID, id, from, to)
 	if err != nil {
 		return err
 	}
 	out := wire.NodeDisksResponse{
-		NodeID:     r.NodeID,
-		From:       r.From,
-		To:         r.To,
-		Resolution: resolution(bucket),
-		Clamped:    r.Clamped,
+		NodeID:     id,
+		From:       res.From,
+		To:         res.To,
+		Resolution: resolution(res.Bucket),
+		Clamped:    res.Clamped,
 		Mounts:     []wire.DiskSeries{},
 	}
-	for _, p := range pts {
+	for _, p := range res.Points {
 		// The rows come in mount order.
 		if n := len(out.Mounts); n == 0 || out.Mounts[n-1].Mount != p.Mount {
 			out.Mounts = append(out.Mounts, wire.DiskSeries{Mount: p.Mount, FS: p.FS})

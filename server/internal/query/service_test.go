@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +33,14 @@ type fakeReader struct {
 	gotN    int
 	asked   []clickhouse.StatsQuery
 	since   time.Time
+
+	history     []clickhouse.HistoryPoint
+	gotHistory  clickhouse.HistoryQuery
+	disk        []clickhouse.DiskPoint
+	gotDisk     clickhouse.RangeQuery
+	open, rows  []clickhouse.AlertRow
+	gotSince    time.Time
+	gotRowLimit int
 }
 
 func (f *fakeReader) LatestByNode(_ context.Context, _ uuid.UUID, since time.Time) ([]clickhouse.NodeLatest, error) {
@@ -54,6 +63,25 @@ func (f *fakeReader) WindowStats(_ context.Context, q clickhouse.StatsQuery) ([]
 		return nil, nil
 	}
 	return f.stats(q), nil
+}
+
+func (f *fakeReader) QueryHistory(_ context.Context, q clickhouse.HistoryQuery) ([]clickhouse.HistoryPoint, time.Duration, error) {
+	f.gotHistory = q
+	return f.history, time.Minute, nil
+}
+
+func (f *fakeReader) DiskHistory(_ context.Context, q clickhouse.RangeQuery) ([]clickhouse.DiskPoint, time.Duration, error) {
+	f.gotDisk = q
+	return f.disk, time.Minute, nil
+}
+
+func (f *fakeReader) OpenAlerts(context.Context, uuid.UUID) ([]clickhouse.AlertRow, error) {
+	return f.open, nil
+}
+
+func (f *fakeReader) RecentAlerts(_ context.Context, _ uuid.UUID, since time.Time, limit int) ([]clickhouse.AlertRow, error) {
+	f.gotSince, f.gotRowLimit = since, limit
+	return f.rows, nil
 }
 
 var now = time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
@@ -258,5 +286,120 @@ func TestTopProcessesFleet(t *testing.T) {
 	}
 	if _, err := s.TopProcesses(context.Background(), ProcQuery{By: "disk"}); !errors.Is(err, ErrBadOrder) {
 		t.Fatalf("bad order: %v", err)
+	}
+}
+
+func TestResolveHost(t *testing.T) {
+	a, b, c := uuid.New(), uuid.New(), uuid.New()
+	s := newService(nil, []store.Node{
+		{ID: a, DisplayName: "Web-1"},
+		{ID: b, DisplayName: "db"},
+		{ID: c, DisplayName: "DB"},
+	}, 0)
+	ctx := context.Background()
+
+	if n, err := s.ResolveHost(ctx, uuid.New(), a.String()); err != nil || n.ID != a {
+		t.Errorf("by ID: %v, %v", n.ID, err)
+	}
+	if n, err := s.ResolveHost(ctx, uuid.New(), "web-1"); err != nil || n.ID != a {
+		t.Errorf("by name: %v, %v", n.ID, err)
+	}
+	if _, err := s.ResolveHost(ctx, uuid.New(), "nope"); !errors.Is(err, ErrHostNotFound) {
+		t.Errorf("unknown name: %v", err)
+	}
+	if _, err := s.ResolveHost(ctx, uuid.New(), uuid.NewString()); !errors.Is(err, ErrHostNotFound) {
+		t.Errorf("unknown ID: %v", err)
+	}
+	if _, err := s.ResolveHost(ctx, uuid.New(), ""); !errors.Is(err, ErrHostNotFound) {
+		t.Errorf("empty ref: %v", err)
+	}
+	_, err := s.ResolveHost(ctx, uuid.New(), "Db")
+	if !errors.Is(err, ErrHostAmbiguous) || !strings.Contains(err.Error(), b.String()) || !strings.Contains(err.Error(), c.String()) {
+		t.Errorf("same name: %v, want both IDs", err)
+	}
+}
+
+func TestServiceHistoryClamp(t *testing.T) {
+	day := 24 * time.Hour
+	r := &fakeReader{}
+	s := newService(r, nil, 1)
+	_, _, clamped, err := s.History(context.Background(), HistoryRequest{
+		OrgID: uuid.New(), NodeID: uuid.New(), Metric: "cpu", From: now.Add(-7 * day), To: now, Step: time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !clamped || !r.gotHistory.From.Equal(now.Add(-day)) {
+		t.Fatalf("clamped = %v, from = %v; want true, %v", clamped, r.gotHistory.From, now.Add(-day))
+	}
+	_, _, clamped, _ = s.History(context.Background(), HistoryRequest{Metric: "cpu", From: now.Add(-time.Hour)})
+	if clamped || !r.gotHistory.To.Equal(now) {
+		t.Fatalf("inside plan: clamped = %v, to = %v", clamped, r.gotHistory.To)
+	}
+	if _, _, _, err := NewService(nil, fakeNodes(nil), nil).History(context.Background(), HistoryRequest{}); !errors.Is(err, ErrNoHistory) {
+		t.Errorf("no ClickHouse: %v", err)
+	}
+}
+
+func TestServiceDisksClamp(t *testing.T) {
+	day := 24 * time.Hour
+	r := &fakeReader{disk: []clickhouse.DiskPoint{{Mount: "/"}}}
+	got, err := newService(r, nil, 1).Disks(context.Background(), uuid.New(), uuid.New(), now.Add(-7*day), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Clamped || !got.From.Equal(now.Add(-day)) || len(got.Points) != 1 || !r.gotDisk.From.Equal(got.From) {
+		t.Fatalf("Disks = %+v", got)
+	}
+}
+
+func TestServiceAlerts(t *testing.T) {
+	day := 24 * time.Hour
+	a, b := uuid.New(), uuid.New()
+	rows := []clickhouse.AlertRow{{NodeID: a, Metric: "cpu", Tint: "crit"}, {NodeID: b, Metric: "mem", Tint: "warn"}}
+	ctx := context.Background()
+	org := uuid.New()
+
+	for _, tc := range []struct {
+		name        string
+		limits      int
+		req         AlertsRequest
+		wantSince   time.Time
+		wantClamped bool
+		wantN       int
+		wantErr     error
+	}{
+		{"clamped", 1, AlertsRequest{Days: 7}, now.Add(-day), true, 2, nil},
+		{"inside plan", 30, AlertsRequest{Days: 7}, now.Add(-7 * day), false, 2, nil},
+		{"no limit", 0, AlertsRequest{Days: 7}, now.Add(-7 * day), false, 2, nil},
+		{"default days", 30, AlertsRequest{}, now.Add(-7 * day), false, 2, nil},
+		{"one host", 30, AlertsRequest{NodeID: b}, now.Add(-7 * day), false, 1, nil},
+		{"days 91", 0, AlertsRequest{Days: 91}, time.Time{}, false, 0, ErrBadDays},
+		{"days -1", 0, AlertsRequest{Days: -1}, time.Time{}, false, 0, ErrBadDays},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &fakeReader{rows: rows}
+			tc.req.OrgID = org
+			got, err := newService(r, nil, tc.limits).Alerts(ctx, tc.req)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr != nil {
+				return
+			}
+			if !r.gotSince.Equal(tc.wantSince) || got.Clamped != tc.wantClamped || len(got.Alerts) != tc.wantN || r.gotRowLimit != RecentAlertsLimit {
+				t.Fatalf("since = %v, clamped = %v, n = %d", r.gotSince, got.Clamped, len(got.Alerts))
+			}
+		})
+	}
+
+	open := &fakeReader{open: rows}
+	got, err := newService(open, nil, 1).Alerts(ctx, AlertsRequest{OrgID: org, Open: true, NodeID: a})
+	if err != nil || len(got.Alerts) != 1 || got.Alerts[0].NodeID != a || got.Clamped {
+		t.Fatalf("open alerts = %+v, %v", got, err)
+	}
+	empty, err := NewService(nil, fakeNodes(nil), nil).Alerts(ctx, AlertsRequest{Open: true})
+	if err != nil || empty.Alerts == nil || len(empty.Alerts) != 0 {
+		t.Fatalf("no ClickHouse = %+v, %v; want an empty list", empty, err)
 	}
 }

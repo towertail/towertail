@@ -6,6 +6,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"slices"
 	"strings"
@@ -27,6 +28,12 @@ var (
 	ErrBadWindow = errors.New("query: window must be 15m to 30d")
 	// ErrBadOrder is returned for an unknown process order.
 	ErrBadOrder = errors.New("query: by must be cpu or mem")
+	// ErrBadDays is returned for a days value out of range.
+	ErrBadDays = errors.New("query: days must be 1 to 90")
+	// ErrHostNotFound is returned when no host matches a reference.
+	ErrHostNotFound = errors.New("query: host not found")
+	// ErrHostAmbiguous is returned when a name matches more than one host.
+	ErrHostAmbiguous = errors.New("query: host name is not unique")
 )
 
 // Limits of the fleet reads.
@@ -37,6 +44,11 @@ const (
 	MaxWindow   = 30 * 24 * time.Hour
 	MaxProcs    = 50
 	defaultProc = 20
+	// MaxAlertDays is the longest span of the recent alerts.
+	MaxAlertDays = 90
+	// RecentAlertsLimit is the most rows of the recent alerts.
+	RecentAlertsLimit = 200
+	defaultAlertDays  = 7
 )
 
 // compareMetrics are the metrics that Compare accepts.
@@ -50,6 +62,10 @@ type Reader interface {
 	LatestDiskRatio(ctx context.Context, orgID uuid.UUID, since time.Time) (map[uuid.UUID]float64, error)
 	TopProcesses(ctx context.Context, q clickhouse.RangeQuery, by clickhouse.ProcOrder, limit int) ([]clickhouse.TopProc, error)
 	WindowStats(ctx context.Context, q clickhouse.StatsQuery) ([]clickhouse.NodeStat, error)
+	QueryHistory(ctx context.Context, q clickhouse.HistoryQuery) ([]clickhouse.HistoryPoint, time.Duration, error)
+	DiskHistory(ctx context.Context, q clickhouse.RangeQuery) ([]clickhouse.DiskPoint, time.Duration, error)
+	OpenAlerts(ctx context.Context, orgID uuid.UUID) ([]clickhouse.AlertRow, error)
+	RecentAlerts(ctx context.Context, orgID uuid.UUID, since time.Time, limit int) ([]clickhouse.AlertRow, error)
 }
 
 // Nodes lists the nodes of an org.
@@ -384,4 +400,39 @@ func (s *Service) names(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID]str
 		m[n.ID] = n.DisplayName
 	}
 	return m, nil
+}
+
+// ResolveHost finds a node of the org by ID, then by display name with
+// no case. A name that matches more than one node gives
+// ErrHostAmbiguous with the IDs.
+func (s *Service) ResolveHost(ctx context.Context, orgID uuid.UUID, ref string) (store.Node, error) {
+	ref = strings.TrimSpace(ref)
+	nodes, err := s.nodes.ListNodes(ctx, orgID)
+	if err != nil {
+		return store.Node{}, err
+	}
+	if id, err := uuid.Parse(ref); err == nil {
+		for _, n := range nodes {
+			if n.ID == id {
+				return n, nil
+			}
+		}
+	}
+	var found []store.Node
+	for _, n := range nodes {
+		if ref != "" && strings.EqualFold(n.DisplayName, ref) {
+			found = append(found, n)
+		}
+	}
+	switch len(found) {
+	case 0:
+		return store.Node{}, fmt.Errorf("%w: %q", ErrHostNotFound, ref)
+	case 1:
+		return found[0], nil
+	}
+	ids := make([]string, len(found))
+	for i, n := range found {
+		ids[i] = n.ID.String()
+	}
+	return store.Node{}, fmt.Errorf("%w: %q matches %s", ErrHostAmbiguous, ref, strings.Join(ids, ", "))
 }

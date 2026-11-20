@@ -53,7 +53,7 @@ func fleetQueryError(err error) error {
 	switch {
 	case errors.Is(err, query.ErrNoHistory):
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "clickhouse disabled — no history available")
-	case errors.Is(err, query.ErrBadSort), errors.Is(err, query.ErrBadOrder), errors.Is(err, query.ErrBadWindow):
+	case errors.Is(err, query.ErrBadSort), errors.Is(err, query.ErrBadOrder), errors.Is(err, query.ErrBadWindow), errors.Is(err, query.ErrBadDays):
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	case errors.Is(err, clickhouse.ErrUnknownMetric):
 		return echo.NewHTTPError(http.StatusBadRequest, "unknown metric")

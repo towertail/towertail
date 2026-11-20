@@ -12,6 +12,7 @@ import (
 
 	"github.com/towertail/towertail/server/authctx"
 	"github.com/towertail/towertail/server/internal/clickhouse"
+	"github.com/towertail/towertail/server/internal/query"
 	"github.com/towertail/towertail/server/wire"
 )
 
@@ -187,13 +188,13 @@ func (s *Server) handleHistory(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	r, err := s.parseRange(c, time.Hour)
-	if err != nil {
-		return err
-	}
-	r.NodeID = id
 	step := historyStep(c)
 	if v := c.QueryParam("metrics"); v != "" {
+		r, err := s.parseRange(c, time.Hour)
+		if err != nil {
+			return err
+		}
+		r.NodeID = id
 		return s.handleHistoryMulti(c, r, v, step)
 	}
 	metric := c.QueryParam("metric")
@@ -203,23 +204,19 @@ func (s *Server) handleHistory(c echo.Context) error {
 	if err := s.requireCH(c); err != nil {
 		return err
 	}
-
-	pts, res, err := s.ch.QueryHistory(c.Request().Context(), clickhouse.HistoryQuery{
-		OrgID:  r.OrgID,
-		NodeID: r.NodeID,
-		Metric: metric,
-		From:   r.From,
-		To:     r.To,
-		Step:   step,
+	t, _ := authctx.TokenFrom(c)
+	from, to, _ := rangeBounds(c, time.Hour)
+	pts, res, clamped, err := s.query.History(c.Request().Context(), query.HistoryRequest{
+		OrgID: t.OrgID, NodeID: id, Metric: metric, From: from, To: to, Step: step,
 	})
 	if err != nil {
 		return historyQueryError(err)
 	}
 	out := wire.NodeHistoryResponse{
-		NodeID:     r.NodeID,
+		NodeID:     id,
 		Metric:     metric,
 		Resolution: resolution(res),
-		Clamped:    r.Clamped,
+		Clamped:    clamped,
 		Points:     []wire.NodeHistoryPoint{},
 	}
 	for _, p := range pts {

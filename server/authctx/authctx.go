@@ -3,6 +3,8 @@
 package authctx
 
 import (
+	"context"
+
 	"github.com/labstack/echo/v4"
 
 	"github.com/towertail/towertail/server/store"
@@ -29,4 +31,18 @@ func SetRole(c echo.Context, r store.Role) { c.Set(roleKey, r) }
 func RoleFrom(c echo.Context) (store.Role, bool) {
 	r, ok := c.Get(roleKey).(store.Role)
 	return r, ok
+}
+
+type ctxKey struct{}
+
+// WithToken puts the verified token on a context. A plain http.Handler
+// reads it with FromContext.
+func WithToken(ctx context.Context, t store.Token) context.Context {
+	return context.WithValue(ctx, ctxKey{}, t)
+}
+
+// FromContext returns the token that WithToken stored.
+func FromContext(ctx context.Context) (store.Token, bool) {
+	t, ok := ctx.Value(ctxKey{}).(store.Token)
+	return t, ok
 }
