@@ -209,6 +209,35 @@ type NodeHistoryResponse struct {
 	Points  []NodeHistoryPoint `json:"points"`
 }
 
+// NodeHistorySeries is the series of many metrics of one node. Each key
+// of Series is a metric name.
+type NodeHistorySeries struct {
+	NodeID uuid.UUID                     `json:"node_id"`
+	Series map[string][]NodeHistoryPoint `json:"series"`
+}
+
+// NodeHistoryMultiResponse is the answer of the node history route with
+// "metrics".
+type NodeHistoryMultiResponse struct {
+	NodeHistorySeries
+	From       time.Time `json:"from"`
+	To         time.Time `json:"to"`
+	Resolution string    `json:"resolution"`
+	// Clamped is true when the plan history limit moved "from" later.
+	Clamped bool `json:"clamped,omitempty"`
+}
+
+// FleetHistoryResponse is the answer of the fleet history route. A node
+// with no points in the range has no entry.
+type FleetHistoryResponse struct {
+	From       time.Time `json:"from"`
+	To         time.Time `json:"to"`
+	Resolution string    `json:"resolution"`
+	// Clamped is true when the plan history limit moved "from" later.
+	Clamped bool                `json:"clamped,omitempty"`
+	Nodes   []NodeHistorySeries `json:"nodes"`
+}
+
 // TopProcess is one process of a node over a range: a name and a cmd.
 type TopProcess struct {
 	Name      string  `json:"name"`

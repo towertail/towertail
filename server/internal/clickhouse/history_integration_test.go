@@ -219,3 +219,112 @@ func TestProcsTop1h(t *testing.T) {
 		t.Fatalf("top from procs_top_1h = %+v", top)
 	}
 }
+
+// The multi query gives the same points as the single query, for each
+// metric and each tier.
+func TestQueryHistoryMultiMatchesSingle(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	org, node, other := uuid.New(), uuid.New(), uuid.New()
+	end := time.Now().UTC().Truncate(time.Hour)
+	start := end.Add(-2 * time.Hour)
+	var bundles []IngestBundle
+	for i, ts := 0, start; ts.Before(end); i, ts = i+1, ts.Add(10*time.Second) {
+		for _, n := range []uuid.UUID{node, other} {
+			bundles = append(bundles, IngestBundle{Sample: SampleRow{
+				TS: ts, OrgID: org, NodeID: n, SchemaV: 1, CPUPct: float32(i % 100), MemUsed: uint64(1 + i%3), MemTotal: 4,
+				NetRxBps: uint64(i), NetTxBps: uint64(2 * i), DiskReadBps: uint64(3 * i), DiskWriteBps: uint64(4 * i),
+				ProcsTotal: uint32(100 + i%7), Errors: []string{},
+			}})
+		}
+	}
+	if err := client.insert(ctx, bundles); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	all := []string{"cpu", "mem", "net_rx", "net_tx", "disk_read", "disk_write"}
+	for _, tc := range []struct {
+		name    string
+		from    time.Time
+		step    time.Duration
+		metrics []string
+	}{
+		{"raw", end.Add(-time.Hour), 0, append([]string{"procs"}, all...)},
+		{"raw by step", end.Add(-time.Hour), 5 * time.Minute, append([]string{"procs"}, all...)},
+		{"1m", end.Add(-2 * 24 * time.Hour), time.Minute, all},
+		{"5m", end.Add(-10 * 24 * time.Hour), 0, all},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			to := end.Add(-time.Millisecond)
+			multi, res, err := client.QueryHistoryMulti(ctx, HistoryMultiQuery{
+				OrgID: org, NodeIDs: []uuid.UUID{node, other}, Metrics: tc.metrics, From: tc.from, To: to, Step: tc.step,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, n := range []uuid.UUID{node, other} {
+				for _, m := range tc.metrics {
+					single, sres, err := client.QueryHistory(ctx, HistoryQuery{OrgID: org, NodeID: n, Metric: m, From: tc.from, To: to, Step: tc.step})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if sres != res {
+						t.Errorf("%s: resolution %v, want %v", m, res, sres)
+					}
+					got := multi[n][m]
+					if len(got) == 0 || len(got) != len(single) {
+						t.Fatalf("%s: %d points, want %d", m, len(got), len(single))
+					}
+					for i := range got {
+						if !got[i].TS.Equal(single[i].TS) || math.Abs(got[i].Value-single[i].Value) > 1e-9 || math.Abs(got[i].Max-single[i].Max) > 1e-9 {
+							t.Fatalf("%s point %d: %+v, want %+v", m, i, got[i], single[i])
+						}
+					}
+				}
+			}
+		})
+	}
+
+	_, _, err := client.QueryHistoryMulti(ctx, HistoryMultiQuery{
+		OrgID: org, NodeIDs: []uuid.UUID{node}, Metrics: []string{"procs"}, From: end.Add(-2 * 24 * time.Hour), To: end, Step: time.Minute,
+	})
+	if err != ErrNoRollup {
+		t.Fatalf("procs on 1m tier: err = %v, want ErrNoRollup", err)
+	}
+}
+
+// A node of another org gives no series.
+func TestQueryHistoryMultiOrgFilter(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	org, foreign := uuid.New(), uuid.New()
+	mine, theirs := uuid.New(), uuid.New()
+	end := time.Now().UTC().Truncate(time.Minute)
+	var bundles []IngestBundle
+	for i := 0; i < 6; i++ {
+		ts := end.Add(-time.Duration(i+1) * 10 * time.Second)
+		bundles = append(bundles,
+			IngestBundle{Sample: SampleRow{TS: ts, OrgID: org, NodeID: mine, SchemaV: 1, CPUPct: 10, MemTotal: 1, Errors: []string{}}},
+			IngestBundle{Sample: SampleRow{TS: ts, OrgID: foreign, NodeID: theirs, SchemaV: 1, CPUPct: 90, MemTotal: 1, Errors: []string{}}},
+		)
+	}
+	if err := client.insert(ctx, bundles); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	got, _, err := client.QueryHistoryMulti(ctx, HistoryMultiQuery{
+		OrgID: org, NodeIDs: []uuid.UUID{mine, theirs}, Metrics: []string{"cpu"}, From: end.Add(-time.Hour), To: end, Step: time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got[theirs]; ok {
+		t.Fatal("series of a foreign node")
+	}
+	if len(got[mine]["cpu"]) == 0 {
+		t.Fatal("no series for the own node")
+	}
+}

@@ -14,10 +14,15 @@ const maxProcessLimit = 50
 
 // handleProcesses returns the top processes of a node in a range.
 func (s *Server) handleProcesses(c echo.Context) error {
+	id, err := parseNodeID(c)
+	if err != nil {
+		return err
+	}
 	r, err := s.parseRange(c, time.Hour)
 	if err != nil {
 		return err
 	}
+	r.NodeID = id
 	limit := 10
 	if v := c.QueryParam("limit"); v != "" {
 		n, err := strconv.Atoi(v)

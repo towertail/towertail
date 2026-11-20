@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	ch "github.com/ClickHouse/clickhouse-go/v2"
@@ -66,7 +67,7 @@ func historyTier(span time.Duration) tier {
 // comes from the range, and the step groups the points of the tier.
 func (c *Client) QueryHistory(ctx context.Context, q HistoryQuery) ([]HistoryPoint, time.Duration, error) {
 	t := historyTier(q.To.Sub(q.From))
-	sql, err := c.historySQL(t, q.Metric, q.Step)
+	sql, err := c.historySQL(t, []string{q.Metric}, q.Step, false)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -83,6 +84,64 @@ func (c *Client) QueryHistory(ctx context.Context, q HistoryQuery) ([]HistoryPoi
 			return nil, 0, err
 		}
 		out = append(out, p)
+	}
+	return out, t.resolution(q.Step), rows.Err()
+}
+
+// HistoryMultiQuery asks for many metrics of many nodes of one org.
+type HistoryMultiQuery struct {
+	OrgID    uuid.UUID
+	NodeIDs  []uuid.UUID
+	Metrics  []string
+	From, To time.Time
+	Step     time.Duration
+}
+
+// ErrNoRollup is returned for a metric that has only raw samples, when
+// the range needs a rollup table.
+var ErrNoRollup = errors.New("clickhouse: metric has no rollup for this range")
+
+// QueryHistoryMulti returns the points of each metric of each node in
+// the range, and the bucket of the points. A node of another org, or a
+// node with no points, has no entry. The tier rules are the same as in
+// QueryHistory.
+func (c *Client) QueryHistoryMulti(ctx context.Context, q HistoryMultiQuery) (map[uuid.UUID]map[string][]HistoryPoint, time.Duration, error) {
+	t := historyTier(q.To.Sub(q.From))
+	if len(q.Metrics) == 0 || len(q.NodeIDs) == 0 {
+		return map[uuid.UUID]map[string][]HistoryPoint{}, t.resolution(q.Step), nil
+	}
+	sql, err := c.historySQL(t, q.Metrics, q.Step, true)
+	if err != nil {
+		return nil, 0, err
+	}
+	rows, err := c.conn.Query(ctx, sql, q.OrgID, q.NodeIDs, q.From, q.To)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	out := map[uuid.UUID]map[string][]HistoryPoint{}
+	vals := make([]float64, 2*len(q.Metrics))
+	for rows.Next() {
+		var (
+			id uuid.UUID
+			ts time.Time
+		)
+		dest := []any{&id, &ts}
+		for i := range vals {
+			dest = append(dest, &vals[i])
+		}
+		if err := rows.Scan(dest...); err != nil {
+			return nil, 0, err
+		}
+		series := out[id]
+		if series == nil {
+			series = make(map[string][]HistoryPoint, len(q.Metrics))
+			out[id] = series
+		}
+		for i, m := range q.Metrics {
+			series[m] = append(series[m], HistoryPoint{TS: ts, Value: vals[2*i], Max: vals[2*i+1]})
+		}
 	}
 	return out, t.resolution(q.Step), rows.Err()
 }
@@ -113,43 +172,60 @@ var rawExprs = map[string]string{
 	"net_tx":     "toFloat64(net_tx_bps)",
 	"disk_read":  "toFloat64(disk_read_bps)",
 	"disk_write": "toFloat64(disk_write_bps)",
+	"procs":      "toFloat64(procs_total)",
 }
 
-func (c *Client) historySQL(t tier, metric string, step time.Duration) (string, error) {
+// historySQL builds the query of the metrics. Each metric gives a value
+// and a max column (v0, m0, v1, ...). With multiNode, the rows also have
+// the node_id and the node_id filter is a list.
+func (c *Client) historySQL(t tier, metrics []string, step time.Duration, multiNode bool) (string, error) {
 	ts := t.ts
 	res := t.resolution(step)
 	group := res > t.bucket
 	if group {
 		ts = fmt.Sprintf("toStartOfInterval(%s, INTERVAL %d SECOND)", t.ts, int64(res/time.Second))
 	}
-	var v, m string
-	if t == tierRaw {
-		e, ok := rawExprs[metric]
-		if !ok {
-			return "", ErrUnknownMetric
-		}
-		v, m = e, e
-		if group {
-			v, m = "avg("+e+")", "max("+e+")"
-		}
-	} else {
-		cols, ok := rollupCols[metric]
-		if !ok {
-			return "", ErrUnknownMetric
-		}
-		v = "avgMerge(" + cols[0] + ")"
-		m = v
-		if cols[1] != "" {
-			m = "maxMerge(" + cols[1] + ")"
-		}
+	if t != tierRaw {
 		group = true
 	}
-	sql := fmt.Sprintf("SELECT %s AS t, toFloat64(%s) AS v, toFloat64(%s) AS m FROM %s WHERE org_id = ? AND node_id = ? AND %s BETWEEN ? AND ?",
-		ts, v, m, c.table(t.table), t.ts)
-	if group {
-		sql += " GROUP BY t"
+	cols := make([]string, 0, 2*len(metrics))
+	for i, metric := range metrics {
+		var v, m string
+		if t == tierRaw {
+			e, ok := rawExprs[metric]
+			if !ok {
+				return "", ErrUnknownMetric
+			}
+			v, m = e, e
+			if group {
+				v, m = "avg("+e+")", "max("+e+")"
+			}
+		} else {
+			rc, ok := rollupCols[metric]
+			if !ok {
+				if _, raw := rawExprs[metric]; raw {
+					return "", ErrNoRollup
+				}
+				return "", ErrUnknownMetric
+			}
+			v = "avgMerge(" + rc[0] + ")"
+			m = v
+			if rc[1] != "" {
+				m = "maxMerge(" + rc[1] + ")"
+			}
+		}
+		cols = append(cols, fmt.Sprintf("toFloat64(%s) AS v%d, toFloat64(%s) AS m%d", v, i, m, i))
 	}
-	return sql + " ORDER BY t", nil
+	sel, where, groupBy, orderBy := "", "node_id = ?", "t", "t"
+	if multiNode {
+		sel, where, groupBy, orderBy = "node_id, ", "node_id IN ?", "node_id, t", "node_id, t"
+	}
+	sql := fmt.Sprintf("SELECT %s%s AS t, %s FROM %s WHERE org_id = ? AND %s AND %s BETWEEN ? AND ?",
+		sel, ts, strings.Join(cols, ", "), c.table(t.table), where, t.ts)
+	if group {
+		sql += " GROUP BY " + groupBy
+	}
+	return sql + " ORDER BY " + orderBy, nil
 }
 
 // ErrNoAlert is returned when the org has no alert with the id.

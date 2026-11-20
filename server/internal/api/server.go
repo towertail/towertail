@@ -220,6 +220,7 @@ func (s *Server) registerRoutes() {
 	userGroup.GET("/nodes/:id/history", s.handleHistory)
 	userGroup.GET("/nodes/:id/processes", s.handleProcesses)
 	userGroup.GET("/nodes/:id/disks", s.handleDisks)
+	userGroup.GET("/history", s.handleFleetHistory)
 	userGroup.GET("/settings", s.handleGetSettings)
 	userGroup.PUT("/settings", s.handlePutSettings)
 	userGroup.GET("/alerts", s.handleListAlerts)

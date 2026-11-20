@@ -11,10 +11,15 @@ import (
 
 // handleDisks returns the use of each mount of a node in a range.
 func (s *Server) handleDisks(c echo.Context) error {
+	id, err := parseNodeID(c)
+	if err != nil {
+		return err
+	}
 	r, err := s.parseRange(c, 24*time.Hour)
 	if err != nil {
 		return err
 	}
+	r.NodeID = id
 	if err := s.requireCH(c); err != nil {
 		return err
 	}

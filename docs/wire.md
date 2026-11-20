@@ -69,6 +69,8 @@ Base path `/v1`. Authed unless otherwise marked.
 | DELETE | `/v1/nodes/{id}` | — | 204 |
 | POST | `/v1/nodes/{id}/kill-process?pid=…` | — | 202 |
 | GET | `/v1/nodes/{id}/history?metric=cpu&from=…&to=…&step=1m` | — | `NodeHistoryResponse` |
+| GET | `/v1/nodes/{id}/history?metrics=cpu,mem&from=…&to=…&step=1m` | — | `NodeHistoryMultiResponse`. `metrics` is a list of 8 names at most. It replaces `metric`. |
+| GET | `/v1/history?nodes=<ids>&metrics=<names>&from=…&to=…&step=1m` | — | `FleetHistoryResponse`. `nodes` is a list of 200 IDs at most. `metrics` is a list of 8 names at most. The default range is 30 min. A range longer than 24 h gives 400. |
 | GET | `/v1/nodes/{id}/processes?from=…&to=…&limit=10` | — | `NodeProcessesResponse` |
 | GET | `/v1/nodes/{id}/disks?from=…&to=…` | — | `NodeDisksResponse` |
 | GET | `/v1/settings` | — | `ServerSettings` |
@@ -301,9 +303,11 @@ The server's [`wire`](../server/wire/wire.go) package is the source of truth. No
 - `EnrollRequest`, `EnrollResponse`, `JoinTokenRequest`, `JoinTokenResponse`, `JoinRequest`. `SamplerToken` is `{ id, label, nodeId?, createdAt, lastUsedAt? }`.
 - `ControlNextResponse`, `KillProcessPayload`, `DiskScanPayload`.
 - `DiskScanRequest`, `DiskScanJob`, `DiskScanProgressResponse`. The scan lines are `pkg/schema/scan.go` in [towertail/sampler](https://github.com/towertail/sampler).
-- `NodeHistoryPoint`, `NodeHistoryResponse` — `{ node_id, metric, resolution, clamped?, points: [{ ts, value, max? }] }`. `metric` is `cpu`, `mem`, `net_rx`, `net_tx`, `disk_read` or `disk_write`. The length of the range selects the table: 6 h or less reads the raw samples, 7 d or less the 1 min rollup, 30 d or less the 5 min rollup, else the 1 h rollup. A `step` larger than the bucket of the table groups the points. `resolution` is `raw` (one point for each sample) or the bucket, for example `5m0s`.
+- `NodeHistoryPoint`, `NodeHistoryResponse` — `{ node_id, metric, resolution, clamped?, points: [{ ts, value, max? }] }`. `metric` is `cpu`, `mem`, `net_rx`, `net_tx`, `disk_read`, `disk_write` or `procs`. The length of the range selects the table: 6 h or less reads the raw samples, 7 d or less the 1 min rollup, 30 d or less the 5 min rollup, else the 1 h rollup. A `step` larger than the bucket of the table groups the points. `resolution` is `raw` (one point for each sample) or the bucket, for example `5m0s`.
 - `NodeProcessesResponse` — `{ node_id, from, to, clamped?, processes: [TopProcess] }`. `TopProcess` is `{ name, cmd, cpu_pct_avg, cpu_pct_max, rss_max }`, the highest `cpu_pct_avg` first. A process is a name and a cmd. 1 h or less reads each sample. 7 d or less reads the top 10 of each minute. Longer ranges read the top 5 of each hour. `limit` is 10 by default and 50 at most.
 - `NodeDisksResponse` — `{ node_id, from, to, resolution, clamped?, mounts: [{ mount, fs, points: [{ ts, used, total }] }] }`. Each point is the last value in its bucket. The bucket gives about 240 points, 1 min at least. The disk rows stay 7 days.
+- `NodeHistoryMultiResponse` — `{ node_id, series: { <metric>: [{ ts, value, max? }] }, from, to, resolution, clamped? }`. One query gives all metrics, with the same table and `step` rules as `NodeHistoryResponse`. `FleetHistoryResponse` — `{ from, to, resolution, clamped?, nodes: [{ node_id, series }] }`. The org of the token filters the nodes. A node with no points in the range, or of another org, has no entry in `nodes`. The 24 h limit uses the requested range, before the plan limit. The plan limit then moves `from` and sets `clamped`.
+- The `procs` metric is the process count (`procs_total`). It has raw samples only, so it works for ranges of 6 h or less. For a longer range, a request with `procs` gives 400 `metric has no rollup for this range`. An unknown metric gives 400 `unknown metric`.
 - History range: `from` and `to` are RFC 3339 or `now`, `now-1h`. The default `to` is now. The default range is 1 h (history, processes) or 24 h (disks). The plan of the org can limit the history days. Then the server moves `from` to the oldest allowed time and sets `clamped: true`.
 
 ---

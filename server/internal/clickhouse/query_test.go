@@ -40,7 +40,7 @@ func TestHistorySQLStep(t *testing.T) {
 		{tier1m, 15 * time.Minute, true, "INTERVAL 900 SECOND"},
 		{tier1h, time.Minute, true, ""},
 	} {
-		sql, err := c.historySQL(tc.tier, "cpu", tc.step)
+		sql, err := c.historySQL(tc.tier, []string{"cpu"}, tc.step, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -54,7 +54,65 @@ func TestHistorySQLStep(t *testing.T) {
 			t.Errorf("%s step %v: want no regroup in %s", tc.tier.table, tc.step, sql)
 		}
 	}
-	if _, err := c.historySQL(tier1m, "nope", 0); err != ErrUnknownMetric {
+	if _, err := c.historySQL(tier1m, []string{"nope"}, 0, false); err != ErrUnknownMetric {
 		t.Fatalf("err = %v, want ErrUnknownMetric", err)
+	}
+}
+
+func TestHistorySQLMultiMetricRaw(t *testing.T) {
+	c := &Client{db: "towertail"}
+	sql, err := c.historySQL(tierRaw, []string{"cpu", "mem"}, 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"AS v0", "AS m0", "AS v1", "AS m1", "cpu_pct", "mem_used"} {
+		if !strings.Contains(sql, want) {
+			t.Errorf("want %q in %s", want, sql)
+		}
+	}
+	if strings.Count(sql, "SELECT") != 1 || strings.Contains(sql, "GROUP BY") {
+		t.Errorf("want one SELECT and no GROUP BY: %s", sql)
+	}
+	sql, err = c.historySQL(tierRaw, []string{"cpu", "mem"}, time.Minute, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sql, "GROUP BY t") || !strings.Contains(sql, "avg(") {
+		t.Errorf("want a grouped query: %s", sql)
+	}
+}
+
+func TestHistorySQLMultiNode(t *testing.T) {
+	c := &Client{db: "towertail"}
+	for _, tr := range []tier{tierRaw, tier1m} {
+		sql, err := c.historySQL(tr, []string{"cpu"}, time.Minute, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"node_id IN ?", "SELECT node_id, ", "GROUP BY node_id, t", "ORDER BY node_id, t"} {
+			if !strings.Contains(sql, want) {
+				t.Errorf("%s: want %q in %s", tr.table, want, sql)
+			}
+		}
+	}
+	sql, err := c.historySQL(tierRaw, []string{"cpu"}, 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(sql, "IN ?") || strings.Contains(sql, "SELECT node_id") {
+		t.Errorf("single node query has a node list: %s", sql)
+	}
+}
+
+func TestHistorySQLProcsRawOnly(t *testing.T) {
+	c := &Client{db: "towertail"}
+	sql, err := c.historySQL(tierRaw, []string{"procs"}, time.Minute, false)
+	if err != nil || !strings.Contains(sql, "procs_total") {
+		t.Fatalf("raw: sql %q, err %v", sql, err)
+	}
+	for _, tr := range []tier{tier1m, tier5m, tier1h} {
+		if _, err := c.historySQL(tr, []string{"cpu", "procs"}, 0, false); err != ErrNoRollup {
+			t.Errorf("%s: err = %v, want ErrNoRollup", tr.table, err)
+		}
 	}
 }
