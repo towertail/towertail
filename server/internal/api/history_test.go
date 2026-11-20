@@ -13,6 +13,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/towertail/towertail/server/authctx"
+	"github.com/towertail/towertail/server/internal/query"
 	"github.com/towertail/towertail/server/store"
 	"github.com/towertail/towertail/server/wire"
 )
@@ -44,7 +45,7 @@ func fleetCtx(t *testing.T, query string) echo.Context {
 }
 
 func TestParseRangeClampsToPlan(t *testing.T) {
-	s := &Server{limits: fixedLimits(30)}
+	s := &Server{query: query.NewService(nil, nil, fixedLimits(30))}
 	r, err := s.parseRange(rangeCtx(t, "from=now-2160h"), time.Hour)
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +59,7 @@ func TestParseRangeClampsToPlan(t *testing.T) {
 }
 
 func TestParseRangeInsidePlan(t *testing.T) {
-	s := &Server{limits: fixedLimits(30)}
+	s := &Server{query: query.NewService(nil, nil, fixedLimits(30))}
 	r, err := s.parseRange(rangeCtx(t, "from=now-24h"), time.Hour)
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +70,7 @@ func TestParseRangeInsidePlan(t *testing.T) {
 }
 
 func TestParseRangeNoLimits(t *testing.T) {
-	for _, s := range []*Server{{}, {limits: fixedLimits(0)}} {
+	for _, s := range []*Server{{query: query.NewService(nil, nil, nil)}, {query: query.NewService(nil, nil, fixedLimits(0))}} {
 		r, err := s.parseRange(rangeCtx(t, "from=now-2160h"), time.Hour)
 		if err != nil {
 			t.Fatal(err)
@@ -82,7 +83,7 @@ func TestParseRangeNoLimits(t *testing.T) {
 
 // A range that ends before the oldest allowed time becomes empty.
 func TestParseRangeToBeforeLimit(t *testing.T) {
-	s := &Server{limits: fixedLimits(30)}
+	s := &Server{query: query.NewService(nil, nil, fixedLimits(30))}
 	r, err := s.parseRange(rangeCtx(t, "from=now-2160h&to=now-1440h"), time.Hour)
 	if err != nil {
 		t.Fatal(err)
@@ -93,7 +94,7 @@ func TestParseRangeToBeforeLimit(t *testing.T) {
 }
 
 func TestParseRangeWithoutID(t *testing.T) {
-	s := &Server{}
+	s := &Server{query: query.NewService(nil, nil, nil)}
 	r, err := s.parseRange(fleetCtx(t, "from=now-2h"), time.Hour)
 	if err != nil {
 		t.Fatal(err)
@@ -144,7 +145,7 @@ func TestParseMetricListLimits(t *testing.T) {
 }
 
 func TestFleetHistoryRejectsLongRange(t *testing.T) {
-	s := &Server{}
+	s := &Server{query: query.NewService(nil, nil, nil)}
 	q := "nodes=" + uuid.NewString() + "&metrics=cpu&from=now-48h"
 	err := s.handleFleetHistory(fleetCtx(t, q))
 	he, ok := err.(*echo.HTTPError)
@@ -154,7 +155,7 @@ func TestFleetHistoryRejectsLongRange(t *testing.T) {
 }
 
 func TestFleetHistoryBadParams(t *testing.T) {
-	s := &Server{}
+	s := &Server{query: query.NewService(nil, nil, nil)}
 	id := uuid.NewString()
 	for _, q := range []string{"metrics=cpu", "nodes=" + id, "nodes=nope&metrics=cpu", "nodes=" + id + "&metrics=a,b,c,d,e,f,g,h,i"} {
 		err := s.handleFleetHistory(fleetCtx(t, q))
@@ -165,7 +166,7 @@ func TestFleetHistoryBadParams(t *testing.T) {
 }
 
 func TestFleetRangeClampsToPlan(t *testing.T) {
-	s := &Server{limits: fixedLimits(1)}
+	s := &Server{query: query.NewService(nil, nil, fixedLimits(1))}
 	r, err := s.parseFleetRange(fleetCtx(t, "from=now-30h&to=now-8h"))
 	if err != nil {
 		t.Fatal(err)
@@ -179,7 +180,7 @@ func TestFleetRangeClampsToPlan(t *testing.T) {
 }
 
 func TestFleetRangeDefault(t *testing.T) {
-	s := &Server{}
+	s := &Server{query: query.NewService(nil, nil, nil)}
 	r, err := s.parseFleetRange(fleetCtx(t, ""))
 	if err != nil {
 		t.Fatal(err)

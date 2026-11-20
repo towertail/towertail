@@ -18,6 +18,7 @@ type RangeQuery struct {
 // TopProc is one process of a node over a range. A process is a name
 // and a cmd.
 type TopProc struct {
+	NodeID    uuid.UUID
 	Name      string
 	Cmd       string
 	CPUPctAvg float64
@@ -37,21 +38,37 @@ func procsSource(span time.Duration) (table, ts string) {
 	}
 }
 
-// TopProcesses gives the top processes of the node in the range, by
-// average CPU.
-func (c *Client) TopProcesses(ctx context.Context, q RangeQuery, limit int) ([]TopProc, error) {
+// ProcOrder is the sort of the top processes.
+type ProcOrder string
+
+const (
+	ProcByCPU ProcOrder = "cpu"
+	ProcByMem ProcOrder = "mem"
+)
+
+// TopProcesses gives the top processes in the range, by average CPU or by
+// the highest memory. A NodeID of uuid.Nil reads all nodes of the org.
+func (c *Client) TopProcesses(ctx context.Context, q RangeQuery, by ProcOrder, limit int) ([]TopProc, error) {
 	table, ts := procsSource(q.To.Sub(q.From))
-	var sql string
-	if table == "procs_topn" {
-		sql = fmt.Sprintf("SELECT name, any(cmd), avg(cpu_pct), toFloat64(max(cpu_pct)), max(rss) FROM %s "+
-			"WHERE org_id = ? AND node_id = ? AND ts BETWEEN ? AND ? "+
-			"GROUP BY name, cityHash64(cmd) ORDER BY 3 DESC LIMIT ?", c.table(table))
-	} else {
-		sql = fmt.Sprintf("SELECT name, any(cmd), avg(cpu_pct_avg), toFloat64(max(cpu_pct_max)), max(rss_max) FROM %s FINAL "+
-			"WHERE org_id = ? AND node_id = ? AND %s BETWEEN ? AND ? "+
-			"GROUP BY name, cmd_hash ORDER BY 3 DESC LIMIT ?", c.table(table), ts)
+	avg, mx, rss, hash := "cpu_pct", "cpu_pct", "rss", "cityHash64(cmd)"
+	final := ""
+	if table != "procs_topn" {
+		avg, mx, rss, hash, final = "cpu_pct_avg", "cpu_pct_max", "rss_max", "cmd_hash", " FINAL"
 	}
-	rows, err := c.conn.Query(ctx, sql, q.OrgID, q.NodeID, q.From, q.To, limit)
+	where, args := "org_id = ?", []any{q.OrgID}
+	if q.NodeID != uuid.Nil {
+		where += " AND node_id = ?"
+		args = append(args, q.NodeID)
+	}
+	order := "p_avg DESC, p_rss DESC"
+	if by == ProcByMem {
+		order = "p_rss DESC, p_avg DESC"
+	}
+	sql := fmt.Sprintf("SELECT node_id, name, any(cmd), avg(%s) AS p_avg, toFloat64(max(%s)), max(%s) AS p_rss FROM %s%s "+
+		"WHERE %s AND %s BETWEEN ? AND ? GROUP BY node_id, name, %s ORDER BY %s LIMIT ?",
+		avg, mx, rss, c.table(table), final, where, ts, hash, order)
+	args = append(args, q.From, q.To, limit)
+	rows, err := c.conn.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -59,10 +76,35 @@ func (c *Client) TopProcesses(ctx context.Context, q RangeQuery, limit int) ([]T
 	var out []TopProc
 	for rows.Next() {
 		var p TopProc
-		if err := rows.Scan(&p.Name, &p.Cmd, &p.CPUPctAvg, &p.CPUPctMax, &p.RSSMax); err != nil {
+		if err := rows.Scan(&p.NodeID, &p.Name, &p.Cmd, &p.CPUPctAvg, &p.CPUPctMax, &p.RSSMax); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// LatestDiskRatio gives the highest used/total ratio of the mounts of
+// each node, from the newest row of each mount since the time.
+func (c *Client) LatestDiskRatio(ctx context.Context, orgID uuid.UUID, since time.Time) (map[uuid.UUID]float64, error) {
+	rows, err := c.conn.Query(ctx,
+		"SELECT node_id, max(ratio) FROM ("+
+			"SELECT node_id, mount, toFloat64(argMax(used, ts)) / greatest(toFloat64(argMax(total, ts)), 1) AS ratio "+
+			"FROM "+c.table("disks")+" WHERE org_id = ? AND ts >= ? GROUP BY node_id, mount) GROUP BY node_id", orgID, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[uuid.UUID]float64{}
+	for rows.Next() {
+		var (
+			id uuid.UUID
+			r  float64
+		)
+		if err := rows.Scan(&id, &r); err != nil {
+			return nil, err
+		}
+		out[id] = r
 	}
 	return out, rows.Err()
 }

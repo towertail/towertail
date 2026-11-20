@@ -50,7 +50,7 @@ func (s *Server) recentSince(c echo.Context, now time.Time) (since time.Time, cl
 		days = n
 	}
 	since = now.Add(-time.Duration(days) * 24 * time.Hour)
-	since, clamped = s.clampFrom(c.Request().Context(), t.OrgID, since, now)
+	since, clamped = s.query.Clamp(c.Request().Context(), t.OrgID, since, now)
 	return since, clamped, nil
 }
 

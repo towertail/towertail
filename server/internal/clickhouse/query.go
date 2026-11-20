@@ -175,6 +175,34 @@ var rawExprs = map[string]string{
 	"procs":      "toFloat64(procs_total)",
 }
 
+// metricExprs gives the value and max expressions of a metric in a tier.
+// On the raw tier, group wraps them in avg and max.
+func metricExprs(t tier, metric string, group bool) (v, m string, err error) {
+	if t == tierRaw {
+		e, ok := rawExprs[metric]
+		if !ok {
+			return "", "", ErrUnknownMetric
+		}
+		if group {
+			return "avg(" + e + ")", "max(" + e + ")", nil
+		}
+		return e, e, nil
+	}
+	rc, ok := rollupCols[metric]
+	if !ok {
+		if _, raw := rawExprs[metric]; raw {
+			return "", "", ErrNoRollup
+		}
+		return "", "", ErrUnknownMetric
+	}
+	v = "avgMerge(" + rc[0] + ")"
+	m = v
+	if rc[1] != "" {
+		m = "maxMerge(" + rc[1] + ")"
+	}
+	return v, m, nil
+}
+
 // historySQL builds the query of the metrics. Each metric gives a value
 // and a max column (v0, m0, v1, ...). With multiNode, the rows also have
 // the node_id and the node_id filter is a list.
@@ -190,29 +218,9 @@ func (c *Client) historySQL(t tier, metrics []string, step time.Duration, multiN
 	}
 	cols := make([]string, 0, 2*len(metrics))
 	for i, metric := range metrics {
-		var v, m string
-		if t == tierRaw {
-			e, ok := rawExprs[metric]
-			if !ok {
-				return "", ErrUnknownMetric
-			}
-			v, m = e, e
-			if group {
-				v, m = "avg("+e+")", "max("+e+")"
-			}
-		} else {
-			rc, ok := rollupCols[metric]
-			if !ok {
-				if _, raw := rawExprs[metric]; raw {
-					return "", ErrNoRollup
-				}
-				return "", ErrUnknownMetric
-			}
-			v = "avgMerge(" + rc[0] + ")"
-			m = v
-			if rc[1] != "" {
-				m = "maxMerge(" + rc[1] + ")"
-			}
+		v, m, err := metricExprs(t, metric, group)
+		if err != nil {
+			return "", err
 		}
 		cols = append(cols, fmt.Sprintf("toFloat64(%s) AS v%d, toFloat64(%s) AS m%d", v, i, m, i))
 	}
@@ -226,6 +234,103 @@ func (c *Client) historySQL(t tier, metrics []string, step time.Duration, multiN
 		sql += " GROUP BY " + groupBy
 	}
 	return sql + " ORDER BY " + orderBy, nil
+}
+
+// NodeLatest is the newest sample values of a node.
+type NodeLatest struct {
+	NodeID   uuid.UUID
+	TS       time.Time
+	CPUPct   float64
+	MemRatio float64
+	Load1    float64
+	NetRxBps uint64
+	NetTxBps uint64
+}
+
+// LatestByNode gives the newest sample of each node of the org that has a
+// sample since the time.
+func (c *Client) LatestByNode(ctx context.Context, orgID uuid.UUID, since time.Time) ([]NodeLatest, error) {
+	rows, err := c.conn.Query(ctx,
+		"SELECT node_id, max(ts), toFloat64(argMax(cpu_pct, ts)), "+
+			"toFloat64(argMax(mem_used, ts)) / greatest(toFloat64(argMax(mem_total, ts)), 1), "+
+			"toFloat64(argMax(cpu_load_1, ts)), argMax(net_rx_bps, ts), argMax(net_tx_bps, ts) "+
+			"FROM "+c.table("samples_raw")+" WHERE org_id = ? AND ts >= ? GROUP BY node_id ORDER BY node_id", orgID, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NodeLatest
+	for rows.Next() {
+		var n NodeLatest
+		if err := rows.Scan(&n.NodeID, &n.TS, &n.CPUPct, &n.MemRatio, &n.Load1, &n.NetRxBps, &n.NetTxBps); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// StatsQuery is a metric over a range. A NodeID of uuid.Nil means all
+// nodes of the org.
+type StatsQuery struct {
+	OrgID    uuid.UUID
+	NodeID   uuid.UUID
+	Metric   string
+	From, To time.Time
+}
+
+// NodeStat is the average and the highest value of a metric of a node.
+type NodeStat struct {
+	NodeID uuid.UUID
+	Avg    float64
+	Max    float64
+	Points int
+}
+
+// WindowStats gives the average and the highest value of the metric of
+// each node in the range. The tier comes from the range. On a rollup
+// tier, Avg is the mean of the bucket averages, and Max is the highest
+// bucket max (the highest bucket average for a metric with no max state).
+func (c *Client) WindowStats(ctx context.Context, q StatsQuery) ([]NodeStat, error) {
+	t := historyTier(q.To.Sub(q.From))
+	v, m, err := metricExprs(t, q.Metric, true)
+	if err != nil {
+		return nil, err
+	}
+	where, args := "org_id = ?", []any{q.OrgID}
+	if q.NodeID != uuid.Nil {
+		where += " AND node_id = ?"
+		args = append(args, q.NodeID)
+	}
+	where += " AND " + t.ts + " BETWEEN ? AND ?"
+	args = append(args, q.From, q.To)
+	var sql string
+	if t == tierRaw {
+		sql = fmt.Sprintf("SELECT node_id, toFloat64(%s), toFloat64(%s), count() FROM %s WHERE %s GROUP BY node_id ORDER BY node_id",
+			v, m, c.table(t.table), where)
+	} else {
+		sql = fmt.Sprintf("SELECT node_id, toFloat64(avg(v)), toFloat64(max(m)), count() FROM "+
+			"(SELECT node_id, %s AS v, %s AS m FROM %s WHERE %s GROUP BY node_id, %s) GROUP BY node_id ORDER BY node_id",
+			v, m, c.table(t.table), where, t.ts)
+	}
+	rows, err := c.conn.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NodeStat
+	for rows.Next() {
+		var (
+			s NodeStat
+			n uint64
+		)
+		if err := rows.Scan(&s.NodeID, &s.Avg, &s.Max, &n); err != nil {
+			return nil, err
+		}
+		s.Points = int(n)
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }
 
 // ErrNoAlert is returned when the org has no alert with the id.

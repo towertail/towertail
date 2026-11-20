@@ -269,6 +269,102 @@ type NodeProcessesResponse struct {
 	Processes []TopProcess `json:"processes"`
 }
 
+// FleetHost is one host with its latest values. A host with no sample in
+// the last 10 minutes is offline and has no values. CPU is a percent. Mem
+// and Disk are ratios from 0 to 1. NetRx and NetTx are bytes each second.
+type FleetHost struct {
+	NodeID   uuid.UUID  `json:"node_id"`
+	Name     string     `json:"name"`
+	Tags     []string   `json:"tags,omitempty"`
+	Online   bool       `json:"online"`
+	LastSeen *time.Time `json:"last_seen,omitempty"`
+	CPU      *float64   `json:"cpu,omitempty"`
+	Mem      *float64   `json:"mem,omitempty"`
+	Disk     *float64   `json:"disk,omitempty"`
+	Load1    *float64   `json:"load1,omitempty"`
+	NetRx    *uint64    `json:"net_rx,omitempty"`
+	NetTx    *uint64    `json:"net_tx,omitempty"`
+}
+
+// FleetHosts is the body of GET /v1/fleet/hosts.
+type FleetHosts struct {
+	Hosts []FleetHost `json:"hosts"`
+}
+
+// FleetProcess is one process of a host over a range.
+type FleetProcess struct {
+	NodeID    uuid.UUID `json:"node_id"`
+	NodeName  string    `json:"node_name"`
+	Name      string    `json:"name"`
+	Cmd       string    `json:"cmd"`
+	CPUPctAvg float64   `json:"cpu_pct_avg"`
+	CPUPctMax float64   `json:"cpu_pct_max"`
+	RSSMax    uint64    `json:"rss_max"`
+}
+
+// FleetProcesses is the body of GET /v1/fleet/processes. By is cpu or mem.
+type FleetProcesses struct {
+	From      time.Time      `json:"from"`
+	To        time.Time      `json:"to"`
+	Clamped   bool           `json:"clamped,omitempty"`
+	By        string         `json:"by"`
+	Processes []FleetProcess `json:"processes"`
+}
+
+// Window is a time range.
+type Window struct {
+	From time.Time `json:"from"`
+	To   time.Time `json:"to"`
+}
+
+// Stat is the average and the highest value of a metric in a window.
+type Stat struct {
+	Avg    float64 `json:"avg"`
+	Max    float64 `json:"max"`
+	Points int     `json:"points"`
+}
+
+// CompareHost is the change of one host between two windows. Previous
+// and DeltaAvg are empty when the host has no data in the previous window.
+type CompareHost struct {
+	NodeID   uuid.UUID `json:"node_id"`
+	Name     string    `json:"name"`
+	Current  Stat      `json:"current"`
+	Previous *Stat     `json:"previous,omitempty"`
+	DeltaAvg *float64  `json:"delta_avg,omitempty"`
+}
+
+// Compare is the body of GET /v1/fleet/compare. Clamped is true when the
+// plan history limit cuts the previous window.
+type Compare struct {
+	Metric   string        `json:"metric"`
+	Current  Window        `json:"current"`
+	Previous Window        `json:"previous"`
+	Clamped  bool          `json:"clamped,omitempty"`
+	Hosts    []CompareHost `json:"hosts"`
+}
+
+// APIKey is a read-only API key. The secret is not part of it.
+type APIKey struct {
+	ID         uuid.UUID  `json:"id"`
+	Label      string     `json:"label"`
+	UserID     *uuid.UUID `json:"userId,omitempty"`
+	CreatedAt  time.Time  `json:"createdAt"`
+	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
+}
+
+// APIKeyCreated is the answer of POST /v1/api-keys. Token shows only one
+// time.
+type APIKeyCreated struct {
+	APIKey
+	Token string `json:"token"`
+}
+
+// APIKeyRequest is the body of POST /v1/api-keys.
+type APIKeyRequest struct {
+	Label string `json:"label" validate:"required,max=80"`
+}
+
 // DiskPoint is the use of a mount at the end of one bucket.
 type DiskPoint struct {
 	TS    time.Time `json:"ts"`

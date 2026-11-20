@@ -30,12 +30,13 @@ Codes: `unauthorized`, `forbidden`, `not_found`, `bad_request`, `conflict`, `pla
 
 ## 2. Authentication
 
-Four token kinds, all opaque strings with a `tt_` prefix. Raw tokens are only ever returned at issue time; the server stores SHA-256 hashes.
+Five token kinds, all opaque strings with a `tt_` prefix. Raw tokens are only ever returned at issue time; the server stores SHA-256 hashes.
 
 | Kind | Issued by | Allowed groups |
 |---|---|---|
 | `user` | `POST /v1/auth/login` | `/v1/*` except ingest + control |
 | `admin` | `towertail-server token issue --kind=admin` (CLI) | everything in `user` + token management |
+| `api` | `POST /v1/api-keys`, or `towertail-server token issue --kind=api` | The read endpoints of §3 and `/mcp`. The key reads as a `viewer`. It gets 403 on the stream, on the write routes and on `/v1/api-keys`. Each key has a budget of 5 requests each second with a burst of 20 (`http.api_key_rate_limit_rps` and `http.api_key_rate_limit_burst`). A call above the budget gets 429 `rate_limited`. The per-IP limit also applies |
 | `sampler` | `POST /v1/sampler/enroll`, `POST /v1/sampler/join` | `/v1/ingest/*`, `/v1/control/next`, `/v1/disk-scans/{job}/progress`, `/v1/disk-scans/{job}/result` |
 | `join` | `POST /v1/sampler/join-tokens` | `POST /v1/sampler/join` only (in the body). The token starts with `tt_join_`, works for 1 hour and for one call. Any bearer route gives 403 for it |
 
@@ -52,7 +53,7 @@ A user has a role in an org. The roles from the highest to the lowest rank are `
 | `admin` | Everything of `member`, and change nodes and settings, use the channels (also read them, because a channel holds a secret URL), kill a process, enroll samplers, and manage sampler tokens and join tokens. |
 | `owner` | Everything of `admin`. An extension (the cloud) uses it for billing and the org. |
 
-Self-hosted mode has no role source. There, each `user` and `admin` token has the `owner` role. A token with no user also has the `owner` role, for example the bootstrap admin token. A server with a role source (the cloud, through `app.WithRoles`) finds the role of the token user in the org of the token. A user with no role in the org gets 403 `no access to this org`. A role that is too low gives 403 "role <role> needed". `sampler` and `join` tokens have no role.
+Self-hosted mode has no role source. There, each `user` and `admin` token has the `owner` role. A token with no user also has the `owner` role, for example the bootstrap admin token. A server with a role source (the cloud, through `app.WithRoles`) finds the role of the token user in the org of the token. A user with no role in the org gets 403 `no access to this org`. A role that is too low gives 403 "role <role> needed". `sampler` and `join` tokens have no role. An `api` token always has the `viewer` role. When it has a user and the server has a role source, the user must still have a role in the org, else 403.
 
 ---
 
@@ -84,7 +85,13 @@ Base path `/v1`. Authed unless otherwise marked.
 | GET | `/v1/nodes/{id}/history?metric=cpu&from=…&to=…&step=1m` | — | `NodeHistoryResponse` | viewer |
 | GET | `/v1/nodes/{id}/history?metrics=cpu,mem&from=…&to=…&step=1m` | — | `NodeHistoryMultiResponse`. `metrics` is a list of 8 names at most. It replaces `metric`. | viewer |
 | GET | `/v1/history?nodes=<ids>&metrics=<names>&from=…&to=…&step=1m` | — | `FleetHistoryResponse`. `nodes` is a list of 200 IDs at most. `metrics` is a list of 8 names at most. The default range is 30 min. A range longer than 24 h gives 400. | viewer |
-| GET | `/v1/nodes/{id}/processes?from=…&to=…&limit=10` | — | `NodeProcessesResponse` | viewer |
+| GET | `/v1/fleet/hosts?sort=cpu&limit=100` | — | `FleetHosts`: each node with the latest values of the last 10 minutes, the highest first. `sort` is `cpu`, `mem`, `disk` or `net` (default `cpu`). `limit` is 1 to 500. A node with no sample in 10 minutes has `online: false` and no values, and is last. | viewer |
+| GET | `/v1/fleet/processes?by=cpu&from=…&to=…&node=<id>&limit=20` | — | `FleetProcesses`: the top processes of the fleet, or of one host with `node`. `by` is `cpu` or `mem` (default `cpu`). The default range is 1 h. The plan limit moves `from` and sets `clamped`. `limit` is 1 to 50. | viewer |
+| GET | `/v1/fleet/compare?metric=cpu&window=1h&node=<id>` | — | `Compare`: the average and the highest value of each host in the last `window` and in the window before it. `metric` is `cpu`, `mem`, `net_rx`, `net_tx`, `disk_read` or `disk_write`. `window` is a Go duration from 15m to 720h. The plan limit moves the start of each window and sets `clamped`. A previous window fully outside the plan is empty: it has `from` equal to `to`, and no host has `previous`. | viewer |
+| GET | `/v1/api-keys` | — | `[APIKey]`: an admin or owner sees all keys of the org. Other roles see their own keys. | viewer |
+| POST | `/v1/api-keys` | `APIKeyRequest` | `APIKeyCreated` (201). The `token` shows only this one time. 409 when the user has 20 keys. An `api` token gets 403. | viewer |
+| DELETE | `/v1/api-keys/{id}` | — | 204. 404 for an unknown ID or a token of another kind. 403 when a non-admin revokes the key of another user. | viewer |
+| GET | `/v1/nodes/{id}/processes?from=…&to=…&limit=10&by=cpu` | — | `NodeProcessesResponse`. `by` is `cpu` or `mem`. | viewer |
 | GET | `/v1/nodes/{id}/disks?from=…&to=…` | — | `NodeDisksResponse` | viewer |
 | GET | `/v1/settings` | — | `ServerSettings` | viewer |
 | PUT | `/v1/settings` | `ServerSettings` | `ServerSettings` | admin |
@@ -385,6 +392,9 @@ The server's [`wire`](../server/wire/wire.go) package is the source of truth. No
 - `NodeDisksResponse` — `{ node_id, from, to, resolution, clamped?, mounts: [{ mount, fs, points: [{ ts, used, total }] }] }`. Each point is the last value in its bucket. The bucket gives about 240 points, 1 min at least. The disk rows stay 7 days.
 - `NodeHistoryMultiResponse` — `{ node_id, series: { <metric>: [{ ts, value, max? }] }, from, to, resolution, clamped? }`. One query gives all metrics, with the same table and `step` rules as `NodeHistoryResponse`. `FleetHistoryResponse` — `{ from, to, resolution, clamped?, nodes: [{ node_id, series }] }`. The org of the token filters the nodes. A node with no points in the range, or of another org, has no entry in `nodes`. The 24 h limit uses the requested range, before the plan limit. The plan limit then moves `from` and sets `clamped`.
 - The `procs` metric is the process count (`procs_total`). It has raw samples only, so it works for ranges of 6 h or less. For a longer range, a request with `procs` gives 400 `metric has no rollup for this range`. An unknown metric gives 400 `unknown metric`.
+- `FleetHosts` — `{ hosts: [{ node_id, name, tags?, online, last_seen?, cpu?, mem?, disk?, load1?, net_rx?, net_tx? }] }`. `cpu` is a percent. `mem` and `disk` are ratios 0..1 (`disk` is the fullest mount). `net_rx` and `net_tx` are bytes each second. `FleetProcesses` — `{ from, to, clamped?, by, processes: [{ node_id, node_name, name, cmd, cpu_pct_avg, cpu_pct_max, rss_max }] }`. A process is a node, a name and a cmd.
+- `Compare` — `{ metric, current: { from, to }, previous: { from, to }, clamped?, hosts: [{ node_id, name, current: { avg, max, points }, previous?, delta_avg? }] }`. `delta_avg` is the current average minus the previous average. It is left out when a window has no data for the host. The hosts with the biggest change are first. On a rollup table, `avg` is the mean of the bucket averages. `max` is the highest bucket max. Only `cpu` has a max in the rollups, so for the other metrics `max` is the highest bucket average.
+- `APIKey` — `{ id, label, userId?, createdAt, lastUsedAt? }`. `lastUsedAt` is updated at most one time in 5 minutes. `APIKeyCreated` is `APIKey` with `token`. `APIKeyRequest` is `{ label }`, 1 to 80 characters.
 - History range: `from` and `to` are RFC 3339 or `now`, `now-1h`. The default `to` is now. The default range is 1 h (history, processes) or 24 h (disks). The plan of the org can limit the history days. Then the server moves `from` to the oldest allowed time and sets `clamped: true`.
 
 ---

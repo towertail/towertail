@@ -7,6 +7,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/towertail/towertail/server/internal/query"
 	"github.com/towertail/towertail/server/wire"
 )
 
@@ -31,10 +32,14 @@ func (s *Server) handleProcesses(c echo.Context) error {
 		}
 		limit = min(n, maxProcessLimit)
 	}
+	by, err := query.ParseProcOrder(c.QueryParam("by"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
 	if err := s.requireCH(c); err != nil {
 		return err
 	}
-	procs, err := s.ch.TopProcesses(c.Request().Context(), r.RangeQuery, limit)
+	procs, err := s.ch.TopProcesses(c.Request().Context(), r.RangeQuery, by, limit)
 	if err != nil {
 		return err
 	}
@@ -46,7 +51,9 @@ func (s *Server) handleProcesses(c echo.Context) error {
 		Processes: make([]wire.TopProcess, 0, len(procs)),
 	}
 	for _, p := range procs {
-		out.Processes = append(out.Processes, wire.TopProcess(p))
+		out.Processes = append(out.Processes, wire.TopProcess{
+			Name: p.Name, Cmd: p.Cmd, CPUPctAvg: p.CPUPctAvg, CPUPctMax: p.CPUPctMax, RSSMax: p.RSSMax,
+		})
 	}
 	return c.JSON(http.StatusOK, out)
 }

@@ -126,7 +126,9 @@ app `Logger` output.
 The generic limiter is per-IP at `TT_HTTP__RATE_LIMIT_RPS` (default 100).
 The ingest limiter is separate at `TT_HTTP__INGEST_RATE_LIMIT_RPS`
 (default 1000). If the Mac app gets 429s, raise the generic; if samplers
-get them, raise ingest.
+get them, raise ingest. Each API key has its own budget:
+`TT_HTTP__API_KEY_RATE_LIMIT_RPS` (default 5) and
+`TT_HTTP__API_KEY_RATE_LIMIT_BURST` (default 20).
 
 The client IP comes from the socket address. Behind a proxy, all the
 clients then share the IP of the proxy. Set `TT_HTTP__TRUSTED_PROXY_HEADER`

@@ -67,28 +67,11 @@ func (s *Server) parseRange(c echo.Context, span time.Duration) (historyRange, e
 func (s *Server) clampRange(c echo.Context, from, to, now time.Time) historyRange {
 	t, _ := authctx.TokenFrom(c)
 	r := historyRange{RangeQuery: clickhouse.RangeQuery{OrgID: t.OrgID, From: from, To: to}}
-	r.From, r.Clamped = s.clampFrom(c.Request().Context(), t.OrgID, from, now)
+	r.From, r.Clamped = s.query.Clamp(c.Request().Context(), t.OrgID, from, now)
 	if r.To.Before(r.From) {
 		r.To = r.From
 	}
 	return r
-}
-
-// clampFrom moves from to the oldest time that the plan of the org
-// allows.
-func (s *Server) clampFrom(ctx context.Context, orgID uuid.UUID, from, now time.Time) (time.Time, bool) {
-	if s.limits == nil {
-		return from, false
-	}
-	days := s.limits.HistoryDays(ctx, orgID)
-	if days <= 0 {
-		return from, false
-	}
-	oldest := now.Add(-time.Duration(days) * 24 * time.Hour)
-	if from.Before(oldest) {
-		return oldest, true
-	}
-	return from, false
 }
 
 // requireCH answers 503 when ClickHouse is off or not ready.

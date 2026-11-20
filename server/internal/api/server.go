@@ -22,6 +22,7 @@ import (
 	"github.com/towertail/towertail/server/internal/clickhouse"
 	"github.com/towertail/towertail/server/internal/control"
 	"github.com/towertail/towertail/server/internal/hub"
+	"github.com/towertail/towertail/server/internal/query"
 	"github.com/towertail/towertail/server/internal/scan"
 	"github.com/towertail/towertail/server/runtime"
 	"github.com/towertail/towertail/server/store"
@@ -51,6 +52,8 @@ type Server struct {
 	interval      IntervalAdvisor
 	roles         Roles
 	ranks         *rankCache
+	query         *query.Service
+	apiKeyRates   *keyLimiters
 }
 
 // Deps is the dependency bundle supplied by main.
@@ -134,6 +137,10 @@ func New(d Deps) *Server {
 
 	e.Use(d.Middleware...)
 
+	var reader query.Reader
+	if d.CH != nil {
+		reader = d.CH
+	}
 	s := &Server{
 		echo:          e,
 		cfg:           d.Config,
@@ -152,6 +159,8 @@ func New(d Deps) *Server {
 		interval:      d.Interval,
 		roles:         d.Roles,
 		ranks:         newRankCache(),
+		query:         query.NewService(reader, d.Store, d.Limits),
+		apiKeyRates:   newKeyLimiters(d.Config.HTTP.APIKeyRateLimitRPS, d.Config.HTTP.APIKeyRateLimitBurst),
 	}
 	s.registerRoutes()
 	for _, f := range d.Routes {
@@ -220,18 +229,23 @@ func (s *Server) registerRoutes() {
 	// User/admin-authenticated groups. The read group needs the viewer
 	// role. Each route of the write group names its own role.
 	userKinds := []store.TokenKind{store.TokenKindUser, store.TokenKindAdmin}
-	read := v1.Group("", s.bearer(userKinds...), requireRole(store.RoleViewer))
+	// API keys read the read group and nothing else. They have the viewer
+	// role and a budget of requests for each key.
+	readKinds := append([]store.TokenKind{store.TokenKindAPI}, userKinds...)
+	read := v1.Group("", s.bearer(readKinds...), s.apiKeyLimiter(), requireRole(store.RoleViewer))
 	write := v1.Group("", s.bearer(userKinds...))
 	member := requireRole(store.RoleMember)
 	admin := requireRole(store.RoleAdmin)
 
-	read.POST("/auth/logout", s.handleLogout)
 	read.GET("/nodes", s.handleListNodes)
 	read.GET("/nodes/:id", s.handleGetNode)
 	read.GET("/nodes/:id/history", s.handleHistory)
 	read.GET("/nodes/:id/processes", s.handleProcesses)
 	read.GET("/nodes/:id/disks", s.handleDisks)
 	read.GET("/history", s.handleFleetHistory)
+	read.GET("/fleet/hosts", s.handleFleetHosts)
+	read.GET("/fleet/processes", s.handleFleetProcesses)
+	read.GET("/fleet/compare", s.handleFleetCompare)
 	read.GET("/settings", s.handleGetSettings)
 	read.GET("/alerts", s.handleListAlerts)
 	read.GET("/alerts/recent", s.handleRecentAlerts)
@@ -239,6 +253,12 @@ func (s *Server) registerRoutes() {
 	read.GET("/nodes/:id/disk-scans", s.handleListDiskScans)
 	read.GET("/disk-scans/:job", s.handleGetDiskScan)
 	read.GET("/disk-scans/:job/result", s.handleGetDiskScanResult)
+
+	viewer := requireRole(store.RoleViewer)
+	write.POST("/auth/logout", s.handleLogout, viewer)
+	write.GET("/api-keys", s.handleListAPIKeys, viewer)
+	write.POST("/api-keys", s.handleCreateAPIKey, viewer)
+	write.DELETE("/api-keys/:id", s.handleRevokeAPIKey, viewer)
 
 	write.POST("/alerts/:id/ack", s.handleAckAlert, member)
 	write.POST("/alerts/:id/snooze", s.handleSnoozeAlert, member)

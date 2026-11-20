@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+
+	"github.com/towertail/towertail/server/internal/query"
 )
 
 func TestRecentSince(t *testing.T) {
@@ -29,7 +31,7 @@ func TestRecentSince(t *testing.T) {
 		{"days word", nil, "days=x", time.Time{}, false, http.StatusBadRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := &Server{limits: tc.limits}
+			s := &Server{query: query.NewService(nil, nil, tc.limits)}
 			since, clamped, err := s.recentSince(rangeCtx(t, tc.query), now)
 			if tc.wantCode != 0 {
 				he, ok := err.(*echo.HTTPError)
