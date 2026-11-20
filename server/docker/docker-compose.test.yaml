@@ -31,7 +31,8 @@ services:
       - "127.0.0.1:${TT_TEST_PORT_CH_HTTP:-18123}:8123"
       - "127.0.0.1:${TT_TEST_PORT_CH_NATIVE:-19000}:9000"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8123/ping"]
+      # Not localhost: it can resolve to ::1, and Docker often has no IPv6.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8123/ping"]
       interval: 2s
       timeout: 3s
       retries: 30
