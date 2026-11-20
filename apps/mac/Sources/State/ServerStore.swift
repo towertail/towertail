@@ -104,6 +104,15 @@ final class ServerStore {
         logAggregateIfChanged()
     }
 
+    func merge(history points: [HistoryPoint], for id: UUID) {
+        serverVMs.first(where: { $0.id == id })?.merge(history: points)
+    }
+
+    func merge(diskCapacity capacity: [HistoryStore.DiskCapacityRow],
+               diskIO io: [HistoryStore.DiskIORow], for id: UUID) {
+        serverVMs.first(where: { $0.id == id })?.mergeDisk(capacity: capacity, io: io)
+    }
+
     func apply(detail: LiveDetail, tab: DetailTab, for id: UUID) {
         serverVMs.first(where: { $0.id == id })?.apply(detail: detail, tab: tab)
     }

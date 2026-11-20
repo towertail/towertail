@@ -15,6 +15,7 @@ final class LocalBackend: Backend {
     let diskScans: DiskScanStore
 
     let history: HistoryStore
+    let cloudHistory: (any CloudHistoryLoader)? = nil
     let collector: any Collector
     let notifier: ThresholdNotifier
     let reachability: SystemReachabilityMonitor

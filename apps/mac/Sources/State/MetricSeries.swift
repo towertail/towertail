@@ -29,6 +29,23 @@ struct MetricSeries: Sendable {
         buffer.append(p)
     }
 
+    /// Puts `points` (oldest first) before the live points. Drops the
+    /// points at or after the oldest live point. Trims to `capacity`.
+    mutating func merge(older points: [MetricPoint]) {
+        let live = buffer.snapshot()
+        let older = live.first.map { first in points.filter { $0.t < first.t } } ?? points
+        buffer.replace(with: older + live)
+    }
+
+    /// Takes REST history. It replaces the live points up to the last
+    /// point of `points`. Newer live points stay.
+    mutating func merge(history points: [MetricPoint]) {
+        guard let last = points.last else { return }
+        let newer = buffer.snapshot().filter { $0.t > last.t }
+        buffer = TimeSeriesBuffer(trim: .maxCount(Self.capacity), reserveCapacity: Self.capacity)
+        buffer.replace(with: points + newer)
+    }
+
     func snapshot() -> [MetricPoint] {
         buffer.snapshot()
     }

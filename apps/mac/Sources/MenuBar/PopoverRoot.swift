@@ -13,6 +13,7 @@ struct PopoverRoot: View {
     @Environment(ClientSettings.self) private var clientSettings
     @Environment(CloudSession.self) private var cloud: CloudSession?
     @Environment(\.viewLease) private var viewLease
+    @Environment(\.backend) private var backend
     /// `MenuBarExtra(style: .window)` keeps its popover content view tree
     /// alive even after the user dismisses the popover (window ordered
     /// out, not destroyed) so the next click feels instant. The downside:
@@ -51,6 +52,19 @@ struct PopoverRoot: View {
         // Outside the `if`: the active body is gone while the popover is hidden.
         .onAppear { viewLease?.setPopover(visible: scenePhase != .background) }
         .onChange(of: scenePhase) { _, phase in viewLease?.setPopover(visible: phase != .background) }
+        .task(id: scenePhase != .background) { await backfillCards() }
+    }
+
+    /// Fills the cards of Cloud hosts from REST when the popover shows. The
+    /// wait lets the lazy list report its cards first.
+    private func backfillCards() async {
+        guard scenePhase != .background, let loader = backend?.cloudHistory else { return }
+        try? await Task.sleep(for: .milliseconds(300))
+        guard !Task.isCancelled, let lease = viewLease else { return }
+        let ids = store.serverVMs
+            .filter { $0.liveSource == .cloud && lease.visibleCards.contains($0.id) }
+            .map(\.id)
+        await loader.backfillCards(ids)
     }
 
     @ViewBuilder

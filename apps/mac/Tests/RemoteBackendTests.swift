@@ -318,6 +318,94 @@ final class RemoteBackendTests: XCTestCase {
         backend.stop()
     }
 
+    // MARK: - Cloud history
+
+    private func historyBody(_ node: UUID, series: String) -> Data {
+        Data("""
+        {"node_id":"\(node)","series":{\(series)},"from":"2026-04-20T11:00:00Z","to":"2026-04-20T12:00:00Z","resolution":"raw"}
+        """.utf8)
+    }
+
+    private func query(_ req: LocalTestServer.CapturedRequest) -> [URLQueryItem] {
+        URLComponents(string: "http://x" + req.path)?.queryItems ?? []
+    }
+
+    func testBackfillCardsFillsSeries() async throws {
+        let (backend, node) = try await startBackend()
+        let body = Data("""
+        {"from":"2026-04-20T11:30:00Z","to":"2026-04-20T12:00:00Z","resolution":"raw","nodes":[\
+        {"node_id":"\(node.id)","series":{"cpu":[{"ts":"2026-04-20T11:59:50Z","value":40},{"ts":"2026-04-20T12:00:00Z","value":60}]}}]}
+        """.utf8)
+        server.on("GET", "/v1/history") { _ in .json(200, body) }
+        let vm = try XCTUnwrap(backend.servers.serverVMs.first)
+        await backend.cloudHistory?.backfillCards([node.id])
+        XCTAssertEqual(vm.cpu.snapshot().map(\.v), [0.4, 0.6])
+        let items = query(try XCTUnwrap(server.captured.last { $0.path.hasPrefix("/v1/history") }))
+        XCTAssertEqual(items.first { $0.name == "nodes" }?.value, node.id.uuidString)
+        XCTAssertEqual(items.first { $0.name == "metrics" }?.value, "cpu,mem,net_rx,net_tx")
+        backend.stop()
+    }
+
+    func testLoadFullViewDiskUsesDisksRoute() async throws {
+        let (backend, node) = try await startBackend()
+        let id = node.id
+        server.on("GET", "/v1/nodes/\(id)/disks") { _ in
+            .json(200, Data(#"{"mounts":[{"mount":"/","fs":"ext4","points":[{"ts":"2026-04-20T12:00:00Z","used":50,"total":100}]}]}"#.utf8))
+        }
+        let io = historyBody(id, series: #""disk_read":[{"ts":"2026-04-20T12:00:00Z","value":1048576}],"disk_write":[{"ts":"2026-04-20T12:00:00Z","value":0}]"#)
+        server.on("GET", "/v1/nodes/\(id)/history") { _ in .json(200, io) }
+        try await backend.cloudHistory?.loadFullView(host: id, metric: .disk)
+        let paths = server.captured.map(\.path)
+        XCTAssertTrue(paths.contains { $0.hasPrefix("/v1/nodes/\(id)/disks") })
+        let hist = try XCTUnwrap(server.captured.first { $0.path.hasPrefix("/v1/nodes/\(id)/history") })
+        let items = query(hist)
+        XCTAssertEqual(items.first { $0.name == "metrics" }?.value, "disk_read,disk_write")
+        XCTAssertEqual(items.first { $0.name == "step" }?.value, "10s")
+        let vm = try XCTUnwrap(backend.servers.serverVMs.first)
+        XCTAssertEqual(vm.disksPerMount.max.latest?.v, 0.5)
+        XCTAssertEqual(vm.diskIO.total.read.latest?.v, 1.0)
+        backend.stop()
+    }
+
+    func testLoadFullViewErrorThrows() async throws {
+        let (backend, node) = try await startBackend()
+        let id = node.id
+        server.on("GET", "/v1/nodes/\(id)/history") { _ in
+            .json(400, Data(#"{"error":{"code":"bad_request","message":"metric has no rollup for this range"}}"#.utf8))
+        }
+        do {
+            try await backend.cloudHistory?.loadFullView(host: id, metric: .cpu)
+            XCTFail("expected an error")
+        } catch let RemoteClient.RemoteError.http(code, body) {
+            XCTAssertEqual(code, 400)
+            XCTAssertEqual(RemoteClient.errorMessage(Data(body.utf8)), "metric has no rollup for this range")
+            XCTAssertEqual(CloudHistoryError.message(RemoteClient.RemoteError.http(code, body)), "metric has no rollup for this range")
+        }
+        backend.stop()
+    }
+
+    func testHistoryDecodesFractionalSeconds() async throws {
+        let id = UUID()
+        let body = historyBody(id, series: #""cpu":[{"ts":"2026-04-20T12:00:00.123Z","value":5}]"#)
+        server.on("GET", "/v1/nodes/\(id)/history") { _ in .json(200, body) }
+        let client = RemoteClient(config: .init(endpoint: server.baseURL, token: token))
+        let r = try await client.history(nodeID: id, metrics: ["cpu"], from: Date(timeIntervalSince1970: 0), to: Date())
+        let t = try XCTUnwrap(r.series["cpu"]?.first?.ts)
+        XCTAssertEqual(t.timeIntervalSince1970.truncatingRemainder(dividingBy: 1), 0.123, accuracy: 0.001)
+    }
+
+    func testTopProcessesUnwrapsProcessesKey() async throws {
+        let id = UUID()
+        server.on("GET", "/v1/nodes/\(id)/processes") { _ in
+            .json(200, Data(#"{"node_id":"\#(id)","processes":[{"name":"go","cmd":"go test","cpu_pct_avg":12.5,"cpu_pct_max":90,"rss_max":2048}]}"#.utf8))
+        }
+        let client = RemoteClient(config: .init(endpoint: server.baseURL, token: token))
+        let rows = try await client.topProcesses(nodeID: id, from: Date(timeIntervalSince1970: 0), to: Date(), limit: 20)
+        XCTAssertEqual(rows.first?.name, "go")
+        XCTAssertEqual(rows.first?.rssMax, 2048)
+        XCTAssertEqual(query(try XCTUnwrap(server.captured.last)).first { $0.name == "limit" }?.value, "20")
+    }
+
     // MARK: - Helpers
 
     private func lastRequest() throws -> LocalTestServer.CapturedRequest {

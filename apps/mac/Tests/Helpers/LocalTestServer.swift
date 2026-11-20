@@ -221,11 +221,13 @@ final class LocalTestServer: @unchecked Sendable {
         capturedLock.unlock()
 
         // Exact match first, then prefix match (for /v1/nodes/<id>-style paths).
-        var handler = handlers["\(method) \(path)"]
+        // The query is not part of the match. `cap.path` keeps it.
+        let route = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? path
+        var handler = handlers["\(method) \(path)"] ?? handlers["\(method) \(route)"]
         if handler == nil {
             for (key, h) in handlers where key.hasPrefix("\(method) ") {
                 let registered = String(key.dropFirst(method.count + 1))
-                if registered.hasSuffix("/") && path.hasPrefix(registered) {
+                if registered.hasSuffix("/") && route.hasPrefix(registered) {
                     handler = h
                     break
                 }

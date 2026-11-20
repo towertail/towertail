@@ -15,6 +15,9 @@ final class ViewLeaseController {
 
     private(set) var current: LiveView = .empty
 
+    /// The cards that are on screen now.
+    var visibleCards: Set<UUID> { cards }
+
     private let renewEvery: Duration
     private let cardDebounce: Duration
     private let send: @MainActor (LiveView) -> Void

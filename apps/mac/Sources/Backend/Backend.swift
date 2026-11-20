@@ -81,6 +81,21 @@ protocol Backend: AnyObject {
 
     /// Scanner for the Usage sub-tab of DISK.
     func diskScanner(for node: Node) -> any DiskScanner
+
+    /// Loads Cloud history over REST. Nil outside Cloud. The name is not
+    /// `history`, because `LocalBackend` has a `HistoryStore` with that name.
+    var cloudHistory: (any CloudHistoryLoader)? { get }
+}
+
+/// What the popover and the full view need to fill the series of a Cloud host.
+@MainActor
+protocol CloudHistoryLoader: AnyObject {
+    /// Fills the 30 min card series of the hosts.
+    func backfillCards(_ ids: [UUID]) async
+    /// Fills the 2 h series of the tab. Throws the client error.
+    func loadFullView(host: UUID, metric: Metric) async throws
+    /// The aggregate process list of a past range.
+    func pastProcesses(host: UUID, from: Date, to: Date) async throws -> [RemoteTopProcess]
 }
 
 /// SwiftUI environment key for the active backend. Views that mutate

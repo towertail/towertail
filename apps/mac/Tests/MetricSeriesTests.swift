@@ -56,4 +56,32 @@ final class MetricSeriesTests: XCTestCase {
         let s = MetricSeries()
         XCTAssertEqual(s.tint(warn: 0.5, critical: 0.8), .stale)
     }
+
+    private func points(_ times: [Double], value: Double = 0) -> [MetricPoint] {
+        times.map { MetricPoint(t: Date(timeIntervalSince1970: $0), v: value) }
+    }
+
+    func testMergeOlderKeepsLivePoints() {
+        var s = MetricSeries()
+        for p in points([100, 110], value: 9) { s.append(p) }
+        s.merge(older: points(Array(stride(from: 50.0, through: 105.0, by: 5)), value: 1))
+        let snap = s.snapshot()
+        XCTAssertEqual(snap.map { $0.t.timeIntervalSince1970 }, Array(stride(from: 50.0, through: 95.0, by: 5)) + [100, 110])
+        XCTAssertEqual(snap.suffix(2).map(\.v), [9, 9])
+    }
+
+    func testMergeOlderTrimsToCapacity() {
+        var s = MetricSeries()
+        s.merge(older: points((0..<800).map(Double.init)))
+        XCTAssertEqual(s.count, MetricSeries.capacity)
+        XCTAssertEqual(s.latest?.t.timeIntervalSince1970, 799)
+    }
+
+    func testMergeHistoryReplacesLivePointsUpToLastRestPoint() {
+        var s = MetricSeries()
+        for p in points([10, 100, 110, 120], value: 9) { s.append(p) }
+        s.merge(history: points([50, 100, 110], value: 1))
+        XCTAssertEqual(s.snapshot().map { $0.t.timeIntervalSince1970 }, [50, 100, 110, 120])
+        XCTAssertEqual(s.snapshot().map(\.v), [1, 1, 1, 9])
+    }
 }

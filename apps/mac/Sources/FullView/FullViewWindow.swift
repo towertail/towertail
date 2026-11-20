@@ -7,6 +7,13 @@ private struct TaskKey: Hashable {
     let active: Bool
 }
 
+/// Restarts the Cloud history load on a host, metric or source change.
+private struct HistoryKey: Hashable {
+    let host: UUID
+    let metric: Metric
+    let cloud: Bool
+}
+
 struct FullViewWindow: View {
     let context: FullViewContext
     @Environment(ServerStore.self) private var store
@@ -45,6 +52,8 @@ struct FullViewWindow: View {
     @State private var cachedMainSamples: [MetricPoint] = []
     @State private var cachedDiskCapacity: [MetricPoint] = []
     @State private var cachedDiskIO: [MetricPoint] = []
+    @State private var historyLoading = false
+    @State private var historyError: String?
 
     init(context: FullViewContext) {
         self.context = context
@@ -138,6 +147,9 @@ struct FullViewWindow: View {
                 try? await Task.sleep(nanoseconds: nanos)
             }
         }
+        .task(id: HistoryKey(host: activeHostId, metric: model.metric, cloud: vm?.liveSource == .cloud)) {
+            await loadCloudHistory()
+        }
         .onChange(of: model.metric) { _, _ in refreshCaches(vm: vm) }
         .onChange(of: model.zoomRange) { _, _ in refreshCaches(vm: vm) }
         .onChange(of: model.diskMount) { _, _ in refreshCaches(vm: vm) }
@@ -189,6 +201,28 @@ struct FullViewWindow: View {
             if cachedDiskCapacity != clippedCapacity { cachedDiskCapacity = clippedCapacity }
             if cachedDiskIO != clippedIO { cachedDiskIO = clippedIO }
         }
+    }
+
+    /// Loads the 2 h series of a Cloud host over REST. Local and SSH hosts
+    /// read SQLite instead.
+    private func loadCloudHistory() async {
+        guard let loader = backend?.cloudHistory,
+              store.serverVMs.first(where: { $0.id == activeHostId })?.liveSource == .cloud else {
+            historyLoading = false
+            historyError = nil
+            return
+        }
+        historyLoading = true
+        historyError = nil
+        do {
+            try await loader.loadFullView(host: activeHostId, metric: model.metric)
+        } catch {
+            guard !Task.isCancelled else { return }
+            historyError = CloudHistoryError.message(error)
+        }
+        guard !Task.isCancelled else { return }
+        historyLoading = false
+        refreshCaches(vm: store.serverVMs.first(where: { $0.id == activeHostId }))
     }
 
     private func updateMain(_ samples: [MetricPoint]) {
@@ -300,11 +334,14 @@ struct FullViewWindow: View {
             .padding(.horizontal, 16)
 
             if let vm {
-                if model.metric == .disk {
-                    diskArea(vm: vm)
-                } else {
-                    chartArea(vm: vm)
+                Group {
+                    if model.metric == .disk {
+                        diskArea(vm: vm)
+                    } else {
+                        chartArea(vm: vm)
+                    }
                 }
+                .overlay { historyOverlay }
                 if model.metric == .health {
                     HealthDetails(
                         health: vm.health, thresholds: vm.thresholds,
@@ -324,6 +361,20 @@ struct FullViewWindow: View {
             }
         }
         .padding(.vertical, 10)
+    }
+
+    @ViewBuilder
+    private var historyOverlay: some View {
+        if let historyError {
+            Text(historyError)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .padding(10)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        } else if historyLoading {
+            ProgressView()
+                .controlSize(.large)
+        }
     }
 
     /// DISK tab: two stacked charts (capacity + I/O) with per-mount /
@@ -481,7 +532,8 @@ struct FullViewWindow: View {
                 let wTxt = Self.formatByteRate(bytesPerSec: wMBps * 1_048_576.0)
                 Text("↓\(rTxt) · ↑\(wTxt)")
                     .font(.system(.title3, design: .rounded).monospacedDigit())
-                devicePicker(vm: vm)
+                // Cloud has no per-device history.
+                if vm.liveSource != .cloud { devicePicker(vm: vm) }
                 Spacer()
             }
             .padding(.horizontal, 16)
@@ -658,6 +710,28 @@ struct FullViewWindow: View {
 
     @ViewBuilder
     private func processTable(vm: ServerViewModel) -> some View {
+        if let range = pastRange(vm: vm), let loader = backend?.cloudHistory {
+            PastProcessTable(host: vm.id, range: range, loader: loader)
+        } else {
+            liveProcessTable(vm: vm)
+        }
+    }
+
+    /// The range of a Cloud host when the hover time or the zoom is older
+    /// than the newest process snapshot by more than 1 min.
+    private func pastRange(vm: ServerViewModel) -> ClosedRange<Date>? {
+        guard vm.liveSource == .cloud, backend?.cloudHistory != nil else { return nil }
+        let limit = (vm.procs.latest?.t ?? Date()).addingTimeInterval(-60)
+        if let z = model.zoomRange, z.upperBound < limit { return z }
+        if let t = model.effectiveTimestamp(latest: nil), t < limit {
+            let start = (t.timeIntervalSince1970 / 60).rounded(.down) * 60
+            return Date(timeIntervalSince1970: start)...Date(timeIntervalSince1970: start + 60)
+        }
+        return nil
+    }
+
+    @ViewBuilder
+    private func liveProcessTable(vm: ServerViewModel) -> some View {
         let effective = model.effectiveTimestamp(latest: vm.procs.latest?.t)
         ProcessTable(
             series: vm.procs,

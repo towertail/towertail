@@ -55,6 +55,22 @@ struct DiskSeries: Sendable {
             max.append(MetricPoint(t: t, v: worst))
         }
     }
+
+    /// Takes REST rows, oldest first. Each mount, and `max`, keeps the live
+    /// points that are newer than the rows.
+    mutating func merge(rows: [HistoryStore.DiskCapacityRow]) {
+        var worst: [Date: Double] = [:]
+        var perMount: [String: [MetricPoint]] = [:]
+        for r in rows {
+            let v = min(Swift.max(r.frac, 0), 1)
+            perMount[r.mount, default: []].append(MetricPoint(t: r.t, v: v))
+            worst[r.t] = Swift.max(worst[r.t] ?? 0, v)
+        }
+        for (mount, points) in perMount {
+            byMount[mount, default: MetricSeries()].merge(history: points)
+        }
+        max.merge(history: worst.keys.sorted().map { MetricPoint(t: $0, v: worst[$0]!) })
+    }
 }
 
 /// Per-device disk I/O history. Tracks both read and write rates as
@@ -113,6 +129,14 @@ struct DiskIOSeries: Sendable {
                 byDevice[r.device] = ds
             }
         }
+    }
+
+    /// Takes REST rows of the total (`device == ""`), oldest first. Other
+    /// rows are ignored.
+    mutating func merge(rows: [HistoryStore.DiskIORow]) {
+        let total = rows.filter { $0.device.isEmpty }
+        self.total.read.merge(history: total.map { MetricPoint(t: $0.t, v: Swift.max($0.readMBps, 0)) })
+        self.total.write.merge(history: total.map { MetricPoint(t: $0.t, v: Swift.max($0.writeMBps, 0)) })
     }
 
     private func bytesToMBps(_ b: Int64) -> Double {

@@ -80,6 +80,60 @@ final class RemoteClient {
         _ = try await raw("POST", "/v1/nodes/\(nodeID.uuidString)/kill-process?pid=\(pid)")
     }
 
+    // MARK: - History (docs/wire.md §3.1)
+
+    func history(nodeID: UUID, metrics: [String], from: Date, to: Date, step: Duration? = nil) async throws -> RemoteHistoryResponse {
+        var query = [URLQueryItem(name: "metrics", value: metrics.joined(separator: ","))]
+        query += Self.rangeItems(from: from, to: to)
+        if let step { query.append(URLQueryItem(name: "step", value: "\(step.components.seconds)s")) }
+        return try await get("/v1/nodes/\(nodeID.uuidString)/history", query: query, decoder: SampleCodec.decoder())
+    }
+
+    /// The server takes 200 nodes at most for each request.
+    func fleetHistory(nodeIDs: [UUID], metrics: [String], from: Date, to: Date) async throws -> RemoteFleetHistory {
+        var merged: RemoteFleetHistory?
+        for start in stride(from: 0, to: nodeIDs.count, by: Self.fleetGroupSize) {
+            let group = nodeIDs[start..<min(start + Self.fleetGroupSize, nodeIDs.count)]
+            let query = [
+                URLQueryItem(name: "nodes", value: group.map(\.uuidString).joined(separator: ",")),
+                URLQueryItem(name: "metrics", value: metrics.joined(separator: ",")),
+            ] + Self.rangeItems(from: from, to: to)
+            let part: RemoteFleetHistory = try await get("/v1/history", query: query, decoder: SampleCodec.decoder())
+            merged = merged.map {
+                RemoteFleetHistory(
+                    from: $0.from, to: $0.to, resolution: $0.resolution,
+                    clamped: ($0.clamped ?? false) || (part.clamped ?? false) ? true : nil,
+                    nodes: $0.nodes + part.nodes
+                )
+            } ?? part
+        }
+        return merged ?? RemoteFleetHistory(from: from, to: to, resolution: "raw", clamped: nil, nodes: [])
+    }
+
+    func topProcesses(nodeID: UUID, from: Date, to: Date, limit: Int) async throws -> [RemoteTopProcess] {
+        struct List: Decodable { let processes: [RemoteTopProcess]? }
+        let query = Self.rangeItems(from: from, to: to) + [URLQueryItem(name: "limit", value: String(limit))]
+        let list: List = try await get("/v1/nodes/\(nodeID.uuidString)/processes", query: query,
+                                       decoder: SampleCodec.decoder())
+        return list.processes ?? []
+    }
+
+    func diskHistory(nodeID: UUID, from: Date, to: Date) async throws -> RemoteDiskHistory {
+        try await get("/v1/nodes/\(nodeID.uuidString)/disks", query: Self.rangeItems(from: from, to: to),
+                      decoder: SampleCodec.decoder())
+    }
+
+    private static let fleetGroupSize = 200
+
+    private static func rangeItems(from: Date, to: Date) -> [URLQueryItem] {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return [
+            URLQueryItem(name: "from", value: f.string(from: from)),
+            URLQueryItem(name: "to", value: f.string(from: to)),
+        ]
+    }
+
     // MARK: - Disk scans (docs/wire.md §3.1)
 
     /// Starts a scan job. 403 gives `scansOff`, 409 gives `alreadyRunning`
@@ -159,9 +213,15 @@ final class RemoteClient {
         catch { throw RemoteError.decode(String(describing: error)) }
     }
 
-    private func get<T: Decodable>(_ path: String) async throws -> T {
-        let data = try await raw("GET", path)
-        do { return try decoder.decode(T.self, from: data) }
+    private func get<T: Decodable>(_ path: String, query: [URLQueryItem] = [], decoder: JSONDecoder? = nil) async throws -> T {
+        var full = path
+        if !query.isEmpty {
+            var c = URLComponents()
+            c.queryItems = query
+            full += "?" + (c.percentEncodedQuery ?? "")
+        }
+        let data = try await raw("GET", full)
+        do { return try (decoder ?? self.decoder).decode(T.self, from: data) }
         catch { throw RemoteError.decode(String(describing: error)) }
     }
 

@@ -483,6 +483,25 @@ final class ServerViewModel: Identifiable {
         }
     }
 
+    /// Takes REST history of a Cloud host. REST points replace the live
+    /// points up to the last REST point. Newer live points stay.
+    func merge(history points: [HistoryPoint]) {
+        func series(_ value: (HistoryPoint) -> Double?) -> [MetricPoint] {
+            points.compactMap { p in value(p).map { MetricPoint(t: p.t, v: $0) } }
+        }
+        cpu.merge(history: series(\.cpu))
+        mem.merge(history: series(\.mem))
+        net.merge(history: series(\.net))
+        netRx.merge(history: series(\.rxMBps))
+        netTx.merge(history: series(\.txMBps))
+        procCount.merge(history: series(\.procs))
+    }
+
+    func mergeDisk(capacity: [HistoryStore.DiskCapacityRow], io: [HistoryStore.DiskIORow]) {
+        disksPerMount.merge(rows: capacity)
+        diskIO.merge(rows: io)
+    }
+
     func markOffline(reason: String, at t: Date) {
         resetAlerts()
         lastSeen = t

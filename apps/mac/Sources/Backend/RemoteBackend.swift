@@ -15,6 +15,7 @@ final class RemoteBackend: Backend {
     let diskScans: DiskScanStore
     /// Changes of server scan jobs, for `RemoteDiskScanner`.
     let scanJobs = DiskScanJobFeed()
+    let cloudHistory: (any CloudHistoryLoader)?
 
     /// Reports what the user looks at.
     private(set) var viewLease: ViewLeaseController!
@@ -25,14 +26,17 @@ final class RemoteBackend: Backend {
     private(set) var leaseMode = false
 
     init(endpoint: URL, token: String) {
-        self.servers = ServerStore()
+        let servers = ServerStore()
+        self.servers = servers
         self.nodes = NodeStore(nodes: [])
         self.clientSettings = ClientSettings()
         self.serverSettings = ServerSettings()
         // In remote mode the server pushes sampler updates to hosts — the
         // client only shows status. Keep the updater idle.
         self.samplerUpdater = SamplerUpdateCoordinator(manifest: nil)
-        self.client = RemoteClient(config: .init(endpoint: endpoint, token: token))
+        let client = RemoteClient(config: .init(endpoint: endpoint, token: token))
+        self.client = client
+        self.cloudHistory = RemoteHistoryLoader(cache: CloudHistoryCache(client: client), store: servers)
         self.diskScans = DiskScanStore(url: HistoryStore.defaultURL())
         self.viewLease = ViewLeaseController(send: { [weak self] view in
             guard let stream = self?.stream else { return }
