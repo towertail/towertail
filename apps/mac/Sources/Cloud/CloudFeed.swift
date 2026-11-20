@@ -13,7 +13,7 @@ final class CloudFeed {
     @ObservationIgnored private let client: RemoteClient
     @ObservationIgnored private let servers: ServerStore
     @ObservationIgnored private let nodes: NodeStore
-    @ObservationIgnored private var streamTask: Task<Void, Never>?
+    @ObservationIgnored private var stream: RemoteStream?
     /// Reachability events since the last connect. They win over the
     /// open alerts, which can be older than the events.
     @ObservationIgnored private var eventAlerts: [UUID: Bool] = [:]
@@ -25,8 +25,8 @@ final class CloudFeed {
     }
 
     func start() {
-        guard streamTask == nil else { return }
-        streamTask = client.openStream(
+        guard stream == nil else { return }
+        stream = client.openStream(
             onConnect: { [weak self] in
                 Task { @MainActor in
                     guard let self else { return }
@@ -46,8 +46,8 @@ final class CloudFeed {
     }
 
     func stop() {
-        streamTask?.cancel()
-        streamTask = nil
+        stream?.cancel()
+        stream = nil
         connected = false
     }
 
@@ -82,8 +82,15 @@ final class CloudFeed {
         case .sample(let id, let sample):
             guard nodes.node(withId: id)?.isCloud == true else { return }
             servers.ingest(sample, for: id)
+        case .summary(let id, let summary):
+            guard nodes.node(withId: id)?.isCloud == true else { return }
+            servers.ingest(summary: summary, for: id)
+        case .detail(let id, let tab, let detail):
+            guard nodes.node(withId: id)?.isCloud == true else { return }
+            servers.apply(detail: detail, tab: tab, for: id)
         case .event(let event):
             guard event.metric == "reachability" else { return }
+            if nodes.node(withId: event.nodeId)?.isCloud == true { servers.apply(reachability: event) }
             let open = event.tint == "critical"
             eventAlerts[event.nodeId] = open
             if open { alerted.insert(event.nodeId) } else { alerted.remove(event.nodeId) }
@@ -92,7 +99,7 @@ final class CloudFeed {
                   node.displayName != remote.displayName else { return }
             node.displayName = remote.displayName
             nodes.update(node)
-        case .settingsUpdated, .diskScan, .other:
+        case .settingsUpdated, .diskScan, .hello, .lease, .other:
             break
         }
     }

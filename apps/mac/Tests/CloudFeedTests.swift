@@ -93,6 +93,39 @@ final class CloudFeedTests: XCTestCase {
         XCTAssertEqual(servers.serverVMs.first?.samplerVersion, "0.1.0")
     }
 
+    private func summaryFrame(for id: UUID) -> String {
+        """
+        {"type":"summary","nodeId":"\(id.uuidString)","summary":{"ts":"2026-04-21T12:00:00.000Z","cpu":10,"mem":0.5,"disk":0.2,"rx":0,"tx":0,"load":0,"host":{"os":"linux","arch":"arm64","cores":4,"mem_total":1,"uptime_s":1,"sampler":"0.2.0"}}}
+        """
+    }
+
+    func testSummaryForCloudNodeIsIngestedAndSSHNodeIsIgnored() async throws {
+        let cloud = Node(displayName: "web", kind: .ssh, sshUser: "u", sshHost: "h", cloud: CloudLink(enrolledAt: Date()))
+        let plain = Node(displayName: "db", kind: .ssh, sshUser: "u", sshHost: "d")
+        serveNodes([cloud])
+        addHost(cloud)
+        addHost(plain)
+        try await connect()
+        server.sendToAllWebSockets(text: summaryFrame(for: plain.id))
+        server.sendToAllWebSockets(text: summaryFrame(for: cloud.id))
+        try await waitFor { self.servers.serverVMs.first(where: { $0.id == cloud.id })?.lastSeen != nil }
+        XCTAssertEqual(servers.serverVMs.first(where: { $0.id == cloud.id })?.samplerVersion, "0.2.0")
+        XCTAssertNil(servers.serverVMs.first(where: { $0.id == plain.id })?.lastSeen)
+    }
+
+    func testReachabilityEventMarksCloudHostOfflineAndBack() async throws {
+        let node = Node(displayName: "web", kind: .ssh, sshUser: "u", sshHost: "h", cloud: CloudLink(enrolledAt: Date()))
+        serveNodes([node])
+        addHost(node)
+        try await connect()
+        server.sendToAllWebSockets(text: summaryFrame(for: node.id))
+        try await waitFor { self.servers.serverVMs.first?.lastSeen != nil }
+        server.sendToAllWebSockets(text: try eventFrame(for: node.id, tint: "critical"))
+        try await waitFor { self.servers.serverVMs.first?.state.isOffline == true }
+        server.sendToAllWebSockets(text: try eventFrame(for: node.id, tint: "ok"))
+        try await waitFor { self.servers.serverVMs.first?.state.isOffline == false }
+    }
+
     func testSampleForSSHNodeIsIgnored() async throws {
         let cloud = Node(displayName: "web", kind: .ssh, sshUser: "u", sshHost: "h", cloud: CloudLink(enrolledAt: Date()))
         let plain = Node(displayName: "db", kind: .ssh, sshUser: "u", sshHost: "d")

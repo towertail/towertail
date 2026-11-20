@@ -16,7 +16,9 @@ final class RemoteBackend: Backend {
     let scanJobs = DiskScanJobFeed()
 
     private let client: RemoteClient
-    private var streamTask: Task<Void, Never>?
+    private var stream: RemoteStream?
+    /// True after a `hello` frame: the server runs in lease mode.
+    private(set) var leaseMode = false
 
     init(endpoint: URL, token: String) {
         self.servers = ServerStore()
@@ -39,8 +41,8 @@ final class RemoteBackend: Backend {
     }
 
     func stop() {
-        streamTask?.cancel()
-        streamTask = nil
+        stream?.cancel()
+        stream = nil
     }
 
     // MARK: - Initial load
@@ -73,14 +75,14 @@ final class RemoteBackend: Backend {
     }
 
     private func openStream() async {
-        streamTask?.cancel()
+        stream?.cancel()
         let onConnect: @Sendable () -> Void = { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
                 await self.scanJobs.refetch(using: self.client)
             }
         }
-        streamTask = client.openStream(onConnect: onConnect) { [weak self] raw in
+        stream = client.openStream(onConnect: onConnect) { [weak self] raw in
             guard let self else { return }
             Task { @MainActor in
                 self.handleStreamMessage(raw)
@@ -99,10 +101,22 @@ final class RemoteBackend: Backend {
             applyRemoteSettings(rs)
         case .diskScan(let job):
             scanJobs.publish(job)
-        case .event:
-            // Phase H: thread BackendEvents into the notifier once the
-            // remote dispatcher lands. For now log and move on.
-            Logger.shared.info("remote: event", category: "alerts", kv: ["raw": raw])
+        case .hello:
+            leaseMode = true
+        case .summary(let id, let summary):
+            servers.ingest(summary: summary, for: id)
+        case .detail(let id, let tab, let detail):
+            servers.apply(detail: detail, tab: tab, for: id)
+        case .lease:
+            break
+        case .event(let event):
+            if event.kind == "reachability_changed" {
+                servers.apply(reachability: event)
+            } else {
+                // Phase H: thread BackendEvents into the notifier once the
+                // remote dispatcher lands. For now log and move on.
+                Logger.shared.info("remote: event", category: "alerts", kv: ["raw": raw])
+            }
         case .other:
             break
         }

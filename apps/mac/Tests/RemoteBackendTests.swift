@@ -199,6 +199,73 @@ final class RemoteBackendTests: XCTestCase {
         backend.stop()
     }
 
+    // MARK: - Lease frames
+
+    private func startBackend() async throws -> (RemoteBackend, RemoteNode) {
+        let node = sampleRemoteNode(name: "node-lease")
+        let nodesPayload = try jsonEncoder().encode([node])
+        server.on("GET", "/v1/nodes") { _ in .json(200, nodesPayload) }
+        let settingsPayload = try jsonEncoder().encode(sampleRemoteSettings())
+        server.on("GET", "/v1/settings") { _ in .json(200, settingsPayload) }
+        let backend = RemoteBackend(endpoint: server.baseURL, token: token)
+        backend.start()
+        try await waitFor(timeout: 5) { backend.servers.serverVMs.first != nil }
+        try await waitFor(timeout: 5) { self.server.hasWebSocketClient }
+        return (backend, node)
+    }
+
+    private func frame(_ object: [String: Any]) throws -> String {
+        String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+    }
+
+    func testRemoteBackendStreamDeliversSummaryToServerStore() async throws {
+        let (backend, node) = try await startBackend()
+        server.sendToAllWebSockets(text: try frame([
+            "type": "summary",
+            "nodeId": node.id.uuidString,
+            "summary": [
+                "ts": "2026-10-17T12:00:00.000Z", "cpu": 12.5, "mem": 0.4, "disk": 0.3,
+                "rx": 10, "tx": 20, "load": 0.1,
+                "host": ["os": "linux", "arch": "amd64", "cores": 4, "mem_total": 1, "uptime_s": 1, "sampler": "0.4.0"],
+            ] as [String: Any],
+        ]))
+        try await waitFor(timeout: 5) { backend.servers.serverVMs.first?.lastSeen != nil }
+        XCTAssertEqual(backend.servers.serverVMs.first?.samplerVersion, "0.4.0")
+        backend.stop()
+    }
+
+    func testRemoteBackendStreamDetailFillsProcs() async throws {
+        let (backend, node) = try await startBackend()
+        server.sendToAllWebSockets(text: try frame([
+            "type": "detail",
+            "nodeId": node.id.uuidString,
+            "tab": "processes",
+            "detail": [
+                "ts": "2026-10-17T12:00:00.000Z",
+                "procs": ["root": true, "top_n": 1, "total": 1, "visible": 1,
+                          "items": [["pid": 1, "name": "init", "cpu_pct": 1.0, "rss": 10]]] as [String: Any],
+            ] as [String: Any],
+        ]))
+        try await waitFor(timeout: 5) { backend.servers.serverVMs.first?.procsAvailable == true }
+        backend.stop()
+    }
+
+    func testRemoteBackendReachabilityEventMarksOffline() async throws {
+        let (backend, node) = try await startBackend()
+        func event(_ tint: String) throws -> String {
+            try frame(["type": "event", "event": [
+                "id": UUID().uuidString, "ts": "2026-10-17T12:00:00Z", "kind": "reachability_changed",
+                "nodeId": node.id.uuidString, "metric": "reachability", "tint": tint,
+            ]])
+        }
+        let vm = try XCTUnwrap(backend.servers.serverVMs.first)
+        server.sendToAllWebSockets(text: try event("critical"))
+        try await waitFor(timeout: 5) { vm.state.isOffline }
+        server.sendToAllWebSockets(text: try event("ok"))
+        try await waitFor(timeout: 5) { !vm.state.isOffline }
+        backend.stop()
+    }
+
     // MARK: - Helpers
 
     private func lastRequest() throws -> LocalTestServer.CapturedRequest {

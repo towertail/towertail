@@ -209,18 +209,21 @@ final class RemoteClient {
     // MARK: - WebSocket
 
     /// Opens a WS connection and invokes `onMessage` for each received
-    /// text frame. `onConnect` runs once for each connection, at the first
+    /// text frame. `lease` selects lease mode (`?lease=1`, docs/wire.md §4).
+    /// `onConnect` runs once for each connection, at the first
     /// frame or at the first pong, so callers can refetch state that they
     /// missed. `onDisconnect` runs each time a connection attempt
-    /// ends. The returned task runs until cancelled.
-    func openStream(onConnect: (@Sendable () -> Void)? = nil,
+    /// ends. The loop runs until `cancel()` of the returned stream.
+    func openStream(lease: Bool = false,
+                    onConnect: (@Sendable () -> Void)? = nil,
                     onDisconnect: (@Sendable () -> Void)? = nil,
-                    onMessage: @escaping @Sendable (String) -> Void) -> Task<Void, Never> {
-        return Task.detached { [weak self] in
+                    onMessage: @escaping @Sendable (String) -> Void) -> RemoteStream {
+        let stream = RemoteStream()
+        stream.start(Task.detached { [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
                 do {
-                    try await self.streamOnce(onConnect: onConnect, onMessage: onMessage)
+                    try await self.streamOnce(stream: stream, lease: lease, onConnect: onConnect, onMessage: onMessage)
                 } catch {
                     // transient; backoff and retry.
                 }
@@ -228,10 +231,12 @@ final class RemoteClient {
                 let jitter = UInt64.random(in: 500...1500) * 1_000_000
                 try? await Task.sleep(nanoseconds: jitter)
             }
-        }
+        })
+        return stream
     }
 
-    private func streamOnce(onConnect: (@Sendable () -> Void)?,
+    private func streamOnce(stream: RemoteStream, lease: Bool,
+                            onConnect: (@Sendable () -> Void)?,
                             onMessage: @escaping @Sendable (String) -> Void) async throws {
         var components = URLComponents(url: config.endpoint.appendingPathComponent("/v1/stream"), resolvingAgainstBaseURL: false)!
         if components.scheme == "https" {
@@ -239,11 +244,16 @@ final class RemoteClient {
         } else if components.scheme == "http" {
             components.scheme = "ws"
         }
+        if lease { components.queryItems = [URLQueryItem(name: "lease", value: "1")] }
         var req = URLRequest(url: components.url!)
         req.addValue("Bearer \(config.token)", forHTTPHeaderField: "Authorization")
         let task = urlSession.webSocketTask(with: req)
         task.resume()
-        defer { task.cancel(with: .normalClosure, reason: nil) }
+        stream.attach(task)
+        defer {
+            stream.detach(task)
+            task.cancel(with: .normalClosure, reason: nil)
+        }
 
         // A server with no data to replay sends no first frame, so a ping
         // also tells that the connection is up.
@@ -263,6 +273,44 @@ final class RemoteClient {
                 break
             }
         }
+    }
+}
+
+/// A stream that `RemoteClient.openStream` opened. It sends frames on the
+/// open connection and stops the reconnect loop.
+final class RemoteStream: @unchecked Sendable {
+    private let lock = NSLock()
+    private var loop: Task<Void, Never>?
+    private var socket: URLSessionWebSocketTask?
+
+    fileprivate func start(_ loop: Task<Void, Never>) {
+        lock.withLock { self.loop = loop }
+    }
+
+    fileprivate func attach(_ task: URLSessionWebSocketTask) {
+        lock.withLock { socket = task }
+    }
+
+    fileprivate func detach(_ task: URLSessionWebSocketTask) {
+        lock.withLock { if socket === task { socket = nil } }
+    }
+
+    /// Sends one `view` frame. Without a connection it drops the frame:
+    /// the caller sends the view again when the stream connects.
+    func send(_ view: LiveView) async {
+        guard let task = lock.withLock({ socket }),
+              let data = try? JSONEncoder().encode(view) else { return }
+        do {
+            try await task.send(.string(String(decoding: data, as: UTF8.self)))
+        } catch {
+            await Logger.shared.debug("stream: view send failed: \(error)", category: "cloud")
+        }
+    }
+
+    func cancel() {
+        let (loop, socket) = lock.withLock { (self.loop, self.socket) }
+        loop?.cancel()
+        socket?.cancel(with: .normalClosure, reason: nil)
     }
 }
 

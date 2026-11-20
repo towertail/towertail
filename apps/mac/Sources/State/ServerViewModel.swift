@@ -24,6 +24,14 @@ enum ServerConnState: Equatable, Sendable {
     }
 }
 
+/// Where the data of a host comes from.
+enum LiveSource: Sendable {
+    /// The app polls the host (or reads full samples).
+    case poll
+    /// Cloud sends data while a view lease is open, and reachability events.
+    case cloud
+}
+
 @Observable
 @MainActor
 final class ServerViewModel: Identifiable {
@@ -33,6 +41,9 @@ final class ServerViewModel: Identifiable {
     var osArch: String
     var kind: NodeKind
     var state: ServerConnState
+    /// `.cloud` turns the no-data watchdog off: no data comes while the
+    /// popover is hidden.
+    var liveSource: LiveSource = .poll
     var lastSeen: Date?
     /// True after the first successful sample has ever been ingested for
     /// this host. Drives the menu-bar escalation: a known-good host that
@@ -118,6 +129,10 @@ final class ServerViewModel: Identifiable {
 
     /// Latest host health, re-evaluated on every ingest.
     var health: HealthStatus = .empty
+    /// Last health data of a Cloud host. A summary has it only when it
+    /// changed, so the app keeps the last value.
+    @ObservationIgnored private var healthInfo: HealthInfo?
+    @ObservationIgnored private var healthInodes: Double?
     /// Process count per sample, raw (not a fraction).
     var procCount: MetricSeries
     /// Process count when the latest sample skipped the per-process scan
@@ -196,14 +211,7 @@ final class ServerViewModel: Identifiable {
         // Pick up the OS/arch the sampler reported. Without this, remote
         // hosts stay stuck on their placeholder "—" because osArch is
         // only set at VM creation time.
-        let os = Self.prettyOSName(s.host.os)
-        if !os.isEmpty {
-            osArch = s.host.arch.isEmpty ? os : "\(os) · \(s.host.arch)"
-        }
-        if !s.host.sampler.isEmpty {
-            samplerVersion = s.host.sampler
-        }
-        if !s.host.os.isEmpty, hostOS != s.host.os { hostOS = s.host.os }
+        applyFacts(os: s.host.os, arch: s.host.arch, sampler: s.host.sampler)
         let cpuFrac = computeCPUFraction(from: s.cpu)
         let cpuV = min(max(cpuFrac, 0), 1)
         cpu.append(MetricPoint(t: s.ts, v: cpuV))
@@ -258,18 +266,7 @@ final class ServerViewModel: Identifiable {
             netTx.append(MetricPoint(t: s.ts, v: netTxMBps))
         }
 
-        if let ps = s.procs {
-            longProcs = longProcTracker.observe(
-                ps.items, skipped: ps.skipped == true, at: s.ts,
-                rule: longProcRule, ignored: ignoredProcs
-            )
-            procsSkippedTotal = ps.skipped == true ? ps.total : nil
-            if procsSkippedTotal == nil {
-                procs.append(ProcSeries.Snapshot(t: s.ts, items: ps.items))
-            }
-            procsAvailable = true
-            procsRoot = ps.root
-        }
+        if let ps = s.procs { applyProcs(ps, at: s.ts) }
 
         health = HealthStatus(
             info: s.health, disks: s.disks, thresholds: thresholds, longProcs: longProcs, now: s.ts,
@@ -286,36 +283,150 @@ final class ServerViewModel: Identifiable {
         }
 
         memPressured = memoryPressure(s)
-        record(.cpu, tint(for: .cpu), at: s.ts)
-        record(.mem, tint(for: .mem), at: s.ts)
-        record(.disk, tint(for: .disk), at: s.ts)
-        record(.health, health.alertTint(muted: mutedSignals), at: s.ts)
-        updateAlertLevel()
-
-        let previous = state
-        state = computeState()
-        if previous != state {
-            var kv = [
-                "cpu_pct": String(format: "%.0f", cpuV * 100),
-                "mem_pct": String(format: "%.0f", memV * 100),
-                "disk_pct": String(format: "%.0f", diskV * 100),
-            ]
-            if !health.reasons.isEmpty {
-                kv["health"] = health.reasons.map(\.text).joined(separator: "; ")
-            }
-            Logger.shared.info(
-                "state: \(Self.stateLabel(previous)) → \(Self.stateLabel(state))",
-                category: "thresholds",
-                hostID: id, host: hostname,
-                kv: kv
-            )
-        }
+        refreshState(at: s.ts, cpu: cpuV, mem: memV, disk: diskV)
         return HistoryPoint(
             t: s.ts,
             cpu: cpuV, mem: memV, disk: diskV, net: netV,
             rxMBps: rxV,
             txMBps: txV,
             procs: procsV
+        )
+    }
+
+    /// Takes a summary of a leased host. It has no history rows: Cloud
+    /// hosts keep no local history.
+    func ingest(summary s: LiveSummary, now: Date = Date()) {
+        lastSeen = s.ts
+        lastIngestAt = now
+        noDataSince = nil
+        lastError = nil
+        everConnected = true
+        if let f = s.host { applyFacts(f) }
+        let cpuV = min(max(s.cpu / 100, 0), 1)
+        let memV = min(max(s.mem, 0), 1)
+        let diskV = min(max(s.disk, 0), 1)
+        cpu.append(MetricPoint(t: s.ts, v: cpuV))
+        mem.append(MetricPoint(t: s.ts, v: memV))
+        disk.append(MetricPoint(t: s.ts, v: diskV))
+
+        netRxMBps = Double(max(s.rx, 0)) / 1_048_576.0
+        netTxMBps = Double(max(s.tx, 0)) / 1_048_576.0
+        net.append(MetricPoint(t: s.ts, v: min(1.0, (netRxMBps + netTxMBps) / 100.0)))
+        netRx.append(MetricPoint(t: s.ts, v: netRxMBps))
+        netTx.append(MetricPoint(t: s.ts, v: netTxMBps))
+
+        if let n = s.procs {
+            procCount.append(MetricPoint(t: s.ts, v: Double(n)))
+        }
+        if let h = s.health {
+            healthInfo = h.info
+            healthInodes = h.inodes
+        }
+        rebuildHealth(now: s.ts)
+        memPressured = healthPressure(healthInfo)
+        liveSource = .cloud
+        refreshState(at: s.ts, cpu: cpuV, mem: memV, disk: diskV)
+    }
+
+    func applyFacts(_ f: HostFacts) {
+        applyFacts(os: f.os, arch: f.arch, sampler: f.sampler)
+    }
+
+    /// Takes the parts of one tab from a `detail` frame.
+    func apply(detail d: LiveDetail, tab: DetailTab) {
+        if let ps = d.procs { applyProcs(ps, at: d.ts) }
+        if let pl = d.ports {
+            ports = pl
+            portsAvailable = true
+        }
+        if let disks = d.disks, !disks.isEmpty {
+            latestDisks = disks
+            disksPerMount.append(disks, at: d.ts)
+        }
+        if let io = d.diskIO {
+            diskIO.append(at: d.ts, totalReadBps: io.readBps, totalWriteBps: io.writeBps, devices: io.devices)
+        }
+        if let h = d.health {
+            healthInfo = h
+            memPressured = healthPressure(h)
+        }
+        if d.procs != nil || d.health != nil {
+            rebuildHealth(now: d.ts)
+            updateAlertLevel()
+        }
+    }
+
+    /// Leaves `.offline` when Cloud says that the host is back.
+    func markReachable(at t: Date = Date()) {
+        guard state.isOffline else { return }
+        noDataSince = nil
+        lastError = nil
+        staleBaseline = t
+        let previous = state
+        state = everConnected ? computeState() : .unknown
+        Logger.shared.info(
+            "state: \(Self.stateLabel(previous)) → \(Self.stateLabel(state))",
+            category: "thresholds",
+            hostID: id, host: hostname
+        )
+    }
+
+    private func applyFacts(os raw: String, arch: String, sampler: String) {
+        // Without this, remote hosts stay on their placeholder osArch.
+        let os = Self.prettyOSName(raw)
+        if !os.isEmpty {
+            osArch = arch.isEmpty ? os : "\(os) · \(arch)"
+        }
+        if !sampler.isEmpty {
+            samplerVersion = sampler
+        }
+        if !raw.isEmpty, hostOS != raw { hostOS = raw }
+    }
+
+    private func applyProcs(_ ps: ProcList, at t: Date) {
+        longProcs = longProcTracker.observe(
+            ps.items, skipped: ps.skipped == true, at: t,
+            rule: longProcRule, ignored: ignoredProcs
+        )
+        procsSkippedTotal = ps.skipped == true ? ps.total : nil
+        if procsSkippedTotal == nil {
+            procs.append(ProcSeries.Snapshot(t: t, items: ps.items))
+        }
+        procsAvailable = true
+        procsRoot = ps.root
+    }
+
+    private func rebuildHealth(now: Date) {
+        health = HealthStatus(
+            info: healthInfo, disks: nil, thresholds: thresholds, longProcs: longProcs, now: now,
+            kernelCriticalOnly: memPressureOverridden, inodeRatio: healthInodes
+        )
+    }
+
+    /// Records the tints and sets the connection state after an ingest.
+    private func refreshState(at t: Date, cpu cpuV: Double, mem memV: Double, disk diskV: Double) {
+        record(.cpu, tint(for: .cpu), at: t)
+        record(.mem, tint(for: .mem), at: t)
+        record(.disk, tint(for: .disk), at: t)
+        record(.health, health.alertTint(muted: mutedSignals), at: t)
+        updateAlertLevel()
+
+        let previous = state
+        state = computeState()
+        guard previous != state else { return }
+        var kv = [
+            "cpu_pct": String(format: "%.0f", cpuV * 100),
+            "mem_pct": String(format: "%.0f", memV * 100),
+            "disk_pct": String(format: "%.0f", diskV * 100),
+        ]
+        if !health.reasons.isEmpty {
+            kv["health"] = health.reasons.map(\.text).joined(separator: "; ")
+        }
+        Logger.shared.info(
+            "state: \(Self.stateLabel(previous)) → \(Self.stateLabel(state))",
+            category: "thresholds",
+            hostID: id, host: hostname,
+            kv: kv
         )
     }
 
@@ -427,7 +538,7 @@ final class ServerViewModel: Identifiable {
     /// Watchdog step: mark the host offline when no sample arrived for
     /// longer than `limit`. Suspended and never-connected hosts are skipped.
     func checkStale(now: Date, limit: TimeInterval) {
-        if state.isSuspended || !everConnected { return }
+        if liveSource == .cloud || state.isSuspended || !everConnected { return }
         let reference = max(lastIngestAt ?? staleBaseline, staleBaseline)
         let age = now.timeIntervalSince(reference)
         guard age > limit else { return }
@@ -567,19 +678,25 @@ final class ServerViewModel: Identifiable {
     /// level, then swap growth.
     private func memoryPressure(_ s: Sample) -> Bool? {
         defer { prevSwap = (s.swap.used, s.ts) }
-        if let psi = s.health?.psi {
-            return psi.memFull >= Self.psiMemFullPressure || psi.memSome >= Self.psiMemSomePressure
-        }
-        if let pct = s.health?.memPressurePct {
-            return Double(pct) >= thresholds.health.macMemPressure.critical
-        }
-        if let level = s.health?.memPressure {
-            return level == 4
-        }
+        if let pressured = healthPressure(s.health) { return pressured }
         guard s.swap.total > 0, let prev = prevSwap else { return nil }
         let dt = s.ts.timeIntervalSince(prev.t)
         guard dt > 0 else { return nil }
         return Double(s.swap.used - prev.used) / dt >= Self.swapGrowthPressureBps
+    }
+
+    /// The pressure that the health block tells, or nil when it has none.
+    private func healthPressure(_ h: HealthInfo?) -> Bool? {
+        if let psi = h?.psi {
+            return psi.memFull >= Self.psiMemFullPressure || psi.memSome >= Self.psiMemSomePressure
+        }
+        if let pct = h?.memPressurePct {
+            return Double(pct) >= thresholds.health.macMemPressure.critical
+        }
+        if let level = h?.memPressure {
+            return level == 4
+        }
+        return nil
     }
 
     var worstTint: ThresholdTint {

@@ -50,9 +50,12 @@ struct HealthStatus: Sendable, Equatable {
 
     /// `kernelCriticalOnly`: with no pressure number, only the kernel
     /// critical level alerts. Use it when the host overrides memory pressure.
+    /// `inodeRatio` is the worst inode ratio of a summary. It counts only
+    /// when `disks` is nil.
     init(
         info: HealthInfo?, disks: [DiskSample]?, thresholds t: MetricThresholds,
-        longProcs: [LongProc] = [], now: Date = Date(), kernelCriticalOnly: Bool = false
+        longProcs: [LongProc] = [], now: Date = Date(), kernelCriticalOnly: Bool = false,
+        inodeRatio: Double? = nil
     ) {
         var out: [Reason] = []
         func add(_ signal: Signal, _ tint: ThresholdTint, _ text: String) {
@@ -100,6 +103,10 @@ struct HealthStatus: Sendable, Equatable {
                 add(.ioPressure, level(p.ioFull, warn: t.health.ioPressure.warn, critical: t.health.ioPressure.critical),
                     "I/O pressure \(Int(p.ioFull.rounded()))%")
             }
+        }
+        if disks == nil, let f = inodeRatio {
+            add(.inodes, level(f, warn: t.health.inodes.warn, critical: t.health.inodes.critical),
+                "Inodes \(Self.pct(f))")
         }
         for d in disks ?? [] {
             if let f = Self.fraction(d.inodesUsed, d.inodesTotal) {

@@ -96,6 +96,36 @@ final class ServerStore {
         logAggregateIfChanged()
     }
 
+    /// Takes a summary of a leased Cloud host. The local notifier stays
+    /// out: in Cloud mode the server sends the alerts.
+    func ingest(summary: LiveSummary, for id: UUID) {
+        guard let vm = serverVMs.first(where: { $0.id == id }) else { return }
+        vm.ingest(summary: summary)
+        logAggregateIfChanged()
+    }
+
+    func apply(detail: LiveDetail, tab: DetailTab, for id: UUID) {
+        serverVMs.first(where: { $0.id == id })?.apply(detail: detail, tab: tab)
+    }
+
+    func markReachable(id: UUID, at t: Date = Date()) {
+        guard let vm = serverVMs.first(where: { $0.id == id }) else { return }
+        vm.markReachable(at: t)
+        logAggregateIfChanged()
+    }
+
+    /// Follows a reachability event of Cloud. Other event kinds do nothing.
+    func apply(reachability e: StreamEvent) {
+        guard e.kind == "reachability_changed",
+              let vm = serverVMs.first(where: { $0.id == e.nodeId }) else { return }
+        if e.tint == "ok" {
+            markReachable(id: e.nodeId)
+        } else {
+            // Keep the time of the last real data.
+            markOffline(id: e.nodeId, reason: "Cloud lost the host", at: vm.lastSeen ?? Date())
+        }
+    }
+
     /// Bulk-ingest pre-generated samples. Used by MockCollector to
     /// backfill 2h of demo data in one main-actor hop instead of ~2,000
     /// individual hops (which pegged the main thread for ~10s at launch).

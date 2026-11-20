@@ -17,6 +17,10 @@ enum StreamMessage {
     case settingsUpdated(RemoteServerSettings)
     case diskScan(DiskScanJob)
     case event(StreamEvent)
+    case hello
+    case summary(UUID, LiveSummary)
+    case detail(UUID, DetailTab, LiveDetail)
+    case lease(LeaseNotice)
     case other
 
     @MainActor private static let decoder: JSONDecoder = {
@@ -56,6 +60,19 @@ enum StreamMessage {
         case "event":
             struct Wrap: Decodable { let event: StreamEvent }
             return (try? decoder.decode(Wrap.self, from: data)).map { .event($0.event) } ?? .other
+        case "hello":
+            return .hello
+        case "summary":
+            guard let id = env.nodeId else { return .other }
+            struct Wrap: Decodable { let summary: LiveSummary }
+            return (try? SampleCodec.decoder().decode(Wrap.self, from: data)).map { .summary(id, $0.summary) } ?? .other
+        case "detail":
+            guard let id = env.nodeId else { return .other }
+            struct Wrap: Decodable { let tab: DetailTab; let detail: LiveDetail }
+            return (try? SampleCodec.decoder().decode(Wrap.self, from: data)).map { .detail(id, $0.tab, $0.detail) } ?? .other
+        case "lease":
+            struct Wrap: Decodable { let lease: LeaseNotice }
+            return (try? decoder.decode(Wrap.self, from: data)).map { .lease($0.lease) } ?? .other
         default:
             return .other
         }

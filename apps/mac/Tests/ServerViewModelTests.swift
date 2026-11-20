@@ -311,4 +311,108 @@ final class ServerViewModelTests: XCTestCase {
         XCTAssertEqual(vm.state, .warn)
         XCTAssertEqual(vm.alertLevel, .nominal)
     }
+
+    // MARK: - Lease frames
+
+    private func summary(at t: Date = Date(), cpu: Double = 12.5, host: String? = nil, health: String? = nil) throws -> LiveSummary {
+        var extra = ""
+        if let host { extra += ",\"host\":\(host)" }
+        if let health { extra += ",\"health\":\(health)" }
+        let json = """
+        {"ts":"\(SampleCodec.formatRFC3339UTC(t))","cpu":\(cpu),"mem":0.5,"disk":0.25,"rx":1048576,"tx":2097152,"load":0.3,"procs":120\(extra)}
+        """
+        return try SampleCodec.decoder().decode(LiveSummary.self, from: Data(json.utf8))
+    }
+
+    private func detail(_ body: String) throws -> LiveDetail {
+        try SampleCodec.decoder().decode(LiveDetail.self, from: Data("{\"ts\":\"2026-10-17T12:00:00Z\",\(body)}".utf8))
+    }
+
+    func testIngestSummaryAppendsSeries() throws {
+        let vm = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x")
+        let t = Date(timeIntervalSince1970: 1_800_000_000)
+        vm.ingest(summary: try summary(at: t))
+        XCTAssertEqual(vm.cpu.count, 1)
+        XCTAssertEqual(vm.mem.count, 1)
+        XCTAssertEqual(vm.disk.count, 1)
+        XCTAssertEqual(vm.net.count, 1)
+        XCTAssertEqual(vm.procCount.latest?.v, 120)
+        XCTAssertEqual(vm.cpu.latest?.v ?? 0, 0.125, accuracy: 0.0001)
+        XCTAssertEqual(vm.netRxMBps, 1.0, accuracy: 0.0001)
+        XCTAssertEqual(vm.netTxMBps, 2.0, accuracy: 0.0001)
+        XCTAssertEqual(vm.lastSeen, t)
+        XCTAssertTrue(vm.everConnected)
+        XCTAssertEqual(vm.state, .online)
+    }
+
+    func testIngestSummaryAppliesFactsOnlyWhenPresent() throws {
+        let vm = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x")
+        let host = #"{"os":"linux","arch":"amd64","cores":8,"mem_total":1,"uptime_s":1,"sampler":"0.4.0+abc"}"#
+        vm.ingest(summary: try summary(host: host))
+        XCTAssertEqual(vm.osArch, "Linux · amd64")
+        XCTAssertEqual(vm.samplerVersion, "0.4.0+abc")
+        vm.ingest(summary: try summary())
+        XCTAssertEqual(vm.osArch, "Linux · amd64")
+        XCTAssertEqual(vm.samplerVersion, "0.4.0+abc")
+    }
+
+    func testSummaryHealthKeepsLastValueAndInodes() throws {
+        let vm = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x")
+        vm.ingest(summary: try summary(health: #"{"procs":120,"inodes":0.97}"#))
+        XCTAssertEqual(vm.health.tint(of: .inodes), .critical)
+        XCTAssertEqual(vm.health.reasons.first(where: { $0.signal == .inodes })?.text, "Inodes 97%")
+        vm.ingest(summary: try summary())
+        XCTAssertEqual(vm.health.tint(of: .inodes), .critical)
+    }
+
+    func testApplyDetailProcessesFillsProcSeries() throws {
+        let vm = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x")
+        let d = try detail(#""procs":{"root":true,"top_n":1,"total":1,"visible":1,"items":[{"pid":1,"name":"init","cpu_pct":1.5,"rss":1024}]}"#)
+        vm.apply(detail: d, tab: .processes)
+        XCTAssertTrue(vm.procsAvailable)
+        XCTAssertTrue(vm.procsRoot)
+        XCTAssertEqual(vm.procs.count, 1)
+        XCTAssertEqual(vm.procs.latest?.items.first?.name, "init")
+    }
+
+    func testApplyDetailPortsAndDisks() throws {
+        let vm = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x")
+        let ports = try detail(#""ports":{"root":false,"collected_ts":"2026-10-17T12:00:00Z","max_conn":10,"truncated":false,"total":0,"items":[]}"#)
+        vm.apply(detail: ports, tab: .ports)
+        XCTAssertTrue(vm.portsAvailable)
+        let disks = try detail(#""disks":[{"mount":"/","fs":"ext4","used":50,"total":100}],"disk_io":{"read_bps":5,"write_bps":6,"read_cum":0,"write_cum":0}"#)
+        vm.apply(detail: disks, tab: .disks)
+        XCTAssertFalse(vm.disksPerMount.mounts.isEmpty)
+        XCTAssertEqual(vm.latestDisks.count, 1)
+    }
+
+    func testApplyDetailHealthKeepsZombieParents() throws {
+        let vm = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x")
+        let d = try detail(#""health":{"procs":10,"zombies":500,"zombie_parents":[{"pid":7,"name":"bad","count":500}]}"#)
+        vm.apply(detail: d, tab: .health)
+        XCTAssertEqual(vm.health.info?.zombieParents?.first?.name, "bad")
+        XCTAssertTrue(vm.health.reasons.contains { $0.signal == .zombies })
+    }
+
+    func testCloudSourceSkipsStaleCheck() throws {
+        let vm = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x")
+        let t = Date()
+        vm.ingest(summary: try summary(at: t), now: t)
+        vm.liveSource = .cloud
+        vm.checkStale(now: t.addingTimeInterval(600), limit: 30)
+        XCTAssertFalse(vm.state.isOffline)
+        vm.liveSource = .poll
+        vm.checkStale(now: t.addingTimeInterval(600), limit: 30)
+        XCTAssertTrue(vm.state.isOffline)
+    }
+
+    func testMarkReachableLeavesOffline() throws {
+        let vm = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x")
+        vm.ingest(summary: try summary())
+        vm.markOffline(reason: "down", at: Date())
+        XCTAssertTrue(vm.state.isOffline)
+        vm.markReachable(at: Date())
+        XCTAssertFalse(vm.state.isOffline)
+        XCTAssertEqual(vm.state, .online)
+    }
 }
