@@ -48,6 +48,7 @@ type Server struct {
 	limits   Limits
 	channels Channels
 	interval IntervalAdvisor
+	roles    Roles
 	ranks    *rankCache
 }
 
@@ -70,6 +71,9 @@ type Deps struct {
 	Channels Channels
 	// Interval gives the push interval of a host. Nil means no order.
 	Interval IntervalAdvisor
+	// Roles gives the role of a user in an org. Nil gives the owner role
+	// to every user token.
+	Roles Roles
 	// Middleware runs after the core middleware.
 	Middleware []echo.MiddlewareFunc
 	// Routes add routes after the core routes.
@@ -142,6 +146,7 @@ func New(d Deps) *Server {
 		limits:   d.Limits,
 		channels: d.Channels,
 		interval: d.Interval,
+		roles:    d.Roles,
 		ranks:    newRankCache(),
 	}
 	s.registerRoutes()
@@ -154,7 +159,7 @@ func New(d Deps) *Server {
 // Group gives a route group that requires a bearer token of one of the
 // kinds.
 func (s *Server) Group(prefix string, kinds ...store.TokenKind) *echo.Group {
-	return s.echo.Group(prefix, bearerMiddleware(s.issuer, kinds...))
+	return s.echo.Group(prefix, s.bearer(kinds...))
 }
 
 // Public gives a route group with no bearer middleware.
@@ -208,43 +213,51 @@ func (s *Server) registerRoutes() {
 		IdentifierExtractor: func(c echo.Context) (string, error) { return c.RealIP(), nil },
 	}))
 
-	// User/admin-authenticated group.
-	userGroup := v1.Group("", bearerMiddleware(s.issuer, store.TokenKindUser, store.TokenKindAdmin))
-	userGroup.POST("/auth/logout", s.handleLogout)
-	userGroup.GET("/nodes", s.handleListNodes)
-	userGroup.POST("/nodes", s.handleCreateNode)
-	userGroup.GET("/nodes/:id", s.handleGetNode)
-	userGroup.PUT("/nodes/:id", s.handleUpdateNode)
-	userGroup.DELETE("/nodes/:id", s.handleDeleteNode)
-	userGroup.POST("/nodes/:id/kill-process", s.handleKillProcess)
-	userGroup.GET("/nodes/:id/history", s.handleHistory)
-	userGroup.GET("/nodes/:id/processes", s.handleProcesses)
-	userGroup.GET("/nodes/:id/disks", s.handleDisks)
-	userGroup.GET("/history", s.handleFleetHistory)
-	userGroup.GET("/settings", s.handleGetSettings)
-	userGroup.PUT("/settings", s.handlePutSettings)
-	userGroup.GET("/alerts", s.handleListAlerts)
-	userGroup.GET("/alerts/recent", s.handleRecentAlerts)
-	userGroup.POST("/alerts/:id/ack", s.handleAckAlert)
-	userGroup.POST("/alerts/:id/snooze", s.handleSnoozeAlert)
+	// User/admin-authenticated groups. The read group needs the viewer
+	// role. Each route of the write group names its own role.
+	userKinds := []store.TokenKind{store.TokenKindUser, store.TokenKindAdmin}
+	read := v1.Group("", s.bearer(userKinds...), requireRole(store.RoleViewer))
+	write := v1.Group("", s.bearer(userKinds...))
+	member := requireRole(store.RoleMember)
+	admin := requireRole(store.RoleAdmin)
+
+	read.POST("/auth/logout", s.handleLogout)
+	read.GET("/nodes", s.handleListNodes)
+	read.GET("/nodes/:id", s.handleGetNode)
+	read.GET("/nodes/:id/history", s.handleHistory)
+	read.GET("/nodes/:id/processes", s.handleProcesses)
+	read.GET("/nodes/:id/disks", s.handleDisks)
+	read.GET("/history", s.handleFleetHistory)
+	read.GET("/settings", s.handleGetSettings)
+	read.GET("/alerts", s.handleListAlerts)
+	read.GET("/alerts/recent", s.handleRecentAlerts)
+	read.GET("/sampler/versions", s.handleSamplerVersions)
+	read.GET("/nodes/:id/disk-scans", s.handleListDiskScans)
+	read.GET("/disk-scans/:job", s.handleGetDiskScan)
+	read.GET("/disk-scans/:job/result", s.handleGetDiskScanResult)
+
+	write.POST("/alerts/:id/ack", s.handleAckAlert, member)
+	write.POST("/alerts/:id/snooze", s.handleSnoozeAlert, member)
+	write.POST("/nodes/:id/disk-scans", s.handleRequestDiskScan, member)
+	write.POST("/disk-scans/:job/cancel", s.handleCancelDiskScan, member)
+
+	write.POST("/nodes", s.handleCreateNode, admin)
+	write.PUT("/nodes/:id", s.handleUpdateNode, admin)
+	write.DELETE("/nodes/:id", s.handleDeleteNode, admin)
+	write.POST("/nodes/:id/kill-process", s.handleKillProcess, admin)
+	write.PUT("/settings", s.handlePutSettings, admin)
 	if s.channels != nil {
-		userGroup.GET("/channels", s.handleListChannels)
-		userGroup.POST("/channels", s.handleCreateChannel)
-		userGroup.GET("/channels/:id", s.handleGetChannel)
-		userGroup.PUT("/channels/:id", s.handleUpdateChannel)
-		userGroup.DELETE("/channels/:id", s.handleDeleteChannel)
-		userGroup.POST("/channels/:id/test", s.handleTestChannel)
+		write.GET("/channels", s.handleListChannels, admin)
+		write.POST("/channels", s.handleCreateChannel, admin)
+		write.GET("/channels/:id", s.handleGetChannel, admin)
+		write.PUT("/channels/:id", s.handleUpdateChannel, admin)
+		write.DELETE("/channels/:id", s.handleDeleteChannel, admin)
+		write.POST("/channels/:id/test", s.handleTestChannel, admin)
 	}
-	userGroup.POST("/sampler/enroll", s.handleSamplerEnroll)
-	userGroup.POST("/sampler/join-tokens", s.handleCreateJoinToken)
-	userGroup.GET("/sampler/versions", s.handleSamplerVersions)
-	userGroup.GET("/sampler/tokens", s.handleListSamplerTokens)
-	userGroup.DELETE("/sampler/tokens/:id", s.handleRevokeSamplerToken)
-	userGroup.POST("/nodes/:id/disk-scans", s.handleRequestDiskScan)
-	userGroup.GET("/nodes/:id/disk-scans", s.handleListDiskScans)
-	userGroup.GET("/disk-scans/:job", s.handleGetDiskScan)
-	userGroup.GET("/disk-scans/:job/result", s.handleGetDiskScanResult)
-	userGroup.POST("/disk-scans/:job/cancel", s.handleCancelDiskScan)
+	write.POST("/sampler/enroll", s.handleSamplerEnroll, admin)
+	write.POST("/sampler/join-tokens", s.handleCreateJoinToken, admin)
+	write.GET("/sampler/tokens", s.handleListSamplerTokens, admin)
+	write.DELETE("/sampler/tokens/:id", s.handleRevokeSamplerToken, admin)
 
 	// Sampler-authenticated group. Ingest gets its own (higher) budget
 	// since a fleet of samplers pushing 1/s can easily exceed the
@@ -254,7 +267,7 @@ func (s *Server) registerRoutes() {
 		ingestRPS = 1000
 	}
 	samplerGroup := v1.Group("",
-		bearerMiddleware(s.issuer, store.TokenKindSampler),
+		s.bearer(store.TokenKindSampler),
 		middleware.RateLimiterWithConfig(middleware.RateLimiterConfig{
 			Store: middleware.NewRateLimiterMemoryStore(rate.Limit(ingestRPS)),
 		}),
@@ -266,7 +279,7 @@ func (s *Server) registerRoutes() {
 
 	// Stream group: user tokens only, attached directly (no nested group
 	// so the WS upgrade can use the original ResponseWriter cleanly).
-	v1.GET("/stream", s.handleStream, bearerMiddleware(s.issuer, store.TokenKindUser, store.TokenKindAdmin))
+	v1.GET("/stream", s.handleStream, s.bearer(userKinds...), requireRole(store.RoleViewer))
 }
 
 type echoValidator struct{ v *validator.Validate }

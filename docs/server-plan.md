@@ -743,6 +743,7 @@ a, err := app.New(cfg,
     app.WithMiddleware(mw),                    // after the core middleware
     app.WithComponent(billing),                // runtime.Component: Run starts it, then stops it
     app.WithLimits(limits),                    // app.Limits: HistoryDays and MaxNodes of each org
+    app.WithRoles(roles),                      // app.Roles: the role of a user in an org
 )
 err = a.Run(ctx)                               // serves until ctx is done
 ```
@@ -754,6 +755,7 @@ err = a.Run(ctx)                               // serves until ctx is done
 - `store.NewToken(org, kind, label)` makes an API token with a new secret, and `store.HashToken(raw)` is the hash that the store keeps.
 - `(*store.PostgresStore).Migrate(ctx, fsys, table)` runs a set of goose SQL files with its own version table.
 - `app.Limits.MaxNodes` limits new nodes. `POST /v1/nodes`, a `PUT /v1/nodes/:id` that adds a node, and `POST /v1/sampler/enroll` reply 402 `plan_limit` above it. A negative value means no limit. Ingest for existing nodes does not stop.
+- `app.WithRoles` gives the role of a user in an org (`store.Role`: owner, admin, member, viewer). The bearer middleware sets it on the context (`authctx.RoleFrom`), unless an earlier middleware did. With no source, or for a token with no user, the role is owner. A user with no membership gets 403. `app.RequireRole(role)` checks the role on the routes of an extension.
 - `config.LoadSection(path, key, &out)` reads one key (for example `cloud`) from the same YAML file and env as `config.Load`.
 
 ---

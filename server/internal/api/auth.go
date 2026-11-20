@@ -1,9 +1,13 @@
 package api
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/towertail/towertail/server/authctx"
@@ -12,17 +16,25 @@ import (
 	"github.com/towertail/towertail/server/wire"
 )
 
-// bearerMiddleware rejects requests without a valid bearer token.
+// Roles gives the role of a user in an org.
+type Roles interface {
+	Role(ctx context.Context, orgID, userID uuid.UUID) (store.Role, error)
+}
+
+// bearer rejects requests without a valid bearer token.
 // kinds may contain multiple kinds (e.g. user + admin); empty means any.
 // A token that an earlier middleware set with authctx.Set (for example a
-// cloud session cookie) counts as verified.
-func bearerMiddleware(issuer *auth.TokenIssuer, kinds ...store.TokenKind) echo.MiddlewareFunc {
+// cloud session cookie) counts as verified. After the check, bearer sets
+// the role of user and admin tokens, unless an earlier middleware did.
+// A token with no user, or a server with no Roles, gives owner.
+func (s *Server) bearer(kinds ...store.TokenKind) echo.MiddlewareFunc {
 	allowed := map[store.TokenKind]struct{}{}
 	for _, k := range kinds {
 		allowed[k] = struct{}{}
 	}
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
+			ctx := c.Request().Context()
 			t, ok := authctx.TokenFrom(c)
 			if !ok {
 				raw := extractBearer(c)
@@ -30,7 +42,7 @@ func bearerMiddleware(issuer *auth.TokenIssuer, kinds ...store.TokenKind) echo.M
 					return echo.NewHTTPError(http.StatusUnauthorized, "missing token")
 				}
 				var err error
-				if t, err = issuer.Verify(c.Request().Context(), raw); err != nil {
+				if t, err = s.issuer.Verify(ctx, raw); err != nil {
 					return echo.NewHTTPError(http.StatusUnauthorized, "invalid token")
 				}
 			}
@@ -40,6 +52,34 @@ func bearerMiddleware(issuer *auth.TokenIssuer, kinds ...store.TokenKind) echo.M
 				}
 			}
 			authctx.Set(c, t)
+			if _, has := authctx.RoleFrom(c); has || (t.Kind != store.TokenKindUser && t.Kind != store.TokenKindAdmin) {
+				return next(c)
+			}
+			role := store.RoleOwner
+			if s.roles != nil && t.UserID != nil {
+				var err error
+				if role, err = s.roles.Role(ctx, t.OrgID, *t.UserID); errors.Is(err, store.ErrNoMembership) {
+					return echo.NewHTTPError(http.StatusForbidden, "no access to this org")
+				} else if err != nil {
+					return err
+				}
+			}
+			authctx.SetRole(c, role)
+			return next(c)
+		}
+	}
+}
+
+// RequireRole rejects a request when the role on the context is below
+// need, or when there is no role.
+func RequireRole(need store.Role) echo.MiddlewareFunc { return requireRole(need) }
+
+func requireRole(need store.Role) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			if r, ok := authctx.RoleFrom(c); !ok || !r.Allows(need) {
+				return echo.NewHTTPError(http.StatusForbidden, fmt.Sprintf("role %s needed", need))
+			}
 			return next(c)
 		}
 	}

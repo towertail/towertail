@@ -70,3 +70,31 @@ func TestLongProcIgnoreSet(t *testing.T) {
 		t.Fatalf("set = %v", got)
 	}
 }
+
+func TestRoleAllows(t *testing.T) {
+	order := []Role{RoleViewer, RoleMember, RoleAdmin, RoleOwner}
+	for i, have := range order {
+		for j, need := range order {
+			if got, want := have.Allows(need), i >= j; got != want {
+				t.Errorf("%s.Allows(%s) = %v, want %v", have, need, got, want)
+			}
+		}
+	}
+	for _, need := range order {
+		if Role("").Allows(need) {
+			t.Errorf("an empty role allows %s", need)
+		}
+	}
+}
+
+func TestParseRole(t *testing.T) {
+	for _, name := range []string{"owner", "admin", "member", "viewer"} {
+		r, err := ParseRole(name)
+		if err != nil || string(r) != name {
+			t.Errorf("ParseRole(%q) = %q, %v", name, r, err)
+		}
+	}
+	if _, err := ParseRole("root"); err == nil {
+		t.Error("ParseRole(root) has no error")
+	}
+}

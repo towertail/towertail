@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/towertail/towertail/server/internal/api"
 	"github.com/towertail/towertail/server/notify"
 	"github.com/towertail/towertail/server/runtime"
 	"github.com/towertail/towertail/server/store"
@@ -22,6 +23,13 @@ type Limits interface {
 	// MaxNodes is the number of nodes that the org can have. A negative
 	// value means no limit.
 	MaxNodes(ctx context.Context, orgID uuid.UUID) int
+}
+
+// Roles gives the role of a user in an org.
+type Roles interface {
+	// Role returns store.ErrNoMembership when the user has no role in the
+	// org.
+	Role(ctx context.Context, orgID, userID uuid.UUID) (store.Role, error)
 }
 
 // IntervalAdvisor gives the push interval of a host. 0 means that the
@@ -52,6 +60,7 @@ type builder struct {
 	limits     Limits
 	mailer     notify.Mailer
 	interval   IntervalAdvisor
+	roles      Roles
 }
 
 type migrations struct {
@@ -105,3 +114,11 @@ func WithLimits(l Limits) Option { return func(b *builder) { b.limits = l } }
 // WithIntervalAdvisor sets the source of the push interval orders in the
 // ingest reply.
 func WithIntervalAdvisor(a IntervalAdvisor) Option { return func(b *builder) { b.interval = a } }
+
+// WithRoles sets the source of the roles. With no source, each user token
+// has the owner role.
+func WithRoles(r Roles) Option { return func(b *builder) { b.roles = r } }
+
+// RequireRole rejects a request when the role on the context is below
+// need, or when there is no role. Use it on the routes of an extension.
+func RequireRole(need store.Role) echo.MiddlewareFunc { return api.RequireRole(need) }

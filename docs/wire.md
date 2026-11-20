@@ -41,6 +41,19 @@ Four token kinds, all opaque strings with a `tt_` prefix. Raw tokens are only ev
 
 Sampler tokens are bound to one `node_id`. Ingest/control endpoints reject tokens without a binding.
 
+### Roles
+
+A user has a role in an org. The roles from the highest to the lowest rank are `owner`, `admin`, `member` and `viewer`. A role allows each route of the same rank or a lower rank. The table in §3 gives the lowest role of each route.
+
+| Role | Can |
+|---|---|
+| `viewer` | Read nodes, history, processes, disks, settings, alerts, disk scans and the stream. Log out. |
+| `member` | Everything of `viewer`, and ack or snooze an alert, and request or cancel a disk scan. |
+| `admin` | Everything of `member`, and change nodes and settings, use the channels (also read them, because a channel holds a secret URL), kill a process, enroll samplers, and manage sampler tokens and join tokens. |
+| `owner` | Everything of `admin`. An extension (the cloud) uses it for billing and the org. |
+
+Self-hosted mode has no role source. There, each `user` and `admin` token has the `owner` role. A token with no user also has the `owner` role, for example the bootstrap admin token. A server with a role source (the cloud, through `app.WithRoles`) finds the role of the token user in the org of the token. A user with no role in the org gets 403 `no access to this org`. A role that is too low gives 403 "role <role> needed". `sampler` and `join` tokens have no role.
+
 ---
 
 ## 3. REST endpoints
@@ -59,42 +72,42 @@ Base path `/v1`. Authed unless otherwise marked.
 
 ### User / admin
 
-| Method | Path | Request | Response |
-|---|---|---|---|
-| POST | `/v1/auth/logout` | — | 204 |
-| GET | `/v1/nodes` | — | `[Node]` |
-| POST | `/v1/nodes` | `Node` | `Node` (201) |
-| GET | `/v1/nodes/{id}` | — | `Node` |
-| PUT | `/v1/nodes/{id}` | `Node` | `Node` |
-| DELETE | `/v1/nodes/{id}` | — | 204 |
-| POST | `/v1/nodes/{id}/kill-process?pid=…` | — | 202 |
-| GET | `/v1/nodes/{id}/history?metric=cpu&from=…&to=…&step=1m` | — | `NodeHistoryResponse` |
-| GET | `/v1/nodes/{id}/history?metrics=cpu,mem&from=…&to=…&step=1m` | — | `NodeHistoryMultiResponse`. `metrics` is a list of 8 names at most. It replaces `metric`. |
-| GET | `/v1/history?nodes=<ids>&metrics=<names>&from=…&to=…&step=1m` | — | `FleetHistoryResponse`. `nodes` is a list of 200 IDs at most. `metrics` is a list of 8 names at most. The default range is 30 min. A range longer than 24 h gives 400. |
-| GET | `/v1/nodes/{id}/processes?from=…&to=…&limit=10` | — | `NodeProcessesResponse` |
-| GET | `/v1/nodes/{id}/disks?from=…&to=…` | — | `NodeDisksResponse` |
-| GET | `/v1/settings` | — | `ServerSettings` |
-| PUT | `/v1/settings` | `ServerSettings` | `ServerSettings` |
-| GET | `/v1/alerts` | — | `AlertList`: the open alerts of the org, the newest first |
-| GET | `/v1/alerts/recent?days=7` | — | `AlertList`: the alert events of the org in the last `days` (1 to 90, default 7), the newest first, 200 at most. A change back to ok has the tint `ok` |
-| POST | `/v1/alerts/{id}/ack` | — | `Alert` (404 if the alert is not open) |
-| POST | `/v1/alerts/{id}/snooze?until=RFC3339` | — | `Alert` (404 if the alert is not open) |
-| GET | `/v1/channels` | — | `[Channel]` |
-| POST | `/v1/channels` | `ChannelRequest` | `Channel` (201, 400 if not valid) |
-| GET | `/v1/channels/{id}` | — | `Channel` |
-| PUT | `/v1/channels/{id}` | `ChannelRequest` | `Channel` |
-| DELETE | `/v1/channels/{id}` | — | 204 |
-| POST | `/v1/channels/{id}/test` | — | `ChannelTestResponse` (200, also when the send fails) |
-| POST | `/v1/sampler/enroll` | `EnrollRequest` | `EnrollResponse` (see §3.0.1) |
-| POST | `/v1/sampler/join-tokens` | `JoinTokenRequest` | `JoinTokenResponse` (201). 402 when the plan is full |
-| GET | `/v1/sampler/versions` | — | `{ "linux-amd64": "sha256:…", … }` |
-| GET | `/v1/sampler/tokens` | — | `[SamplerToken]`: the sampler tokens of the org, with no secret |
-| DELETE | `/v1/sampler/tokens/{id}` | — | 204. The node stays. Its sampler cannot send again until it enrolls again |
-| POST | `/v1/nodes/{id}/disk-scans` | `DiskScanRequest` | `DiskScanJob` (202) |
-| GET | `/v1/nodes/{id}/disk-scans` | — | `{ "jobs": [DiskScanJob] }`, the newest first |
-| GET | `/v1/disk-scans/{job}` | — | `DiskScanJob` |
-| GET | `/v1/disk-scans/{job}/result` | — | the scan result line, gzip (see §3.1) |
-| POST | `/v1/disk-scans/{job}/cancel` | — | `DiskScanJob` |
+| Method | Path | Request | Response | Role |
+|---|---|---|---|---|
+| POST | `/v1/auth/logout` | — | 204 | viewer |
+| GET | `/v1/nodes` | — | `[Node]` | viewer |
+| POST | `/v1/nodes` | `Node` | `Node` (201) | admin |
+| GET | `/v1/nodes/{id}` | — | `Node` | viewer |
+| PUT | `/v1/nodes/{id}` | `Node` | `Node` | admin |
+| DELETE | `/v1/nodes/{id}` | — | 204 | admin |
+| POST | `/v1/nodes/{id}/kill-process?pid=…` | — | 202 | admin |
+| GET | `/v1/nodes/{id}/history?metric=cpu&from=…&to=…&step=1m` | — | `NodeHistoryResponse` | viewer |
+| GET | `/v1/nodes/{id}/history?metrics=cpu,mem&from=…&to=…&step=1m` | — | `NodeHistoryMultiResponse`. `metrics` is a list of 8 names at most. It replaces `metric`. | viewer |
+| GET | `/v1/history?nodes=<ids>&metrics=<names>&from=…&to=…&step=1m` | — | `FleetHistoryResponse`. `nodes` is a list of 200 IDs at most. `metrics` is a list of 8 names at most. The default range is 30 min. A range longer than 24 h gives 400. | viewer |
+| GET | `/v1/nodes/{id}/processes?from=…&to=…&limit=10` | — | `NodeProcessesResponse` | viewer |
+| GET | `/v1/nodes/{id}/disks?from=…&to=…` | — | `NodeDisksResponse` | viewer |
+| GET | `/v1/settings` | — | `ServerSettings` | viewer |
+| PUT | `/v1/settings` | `ServerSettings` | `ServerSettings` | admin |
+| GET | `/v1/alerts` | — | `AlertList`: the open alerts of the org, the newest first | viewer |
+| GET | `/v1/alerts/recent?days=7` | — | `AlertList`: the alert events of the org in the last `days` (1 to 90, default 7), the newest first, 200 at most. A change back to ok has the tint `ok` | viewer |
+| POST | `/v1/alerts/{id}/ack` | — | `Alert` (404 if the alert is not open) | member |
+| POST | `/v1/alerts/{id}/snooze?until=RFC3339` | — | `Alert` (404 if the alert is not open) | member |
+| GET | `/v1/channels` | — | `[Channel]` | admin |
+| POST | `/v1/channels` | `ChannelRequest` | `Channel` (201, 400 if not valid) | admin |
+| GET | `/v1/channels/{id}` | — | `Channel` | admin |
+| PUT | `/v1/channels/{id}` | `ChannelRequest` | `Channel` | admin |
+| DELETE | `/v1/channels/{id}` | — | 204 | admin |
+| POST | `/v1/channels/{id}/test` | — | `ChannelTestResponse` (200, also when the send fails) | admin |
+| POST | `/v1/sampler/enroll` | `EnrollRequest` | `EnrollResponse` (see §3.0.1) | admin |
+| POST | `/v1/sampler/join-tokens` | `JoinTokenRequest` | `JoinTokenResponse` (201). 402 when the plan is full | admin |
+| GET | `/v1/sampler/versions` | — | `{ "linux-amd64": "sha256:…", … }` | viewer |
+| GET | `/v1/sampler/tokens` | — | `[SamplerToken]`: the sampler tokens of the org, with no secret | admin |
+| DELETE | `/v1/sampler/tokens/{id}` | — | 204. The node stays. Its sampler cannot send again until it enrolls again | admin |
+| POST | `/v1/nodes/{id}/disk-scans` | `DiskScanRequest` | `DiskScanJob` (202) | member |
+| GET | `/v1/nodes/{id}/disk-scans` | — | `{ "jobs": [DiskScanJob] }`, the newest first | viewer |
+| GET | `/v1/disk-scans/{job}` | — | `DiskScanJob` | viewer |
+| GET | `/v1/disk-scans/{job}/result` | — | the scan result line, gzip (see §3.1) | viewer |
+| POST | `/v1/disk-scans/{job}/cancel` | — | `DiskScanJob` | member |
 
 ### Sampler-only
 

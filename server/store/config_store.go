@@ -10,6 +10,9 @@ import (
 // ErrNotFound is returned when a lookup misses.
 var ErrNotFound = errors.New("store: not found")
 
+// ErrNoMembership is returned when a user has no role in an org.
+var ErrNoMembership = errors.New("store: no membership")
+
 // ErrNotImplemented is returned by a store for an operation that it does
 // not support. The API maps it to 501.
 var ErrNotImplemented = errors.New("store: not implemented")

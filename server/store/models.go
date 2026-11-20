@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -243,3 +244,42 @@ type ControlMessage struct {
 // ZeroOrg is the synthetic org id used in self-hosted mode where
 // multi-tenancy is not active.
 var ZeroOrg = uuid.UUID{}
+
+// Role is the rank of a user in an org.
+type Role string
+
+const (
+	RoleOwner  Role = "owner"
+	RoleAdmin  Role = "admin"
+	RoleMember Role = "member"
+	RoleViewer Role = "viewer"
+)
+
+func (r Role) rank() int {
+	switch r {
+	case RoleOwner:
+		return 4
+	case RoleAdmin:
+		return 3
+	case RoleMember:
+		return 2
+	case RoleViewer:
+		return 1
+	}
+	return 0
+}
+
+// Valid reports whether r is one of the four roles.
+func (r Role) Valid() bool { return r.rank() > 0 }
+
+// Allows reports whether r has the rank of need or a higher rank. An
+// invalid role allows nothing.
+func (r Role) Allows(need Role) bool { return r.Valid() && r.rank() >= need.rank() }
+
+// ParseRole converts a role name.
+func ParseRole(s string) (Role, error) {
+	if r := Role(s); r.Valid() {
+		return r, nil
+	}
+	return "", fmt.Errorf("unknown role %q", s)
+}

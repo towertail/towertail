@@ -74,6 +74,60 @@ func TestWithRoutes(t *testing.T) {
 	}
 }
 
+type fakeRoles map[uuid.UUID]store.Role
+
+func (f fakeRoles) Role(_ context.Context, _, userID uuid.UUID) (store.Role, error) {
+	if r, ok := f[userID]; ok {
+		return r, nil
+	}
+	return "", store.ErrNoMembership
+}
+
+func TestRequireRoleExtension(t *testing.T) {
+	adminID, ownerID := uuid.New(), uuid.New()
+	a, err := New(testConfig(t), quietLog(),
+		WithRoles(fakeRoles{adminID: store.RoleAdmin, ownerID: store.RoleOwner}),
+		WithRoutes(func(r Router) {
+			r.Group("/v1/x", store.TokenKindUser).GET("/secret", func(c echo.Context) error {
+				return c.String(http.StatusOK, "ok")
+			}, RequireRole(store.RoleOwner))
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(a.close)
+	tokenFor := func(userID uuid.UUID) string {
+		raw, tok, err := store.NewToken(store.ZeroOrg, store.TokenKindUser, "test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		tok.UserID = &userID
+		if err := a.store.PutToken(context.Background(), tok); err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	for _, tc := range []struct {
+		name  string
+		token string
+		want  int
+	}{
+		{"admin", tokenFor(adminID), http.StatusForbidden},
+		{"owner", tokenFor(ownerID), http.StatusOK},
+		{"no membership", tokenFor(uuid.New()), http.StatusForbidden},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/v1/x/secret", nil)
+			req.Header.Set("Authorization", "Bearer "+tc.token)
+			rec := httptest.NewRecorder()
+			a.Handler().ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, tc.want, rec.Body)
+			}
+		})
+	}
+}
+
 func TestWithMiddleware(t *testing.T) {
 	a, err := New(testConfig(t), quietLog(), WithMiddleware(func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
