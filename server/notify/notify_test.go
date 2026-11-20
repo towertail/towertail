@@ -49,3 +49,16 @@ func TestDedupKeyInstance(t *testing.T) {
 		t.Errorf("cpu key = %q", got)
 	}
 }
+
+func TestAckDedupKey(t *testing.T) {
+	org, node := uuid.New(), uuid.New()
+	ack := Ack{OrgID: org, NodeID: node, Metric: "long_proc/812/1700000000"}
+	alert := Alert{OrgID: org, NodeID: node, Metric: "long_proc", Instance: "812/1700000000"}
+	if ack.DedupKey() != alert.DedupKey() {
+		t.Errorf("long_proc: %q, want %q", ack.DedupKey(), alert.DedupKey())
+	}
+	cpu := Ack{OrgID: org, NodeID: node, Metric: "cpu"}
+	if cpu.DedupKey() != (Alert{OrgID: org, NodeID: node, Metric: "cpu"}).DedupKey() {
+		t.Errorf("cpu: %q", cpu.DedupKey())
+	}
+}

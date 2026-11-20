@@ -452,3 +452,21 @@ func (e *Engine) notify(eventID uuid.UUID, c change, node *store.Node) {
 		}()
 	}
 }
+
+// Acked tells the notifiers that implement notify.AckObserver about an ack
+// or a snooze. Each call has its own goroutine and timeout.
+func (e *Engine) Acked(_ context.Context, a notify.Ack) {
+	for _, n := range e.notifiers {
+		o, ok := n.(notify.AckObserver)
+		if !ok {
+			continue
+		}
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), notifyTimeout)
+			defer cancel()
+			if err := o.AlertAcked(ctx, a); err != nil {
+				e.log.Warn("alerter: ack", "notifier", n.Name(), "node_id", a.NodeID, "metric", a.Metric, "err", err)
+			}
+		}()
+	}
+}

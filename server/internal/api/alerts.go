@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/towertail/towertail/server/authctx"
 	"github.com/towertail/towertail/server/internal/clickhouse"
+	"github.com/towertail/towertail/server/notify"
+	"github.com/towertail/towertail/server/store"
 	"github.com/towertail/towertail/server/wire"
 )
 
@@ -84,11 +87,14 @@ func (s *Server) handleAckAlert(c echo.Context) error {
 		return err
 	}
 	now := time.Now().UTC()
-	if err := s.ch.AckAlert(c.Request().Context(), t.OrgID, a.ID, t.ID, now); err != nil {
+	by := ackedBy(t)
+	ctx := c.Request().Context()
+	if err := s.ch.AckAlert(ctx, t.OrgID, a.ID, by, now); err != nil {
 		return err
 	}
-	a.AckedBy, a.AckedAt = &t.ID, &now
+	a.AckedBy, a.AckedAt = &by, &now
 	s.audit(c, "ack", "alert", a.ID)
+	s.tellAcked(ctx, t, a, by, now, false)
 	return c.JSON(http.StatusOK, a)
 }
 
@@ -108,7 +114,23 @@ func (s *Server) handleSnoozeAlert(c echo.Context) error {
 	}
 	a.SnoozedUntil = &until
 	s.audit(c, "snooze", "alert", a.ID, "until", until)
+	s.tellAcked(c.Request().Context(), t, a, ackedBy(t), time.Now().UTC(), true)
 	return c.JSON(http.StatusOK, a)
+}
+
+// ackedBy is the user of the token when it has one, else the token.
+func ackedBy(t store.Token) uuid.UUID {
+	if t.UserID != nil {
+		return *t.UserID
+	}
+	return t.ID
+}
+
+func (s *Server) tellAcked(ctx context.Context, t store.Token, a wire.Alert, by uuid.UUID, at time.Time, snooze bool) {
+	if s.alerter == nil {
+		return
+	}
+	s.alerter.Acked(ctx, notify.Ack{OrgID: t.OrgID, EventID: a.ID, NodeID: a.NodeID, Metric: a.Metric, By: by, At: at, Snooze: snooze})
 }
 
 // openAlert finds the open alert of the path id in the org of the caller.

@@ -162,3 +162,28 @@ func (a Alert) DedupKey() string {
 	}
 	return k
 }
+
+// Ack is one ack or snooze of an open alert.
+type Ack struct {
+	OrgID   uuid.UUID
+	EventID uuid.UUID
+	NodeID  uuid.UUID
+	// Metric is the stored metric of the alert, with the instance after a
+	// "/" (the metric of wire.Alert).
+	Metric string
+	// By is the user ID when the token has a user, else the token ID.
+	By     uuid.UUID
+	At     time.Time
+	Snooze bool
+}
+
+// DedupKey gives the same key as Alert.DedupKey for the same alert.
+func (a Ack) DedupKey() string {
+	metric, instance, _ := strings.Cut(a.Metric, "/")
+	return Alert{OrgID: a.OrgID, NodeID: a.NodeID, Metric: metric, Instance: instance}.DedupKey()
+}
+
+// AckObserver is a notifier that hears each ack and snooze.
+type AckObserver interface {
+	AlertAcked(ctx context.Context, a Ack) error
+}

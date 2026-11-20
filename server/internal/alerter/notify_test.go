@@ -578,3 +578,34 @@ func TestAlerter_LoadSkipsAlertedRegistration(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 }
+
+// ackNotifier also hears the acks.
+type ackNotifier struct {
+	*countingNotifier
+	acks chan notify.Ack
+}
+
+func (n *ackNotifier) AlertAcked(_ context.Context, a notify.Ack) error {
+	n.acks <- a
+	return nil
+}
+
+func TestAlerter_Acked(t *testing.T) {
+	plain := newCountingNotifier()
+	obs := &ackNotifier{countingNotifier: newCountingNotifier(), acks: make(chan notify.Ack, 1)}
+	e := New(nil, newClock(), &capturingSink{}, nopStore{}, newFakeConfig(store.DefaultServerSettings()), plain, obs)
+
+	want := notify.Ack{OrgID: uuid.New(), NodeID: uuid.New(), Metric: "cpu", By: uuid.New(), Snooze: true}
+	e.Acked(context.Background(), want)
+	select {
+	case got := <-obs.acks:
+		if got != want {
+			t.Errorf("ack = %+v, want %+v", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the observer got no ack")
+	}
+	if n := len(plain.ch); n != 0 {
+		t.Errorf("plain notifier got %d alerts", n)
+	}
+}
