@@ -48,6 +48,8 @@ final class LocalTestServer: @unchecked Sendable {
     private let listener: NWListener
     private let listenerReady = DispatchSemaphore(value: 0)
     private let expectedToken: String
+    /// Paths that need no bearer token, such as the sign-in routes.
+    private let publicPaths: Set<String>
 
     /// Handlers keyed by "METHOD PATH". Path matching is prefix-aware: a
     /// registered "GET /v1/nodes/" will match "/v1/nodes/<uuid>".
@@ -72,8 +74,9 @@ final class LocalTestServer: @unchecked Sendable {
         URL(string: "http://127.0.0.1:\(port)")!
     }
 
-    init(token: String) throws {
+    init(token: String, publicPaths: Set<String> = []) throws {
         self.expectedToken = token
+        self.publicPaths = publicPaths
         let params = NWParameters.tcp
         params.allowLocalEndpointReuse = true
         params.requiredInterfaceType = .loopback
@@ -204,7 +207,7 @@ final class LocalTestServer: @unchecked Sendable {
                               headers: [String: String], body: Data) {
         // Bearer auth required.
         let expected = "Bearer \(expectedToken)"
-        guard headers["authorization"] == expected else {
+        guard publicPaths.contains(path) || headers["authorization"] == expected else {
             writeHTTP(connection: connection, status: 401, body: Data("{\"error\":{\"code\":\"unauthorized\",\"message\":\"missing or invalid bearer\"}}".utf8),
                       contentType: "application/json", closeAfter: true)
             return
@@ -338,6 +341,7 @@ final class LocalTestServer: @unchecked Sendable {
         case 403: return "Forbidden"
         case 404: return "Not Found"
         case 409: return "Conflict"
+        case 429: return "Too Many Requests"
         case 500: return "Internal Server Error"
         default: return "Status"
         }

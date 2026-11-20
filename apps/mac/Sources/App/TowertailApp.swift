@@ -22,6 +22,7 @@ struct TowertailApp: App {
                 .environment(env.nodeStore)
                 .environment(env.samplerUpdater)
                 .environment(\.backend, env.backend)
+                .environment(env.cloud)
         } label: {
             // The menu-bar label is instantiated eagerly at launch (unlike
             // the popover content). Piggyback the tap-routing installer
@@ -52,6 +53,7 @@ struct TowertailApp: App {
                 .environment(env.nodeStore)
                 .environment(env.samplerUpdater)
                 .environment(\.backend, env.backend)
+                .environment(env.cloud)
                 // Settings is an .accessory-policy scene by default, so
                 // without flipping activation policy the app never gets a
                 // Dock icon while it's open — meaning the user can't ⌘-Tab
@@ -72,6 +74,7 @@ struct TowertailApp: App {
                         .environment(env.serverSettings)
                         .environment(env.nodeStore)
                         .environment(\.backend, env.backend)
+                        .environment(env.cloud)
                 } else {
                     ContentUnavailableView("No host", systemImage: "server.rack")
                 }
@@ -91,6 +94,7 @@ struct TowertailApp: App {
                 .environment(env.store)
                 .environment(env.samplerUpdater)
                 .environment(\.backend, env.backend)
+                .environment(env.cloud)
                 .onAppear { ActivationPolicyCoordinator.shared.acquire() }
                 .onDisappear { ActivationPolicyCoordinator.shared.release() }
         }

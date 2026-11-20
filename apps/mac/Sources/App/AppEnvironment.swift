@@ -9,16 +9,19 @@ import SwiftUI
 final class AppEnvironment {
     let backend: any Backend
     let updater = Updater()
+    /// The Cloud account and data path. Nil in remote mode.
+    let cloud: CloudSession?
 
-    /// Remote mode is selected by env vars `TOWERTAIL_REMOTE_URL` +
-    /// `TOWERTAIL_REMOTE_TOKEN` at launch. Absent both, we stay in
-    /// .local. A proper mode toggle (Preferences → Account) lands in
-    /// Phase L along with keychain-stored credentials.
+    /// Remote mode is a developer override. It needs the env vars
+    /// `TOWERTAIL_REMOTE_URL` and `TOWERTAIL_REMOTE_TOKEN` and a debug
+    /// build. Else the app runs in .local mode with the Cloud account.
     static var defaultMode: BackendMode {
+        #if DEBUG
         let env = ProcessInfo.processInfo.environment
         if env["TOWERTAIL_REMOTE_URL"] != nil, env["TOWERTAIL_REMOTE_TOKEN"] != nil {
             return .remote
         }
+        #endif
         return .local
     }
 
@@ -32,6 +35,7 @@ final class AppEnvironment {
         switch mode {
         case .local:
             self.backend = LocalBackend()
+            self.cloud = Self.makeCloud()
         case .remote:
             let env = ProcessInfo.processInfo.environment
             guard
@@ -44,15 +48,30 @@ final class AppEnvironment {
                     category: "lifecycle"
                 )
                 self.backend = LocalBackend()
+                self.cloud = nil
                 return
             }
             self.backend = RemoteBackend(endpoint: url, token: token)
+            self.cloud = nil
         }
+    }
+
+    private static func makeCloud() -> CloudSession {
+        let endpoint = CloudAccount.configuredEndpoint()
+        let account = CloudAccount(
+            endpoint: endpoint,
+            keychain: CloudKeychain(),
+            client: CloudAuthClient(endpoint: endpoint)
+        )
+        return CloudSession(account: account)
     }
 
     func start() {
         backend.start()
         updater.start()
+        if let account = cloud?.account {
+            Task { await account.restore() }
+        }
         let settings = serverSettings
         store.startStaleWatchdog { settings.pollingInterval(for: $0) }
     }

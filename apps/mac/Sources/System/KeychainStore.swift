@@ -1,9 +1,9 @@
 import Foundation
 import Security
 
-/// Thin wrapper over the Keychain Services `SecItem*` API for storing per-node
-/// SSH passwords. Keyed by the node's UUID so each host gets an independent
-/// secret — deleting a node deletes exactly its password with no ambiguity.
+/// Thin wrapper over the Keychain Services `SecItem*` API. The SSH password
+/// functions key by the node's UUID, so each host gets an independent secret.
+/// The generic functions take the service, as `CloudKeychain` does.
 enum KeychainStore {
     /// Shared service identifier. Using a fixed string (rather than the bundle
     /// id) means a developer build and a release build both see the same
@@ -22,8 +22,19 @@ enum KeychainStore {
     }
 
     static func setPassword(_ password: String, for nodeId: UUID) throws {
-        let account = nodeId.uuidString
-        let data = Data(password.utf8)
+        try set(password, service: service, account: nodeId.uuidString)
+    }
+
+    static func getPassword(for nodeId: UUID) throws -> String? {
+        try get(service: service, account: nodeId.uuidString)
+    }
+
+    static func deletePassword(for nodeId: UUID) throws {
+        try delete(service: service, account: nodeId.uuidString)
+    }
+
+    static func set(_ secret: String, service: String, account: String) throws {
+        let data = Data(secret.utf8)
 
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -54,11 +65,11 @@ enum KeychainStore {
         }
     }
 
-    static func getPassword(for nodeId: UUID) throws -> String? {
+    static func get(service: String, account: String) throws -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: nodeId.uuidString,
+            kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
@@ -74,11 +85,11 @@ enum KeychainStore {
         return s
     }
 
-    static func deletePassword(for nodeId: UUID) throws {
+    static func delete(service: String, account: String) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: nodeId.uuidString,
+            kSecAttrAccount as String: account,
         ]
         let status = SecItemDelete(query as CFDictionary)
         if status == errSecSuccess || status == errSecItemNotFound { return }

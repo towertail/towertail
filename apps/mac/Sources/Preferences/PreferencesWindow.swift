@@ -2,12 +2,13 @@ import SwiftUI
 
 struct PreferencesWindow: View {
     enum Tab: String, CaseIterable, Hashable {
-        case servers, alerts, general, logs
+        case servers, alerts, account, general, logs
 
         var title: String {
             switch self {
             case .servers: return "Servers"
             case .alerts: return "Alerts"
+            case .account: return "Cloud"
             case .general: return "General"
             case .logs: return "Logs"
             }
@@ -17,6 +18,7 @@ struct PreferencesWindow: View {
             switch self {
             case .servers: return "server.rack"
             case .alerts: return "gauge"
+            case .account: return "cloud"
             case .general: return "gear"
             case .logs: return "doc.text.magnifyingglass"
             }
@@ -52,6 +54,8 @@ struct PreferencesWindow: View {
                     serverSelection = [id]
                     selection = .servers
                 }
+            case .account:
+                AccountPane()
             case .general:
                 GeneralPane()
             case .logs:
