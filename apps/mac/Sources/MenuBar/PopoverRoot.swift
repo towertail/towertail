@@ -10,6 +10,7 @@ enum PopoverFilter: Hashable {
 struct PopoverRoot: View {
     @Environment(ServerStore.self) private var store
     @Environment(NodeStore.self) private var nodeStore
+    @Environment(ClientSettings.self) private var clientSettings
     /// `MenuBarExtra(style: .window)` keeps its popover content view tree
     /// alive even after the user dismisses the popover (window ordered
     /// out, not destroyed) so the next click feels instant. The downside:
@@ -49,13 +50,18 @@ struct PopoverRoot: View {
         VStack(spacing: 0) {
             PopoverHeader(filter: $filter, searchText: $searchText)
             Divider().opacity(0.3)
-            ScrollView {
-                LazyVStack(spacing: 10) {
-                    ForEach(filteredVMs) { vm in
-                        ServerCardView(vm: vm)
+            switch clientSettings.popoverLayout {
+            case .cards:
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        ForEach(filteredVMs) { vm in
+                            ServerCardView(vm: vm)
+                        }
                     }
+                    .padding(10)
                 }
-                .padding(10)
+            case .rows:
+                rowsBody
             }
         }
         .frame(width: 360, height: 620)
@@ -74,6 +80,21 @@ struct PopoverRoot: View {
                 debouncedQuery = newValue
             }
         }
+    }
+
+    @ViewBuilder
+    private var rowsBody: some View {
+        let vms = filteredVMs
+        ServerRowsHeader(count: vms.count)
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(vms) { vm in
+                    Divider().opacity(0.4)
+                    ServerRowView(vm: vm)
+                }
+            }
+        }
+        RowsFooter()
     }
 
     private var filteredVMs: [ServerViewModel] {

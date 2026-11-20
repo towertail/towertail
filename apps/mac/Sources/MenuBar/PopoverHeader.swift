@@ -3,6 +3,7 @@ import AppKit
 
 struct PopoverHeader: View {
     @Environment(ServerStore.self) private var store
+    @Environment(ClientSettings.self) private var clientSettings
     @Environment(\.dismiss) private var dismiss
     /// Used to grab focus when the popover reopens. `MenuBarExtra` keeps
     /// the view tree alive across dismissals, so `.onAppear` only fires
@@ -59,7 +60,10 @@ struct PopoverHeader: View {
                 .buttonStyle(.plain)
                 .help("Quit Towertail")
             }
-            searchField
+            HStack(spacing: 8) {
+                searchField
+                layoutPicker
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -76,6 +80,22 @@ struct PopoverHeader: View {
             // by the time the body mounts, so onChange wouldn't fire.
             searchFocused = true
         }
+    }
+
+    private var layoutPicker: some View {
+        Picker("View", selection: Binding(
+            get: { clientSettings.popoverLayout },
+            set: {
+                clientSettings.popoverLayout = $0
+                clientSettings.persist()
+            }
+        )) {
+            Text("Cards").tag(PopoverLayout.cards)
+            Text("Rows").tag(PopoverLayout.rows)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
     }
 
     private var searchField: some View {

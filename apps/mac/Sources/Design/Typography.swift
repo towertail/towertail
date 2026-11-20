@@ -8,4 +8,8 @@ enum Typography {
     static let cellLabel = Font.system(size: 10, weight: .medium).monospacedDigit()
     static let headerTitle = Font.system(size: 13, weight: .semibold)
     static let metaText = Font.system(size: 11, weight: .regular).monospacedDigit()
+    static let rowName = Font.system(size: 13, weight: .medium)
+    static let rowValue = Font.system(size: 10.5, weight: .medium, design: .monospaced)
+    static let rowTag = Font.system(size: 9, weight: .medium, design: .monospaced)
+    static let rowColumn = Font.system(size: 9.5, weight: .medium, design: .monospaced)
 }

@@ -1,0 +1,75 @@
+import AppKit
+import SwiftUI
+import XCTest
+@testable import Towertail
+
+/// Renders the Rows view of the popover to PNG. Runs only when
+/// TT_SCREENSHOT_DIR is set (pass TEST_RUNNER_TT_SCREENSHOT_DIR to xcodebuild).
+@MainActor
+final class RowsScreenshotTests: XCTestCase {
+    private var dir: URL!
+
+    override func setUpWithError() throws {
+        guard let path = ProcessInfo.processInfo.environment["TT_SCREENSHOT_DIR"], !path.isEmpty else {
+            throw XCTSkip("TT_SCREENSHOT_DIR is not set")
+        }
+        dir = URL(fileURLWithPath: path)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    }
+
+    private func addHost(_ store: ServerStore, _ name: String, cpu: Double, mem: Double, disk: Double,
+                         rx: Int64, tx: Int64) {
+        let vm = ServerViewModel(hostname: name, dnsName: name, osArch: "linux/arm64")
+        store.register(vm)
+        let mb: Int64 = 1_048_576
+        vm.ingest(makeSample(cpuPct: cpu, memFrac: mem / 100, diskFrac: disk / 100, rxBps: rx * mb, txBps: tx * mb))
+    }
+
+    private func render(layout: PopoverLayout, name: String) throws {
+        let settingsURL = FileManager.default.temporaryDirectory.appendingPathComponent("tt-rows-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: settingsURL) }
+        let settings = ClientSettings(url: settingsURL)
+        settings.popoverLayout = layout
+        let store = ServerStore()
+        addHost(store, "This Mac", cpu: 18, mem: 64, disk: 51, rx: 3, tx: 1)
+        addHost(store, "web-1", cpu: 34, mem: 58, disk: 72, rx: 22, tx: 9)
+        addHost(store, "web-2", cpu: 27, mem: 61, disk: 44, rx: 14, tx: 6)
+        addHost(store, "web-3", cpu: 91, mem: 70, disk: 46, rx: 38, tx: 21)
+        addHost(store, "api-1", cpu: 22, mem: 49, disk: 38, rx: 9, tx: 7)
+        let down = ServerViewModel(hostname: "db-1", dnsName: "db-1", osArch: "linux/arm64")
+        store.register(down)
+        down.ingest(makeSample(cpuPct: 20, memFrac: 0.4, diskFrac: 0.4), now: Date().addingTimeInterval(-240))
+        down.checkStale(now: Date().addingTimeInterval(240), limit: 30)
+        addHost(store, "db-2", cpu: 41, mem: 77, disk: 83, rx: 12, tx: 4)
+        addHost(store, "cache-1", cpu: 12, mem: 88, disk: 21, rx: 6, tx: 6)
+        addHost(store, "edge-1", cpu: 9, mem: 31, disk: 96, rx: 41, tx: 30)
+
+        let view = PopoverRoot()
+            .environment(store)
+            .environment(settings)
+            .environment(NodeStore(nodes: [], url: settingsURL))
+            .environment(\.scenePhase, .active)
+            .environment(\.colorScheme, .dark)
+
+        let host = NSHostingView(rootView: view)
+        let rect = CGRect(x: 0, y: 0, width: 360, height: 620)
+        let window = NSWindow(contentRect: rect, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .darkAqua)
+        host.appearance = NSAppearance(named: .darkAqua)
+        window.contentView = host
+        host.frame = rect
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        host.layoutSubtreeIfNeeded()
+        let rep = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: rep)
+        let png = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+        try png.write(to: dir.appendingPathComponent("\(name).png"))
+        window.close()
+    }
+
+    func testRowsPopover() throws {
+        try render(layout: .rows, name: "popover-rows")
+    }
+}
