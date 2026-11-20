@@ -15,6 +15,7 @@ import (
 
 	"github.com/towertail/towertail/server/config"
 	"github.com/towertail/towertail/server/internal/auth"
+	"github.com/towertail/towertail/server/internal/hub"
 	"github.com/towertail/towertail/server/store"
 	"github.com/towertail/towertail/server/wire"
 )
@@ -24,6 +25,12 @@ const sampleLine = `{"v":1,"ts":"2026-04-23T10:00:00.000Z","host":{"name":"x","o
 type fixedInterval time.Duration
 
 func (f fixedInterval) Interval(uuid.UUID, uuid.UUID) time.Duration { return time.Duration(f) }
+
+type fakeLeases bool
+
+func (f fakeLeases) Covered(uuid.UUID, uuid.UUID) bool { return bool(f) }
+
+var streamIntervals = config.StreamConfig{LiveInterval: 5 * time.Second, IdleInterval: 30 * time.Second}
 
 // ingestEnv is a server with Bolt, no ClickHouse and real sampler tokens.
 type ingestEnv struct {
@@ -166,6 +173,81 @@ func TestIngest_IntervalField(t *testing.T) {
 	if bodyKeys(t, rec)["interval"] != "5s" {
 		t.Fatalf("body: %s", rec.Body)
 	}
+}
+
+// intervalOf posts one sample and gives the interval key of the reply.
+func (e *ingestEnv) intervalOf(tok string) (string, bool) {
+	e.t.Helper()
+	rec := e.post(tok, []byte(sampleLine))
+	wantCode(e.t, rec, http.StatusAccepted)
+	v, ok := bodyKeys(e.t, rec)["interval"].(string)
+	return v, ok
+}
+
+func TestIngestIntervalLiveWhenCovered(t *testing.T) {
+	e := newIngestEnv(t, config.Config{Stream: streamIntervals}, nil, nil)
+	e.srv.leases = fakeLeases(true)
+	_, tok := e.node(nil)
+	if got, _ := e.intervalOf(tok); got != "5s" {
+		t.Fatalf("interval %q, want 5s", got)
+	}
+}
+
+func TestIngestIntervalIdleWhenNotCovered(t *testing.T) {
+	e := newIngestEnv(t, config.Config{Stream: streamIntervals}, nil, nil)
+	e.srv.leases = fakeLeases(false)
+	_, tok := e.node(nil)
+	if got, _ := e.intervalOf(tok); got != "30s" {
+		t.Fatalf("interval %q, want 30s", got)
+	}
+}
+
+func TestIngestNoIntervalWithoutIndex(t *testing.T) {
+	e := newIngestEnv(t, config.Config{Stream: streamIntervals}, nil, nil)
+	_, tok := e.node(nil)
+	if got, ok := e.intervalOf(tok); ok {
+		t.Fatalf("interval %q, want no key", got)
+	}
+}
+
+func TestIngestAdvisorWinsOverLease(t *testing.T) {
+	e := newIngestEnv(t, config.Config{Stream: streamIntervals}, nil, fixedInterval(10*time.Second))
+	e.srv.leases = fakeLeases(true)
+	_, tok := e.node(nil)
+	if got, _ := e.intervalOf(tok); got != "10s" {
+		t.Fatalf("interval %q, want 10s", got)
+	}
+}
+
+func TestIngestIntervalFollowsLease(t *testing.T) {
+	now := time.Now()
+	h := hub.New(slog.New(slog.NewTextHandler(io.Discard, nil)), hub.Options{Now: func() time.Time { return now }})
+	e := newIngestEnv(t, config.Config{Stream: streamIntervals}, nil, nil)
+	e.srv.leases = h
+	n, tok := e.node(nil)
+	c := h.Register(store.ZeroOrg, nil, hub.ClientOptions{Lease: true})
+	view := func(ids ...uuid.UUID) {
+		t.Helper()
+		if err := h.SetView(c, wire.ClientMessage{Type: "view", Hosts: ids, TTL: 60}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := func(w string) {
+		t.Helper()
+		if got, _ := e.intervalOf(tok); got != w {
+			t.Fatalf("interval %q, want %s", got, w)
+		}
+	}
+
+	want("30s")
+	view(n.ID)
+	want("5s")
+	now = now.Add(61 * time.Second)
+	want("30s")
+	view(n.ID)
+	want("5s")
+	view()
+	want("30s")
 }
 
 func TestIngest_UpdateField(t *testing.T) {

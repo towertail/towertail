@@ -38,6 +38,12 @@ type StreamConfig struct {
 	// LegacySamples sends the full sample frames to clients that do not
 	// ask for a lease (?lease=1). When false, they get events only.
 	LegacySamples bool `koanf:"legacy_samples"`
+	// LiveInterval is the push interval of a host that a view lease
+	// covers. Load refuses a value under 1 s.
+	LiveInterval time.Duration `koanf:"live_interval"`
+	// IdleInterval is the push interval of a host with no lease. Load
+	// refuses a value under LiveInterval.
+	IdleInterval time.Duration `koanf:"idle_interval"`
 }
 
 // SamplerConfig is for the samplers that push to this server.
@@ -201,6 +207,12 @@ func Load(path string) (*Config, error) {
 	if cfg.HTTP.CORSAllowCredentials && slices.Contains(cfg.HTTP.CORSAllowOrigins, "*") {
 		return nil, errors.New("http.cors_allow_credentials needs explicit http.cors_allow_origins, not \"*\"")
 	}
+	if cfg.Stream.LiveInterval < time.Second {
+		return nil, errors.New("stream.live_interval must be 1s or more")
+	}
+	if cfg.Stream.IdleInterval < cfg.Stream.LiveInterval {
+		return nil, errors.New("stream.idle_interval must not be under stream.live_interval")
+	}
 	if cfg.ClickHouse.SpillDir == "" {
 		cfg.ClickHouse.SpillDir = filepath.Join(cfg.Storage.Path, "spill")
 	}
@@ -273,6 +285,8 @@ func setDefaults(k *koanf.Koanf) {
 	_ = k.Set("log.format", "json")
 
 	_ = k.Set("stream.legacy_samples", true)
+	_ = k.Set("stream.live_interval", "5s")
+	_ = k.Set("stream.idle_interval", "30s")
 
 	_ = k.Set("cloud.managed", false)
 

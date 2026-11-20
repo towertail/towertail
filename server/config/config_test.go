@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLoadPasswordFiles(t *testing.T) {
@@ -88,5 +89,29 @@ func TestStreamDefaults(t *testing.T) {
 	}
 	if cfg.Stream.LegacySamples {
 		t.Error("TT_STREAM__LEGACY_SAMPLES=false did not apply")
+	}
+}
+
+func TestStreamIntervalDefaults(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Stream.LiveInterval != 5*time.Second || cfg.Stream.IdleInterval != 30*time.Second {
+		t.Errorf("intervals %v and %v", cfg.Stream.LiveInterval, cfg.Stream.IdleInterval)
+	}
+}
+
+func TestStreamIntervalRejectsBadValues(t *testing.T) {
+	for name, env := range map[string][2]string{
+		"live under 1s":   {"TT_STREAM__LIVE_INTERVAL", "500ms"},
+		"idle under live": {"TT_STREAM__IDLE_INTERVAL", "2s"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(env[0], env[1])
+			if _, err := Load(""); err == nil {
+				t.Error("Load accepted the value")
+			}
+		})
 	}
 }

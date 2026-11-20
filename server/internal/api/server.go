@@ -33,6 +33,11 @@ type IntervalAdvisor interface {
 	Interval(orgID, nodeID uuid.UUID) time.Duration
 }
 
+// LeaseIndex tells if a live view lease covers a host.
+type LeaseIndex interface {
+	Covered(orgID, nodeID uuid.UUID) bool
+}
+
 // Server assembles the Echo instance and wires every dependency.
 type Server struct {
 	echo          *echo.Echo
@@ -50,6 +55,7 @@ type Server struct {
 	channels      Channels
 	channelLimits ChannelLimits
 	interval      IntervalAdvisor
+	leases        LeaseIndex
 	roles         Roles
 	ranks         *rankCache
 	query         *query.Service
@@ -77,6 +83,8 @@ type Deps struct {
 	ChannelLimits ChannelLimits
 	// Interval gives the push interval of a host. Nil means no order.
 	Interval IntervalAdvisor
+	// Leases gives the live view leases. Nil turns off the lease interval.
+	Leases LeaseIndex
 	// Roles gives the role of a user in an org. Nil gives the owner role
 	// to every user token.
 	Roles Roles
@@ -157,6 +165,7 @@ func New(d Deps) *Server {
 		channels:      d.Channels,
 		channelLimits: d.ChannelLimits,
 		interval:      d.Interval,
+		leases:        d.Leases,
 		roles:         d.Roles,
 		ranks:         newRankCache(),
 		query:         query.NewService(reader, d.Store, d.Limits),

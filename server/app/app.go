@@ -139,6 +139,7 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 		Limits:        b.limits,
 		ChannelLimits: gate,
 		Interval:      b.interval,
+		Leases:        a.hub,
 		Roles:         b.roles,
 		Channels:      router,
 		Middleware:    b.middleware,

@@ -125,15 +125,22 @@ func (c *rankCache) drop(orgID uuid.UUID) {
 	c.mu.Unlock()
 }
 
-// intervalFor gives the push interval order for the host, or "".
+// intervalFor gives the push interval order for the host, or "". An
+// order of the advisor wins. Else a live view lease gives the live
+// interval, and no lease gives the idle interval.
 func (s *Server) intervalFor(orgID, nodeID uuid.UUID) string {
-	if s.interval == nil {
+	if s.interval != nil {
+		if d := s.interval.Interval(orgID, nodeID); d > 0 {
+			return d.String()
+		}
+	}
+	if s.leases == nil {
 		return ""
 	}
-	if d := s.interval.Interval(orgID, nodeID); d > 0 {
-		return d.String()
+	if s.leases.Covered(orgID, nodeID) {
+		return s.cfg.Stream.LiveInterval.String()
 	}
-	return ""
+	return s.cfg.Stream.IdleInterval.String()
 }
 
 // updateFor gives the configured latest sampler version when the sampler
