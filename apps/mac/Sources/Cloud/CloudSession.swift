@@ -10,11 +10,22 @@ final class CloudSession {
     private(set) var client: RemoteClient?
     private(set) var feed: CloudFeed?
 
-    @ObservationIgnored private let backend: LocalBackend
+    @ObservationIgnored private let servers: ServerStore
+    @ObservationIgnored private let nodes: NodeStore
 
-    init(account: CloudAccount, backend: LocalBackend) {
+    var isSignedIn: Bool {
+        if case .signedIn = account.status { return true }
+        return false
+    }
+
+    convenience init(account: CloudAccount, backend: LocalBackend) {
+        self.init(account: account, servers: backend.servers, nodes: backend.nodes)
+    }
+
+    init(account: CloudAccount, servers: ServerStore, nodes: NodeStore) {
         self.account = account
-        self.backend = backend
+        self.servers = servers
+        self.nodes = nodes
         account.onStatusChange = { [weak self] status in
             self?.accountChanged(status)
         }
@@ -35,7 +46,7 @@ final class CloudSession {
         if let client, client.config.token == token, feed != nil { return }
         stopFeed()
         let client = RemoteClient(config: .init(endpoint: account.endpoint, token: token))
-        let feed = CloudFeed(client: client, servers: backend.servers, nodes: backend.nodes)
+        let feed = CloudFeed(client: client, servers: servers, nodes: nodes)
         self.client = client
         self.feed = feed
         feed.start()

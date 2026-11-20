@@ -9,6 +9,7 @@ import Foundation
 struct ServerCardModel {
     let node: Node?
     let isUpdatingSampler: Bool
+    let tag: HostTag?
 
     /// Captured weakly via the optional protocol type so the closures
     /// don't keep the backend alive past the card's lifetime.
@@ -18,9 +19,11 @@ struct ServerCardModel {
         nodeID: UUID,
         nodeStore: NodeStore,
         samplerUpdater: SamplerUpdateCoordinator,
-        backend: (any Backend)?
+        backend: (any Backend)?,
+        cloud: CloudSession?
     ) {
         self.node = nodeStore.node(withId: nodeID)
+        self.tag = HostTag.tag(forNode: nodeID, in: nodeStore, cloud: cloud)
         self.isUpdatingSampler = samplerUpdater.isUpdating(id: nodeID)
         self.backend = backend
     }

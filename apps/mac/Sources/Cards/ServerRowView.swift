@@ -22,6 +22,7 @@ enum RowsLayout {
     static let netWidth: CGFloat = 52
     static let gap: CGFloat = 8
     static let inset: CGFloat = 14
+    static let minHeight: CGFloat = 48
     static let netRx = Color.blue
     static let netTx = Color(.sRGB, red: 0xBF / 255, green: 0x5A / 255, blue: 0xF2 / 255)
 }
@@ -29,6 +30,7 @@ enum RowsLayout {
 struct ServerRowView: View {
     let vm: ServerViewModel
     @Environment(NodeStore.self) private var nodeStore
+    @Environment(CloudSession.self) private var cloud: CloudSession?
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismiss) private var dismiss
 
@@ -56,6 +58,7 @@ struct ServerRowView: View {
                 }
                 .padding(.horizontal, RowsLayout.inset)
                 .padding(.vertical, 8)
+                .frame(minHeight: RowsLayout.minHeight)
                 .background(rowBackground(state))
                 .contentShape(Rectangle())
             }
@@ -67,15 +70,23 @@ struct ServerRowView: View {
         }
     }
 
+    /// The tag sits under the name: the name column is too narrow for both
+    /// on one line.
     private var nameColumn: some View {
-        HStack(spacing: 7) {
-            Circle()
-                .fill(vm.statusDotColor)
-                .frame(width: 7, height: 7)
-            Text(name)
-                .font(Typography.rowName)
-                .lineLimit(1)
-                .truncationMode(.tail)
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(vm.statusDotColor)
+                    .frame(width: 7, height: 7)
+                Text(name)
+                    .font(Typography.rowName)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            if let tag = HostTag.tag(forNode: vm.id, in: nodeStore, cloud: cloud) {
+                HostTagView(tag: tag)
+                    .padding(.leading, 14)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -207,19 +218,5 @@ struct ServerRowsHeader: View {
         .padding(.horizontal, RowsLayout.inset)
         .padding(.top, 8)
         .padding(.bottom, 6)
-    }
-}
-
-struct RowsFooter: View {
-    var body: some View {
-        HStack(spacing: 4) {
-            Text("↓ rx").foregroundStyle(RowsLayout.netRx)
-            Text("↑ tx").foregroundStyle(RowsLayout.netTx)
-            Spacer(minLength: 0)
-        }
-        .font(Typography.metaText)
-        .padding(.horizontal, RowsLayout.inset)
-        .padding(.vertical, 10)
-        .overlay(alignment: .top) { Divider().opacity(0.3) }
     }
 }

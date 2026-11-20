@@ -11,6 +11,7 @@ struct PopoverRoot: View {
     @Environment(ServerStore.self) private var store
     @Environment(NodeStore.self) private var nodeStore
     @Environment(ClientSettings.self) private var clientSettings
+    @Environment(CloudSession.self) private var cloud: CloudSession?
     /// `MenuBarExtra(style: .window)` keeps its popover content view tree
     /// alive even after the user dismisses the popover (window ordered
     /// out, not destroyed) so the next click feels instant. The downside:
@@ -63,6 +64,7 @@ struct PopoverRoot: View {
             case .rows:
                 rowsBody
             }
+            PopoverFooter(account: cloud?.account, showsLegend: clientSettings.popoverLayout == .rows)
         }
         .frame(width: 360, height: 620)
         .background(Color(nsColor: .windowBackgroundColor))
@@ -94,7 +96,6 @@ struct PopoverRoot: View {
                 }
             }
         }
-        RowsFooter()
     }
 
     private var filteredVMs: [ServerViewModel] {

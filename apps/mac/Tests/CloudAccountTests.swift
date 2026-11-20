@@ -170,4 +170,13 @@ final class CloudAccountTests: XCTestCase {
         )
         XCTAssertEqual(account.dashboardURL.absoluteString, "https://app.towertail.com")
     }
+
+    func testFooterSummary() async {
+        serveSignedIn()
+        let account = makeAccount()
+        XCTAssertNil(PopoverFooter.summary(for: account))
+        await account.sendCode(email: "ana@acme.dev")
+        await account.verify(code: "482913")
+        XCTAssertEqual(PopoverFooter.summary(for: account), "Free \u{00B7} 2 of 3 hosts")
+    }
 }

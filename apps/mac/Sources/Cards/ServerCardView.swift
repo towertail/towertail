@@ -9,6 +9,7 @@ struct ServerCardView: View {
     @Environment(NodeStore.self) private var nodeStore
     @Environment(SamplerUpdateCoordinator.self) private var samplerUpdater
     @Environment(\.backend) private var backend
+    @Environment(CloudSession.self) private var cloud: CloudSession?
     @State private var terminalError: String?
 
     /// Per-render bundle of node metadata + backend mutations. Re-derived
@@ -19,7 +20,8 @@ struct ServerCardView: View {
             nodeID: vm.id,
             nodeStore: nodeStore,
             samplerUpdater: samplerUpdater,
-            backend: backend
+            backend: backend,
+            cloud: cloud
         )
     }
 
@@ -120,6 +122,9 @@ struct ServerCardView: View {
             Text(node?.displayName ?? vm.hostname)
                 .font(Typography.hostname)
                 .foregroundStyle(.primary)
+            if let tag = model.tag {
+                HostTagView(tag: tag)
+            }
             if model.isSnoozed {
                 Image(systemName: "bell.slash.fill")
                     .font(.caption)
