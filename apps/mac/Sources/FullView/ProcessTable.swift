@@ -243,6 +243,8 @@ struct ProcessTable: View {
             let user = node.sshUser ?? "?"
             let host = node.sshHost ?? "?"
             return "ssh \(user)@\(host) 'kill -9 \(pid)'"
+        case .cloud:
+            return "Not available for a host that reports to Cloud."
         }
     }
 
@@ -519,6 +521,8 @@ enum ProcessKiller {
             return await killLocal(pid: pid)
         case .ssh:
             return await killSSH(pid: pid, node: node)
+        case .cloud:
+            return .failure(message: "The app cannot stop processes on a host that reports to Cloud.")
         }
     }
 

@@ -34,8 +34,9 @@ final class AppEnvironment {
     init(mode: BackendMode = AppEnvironment.defaultMode) {
         switch mode {
         case .local:
-            self.backend = LocalBackend()
-            self.cloud = Self.makeCloud()
+            let local = LocalBackend()
+            self.backend = local
+            self.cloud = Self.makeCloud(backend: local)
         case .remote:
             let env = ProcessInfo.processInfo.environment
             guard
@@ -56,14 +57,14 @@ final class AppEnvironment {
         }
     }
 
-    private static func makeCloud() -> CloudSession {
+    private static func makeCloud(backend: LocalBackend) -> CloudSession {
         let endpoint = CloudAccount.configuredEndpoint()
         let account = CloudAccount(
             endpoint: endpoint,
             keychain: CloudKeychain(),
             client: CloudAuthClient(endpoint: endpoint)
         )
-        return CloudSession(account: account)
+        return CloudSession(account: account, backend: backend)
     }
 
     func start() {

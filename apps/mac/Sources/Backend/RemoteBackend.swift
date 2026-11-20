@@ -74,9 +74,6 @@ final class RemoteBackend: Backend {
 
     private func openStream() async {
         streamTask?.cancel()
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let sampleDecoder = SampleCodec.decoder()
         let onConnect: @Sendable () -> Void = { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
@@ -86,58 +83,27 @@ final class RemoteBackend: Backend {
         streamTask = client.openStream(onConnect: onConnect) { [weak self] raw in
             guard let self else { return }
             Task { @MainActor in
-                self.handleStreamMessage(raw, decoder: decoder, sampleDecoder: sampleDecoder)
+                self.handleStreamMessage(raw)
             }
         }
     }
 
-    private func handleStreamMessage(_ raw: String, decoder: JSONDecoder, sampleDecoder: JSONDecoder) {
-        guard let data = raw.data(using: .utf8) else { return }
-        struct Envelope: Decodable {
-            let type: String
-            let nodeId: UUID?
-        }
-        guard let env = try? decoder.decode(Envelope.self, from: data) else { return }
-        switch env.type {
-        case "sample":
-            guard let id = env.nodeId else { return }
-            struct SampleWrap: Decodable {
-                let sample: Sample
-                enum CodingKeys: String, CodingKey { case sample }
-                init(from d: Decoder) throws {
-                    let c = try d.container(keyedBy: CodingKeys.self)
-                    self.sample = try c.decode(Sample.self, forKey: .sample)
-                }
-            }
-            // Re-decode with the custom sample codec so timestamps parse.
-            do {
-                let wrap = try sampleDecoder.decode(SampleWrap.self, from: data)
-                servers.ingest(wrap.sample, for: id)
-            } catch {
-                Logger.shared.debug("remote: sample decode failed: \(error)", category: "collector")
-            }
-        case "node_updated":
-            struct NodeWrap: Decodable { let node: RemoteNode }
-            if let wrap = try? decoder.decode(NodeWrap.self, from: data) {
-                let n = Node(remote: wrap.node)
-                nodes.update(n)
-                applyLongProc()
-            }
-        case "settings_updated":
-            struct SettingsWrap: Decodable { let settings: RemoteServerSettings }
-            if let wrap = try? decoder.decode(SettingsWrap.self, from: data) {
-                applyRemoteSettings(wrap.settings)
-            }
-        case "disk_scan_updated":
-            struct JobWrap: Decodable { let job: DiskScanJob }
-            if let wrap = try? decoder.decode(JobWrap.self, from: data) {
-                scanJobs.publish(wrap.job)
-            }
-        case "event":
+    private func handleStreamMessage(_ raw: String) {
+        switch StreamMessage.decode(raw) {
+        case .sample(let id, let sample):
+            servers.ingest(sample, for: id)
+        case .nodeUpdated(let remote):
+            nodes.update(Node(remote: remote))
+            applyLongProc()
+        case .settingsUpdated(let rs):
+            applyRemoteSettings(rs)
+        case .diskScan(let job):
+            scanJobs.publish(job)
+        case .event:
             // Phase H: thread BackendEvents into the notifier once the
             // remote dispatcher lands. For now log and move on.
             Logger.shared.info("remote: event", category: "alerts", kv: ["raw": raw])
-        default:
+        case .other:
             break
         }
     }

@@ -164,6 +164,8 @@ struct PortsTable: View {
             let user = node.sshUser ?? "?"
             let host = node.sshHost ?? "?"
             return "ssh \(user)@\(host) 'kill -9 \(pid)'"
+        case .cloud:
+            return "Not available for a host that reports to Cloud."
         }
     }
 

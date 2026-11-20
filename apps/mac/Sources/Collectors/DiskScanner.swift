@@ -6,6 +6,13 @@ protocol DiskScanner: Sendable {
     func scan(node: Node, request: DiskScanRequest) -> AsyncThrowingStream<DiskScanEvent, Error>
 }
 
+/// For a host that has no way to reach from the app.
+private struct UnavailableDiskScanner: DiskScanner {
+    func scan(node: Node, request: DiskScanRequest) -> AsyncThrowingStream<DiskScanEvent, Error> {
+        AsyncThrowingStream { $0.finish(throwing: SamplerInvokeError.misconfigured("Disk scans are not available for hosts that only report to Cloud.")) }
+    }
+}
+
 /// Scanner for a node of the local backend. Remote mode uses
 /// `RemoteBackend.diskScanner(for:)`.
 @Sendable
@@ -14,6 +21,8 @@ func makeDiskScanner(
     prepareSSH: (@Sendable (Node, String) async throws -> Void)? = nil
 ) -> any DiskScanner {
     switch node.kind {
+    case .cloud:
+        return UnavailableDiskScanner()
     case .local:
         return LocalDiskScanner()
     case .ssh:

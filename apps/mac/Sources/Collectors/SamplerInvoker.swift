@@ -41,9 +41,18 @@ enum SamplerInvokeError: LocalizedError {
     }
 }
 
+/// For a host that has no way to reach from the app.
+private struct UnavailableInvoker: SamplerInvoker {
+    func invokeOnce(node: Node) async throws -> Sample {
+        throw SamplerInvokeError.misconfigured("This host reports to Cloud. It has no SSH settings.")
+    }
+}
+
 @Sendable
 func makeInvoker(for node: Node) -> SamplerInvoker {
     switch node.kind {
+    case .cloud:
+        return UnavailableInvoker()
     case .local:
         return LocalSamplerInvoker()
     case .ssh:

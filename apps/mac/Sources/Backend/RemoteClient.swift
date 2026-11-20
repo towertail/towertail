@@ -69,6 +69,13 @@ final class RemoteClient {
         try await send("PUT", "/v1/settings", body: s)
     }
 
+    /// The open alerts of the org. The app reads the reachability ones.
+    func openAlerts() async throws -> [RemoteAlert] {
+        struct List: Decodable { let alerts: [RemoteAlert] }
+        let list: List = try await get("/v1/alerts")
+        return list.alerts
+    }
+
     func killProcess(nodeID: UUID, pid: Int32) async throws {
         _ = try await raw("POST", "/v1/nodes/\(nodeID.uuidString)/kill-process?pid=\(pid)")
     }
@@ -202,10 +209,12 @@ final class RemoteClient {
     // MARK: - WebSocket
 
     /// Opens a WS connection and invokes `onMessage` for each received
-    /// text frame. `onConnect` runs at the first frame of each connection,
-    /// so callers can refetch state that they missed. The returned task
-    /// runs until cancelled.
+    /// text frame. `onConnect` runs once for each connection, at the first
+    /// frame or at the first pong, so callers can refetch state that they
+    /// missed. `onDisconnect` runs each time a connection attempt
+    /// ends. The returned task runs until cancelled.
     func openStream(onConnect: (@Sendable () -> Void)? = nil,
+                    onDisconnect: (@Sendable () -> Void)? = nil,
                     onMessage: @escaping @Sendable (String) -> Void) -> Task<Void, Never> {
         return Task.detached { [weak self] in
             guard let self else { return }
@@ -215,6 +224,7 @@ final class RemoteClient {
                 } catch {
                     // transient; backoff and retry.
                 }
+                onDisconnect?()
                 let jitter = UInt64.random(in: 500...1500) * 1_000_000
                 try? await Task.sleep(nanoseconds: jitter)
             }
@@ -235,13 +245,15 @@ final class RemoteClient {
         task.resume()
         defer { task.cancel(with: .normalClosure, reason: nil) }
 
-        var first = true
+        // A server with no data to replay sends no first frame, so a ping
+        // also tells that the connection is up.
+        let connect = OnceGate(onConnect)
+        task.sendPing { error in
+            if error == nil { connect.fire() }
+        }
         while !Task.isCancelled {
             let message = try await task.receive()
-            if first {
-                first = false
-                onConnect?()
-            }
+            connect.fire()
             switch message {
             case .string(let s):
                 onMessage(s)
@@ -254,7 +266,34 @@ final class RemoteClient {
     }
 }
 
+/// Runs a closure at most one time, from any thread.
+private final class OnceGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var action: (@Sendable () -> Void)?
+
+    init(_ action: (@Sendable () -> Void)?) { self.action = action }
+
+    func fire() {
+        lock.lock()
+        let run = action
+        action = nil
+        lock.unlock()
+        run?()
+    }
+}
+
 // MARK: - Wire DTOs
+
+struct RemoteAlert: Decodable, Sendable {
+    let nodeId: UUID
+    let metric: String
+    let tint: String
+
+    enum CodingKeys: String, CodingKey {
+        case nodeId = "node_id"
+        case metric, tint
+    }
+}
 
 struct RemoteNode: Codable, Sendable, Identifiable {
     var id: UUID

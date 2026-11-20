@@ -71,7 +71,7 @@ final class RealCollector: Collector {
             await MainActor.run {
                 Self.syncViewModels(for: snapshot, store: sink, settings: settings)
             }
-            let enabledIDs = Set(snapshot.filter(\.enabled).map(\.id))
+            let enabledIDs = Set(snapshot.filter { $0.enabled && !$0.isCloud }.map(\.id))
             let byID: [UUID: Node] = Dictionary(uniqueKeysWithValues: snapshot.map { ($0.id, $0) })
 
             // Drop tasks for removed/disabled nodes.
@@ -104,7 +104,7 @@ final class RealCollector: Collector {
             // exited (halted-on-error) entry blocks respawn until its node
             // config changes — otherwise we'd hammer a host that just
             // refused our credentials every 2 seconds.
-            for node in snapshot where node.enabled && entries[node.id] == nil {
+            for node in snapshot where node.enabled && !node.isCloud && entries[node.id] == nil {
                 let factory = self.invokerFactory
                 let settings = self.settings
                 let history = self.history
@@ -313,7 +313,7 @@ final class RealCollector: Collector {
             let vm = ServerViewModel(
                 id: node.id,
                 hostname: node.displayName,
-                dnsName: node.kind == .ssh ? node.userAtHost : "local",
+                dnsName: node.kind == .local ? "local" : node.userAtHost,
                 osArch: node.kind == .local ? "macOS" : "—",
                 kind: node.kind,
                 thresholds: MetricThresholds.effective(global: settings.thresholds, override: node.thresholdOverrides),

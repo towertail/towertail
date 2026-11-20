@@ -78,4 +78,34 @@ final class NodeStoreTests: XCTestCase {
         b.mutedSignals = MutedSignals([.cpu])
         XCTAssertNotEqual(a, b)
     }
+
+    func testNodeDecodesWithoutCloudField() throws {
+        let plain = try JSONEncoder().encode(Node(displayName: "db", kind: .ssh))
+        XCTAssertFalse(String(decoding: plain, as: UTF8.self).contains("cloud"))
+        let node = try JSONDecoder().decode(Node.self, from: plain)
+        XCTAssertNil(node.cloud)
+        XCTAssertFalse(node.isCloud)
+    }
+
+    func testNodeCloudRoundTrip() throws {
+        let link = CloudLink(enrolledAt: Date(timeIntervalSince1970: 1_700_000_000), reboot: "systemd", samplerVersion: "0.4.0")
+        let node = Node(displayName: "db", kind: .ssh, sshUser: "ops", sshHost: "db", cloud: link)
+        let url = tempURL()
+        NodeStore(nodes: [], url: url).add(node)
+        let back = try XCTUnwrap(NodeStore.loadFromDisk(url: url).nodes.first)
+        XCTAssertEqual(back.cloud, link)
+        XCTAssertEqual(back, node)
+        XCTAssertTrue(back.isCloud)
+    }
+
+    func testNodeEqualityIncludesCloud() {
+        let a = Node(displayName: "db", kind: .ssh)
+        var b = a
+        b.cloud = CloudLink(enrolledAt: Date())
+        XCTAssertNotEqual(a, b)
+    }
+
+    func testCloudKindNodeIsCloud() {
+        XCTAssertTrue(Node(displayName: "web", kind: .cloud).isCloud)
+    }
 }

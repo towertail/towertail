@@ -67,7 +67,7 @@ final class ServerSettings {
     func pollingInterval(for kind: NodeKind) -> Int {
         switch kind {
         case .local: return localPollingIntervalSeconds
-        case .ssh: return sshPollingIntervalSeconds
+        case .ssh, .cloud: return sshPollingIntervalSeconds
         }
     }
 

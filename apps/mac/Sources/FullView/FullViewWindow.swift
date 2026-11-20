@@ -354,6 +354,7 @@ struct FullViewWindow: View {
         switch node.kind {
         case .local: return .local
         case .ssh: return .ssh(user: node.sshUser ?? "")
+        case .cloud: return .server
         }
     }
 

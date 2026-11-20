@@ -3,6 +3,16 @@ import Foundation
 enum NodeKind: String, Codable, Sendable, CaseIterable {
     case local
     case ssh
+    /// A host known only from Cloud. It has no SSH fields.
+    case cloud
+}
+
+/// The Cloud side of a host. The sampler on the host sends its data to
+/// Cloud, so the app takes the samples from the Cloud stream.
+struct CloudLink: Codable, Equatable, Sendable {
+    var enrolledAt: Date
+    var reboot: String?
+    var samplerVersion: String?
 }
 
 /// How we authenticate to an SSH host. "Key" covers both on-disk private
@@ -66,6 +76,8 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
     /// would reset the "ever connected" memory and treat known-good hosts
     /// like brand-new ones.
     var lastSuccessfulConnect: Date?
+    /// Set when the host reports to Cloud. Nil for a host that SSH polls.
+    var cloud: CloudLink?
 
     init(
         id: UUID = UUID(),
@@ -90,7 +102,8 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         snoozedUntil: Date? = nil,
         favorite: Bool = false,
         allowDiskScan: Bool = false,
-        lastSuccessfulConnect: Date? = nil
+        lastSuccessfulConnect: Date? = nil,
+        cloud: CloudLink? = nil
     ) {
         self.id = id
         self.displayName = displayName
@@ -115,6 +128,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         self.favorite = favorite
         self.allowDiskScan = allowDiskScan
         self.lastSuccessfulConnect = lastSuccessfulConnect
+        self.cloud = cloud
     }
 
     enum CodingKeys: String, CodingKey {
@@ -127,6 +141,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         case allowDiskScan
         case customThresholds
         case lastSuccessfulConnect
+        case cloud
         // Legacy single-toggle flag from the first pass. If present it
         // seeds both iconOnWarn and iconOnCritical so users who already
         // disabled menu-bar icon for a noisy host keep that behavior after
@@ -159,6 +174,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         try c.encode(favorite, forKey: .favorite)
         try c.encode(allowDiskScan, forKey: .allowDiskScan)
         try c.encodeIfPresent(lastSuccessfulConnect, forKey: .lastSuccessfulConnect)
+        try c.encodeIfPresent(cloud, forKey: .cloud)
     }
 
     init(from decoder: Decoder) throws {
@@ -198,6 +214,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         self.favorite = try c.decodeIfPresent(Bool.self, forKey: .favorite) ?? false
         self.allowDiskScan = try c.decodeIfPresent(Bool.self, forKey: .allowDiskScan) ?? false
         self.lastSuccessfulConnect = try c.decodeIfPresent(Date.self, forKey: .lastSuccessfulConnect)
+        self.cloud = try c.decodeIfPresent(CloudLink.self, forKey: .cloud)
     }
 
     /// Equality deliberately ignores `lastSuccessfulConnect`. The collector
@@ -230,6 +247,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
             && lhs.snoozedUntil == rhs.snoozedUntil
             && lhs.favorite == rhs.favorite
             && lhs.allowDiskScan == rhs.allowDiskScan
+            && lhs.cloud == rhs.cloud
     }
 
     /// True only when snoozedUntil is set and still in the future.
@@ -237,6 +255,9 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         guard let until = snoozedUntil else { return false }
         return until > Date()
     }
+
+    /// True when the data of this host comes from Cloud, not from SSH.
+    var isCloud: Bool { cloud != nil || kind == .cloud }
 
     /// Effective port (sshPort ?? 22). Used by the SSH factory and for UI.
     var effectiveSshPort: Int { sshPort ?? 22 }
@@ -253,6 +274,8 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
             let user = sshUser?.isEmpty == false ? sshUser! : "?"
             let host = sshHost?.isEmpty == false ? sshHost! : "?"
             return "\(user)@\(host)"
+        case .cloud:
+            return "cloud"
         }
     }
 }

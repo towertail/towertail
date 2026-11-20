@@ -75,6 +75,8 @@ struct ImportRow: Identifiable, Equatable {
         switch kind {
         case .local:
             return true
+        case .cloud:
+            return false
         case .ssh:
             return !sshHost.trimmingCharacters(in: .whitespaces).isEmpty
                 && !sshUser.trimmingCharacters(in: .whitespaces).isEmpty
