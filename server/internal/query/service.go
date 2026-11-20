@@ -262,7 +262,7 @@ func (s *Service) TopProcesses(ctx context.Context, q ProcQuery) (wire.FleetProc
 	if to.Before(from) {
 		to = from
 	}
-	names, err := s.names(ctx, q.OrgID)
+	names, err := s.HostNames(ctx, q.OrgID)
 	if err != nil {
 		return wire.FleetProcesses{}, err
 	}
@@ -344,7 +344,7 @@ func (s *Service) Compare(ctx context.Context, q CompareQuery) (wire.Compare, er
 			return wire.Compare{}, err
 		}
 	}
-	names, err := s.names(ctx, q.OrgID)
+	names, err := s.HostNames(ctx, q.OrgID)
 	if err != nil {
 		return wire.Compare{}, err
 	}
@@ -389,8 +389,8 @@ func absDelta(h wire.CompareHost) float64 {
 	return math.Abs(*h.DeltaAvg)
 }
 
-// names maps the node IDs of the org to the names.
-func (s *Service) names(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID]string, error) {
+// HostNames maps the node IDs of the org to the display names.
+func (s *Service) HostNames(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID]string, error) {
 	nodes, err := s.nodes.ListNodes(ctx, orgID)
 	if err != nil {
 		return nil, err

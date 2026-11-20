@@ -138,6 +138,24 @@ from private addresses, as with the Caddy of the compose stack) or
 reach the server past the proxy, because a client can set the header.
 The request log shows the IP in `ip`.
 
+### MCP server
+
+The server has a read-only MCP server at `POST /mcp` (see
+[`wire.md`](wire.md) §7). `TT_MCP__ENABLED=false` turns it off, and `/mcp`
+then gives 404. To test it, send `tools/list` with an API key:
+
+```sh
+curl -sS -X POST https://towertail.example.com/mcp \
+  -H "Authorization: Bearer tt_..." \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+A proxy must pass `POST` bodies and must not hold the reply. Each reply is
+one JSON body, so no special proxy setting is necessary. Each API key has
+the budget of the rate limits above.
+
 ### Alerter stuck on a stale threshold crossing
 
 Symptom: a node keeps paging after it recovered.

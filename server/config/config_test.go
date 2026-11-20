@@ -134,3 +134,17 @@ func TestStreamMaxLeasesFromEnv(t *testing.T) {
 		t.Fatalf("env: %v, %v", cfg.Stream.MaxLeasesPerUser, err)
 	}
 }
+
+func TestMCPEnabled(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.MCP.Enabled {
+		t.Error("mcp.enabled default is false, want true")
+	}
+	t.Setenv("TT_MCP__ENABLED", "false")
+	if cfg, err = Load(""); err != nil || cfg.MCP.Enabled {
+		t.Errorf("TT_MCP__ENABLED=false: enabled = %v, err = %v", cfg.MCP.Enabled, err)
+	}
+}

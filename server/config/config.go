@@ -31,6 +31,13 @@ type Config struct {
 	Notify     NotifyConfig
 	Sampler    SamplerConfig
 	Stream     StreamConfig
+	MCP        MCPConfig
+}
+
+// MCPConfig is for the MCP server at /mcp.
+type MCPConfig struct {
+	// Enabled turns on the read-only MCP server. The default is true.
+	Enabled bool `koanf:"enabled"`
 }
 
 // StreamConfig is for the /v1/stream websocket.
@@ -293,6 +300,8 @@ func setDefaults(k *koanf.Koanf) {
 	_ = k.Set("stream.legacy_samples", true)
 	_ = k.Set("stream.live_interval", "5s")
 	_ = k.Set("stream.idle_interval", "30s")
+
+	_ = k.Set("mcp.enabled", true)
 
 	_ = k.Set("cloud.managed", false)
 

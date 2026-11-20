@@ -16,14 +16,17 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/time/rate"
 
+	"github.com/towertail/towertail/server/authctx"
 	"github.com/towertail/towertail/server/config"
 	"github.com/towertail/towertail/server/internal/alerter"
 	"github.com/towertail/towertail/server/internal/auth"
 	"github.com/towertail/towertail/server/internal/clickhouse"
 	"github.com/towertail/towertail/server/internal/control"
 	"github.com/towertail/towertail/server/internal/hub"
+	"github.com/towertail/towertail/server/internal/mcp"
 	"github.com/towertail/towertail/server/internal/query"
 	"github.com/towertail/towertail/server/internal/scan"
+	"github.com/towertail/towertail/server/internal/version"
 	"github.com/towertail/towertail/server/runtime"
 	"github.com/towertail/towertail/server/store"
 )
@@ -60,6 +63,7 @@ type Server struct {
 	ranks         *rankCache
 	query         *query.Service
 	apiKeyRates   *keyLimiters
+	mcp           *mcp.Server
 }
 
 // Deps is the dependency bundle supplied by main.
@@ -170,6 +174,9 @@ func New(d Deps) *Server {
 		ranks:         newRankCache(),
 		query:         query.NewService(reader, d.Store, d.Limits),
 		apiKeyRates:   newKeyLimiters(d.Config.HTTP.APIKeyRateLimitRPS, d.Config.HTTP.APIKeyRateLimitBurst),
+	}
+	if d.Config.MCP.Enabled {
+		s.mcp = mcp.New(s.query, version.Version, d.Log)
 	}
 	s.registerRoutes()
 	for _, f := range d.Routes {
@@ -310,9 +317,29 @@ func (s *Server) registerRoutes() {
 	samplerGroup.POST("/disk-scans/:job/progress", s.handleDiskScanProgress)
 	samplerGroup.PUT("/disk-scans/:job/result", s.handlePutDiskScanResult)
 
+	// MCP: the stateless handler gives 405 for GET and DELETE, so only
+	// POST is routed.
+	if s.mcp != nil {
+		e.POST("/mcp", echo.WrapHandler(s.mcp.Handler()),
+			s.bearer(append([]store.TokenKind{store.TokenKindAPI}, userKinds...)...),
+			requireRole(store.RoleViewer), s.apiKeyLimiter(), tokenToRequest)
+	}
+
 	// Stream group: user tokens only, attached directly (no nested group
 	// so the WS upgrade can use the original ResponseWriter cleanly).
 	v1.GET("/stream", s.handleStream, s.bearer(userKinds...), requireRole(store.RoleViewer))
+}
+
+// tokenToRequest puts the verified token on the request context, where
+// the plain http handler of the MCP server reads it.
+func tokenToRequest(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		if t, ok := authctx.TokenFrom(c); ok {
+			req := c.Request()
+			c.SetRequest(req.WithContext(authctx.WithToken(req.Context(), t)))
+		}
+		return next(c)
+	}
 }
 
 type echoValidator struct{ v *validator.Validate }

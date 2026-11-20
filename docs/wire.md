@@ -404,3 +404,29 @@ The server's [`wire`](../server/wire/wire.go) package is the source of truth. No
 - `Sample.v` tracks the sampler schema (see [`wire-format.md`](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) §11). Server rejects samples with unknown `v`; it ingests `v=1` today.
 - REST + WS do not carry a version field. Breaking changes bump the path prefix (`/v2`).
 - Bolt and ClickHouse storage are internal; schema migrations run on boot.
+
+---
+
+## 7. MCP
+
+The server has a read-only [Model Context Protocol](https://modelcontextprotocol.io) server at `POST /mcp`. It is part of the Go server, so a self-hosted server has it too. The cloud shows it at `https://api.towertail.com/mcp`. `TT_MCP__ENABLED=false` (`mcp.enabled`) turns it off. Then `/mcp` gives 404.
+
+- **Transport:** streamable HTTP in stateless mode with JSON replies. Send `Content-Type: application/json` and `Accept: application/json, text/event-stream`. Each reply is one JSON body. There is no session and no stream. `GET` and `DELETE` give 405.
+- **Auth:** `Authorization: Bearer tt_...` with an `api` token. `user` and `admin` tokens also pass. Other kinds give 403. The role is `viewer`. The key budget of §2 applies (429 `rate_limited`). OAuth is not available yet.
+- **Reads:** the tools call the same query code as the fleet routes of §3, so the plan history limit is the same. A tool that reads history sets `clamped: true` when the limit moved the start later.
+- **Errors:** a bad input or a failed query is a tool error (`isError: true`) with a short text. A server with no ClickHouse gives the tool error `query: history is off`. A call with no token on the context gives `no token`.
+- **Host:** a tool takes a host by ID or by display name (no case). A name that matches two hosts gives an error with the two IDs.
+- **Range:** `range` is a Go duration or a number with `d` for days, from `15m` to `365d` (`1h`, `90m`, `7d`). `from` and `to` are RFC 3339 and replace `range`. A `to` in the future moves to now.
+
+| Tool | Input | Output |
+|---|---|---|
+| `list_hosts` | `sort` (`cpu`, `mem`, `disk`, `net`; default `cpu`), `limit` (1 to 200; default 50) | `hosts`: `id`, `name`, `tags?`, `online`, `last_seen?`, `cpu_pct?`, `mem_ratio?`, `disk_ratio?`, `load1?`, `net_rx_bps?`, `net_tx_bps?`. An offline host has no values. |
+| `host_metrics` | `host`, `metrics` (up to 6 of `cpu`, `mem`, `net_rx`, `net_tx`, `disk_read`, `disk_write`; default `cpu`), `range` (default `1h`) or `from` and `to`, `resolution` (`auto`, `raw`, `1m`, `5m`, `1h`; default `auto`) | `host`, `host_id`, `from`, `to`, `clamped?`, `metrics`: for each metric `metric`, `resolution`, `count`, `min`, `avg`, `max`, `last` and `points` (`ts`, `value`, `max?`). |
+| `top_processes` | `host` (empty = fleet), `by` (`cpu`, `mem`; default `cpu`), `range` (default `1h`), `limit` (1 to 50; default 20) | `from`, `to`, `by`, `clamped?`, `processes`: `host`, `host_id`, `name`, `command`, `cpu_pct_avg`, `cpu_pct_max`, `rss_max_bytes`. |
+| `alerts` | `state` (`open`, `recent`; default `open`), `days` (1 to 90; default 7; `recent` only), `host` (empty = fleet) | `clamped?`, `alerts`: `id`, `host`, `host_id`, `kind`, `metric`, `tint`, `value`, `start`, `acked_by?`, `acked_at?`, `snoozed_until?`. A `recent` alert can have the tint `ok`: the change back to normal. At most 200 recent alerts. |
+| `disks` | `host`, `range` (default `24h`) | `host`, `host_id`, `from`, `to`, `clamped?`, `mounts`: `mount`, `fs`, `used_bytes`, `total_bytes`, `ratio`, `change_bytes` (used now minus used at the start). |
+| `compare` | `metric` (default `cpu`), `window` (`15m` to `30d`; default `1h`), `host` (empty = fleet) | `metric`, `current`, `previous` (each `from`, `to`), `clamped?`, `total_hosts`, `hosts` (at most 50, the biggest change first): `host`, `host_id`, `current` and `previous?` (`avg`, `max`, `points`), `change_avg?`. |
+
+`host_metrics` gives at most 300 points for each metric. When the range has more, the server raises the step and then merges the points: `value` is the average, `max` is the highest. `min`, `avg`, `max` and `last` come from all the points before the merge. A `count` of 0 means no data.
+
+All tools are read-only. Tools that change a host (for example `kill_process`) are not part of this version.

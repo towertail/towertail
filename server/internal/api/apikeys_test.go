@@ -38,6 +38,11 @@ type keyEnv struct {
 
 func newKeyEnv(t *testing.T, cfg config.HTTPConfig) *keyEnv {
 	t.Helper()
+	return newKeyEnvConfig(t, &config.Config{HTTP: cfg})
+}
+
+func newKeyEnvConfig(t *testing.T, cfg *config.Config) *keyEnv {
+	t.Helper()
 	st, err := store.OpenBolt(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -45,7 +50,7 @@ func newKeyEnv(t *testing.T, cfg config.HTTPConfig) *keyEnv {
 	t.Cleanup(func() { _ = st.Close() })
 	e := &keyEnv{st: st, issuer: auth.NewIssuer(st), roles: userRoles{}}
 	e.srv = New(Deps{
-		Config: &config.Config{HTTP: cfg},
+		Config: cfg,
 		Log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Store:  st,
 		Issuer: e.issuer,
