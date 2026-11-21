@@ -7,7 +7,9 @@ enum CardDensity: String, CaseIterable, Sendable {
 
 /// Body of the menu-bar popover: one card for each server, or one compact row.
 enum PopoverLayout: String, CaseIterable, Sendable {
-    case cards, rows
+    case rows, cards
+
+    static let standard: PopoverLayout = .rows
 }
 
 /// `pulse` colors only the LEDs and the pulse line. `full` also colors the rack at warn and critical.
@@ -39,7 +41,7 @@ final class ClientSettings {
         self.defaultTerminalApp = p.defaultTerminalApp
         self.menuBarIconStyle = MenuBarIconStyle(rawValue: p.menuBarIconStyle) ?? .pulse
         self.welcomeDone = p.welcomeDone
-        self.popoverLayout = PopoverLayout(rawValue: p.popoverLayout) ?? .cards
+        self.popoverLayout = PopoverLayout(rawValue: p.popoverLayout) ?? .standard
     }
 
     static func loadFromDisk() -> ClientSettings {
@@ -53,7 +55,7 @@ final class ClientSettings {
         self.defaultTerminalApp = p.defaultTerminalApp
         self.menuBarIconStyle = MenuBarIconStyle(rawValue: p.menuBarIconStyle) ?? .pulse
         self.welcomeDone = p.welcomeDone
-        self.popoverLayout = PopoverLayout(rawValue: p.popoverLayout) ?? .cards
+        self.popoverLayout = PopoverLayout(rawValue: p.popoverLayout) ?? .standard
     }
 
     func persist() {

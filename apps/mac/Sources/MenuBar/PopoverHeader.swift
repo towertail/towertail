@@ -90,8 +90,8 @@ struct PopoverHeader: View {
                 clientSettings.persist()
             }
         )) {
-            Text("Cards").tag(PopoverLayout.cards)
             Text("Rows").tag(PopoverLayout.rows)
+            Text("Cards").tag(PopoverLayout.cards)
         }
         .pickerStyle(.segmented)
         .labelsHidden()

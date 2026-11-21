@@ -187,28 +187,84 @@ final class SettingsTransferTests: XCTestCase {
 
     func testPopoverLayoutRoundTrip() throws {
         var b = base()
-        b.popoverLayout = "rows"
+        b.popoverLayout = "cards"
         let ex = SettingsExport.from(b)
-        XCTAssertEqual(ex.general.popoverLayout, "rows")
+        XCTAssertEqual(ex.general.popoverLayout, "cards")
         let decoded = try JSONDecoder().decode(SettingsExport.self, from: JSONEncoder().encode(ex))
         let (merged, _) = SettingsTransfer.apply(decoded, to: base(), selection: .allDefaults)
-        XCTAssertEqual(merged.popoverLayout, "rows")
+        XCTAssertEqual(merged.popoverLayout, "cards")
     }
 
     func testImportWithoutPopoverLayoutKeepsCurrent() throws {
         var b = base()
-        b.popoverLayout = "rows"
+        b.popoverLayout = "cards"
         var ex = makeExport(nodes: [])
         ex.general.popoverLayout = nil
         let (merged, _) = SettingsTransfer.apply(ex, to: b, selection: .allDefaults)
-        XCTAssertEqual(merged.popoverLayout, "rows")
+        XCTAssertEqual(merged.popoverLayout, "cards")
     }
 
-    func testPopoverLayoutDefaultsToCards() throws {
+    func testMissingPopoverLayoutDefaultsToRows() throws {
         var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(base())) as? [String: Any])
         json.removeValue(forKey: "popoverLayout")
         let data = try JSONSerialization.data(withJSONObject: json)
-        XCTAssertEqual(try JSONDecoder().decode(PersistedSettings.self, from: data).popoverLayout, "cards")
+        XCTAssertEqual(try JSONDecoder().decode(PersistedSettings.self, from: data).popoverLayout, "rows")
+    }
+
+    private func decodeLayout(version: Any?, layout: String) throws -> String {
+        var b = base()
+        b.popoverLayout = layout
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(b)) as? [String: Any])
+        if let version { json["schemaVersion"] = version } else { json.removeValue(forKey: "schemaVersion") }
+        let data = try JSONSerialization.data(withJSONObject: json)
+        return try JSONDecoder().decode(PersistedSettings.self, from: data).popoverLayout
+    }
+
+    func testVersion1FileMovesToRows() throws {
+        XCTAssertEqual(try decodeLayout(version: 1, layout: "cards"), "rows")
+    }
+
+    func testNoVersionMovesToRows() throws {
+        XCTAssertEqual(try decodeLayout(version: nil, layout: "cards"), "rows")
+    }
+
+    func testVersion2KeepsCards() throws {
+        XCTAssertEqual(try decodeLayout(version: 2, layout: "cards"), "cards")
+    }
+
+    func testEncodeWritesVersion2() throws {
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(base())) as? [String: Any])
+        XCTAssertEqual(json["schemaVersion"] as? Int, 2)
+    }
+
+    func testBadSchemaVersionKeepsSettings() throws {
+        var b = base()
+        b.cardDensity = "b"
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(b)) as? [String: Any])
+        json["schemaVersion"] = "two"
+        let data = try JSONSerialization.data(withJSONObject: json)
+        let decoded = try JSONDecoder().decode(PersistedSettings.self, from: data)
+        XCTAssertEqual(decoded.cardDensity, "b")
+        XCTAssertEqual(decoded.popoverLayout, "rows")
+    }
+
+    @MainActor
+    func testClientSettingsPickCardsSurvivesReload() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tt-layout-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("settings.json")
+        var b = base()
+        b.popoverLayout = "cards"
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(b)) as? [String: Any])
+        json["schemaVersion"] = 1
+        try JSONSerialization.data(withJSONObject: json).write(to: url)
+
+        let settings = ClientSettings(url: url)
+        XCTAssertEqual(settings.popoverLayout, .rows)
+        settings.popoverLayout = .cards
+        settings.persist()
+        XCTAssertEqual(ClientSettings(url: url).popoverLayout, .cards)
     }
 
     func testExportCarriesSourcePlatform() {

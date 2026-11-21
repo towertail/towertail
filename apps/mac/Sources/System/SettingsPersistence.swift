@@ -1,6 +1,9 @@
 import Foundation
 
 struct PersistedSettings: Codable, Equatable {
+    /// 2: the popover layout moves one time to rows.
+    static let schemaVersion = 2
+
     var nodes: [Node]
     var thresholds: PersistedThresholds
     var localPollingIntervalSeconds: Int
@@ -40,7 +43,7 @@ struct PersistedSettings: Codable, Equatable {
         postWakeGraceSeconds: 15,
         menuBarIconStyle: "pulse",
         welcomeDone: false,
-        popoverLayout: "cards",
+        popoverLayout: PopoverLayout.standard.rawValue,
         longProc: .defaults,
         platformBlocks: .init(foreign: [:])
     )
@@ -77,6 +80,11 @@ struct PersistedSettings: Codable, Equatable {
         self.popoverLayout = try c.decodeIfPresent(String.self, forKey: .popoverLayout)
             ?? PersistedSettings.defaults.popoverLayout
         self.longProc = (try? c.decodeIfPresent(LongProcRule.self, forKey: .longProc)) ?? .defaults
+        // A bad type counts as version 0, so the other settings stay.
+        let version = (try? c.decodeIfPresent(Int.self, forKey: .schemaVersion)) ?? 0
+        if version < 2 {
+            self.popoverLayout = PopoverLayout.standard.rawValue
+        }
 
         if let local = try c.decodeIfPresent(Int.self, forKey: .localPollingIntervalSeconds) {
             self.localPollingIntervalSeconds = local
@@ -132,7 +140,7 @@ struct PersistedSettings: Codable, Equatable {
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(1, forKey: .schemaVersion)
+        try c.encode(Self.schemaVersion, forKey: .schemaVersion)
         try c.encode(nodes, forKey: .nodes)
         try c.encode(thresholds, forKey: .thresholds)
         try c.encode(localPollingIntervalSeconds, forKey: .localPollingIntervalSeconds)
@@ -184,7 +192,7 @@ struct PersistedSettings: Codable, Equatable {
         postWakeGraceSeconds: Int,
         menuBarIconStyle: String = "pulse",
         welcomeDone: Bool = false,
-        popoverLayout: String = "cards",
+        popoverLayout: String = PopoverLayout.standard.rawValue,
         longProc: LongProcRule = .defaults,
         platformBlocks: PlatformBlocks = .init(foreign: [:])
     ) {
