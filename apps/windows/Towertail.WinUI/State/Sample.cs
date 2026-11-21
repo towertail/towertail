@@ -121,7 +121,13 @@ public sealed record ProcSample(
     [property: JsonPropertyName("state")] string? State,
     [property: JsonPropertyName("start_ts")] DateTime? StartTs,
     [property: JsonPropertyName("read_bytes")] long? ReadBytes,
-    [property: JsonPropertyName("write_bytes")] long? WriteBytes
+    [property: JsonPropertyName("write_bytes")] long? WriteBytes,
+    [property: JsonPropertyName("cwd")] string? Cwd = null,
+    [property: JsonPropertyName("repo")] string? Repo = null,
+    [property: JsonPropertyName("parent")] string? Parent = null,
+    // Null when the sampler cannot read the I/O counters of the process.
+    [property: JsonPropertyName("read_bps")] long? ReadBps = null,
+    [property: JsonPropertyName("write_bps")] long? WriteBps = null
 );
 
 /// <summary>
