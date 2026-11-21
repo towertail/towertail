@@ -20,6 +20,11 @@ struct LongProc: Sendable, Equatable, Identifiable {
     let pid: Int32
     let name: String
     let cmd: String?
+    var cwd: String? = nil
+    var repo: String? = nil
+    var parent: String? = nil
+    var ppid: Int32? = nil
+    var user: String? = nil
     /// Latest CPU, `top` convention.
     let cpuPct: Double
     let highSince: Date
@@ -33,7 +38,12 @@ struct LongProc: Sendable, Equatable, Identifiable {
         return n.count > 24 ? String(n.prefix(23)) + "…" : n
     }
 
-    var culprit: ProcCulprit { ProcCulprit(name: name, pid: pid, cmd: cmd, cpuPct: cpuPct) }
+    var culprit: ProcCulprit {
+        ProcCulprit(
+            name: name, pid: pid, cmd: cmd, cpuPct: cpuPct,
+            cwd: cwd, repo: repo, parent: parent, ppid: ppid, user: user
+        )
+    }
 
     func highFor(at now: Date) -> TimeInterval { now.timeIntervalSince(highSince) }
 }
@@ -112,6 +122,7 @@ struct LongProcTracker: Sendable {
             guard e.flagged, e.present, let since = e.highSince else { return nil }
             return LongProc(
                 key: key, pid: e.proc.pid, name: e.proc.name, cmd: e.proc.cmd,
+                cwd: e.proc.cwd, repo: e.proc.repo, parent: e.proc.parent, ppid: e.proc.ppid, user: e.proc.user,
                 cpuPct: e.proc.cpuPct, highSince: since, startTS: e.proc.startTS
             )
         }

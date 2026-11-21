@@ -72,4 +72,16 @@ final class ThresholdNotifierTests: XCTestCase {
         let body = ThresholdNotifier.longProcBody(p, now: Date(timeIntervalSince1970: 32 * 60))
         XCTAssertTrue(body.hasPrefix("OrbStack Helper (pid 812) at 85% CPU"), body)
     }
+
+    func testCPUBodyShowsFolderLabel() {
+        let items = [
+            ProcSample(pid: 1, name: "node", cmd: "node /p/node_modules/.bin/vitest run", cpuPct: 100, rss: 0,
+                       cwd: "/w/.wt/SLING-40/sling/web", repo: "/w/.wt/SLING-40/sling"),
+            ProcSample(pid: 2, name: "node", cmd: "node /p/node_modules/.bin/vitest run", cpuPct: 90, rss: 0,
+                       cwd: "/w/.wt/SLING-40/sling/web", repo: "/w/.wt/SLING-40/sling"),
+            ProcSample(pid: 3, name: "node", cmd: "node /p/x.js", cpuPct: 50, rss: 0, cwd: "/srv/api"),
+        ]
+        let body = ThresholdNotifier.bodyText(vm: vmWithProcs(items), metric: .cpu)
+        XCTAssertTrue(body.contains("Top: node ×2 · sling (.wt/SLING-40) · vitest run 190%, node · api · x.js 50%"), body)
+    }
 }

@@ -146,4 +146,18 @@ final class LongProcTrackerTests: XCTestCase {
         XCTAssertEqual(vm.longProcs.map(\.pid), [812])
         XCTAssertEqual(vm.alertLevel, .warn)
     }
+
+    func testFlaggedCarriesFolder() {
+        var t = LongProcTracker()
+        let p = ProcSample(
+            pid: 812, name: "node", cmd: "node /p/node_modules/.bin/vitest run", user: "u", cpuPct: 60, rss: 1,
+            startTS: started, cwd: "/Users/u/code/sling/web", repo: "/Users/u/code/sling", parent: "claude"
+        )
+        feed(&t, minutes: 0...29) { _ in [p] }
+        let out = feed(&t, minutes: 30...30) { _ in [p] }
+        XCTAssertEqual(out.count, 1)
+        XCTAssertEqual(out[0].repo, "/Users/u/code/sling")
+        XCTAssertEqual(out[0].parent, "claude")
+        XCTAssertEqual(out[0].culprit.label, "node · sling · vitest run")
+    }
 }
