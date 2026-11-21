@@ -202,7 +202,8 @@ func TestProcsTop1h(t *testing.T) {
 				hour.Add(time.Duration(m)*time.Minute).Format("2006-01-02 15:04:05"), org, node, 11-n, n, n, n, n, n, n))
 		}
 	}
-	if err := client.conn.Exec(ctx, "INSERT INTO "+client.table("procs_top_1m")+" VALUES "+strings.Join(rows, ",")); err != nil {
+	if err := client.conn.Exec(ctx, "INSERT INTO "+client.table("procs_top_1m")+
+		" (ts_minute, org_id, node_id, rank, name, cmd_hash, cmd, cpu_pct_avg, cpu_pct_max, rss_max, refreshed_at) VALUES "+strings.Join(rows, ",")); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
 	mv := client.table("procs_top_1h_mv")
@@ -586,4 +587,148 @@ func TestWindowStats(t *testing.T) {
 	if _, err := client.WindowStats(ctx, StatsQuery{OrgID: org, Metric: "bogus", From: start, To: end}); !errors.Is(err, ErrUnknownMetric) {
 		t.Fatalf("unknown metric: %v", err)
 	}
+}
+
+// procs_topn keeps the folders and the I/O rates. A row without them
+// reads back empty, and a rate of 0 stays different from no rate.
+func TestProcsTopnFolderColumns(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	org, node := uuid.New(), uuid.New()
+	ts := time.Now().UTC().Truncate(time.Second)
+	rate, zero := uint64(4096), uint64(0)
+	procs := []ProcRow{
+		{TS: ts, OrgID: org, NodeID: node, PID: 1, Name: "node", Cwd: "/srv/app/api", Repo: "/srv/app", Parent: "zsh", ReadBps: &rate, WriteBps: &zero, StartTS: ts},
+		{TS: ts, OrgID: org, NodeID: node, PID: 2, Name: "sh", StartTS: ts},
+	}
+	if err := client.insert(ctx, []IngestBundle{{Sample: SampleRow{TS: ts, OrgID: org, NodeID: node, SchemaV: 1, Errors: []string{}}, Procs: procs}}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	rows, err := client.conn.Query(ctx,
+		"SELECT pid, cwd, repo, parent, read_bps, write_bps FROM "+client.table("procs_topn")+" WHERE org_id = ? AND node_id = ? ORDER BY pid", org, node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var got []ProcRow
+	for rows.Next() {
+		var p ProcRow
+		if err := rows.Scan(&p.PID, &p.Cwd, &p.Repo, &p.Parent, &p.ReadBps, &p.WriteBps); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, p)
+	}
+	if len(got) != 2 {
+		t.Fatalf("rows = %d", len(got))
+	}
+	a, b := got[0], got[1]
+	if a.Cwd != "/srv/app/api" || a.Repo != "/srv/app" || a.Parent != "zsh" || a.ReadBps == nil || *a.ReadBps != 4096 || a.WriteBps == nil || *a.WriteBps != 0 {
+		t.Errorf("row with folders = %+v", a)
+	}
+	if b.Cwd != "" || b.Repo != "" || b.Parent != "" || b.ReadBps != nil || b.WriteBps != nil {
+		t.Errorf("row without folders = %+v", b)
+	}
+}
+
+// The same name and cmd in two repos are two processes.
+func TestTopProcessesSplitsByRepo(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	org, node := uuid.New(), uuid.New()
+	start := time.Now().UTC().Truncate(time.Minute).Add(-3 * time.Minute)
+	var procs []ProcRow
+	for ts := start; ts.Before(start.Add(3 * time.Minute)); ts = ts.Add(10 * time.Second) {
+		for _, r := range []struct {
+			pid  int32
+			repo string
+			cpu  float32
+		}{{1, "/w/a", 80}, {2, "/w/b", 20}, {3, "", 5}} {
+			procs = append(procs, ProcRow{
+				TS: ts, OrgID: org, NodeID: node, PID: r.pid, Name: "node", Cmd: "node vitest",
+				CPUPct: r.cpu, RSS: 1 << 20, StartTS: start, Repo: r.repo, Cwd: r.repo + "/pkg", Parent: "zsh",
+			})
+		}
+	}
+	if err := client.insert(ctx, []IngestBundle{{Sample: SampleRow{TS: start, OrgID: org, NodeID: node, SchemaV: 1, Errors: []string{}}, Procs: procs}}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	top, err := client.TopProcesses(ctx, RangeQuery{OrgID: org, NodeID: node, From: start, To: start.Add(3 * time.Minute)}, ProcByCPU, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(top) != 3 || top[0].Repo != "/w/a" || top[1].Repo != "/w/b" || top[2].Repo != "" {
+		t.Fatalf("top = %+v", top)
+	}
+	if top[0].Cwd != "/w/a/pkg" || top[0].Parent != "zsh" || top[0].CPUPctAvg != 80 {
+		t.Errorf("top[0] = %+v", top[0])
+	}
+}
+
+// The minute rollup and the hour rollup keep the repo. The rollups have
+// no cwd and no parent.
+func TestTopProcessesRollupRepo(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	org, node := uuid.New(), uuid.New()
+	start := time.Now().UTC().Truncate(time.Minute).Add(-3 * time.Minute)
+	var procs []ProcRow
+	for ts := start; ts.Before(start.Add(3 * time.Minute)); ts = ts.Add(10 * time.Second) {
+		for _, r := range []struct {
+			pid  int32
+			repo string
+			cpu  float32
+		}{{1, "/w/a", 80}, {2, "/w/b", 20}} {
+			procs = append(procs, ProcRow{
+				TS: ts, OrgID: org, NodeID: node, PID: r.pid, Name: "node", Cmd: "node vitest",
+				CPUPct: r.cpu, RSS: 1 << 20, StartTS: start, Repo: r.repo, Cwd: r.repo + "/pkg", Parent: "zsh",
+			})
+		}
+	}
+	if err := client.insert(ctx, []IngestBundle{{Sample: SampleRow{TS: start, OrgID: org, NodeID: node, SchemaV: 1, Errors: []string{}}, Procs: procs}}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	refresh := func(view string) {
+		t.Helper()
+		mv := client.table(view)
+		if err := client.conn.Exec(ctx, "SYSTEM REFRESH VIEW "+mv); err != nil {
+			t.Fatalf("refresh: %v", err)
+		}
+		if err := client.conn.Exec(ctx, "SYSTEM WAIT VIEW "+mv); err != nil {
+			t.Fatalf("wait: %v", err)
+		}
+	}
+	check := func(label string, q RangeQuery) {
+		t.Helper()
+		top, err := client.TopProcesses(ctx, q, ProcByCPU, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(top) != 2 || top[0].Repo != "/w/a" || top[1].Repo != "/w/b" || top[0].Cwd != "" || top[0].Parent != "" {
+			t.Fatalf("%s: top = %+v", label, top)
+		}
+	}
+	refresh("procs_top_1m_mv")
+	check("procs_top_1m", RangeQuery{OrgID: org, NodeID: node, From: start.Add(-24 * time.Hour), To: start.Add(3 * time.Minute)})
+
+	// procs_top_1h reads the rows of procs_top_1m of the hour before.
+	hour := time.Now().UTC().Truncate(time.Hour).Add(-time.Hour)
+	var rows []string
+	for m := 0; m < 60; m++ {
+		for n, repo := range []string{"/w/a", "/w/b"} {
+			rows = append(rows, fmt.Sprintf("('%s', '%s', '%s', %d, 'node', 1, 'node vitest', %d, %d, 1, now(), '%s')",
+				hour.Add(time.Duration(m)*time.Minute).Format("2006-01-02 15:04:05"), org, node, n+1, 80-60*n, 80-60*n, repo))
+		}
+	}
+	if err := client.conn.Exec(ctx, "INSERT INTO "+client.table("procs_top_1m")+
+		" (ts_minute, org_id, node_id, rank, name, cmd_hash, cmd, cpu_pct_avg, cpu_pct_max, rss_max, refreshed_at, repo) VALUES "+strings.Join(rows, ",")); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	refresh("procs_top_1h_mv")
+	check("procs_top_1h", RangeQuery{OrgID: org, NodeID: node, From: hour.Add(-30 * 24 * time.Hour), To: hour.Add(30 * time.Minute)})
 }

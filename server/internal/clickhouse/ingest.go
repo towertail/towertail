@@ -291,7 +291,13 @@ func (c *Client) flush(ctx context.Context, samples []SampleRow, disks []DiskRow
 		}
 	}
 	if len(procs) > 0 {
-		batch, err := c.conn.PrepareBatch(ctx, "INSERT INTO "+c.table("procs_topn"))
+		batch, err := c.conn.PrepareBatch(ctx, "INSERT INTO "+c.table("procs_topn")+` (
+			ts, org_id, node_id,
+			pid, ppid, name, cmd, user_name,
+			cpu_pct, rss, threads, state, start_ts,
+			read_bytes, write_bytes,
+			cwd, repo, parent, read_bps, write_bps
+		)`)
 		if err != nil {
 			return err
 		}
@@ -301,6 +307,7 @@ func (c *Client) flush(ctx context.Context, samples []SampleRow, disks []DiskRow
 				p.PID, p.PPID, p.Name, p.Cmd, p.UserName,
 				p.CPUPct, p.RSS, p.Threads, p.State, p.StartTS,
 				p.ReadBytes, p.WriteBytes,
+				p.Cwd, p.Repo, p.Parent, p.ReadBps, p.WriteBps,
 			); err != nil {
 				return err
 			}

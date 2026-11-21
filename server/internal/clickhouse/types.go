@@ -82,6 +82,11 @@ type ProcRow struct {
 	StartTS    time.Time
 	ReadBytes  *uint64
 	WriteBytes *uint64
+	Cwd        string
+	Repo       string
+	Parent     string
+	ReadBps    *uint64
+	WriteBps   *uint64
 }
 
 // EventRow is a persisted alert.

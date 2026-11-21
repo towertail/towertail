@@ -16,11 +16,15 @@ type RangeQuery struct {
 }
 
 // TopProc is one process of a node over a range. A process is a name
-// and a cmd.
+// and a cmd, split by repo. Cwd and Parent are empty for ranges that
+// the rollups serve.
 type TopProc struct {
 	NodeID    uuid.UUID
 	Name      string
 	Cmd       string
+	Repo      string
+	Cwd       string
+	Parent    string
 	CPUPctAvg float64
 	CPUPctMax float64
 	RSSMax    uint64
@@ -51,9 +55,10 @@ const (
 func (c *Client) TopProcesses(ctx context.Context, q RangeQuery, by ProcOrder, limit int) ([]TopProc, error) {
 	table, ts := procsSource(q.To.Sub(q.From))
 	avg, mx, rss, hash := "cpu_pct", "cpu_pct", "rss", "cityHash64(cmd)"
-	final := ""
+	cwd, parent, final := "any(cwd)", "any(parent)", ""
 	if table != "procs_topn" {
 		avg, mx, rss, hash, final = "cpu_pct_avg", "cpu_pct_max", "rss_max", "cmd_hash", " FINAL"
+		cwd, parent = "''", "''"
 	}
 	where, args := "org_id = ?", []any{q.OrgID}
 	if q.NodeID != uuid.Nil {
@@ -64,9 +69,9 @@ func (c *Client) TopProcesses(ctx context.Context, q RangeQuery, by ProcOrder, l
 	if by == ProcByMem {
 		order = "p_rss DESC, p_avg DESC"
 	}
-	sql := fmt.Sprintf("SELECT node_id, name, any(cmd), avg(%s) AS p_avg, toFloat64(max(%s)), max(%s) AS p_rss FROM %s%s "+
-		"WHERE %s AND %s BETWEEN ? AND ? GROUP BY node_id, name, %s ORDER BY %s LIMIT ?",
-		avg, mx, rss, c.table(table), final, where, ts, hash, order)
+	sql := fmt.Sprintf("SELECT node_id, name, any(cmd), repo, %s, %s, avg(%s) AS p_avg, toFloat64(max(%s)), max(%s) AS p_rss FROM %s%s "+
+		"WHERE %s AND %s BETWEEN ? AND ? GROUP BY node_id, name, %s, repo ORDER BY %s LIMIT ?",
+		cwd, parent, avg, mx, rss, c.table(table), final, where, ts, hash, order)
 	args = append(args, q.From, q.To, limit)
 	rows, err := c.conn.Query(ctx, sql, args...)
 	if err != nil {
@@ -76,7 +81,7 @@ func (c *Client) TopProcesses(ctx context.Context, q RangeQuery, by ProcOrder, l
 	var out []TopProc
 	for rows.Next() {
 		var p TopProc
-		if err := rows.Scan(&p.NodeID, &p.Name, &p.Cmd, &p.CPUPctAvg, &p.CPUPctMax, &p.RSSMax); err != nil {
+		if err := rows.Scan(&p.NodeID, &p.Name, &p.Cmd, &p.Repo, &p.Cwd, &p.Parent, &p.CPUPctAvg, &p.CPUPctMax, &p.RSSMax); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
