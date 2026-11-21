@@ -125,6 +125,36 @@ final class SampleDecodingTests: XCTestCase {
         XCTAssertNil(items[1].writeBytes)
     }
 
+    func testDecodesProcFolderFields() throws {
+        let json = """
+        {
+          "v": 1,
+          "ts": "2026-04-21T12:00:00.000Z",
+          "host": {"name":"h","os":"linux","arch":"arm64","kernel":"6.6","uptime_s":1,"sampler":"x"},
+          "cpu": {"pct":10,"load_1":0,"load_5":0,"load_15":0,"cores":4},
+          "mem": {"used":1,"total":2},
+          "swap": {"used":0,"total":0},
+          "procs": {
+            "root": true, "top_n": 20, "total": 2, "visible": 2,
+            "items": [
+              {"pid": 1, "name": "node", "cpu_pct": 1.0, "rss": 100, "cwd": "/srv/app/web", "repo": "/srv/app",
+               "parent": "pm2", "read_bps": 1048576, "write_bps": 262144},
+              {"pid": 2, "name": "cron", "cpu_pct": 0.1, "rss": 50}
+            ]
+          },
+          "errors": []
+        }
+        """.data(using: .utf8)!
+        let items = try SampleCodec.decoder().decode(Sample.self, from: json).procs?.items ?? []
+        XCTAssertEqual(items[0].cwd, "/srv/app/web")
+        XCTAssertEqual(items[0].repo, "/srv/app")
+        XCTAssertEqual(items[0].parent, "pm2")
+        XCTAssertEqual(items[0].readBps, 1_048_576)
+        XCTAssertEqual(items[0].writeBps, 262_144)
+        XCTAssertNil(items[1].cwd)
+        XCTAssertNil(items[1].readBps, "omitted read_bps means no visibility, not 0")
+    }
+
     func testMissingMachineIDDecodes() throws {
         let json = """
         {"v":1,"ts":"2026-04-20T12:00:00Z","host":{"name":"h","os":"linux","arch":"arm64","kernel":"6.6","uptime_s":1,"sampler":"x"},"cpu":{"pct":10,"load_1":0,"load_5":0,"load_15":0,"cores":4},"mem":{"used":1,"total":2},"swap":{"used":0,"total":0},"errors":[]}
@@ -151,6 +181,12 @@ final class SampleDecodingTests: XCTestCase {
         XCTAssertEqual(sample.disks?.count, 2)
         XCTAssertEqual(sample.diskIO?.devices?.count, 1)
         XCTAssertEqual(sample.procs?.items.count, 2)
+        XCTAssertEqual(sample.procs?.items[0].parent, "systemd")
+        XCTAssertEqual(sample.procs?.items[0].readBps, 1_048_576)
+        XCTAssertEqual(sample.procs?.items[0].writeBps, 262_144)
+        XCTAssertEqual(sample.procs?.items[1].cwd, "/srv/app/web")
+        XCTAssertEqual(sample.procs?.items[1].repo, "/srv/app")
+        XCTAssertEqual(sample.procs?.items[1].parent, "pm2")
         XCTAssertEqual(sample.ports?.items.count, 2)
         XCTAssertEqual(sample.health?.zombies, 219)
         XCTAssertEqual(sample.health?.memPressurePct, 58)

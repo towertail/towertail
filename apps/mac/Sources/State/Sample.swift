@@ -284,6 +284,15 @@ struct ProcSample: Codable, Sendable, Identifiable {
     let startTS: Date?
     let readBytes: Int64?
     let writeBytes: Int64?
+    /// Working folder. Nil when the sampler cannot read it or the host hides it.
+    let cwd: String?
+    /// Absolute path of the nearest folder that holds `.git`.
+    let repo: String?
+    /// Name of the process at `ppid`.
+    let parent: String?
+    /// Disk I/O rates in bytes per second. Nil means no visibility.
+    let readBps: Int64?
+    let writeBps: Int64?
 
     var id: Int32 { pid }
 
@@ -294,6 +303,9 @@ struct ProcSample: Codable, Sendable, Identifiable {
         case startTS = "start_ts"
         case readBytes = "read_bytes"
         case writeBytes = "write_bytes"
+        case cwd, repo, parent
+        case readBps = "read_bps"
+        case writeBps = "write_bps"
     }
 
     init(
@@ -308,7 +320,12 @@ struct ProcSample: Codable, Sendable, Identifiable {
         state: String? = nil,
         startTS: Date? = nil,
         readBytes: Int64? = nil,
-        writeBytes: Int64? = nil
+        writeBytes: Int64? = nil,
+        cwd: String? = nil,
+        repo: String? = nil,
+        parent: String? = nil,
+        readBps: Int64? = nil,
+        writeBps: Int64? = nil
     ) {
         self.pid = pid
         self.ppid = ppid
@@ -322,6 +339,11 @@ struct ProcSample: Codable, Sendable, Identifiable {
         self.startTS = startTS
         self.readBytes = readBytes
         self.writeBytes = writeBytes
+        self.cwd = cwd
+        self.repo = repo
+        self.parent = parent
+        self.readBps = readBps
+        self.writeBps = writeBps
     }
 }
 
