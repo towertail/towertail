@@ -37,13 +37,27 @@ final class CloudSession {
         }
     }
 
-    /// A sign-out stops the feed. `Node.cloud` stays, because the samplers
-    /// on the hosts keep running.
+    /// A sign-out stops the feed and releases the hosts. SSH polling
+    /// starts again, and Cloud-only hosts leave this Mac.
     private func accountChanged(_ status: CloudAccount.Status) {
         switch status {
         case .signedIn: startFeed()
-        case .signedOut: stopFeed()
+        case .signedOut:
+            stopFeed()
+            releaseHosts()
         case .codeSent, .failed: break
+        }
+    }
+
+    private func releaseHosts() {
+        for node in nodes.nodes where node.isCloud {
+            if node.kind == .cloud {
+                nodes.remove(id: node.id)
+            } else {
+                var local = node
+                local.cloud = nil
+                nodes.update(local)
+            }
         }
     }
 

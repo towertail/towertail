@@ -152,6 +152,27 @@ final class CloudAccount {
         set(.signedOut)
     }
 
+    /// Reads the plan again. It keeps the old value on an error.
+    @discardableResult
+    func refreshBilling() async -> CloudBilling? {
+        guard let token else { return billing }
+        if let fresh = try? await client.billing(token: token) { billing = fresh }
+        return billing
+    }
+
+    /// What an account delete does to each org. Nil when this Cloud cannot delete accounts.
+    func deletion() async throws -> CloudAccountDeletion? {
+        guard let token else { throw LifecycleError.notSignedIn }
+        return try await client.accountDeletion(token: token)
+    }
+
+    /// Deletes the account in Cloud, then signs out. An error keeps the sign-in.
+    func deleteAccount(email: String) async throws {
+        guard let token else { throw LifecycleError.notSignedIn }
+        try await client.deleteAccount(token: token, email: email)
+        signOut()
+    }
+
     private func load(token: String) async {
         do {
             let me = try await client.me(token: token)

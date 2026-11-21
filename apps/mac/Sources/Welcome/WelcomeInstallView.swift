@@ -4,12 +4,24 @@ struct WelcomeInstallView: View {
     let flow: WelcomeFlow
 
     var body: some View {
+        if flow.needsPick, !flow.installStarted {
+            WelcomePickView(flow: flow)
+                .task { await flow.loadRoom() }
+        } else {
+            installing
+        }
+    }
+
+    private var installing: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 16) {
                 WelcomeHeading(
                     title: "Turn on 24/7 monitoring",
                     subtitle: "Towertail copies the sampler to each server and starts it."
                 )
+                if let note = flow.planNote {
+                    Text(note).font(.system(size: 12)).foregroundStyle(.secondary)
+                }
                 table
                 noSudo
             }
@@ -18,13 +30,16 @@ struct WelcomeInstallView: View {
             .padding(.bottom, 16)
             WelcomeFooter(
                 step: .install,
-                secondary: flow.hasPlanFull
+                secondary: flow.hasPlanFull && flow.canBuy
                     ? .init(title: "Upgrade for \(flow.upgradeName)", run: flow.upgrade)
                     : nil,
                 primary: .init(title: "Done", run: flow.finish)
             )
         }
-        .task { await flow.install() }
+        .task {
+            await flow.loadRoom()
+            if !flow.needsPick { await flow.install() }
+        }
     }
 
     private var table: some View {

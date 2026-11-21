@@ -33,6 +33,32 @@ struct CloudPlan: Decodable, Equatable {
 struct CloudBilling: Decodable, Equatable {
     let plan: CloudPlan
     let nodes: Int
+    /// The host cap of the org with packs. Nil when the server is older.
+    var maxNodes: Int? = nil
+    /// Nil when the server is older than the payments flag. Nil means on.
+    var payments: Bool? = nil
+
+    /// Hosts that the org can still add. Nil when the cap is not known.
+    var room: Int? { maxNodes.map { max(0, $0 - nodes) } }
+
+    var canBuy: Bool { payments ?? true }
+}
+
+struct CloudOrgDeletion: Decodable, Equatable, Identifiable {
+    let id: UUID
+    let name: String
+    let role: String
+    /// `delete`, `leave` or `blocked`.
+    let fate: String
+    let members: Int
+    let nodes: Int
+    let reason: String?
+}
+
+struct CloudAccountDeletion: Decodable, Equatable {
+    let email: String
+    let orgs: [CloudOrgDeletion]
+    let blocked: Bool
 }
 
 /// The sign-in and account routes of Towertail Cloud. These routes are
@@ -95,6 +121,21 @@ struct CloudAuthClient: Sendable {
         return try decode(CloudBilling.self, data, status)
     }
 
+    /// Nil when this Cloud cannot delete accounts (404).
+    func accountDeletion(token: String) async throws -> CloudAccountDeletion? {
+        let (data, status) = try await call("GET", "/v1/me/deletion", token: token)
+        if status == 404 { return nil }
+        guard status < 300 else { throw CloudAuthError.server(status, Self.message(data)) }
+        return try decode(CloudAccountDeletion.self, data, status)
+    }
+
+    /// Deletes the account. The server checks the email.
+    func deleteAccount(token: String, email: String) async throws {
+        struct Body: Encodable { let email: String }
+        let (data, status) = try await call("DELETE", "/v1/me", token: token, body: Body(email: email))
+        guard status < 300 else { throw CloudAuthError.server(status, Self.message(data)) }
+    }
+
     private func decode<T: Decodable>(_ type: T.Type, _ data: Data, _ status: Int) throws -> T {
         do { return try JSONDecoder().decode(T.self, from: data) }
         catch { throw CloudAuthError.server(status, "Cloud sent a reply that the app cannot read.") }
@@ -104,8 +145,8 @@ struct CloudAuthClient: Sendable {
         try await send(method, path, token: token, body: nil)
     }
 
-    private func call<B: Encodable>(_ method: String, _ path: String, body: B) async throws -> (Data, Int) {
-        try await send(method, path, token: nil, body: try JSONEncoder().encode(body))
+    private func call<B: Encodable>(_ method: String, _ path: String, token: String? = nil, body: B) async throws -> (Data, Int) {
+        try await send(method, path, token: token, body: try JSONEncoder().encode(body))
     }
 
     private func send(_ method: String, _ path: String, token: String?, body: Data?) async throws -> (Data, Int) {

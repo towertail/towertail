@@ -12,6 +12,7 @@ final class CloudInstaller {
     /// The sampler version of the first sample that came after a date. Nil when there is none.
     typealias FirstSample = @MainActor (UUID, Date) -> String?
 
+    static let stayedText = "Stays on this Mac over SSH"
     static let sampleWait = Duration.seconds(90)
     static let maxParallel = 4
 
@@ -39,11 +40,14 @@ final class CloudInstaller {
     private(set) var notes: [UUID: String] = [:]
     /// Hosts that the plan could not take.
     private(set) var planFull: Set<UUID> = []
+    /// Hosts that the plan has no room for. They stay on SSH.
+    private(set) var stayed: Set<UUID> = []
 
     @ObservationIgnored private let client: @MainActor () -> RemoteClient?
     @ObservationIgnored private let nodes: NodeStore
     @ObservationIgnored private let settings: ServerSettings
     @ObservationIgnored private let planName: @MainActor () -> String?
+    @ObservationIgnored private let room: @MainActor () async -> Int?
     @ObservationIgnored private let firstSample: FirstSample
     @ObservationIgnored private let connect: Connect
     @ObservationIgnored private let upload: Upload
@@ -55,6 +59,7 @@ final class CloudInstaller {
         nodes: NodeStore,
         settings: ServerSettings,
         planName: @escaping @MainActor () -> String? = { nil },
+        room: @escaping @MainActor () async -> Int? = { nil },
         firstSample: @escaping FirstSample,
         connect: @escaping Connect = CloudInstaller.sshConnect,
         upload: @escaping Upload = CloudInstaller.sshUpload,
@@ -65,6 +70,7 @@ final class CloudInstaller {
         self.nodes = nodes
         self.settings = settings
         self.planName = planName
+        self.room = room
         self.firstSample = firstSample
         self.connect = connect
         self.upload = upload
@@ -81,6 +87,7 @@ final class CloudInstaller {
                 if case .signedIn(let me) = session.account.status { return me.org.plan }
                 return nil
             },
+            room: { await session.account.refreshBilling()?.room },
             firstSample: { id, since in
                 guard let vm = servers.serverVMs.first(where: { $0.id == id }),
                       let at = vm.lastIngestAt, at > since else { return nil }
@@ -89,25 +96,79 @@ final class CloudInstaller {
         )
     }
 
-    func run(nodes list: [Node]) async {
+    /// The number of hosts that the plan can still take. Nil means no cap.
+    func availableRoom() async -> Int? { await room() }
+
+    /// The plan name for the notes in the install step, for example "Free plan".
+    var planLabel: String {
+        planName().map { $0.prefix(1).uppercased() + $0.dropFirst() + " plan" } ?? "Plan"
+    }
+
+    /// The alert text when more hosts than the room are selected. Nil when they fit.
+    func overRoomText(selected: Int, room: Int) -> String? {
+        guard selected > room else { return nil }
+        let name = planLabel == "Plan" ? "Your plan" : "The \(planLabel)"
+        if room == 0 { return "\(name) is full. Turn off 24/7 monitoring on another host first." }
+        return "\(name) has room for \(room) more \(room == 1 ? "host" : "hosts"). Select \(room) or fewer."
+    }
+
+    /// Marks hosts that stay on SSH because the plan has no room for them.
+    func keepOnSSH(_ list: [Node]) {
         for node in list {
+            rows[node.id] = nil
+            notes[node.id] = nil
+            planFull.remove(node.id)
+            results[node.id] = Self.stayedText
+            stayed.insert(node.id)
+        }
+    }
+
+    /// Installs on the first hosts that fit in the plan. The other hosts stay on SSH.
+    func run(nodes list: [Node]) async {
+        let take = await room().map { Array(list.prefix($0)) } ?? list
+        keepOnSSH(Array(list.dropFirst(take.count)))
+        for node in take {
             rows[node.id] = Dictionary(uniqueKeysWithValues: InstallStep.allCases.map { ($0, InstallStepState.waiting) })
             results[node.id] = nil
             notes[node.id] = nil
             planFull.remove(node.id)
+            stayed.remove(node.id)
         }
-        await withTaskGroup(of: Void.self) { group in
+        _ = await inParallel(take) { await self.install($0) }
+    }
+
+    /// Removes the samplers of linked SSH hosts and the hosts in Cloud.
+    /// It gives the failures by host id. Cloud-only hosts stay untouched.
+    func leave(nodes list: [Node]) async -> [UUID: String] {
+        let hosts = list.filter { $0.kind == .ssh && $0.cloud != nil }
+        let outcomes = await inParallel(hosts) { node -> (UUID, String?) in
+            do {
+                try await self.remove(node: node)
+                return (node.id, nil)
+            } catch {
+                return (node.id, error.localizedDescription)
+            }
+        }
+        return Dictionary(uniqueKeysWithValues: outcomes.compactMap { id, failure in failure.map { (id, $0) } })
+    }
+
+    /// Runs `work` on the hosts, `maxParallel` at a time.
+    private func inParallel<T: Sendable>(_ list: [Node], _ work: @escaping @MainActor @Sendable (Node) async -> T) async -> [T] {
+        await withTaskGroup(of: T.self) { group in
             var queue = list.makeIterator()
             var active = 0
             while active < Self.maxParallel, let node = queue.next() {
-                group.addTask { await self.install(node) }
+                group.addTask { await work(node) }
                 active += 1
             }
-            while await group.next() != nil {
+            var out: [T] = []
+            while let value = await group.next() {
+                out.append(value)
                 if let node = queue.next() {
-                    group.addTask { await self.install(node) }
+                    group.addTask { await work(node) }
                 }
             }
+            return out
         }
     }
 
@@ -253,9 +314,8 @@ final class CloudInstaller {
     }
 
     private func planFullText(_ max: Int?) -> String {
-        let name = planName().map { $0.prefix(1).uppercased() + $0.dropFirst() + " plan" } ?? "Plan"
-        guard let max else { return "\(name) is full" }
-        return "\(name) is full (\(max) of \(max))"
+        guard let max else { return "\(planLabel) is full" }
+        return "\(planLabel) is full (\(max) of \(max))"
     }
 
     private func set(_ id: UUID, _ step: InstallStep, _ state: InstallStepState) {

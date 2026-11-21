@@ -177,6 +177,32 @@ final class CloudFeedTests: XCTestCase {
         XCTAssertTrue(added.isCloud)
     }
 
+    func testListedSSHNodeIsRelinked() async throws {
+        let local = Node(displayName: "web", kind: .ssh, sshUser: "u", sshHost: "h")
+        nodes.add(local)
+        serveNodes([local])
+        await feed.syncNodes()
+        let stored = try XCTUnwrap(nodes.node(withId: local.id))
+        XCTAssertNotNil(stored.cloud)
+        XCTAssertEqual(stored.kind, .ssh)
+    }
+
+    func testDisabledSSHNodeIsNotRelinked() async throws {
+        var local = Node(displayName: "web", kind: .ssh, sshUser: "u", sshHost: "h")
+        nodes.add(local)
+        local.enabled = false
+        serveNodes([local])
+        await feed.syncNodes()
+        XCTAssertNil(nodes.node(withId: local.id)?.cloud)
+    }
+
+    func testCloudNodeStillAdded() async throws {
+        let unknown = Node(displayName: "edge", kind: .cloud)
+        serveNodes([unknown])
+        await feed.syncNodes()
+        XCTAssertEqual(nodes.node(withId: unknown.id)?.kind, .cloud)
+    }
+
     func testRemovedCloudNodeClearsLink() async throws {
         let linked = Node(displayName: "web", kind: .ssh, sshUser: "u", sshHost: "h", cloud: CloudLink(enrolledAt: Date()))
         let cloudOnly = Node(displayName: "gone", kind: .cloud, cloud: CloudLink(enrolledAt: Date()))

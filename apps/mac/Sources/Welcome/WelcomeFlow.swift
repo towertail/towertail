@@ -36,6 +36,11 @@ final class WelcomeFlow {
     private(set) var added: [Node] = []
     private(set) var addFailures: [UUID: String] = [:]
     private(set) var installStarted = false
+    /// The hosts that the plan can still take. Nil means no cap or not read yet.
+    private(set) var room: Int?
+    private(set) var roomLoaded = false
+    /// The hosts that go to Cloud when there are more hosts than room.
+    private(set) var cloudPicks: Set<UUID> = []
 
     /// The window closes through this. The view sets it.
     @ObservationIgnored var close: () -> Void = {}
@@ -223,18 +228,75 @@ final class WelcomeFlow {
 
     // MARK: install
 
+    /// The SSH hosts of this run.
+    var cloudCandidates: [Node] { added.filter { $0.kind == .ssh } }
+
+    /// True when the user must pick the hosts for Cloud. With no room, none go.
+    var needsPick: Bool {
+        guard let room, room > 0 else { return false }
+        return cloudCandidates.count > room
+    }
+
+    /// Reads the room once. The default picks are the first hosts of the list.
+    func loadRoom() async {
+        guard !roomLoaded, let installer else { return }
+        room = await installer.availableRoom()
+        roomLoaded = true
+        cloudPicks = Set(cloudCandidates.prefix(room ?? cloudCandidates.count).map(\.id))
+    }
+
+    /// The text above the host picker.
+    var pickNote: String {
+        let label = installer?.planLabel ?? "Plan"
+        let name = label == "Plan" ? "Your plan" : "The \(label)"
+        let n = room ?? 0
+        return "\(name) takes \(n) \(n == 1 ? "host" : "hosts"). Select the \(n == 1 ? "1 host" : "\(n) hosts") for Cloud. The other hosts stay on this Mac over SSH."
+    }
+
+    func togglePick(_ id: UUID) {
+        if cloudPicks.contains(id) {
+            cloudPicks.remove(id)
+        } else if cloudPicks.count < (room ?? .max) {
+            cloudPicks.insert(id)
+        }
+    }
+
+    func clearPicks() { cloudPicks = [] }
+
     func install() async {
         guard !installStarted, let installer else { return }
         installStarted = true
-        let hosts = added.filter { $0.kind == .ssh }
+        await loadRoom()
+        let hosts = cloudCandidates
         guard !hosts.isEmpty else { return }
-        await installer.run(nodes: hosts)
+        guard needsPick else {
+            await installer.run(nodes: hosts)
+            return
+        }
+        installer.keepOnSSH(hosts.filter { !cloudPicks.contains($0.id) })
+        let picked = hosts.filter { cloudPicks.contains($0.id) }
+        if !picked.isEmpty { await installer.run(nodes: picked) }
     }
 
+    /// Hosts that stayed on SSH, or that the plan could not take.
     var hasPlanFull: Bool {
         guard let installer else { return false }
-        return added.contains { installer.planFull.contains($0.id) }
+        return added.contains { installer.planFull.contains($0.id) || installer.stayed.contains($0.id) }
     }
+
+    /// The note above the install table. Nil when no host stayed.
+    var planNote: String? {
+        guard let installer else { return nil }
+        let stayed = cloudCandidates.filter { installer.stayed.contains($0.id) }.count
+        guard stayed > 0 else { return nil }
+        let moved = cloudCandidates.count - stayed
+        let goes = moved == 1 ? "1 host goes" : "\(moved) hosts go"
+        let rest = stayed == 1 ? "The other host stays" : "The other \(stayed) hosts stay"
+        return "\(installer.planLabel): \(goes) to Cloud. \(rest) on this Mac over SSH."
+    }
+
+    /// False when this Cloud sells no plans.
+    var canBuy: Bool { cloud?.account.billing?.canBuy != false }
 
     /// The plan that has more hosts than the current plan.
     var upgradeName: String {
@@ -243,7 +305,7 @@ final class WelcomeFlow {
     }
 
     func upgrade() {
-        guard let account = cloud?.account else { return }
+        guard canBuy, let account = cloud?.account else { return }
         openURL(account.dashboardURL.appendingPathComponent("billing"))
     }
 

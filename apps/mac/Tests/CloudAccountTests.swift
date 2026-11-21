@@ -179,4 +179,99 @@ final class CloudAccountTests: XCTestCase {
         await account.verify(code: "482913")
         XCTAssertEqual(PopoverFooter.summary(for: account), "Free \u{00B7} 2 of 3 hosts")
     }
+
+    private func signIn() async -> CloudAccount {
+        serveSignedIn()
+        let account = makeAccount()
+        await account.sendCode(email: "ana@acme.dev")
+        await account.verify(code: "482913")
+        return account
+    }
+
+    func testDeleteAccountSignsOut() async throws {
+        let account = await signIn()
+        server.on("DELETE", "/v1/me") { _ in .empty(204) }
+        try await account.deleteAccount(email: "ana@acme.dev")
+        let req = try XCTUnwrap(server.captured.first { $0.method == "DELETE" })
+        XCTAssertEqual(String(decoding: req.body, as: UTF8.self), "{\"email\":\"ana@acme.dev\"}")
+        XCTAssertEqual(account.status, .signedOut)
+        XCTAssertTrue(keychain.items.isEmpty)
+    }
+
+    func testDeleteAccountConflictKeepsToken() async {
+        let account = await signIn()
+        server.on("DELETE", "/v1/me") { _ in
+            .json(409, Data("{\"error\":{\"code\":\"conflict\",\"message\":\"Acme: Make another member an owner first.\"}}".utf8))
+        }
+        do {
+            try await account.deleteAccount(email: "ana@acme.dev")
+            XCTFail("no error")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "Acme: Make another member an owner first.")
+        }
+        XCTAssertNotNil(keychain.items[keychainAccount])
+        guard case .signedIn = account.status else { return XCTFail("status: \(account.status)") }
+    }
+
+    func testAccountDeletionMissingGivesNil() async throws {
+        let account = await signIn()
+        let found = try await account.deletion()
+        XCTAssertNil(found)
+    }
+
+    func testAccountDeletionDecodes() async throws {
+        let account = await signIn()
+        server.on("GET", "/v1/me/deletion") { _ in
+            .json(200, Data("""
+            {"email":"ana@acme.dev","blocked":true,"orgs":[
+            {"id":"\(UUID().uuidString)","name":"Acme","role":"owner","fate":"blocked","members":2,"nodes":4,"reason":"Cancel the subscription first."},
+            {"id":"\(UUID().uuidString)","name":"Home","role":"owner","fate":"delete","members":1,"nodes":0}]}
+            """.utf8))
+        }
+        let loaded = try await account.deletion()
+        let found = try XCTUnwrap(loaded)
+        XCTAssertTrue(found.blocked)
+        XCTAssertEqual(found.orgs.map(\.fate), ["blocked", "delete"])
+        XCTAssertEqual(found.orgs[0].reason, "Cancel the subscription first.")
+        XCTAssertNil(found.orgs[1].reason)
+    }
+
+    func testBillingDecodesPayments() throws {
+        let with = try JSONDecoder().decode(CloudBilling.self, from: Data("""
+        {"plan":{"id":"free","maxNodes":3},"nodes":1,"maxNodes":3,"payments":false}
+        """.utf8))
+        XCTAssertEqual(with.payments, false)
+        let without = try JSONDecoder().decode(CloudBilling.self, from: Data("""
+        {"plan":{"id":"free","maxNodes":3},"nodes":1}
+        """.utf8))
+        XCTAssertNil(without.payments)
+        XCTAssertNil(without.maxNodes)
+    }
+
+    func testBillingRoom() throws {
+        let plan = CloudPlan(id: "free", maxNodes: 3)
+        XCTAssertEqual(CloudBilling(plan: plan, nodes: 1, maxNodes: 3).room, 2)
+        XCTAssertEqual(CloudBilling(plan: plan, nodes: 5, maxNodes: 3).room, 0)
+        XCTAssertNil(CloudBilling(plan: plan, nodes: 1).room)
+        XCTAssertFalse(CloudBilling(plan: plan, nodes: 1, payments: false).canBuy)
+        XCTAssertTrue(CloudBilling(plan: plan, nodes: 1, payments: true).canBuy)
+        XCTAssertTrue(CloudBilling(plan: plan, nodes: 1).canBuy)
+    }
+
+    func testRefreshBilling() async throws {
+        let account = await signIn()
+        XCTAssertEqual(account.billing?.nodes, 2)
+        server.on("GET", "/v1/billing") { _ in
+            .json(200, Data("""
+            {"plan":{"id":"free","maxNodes":3,"historyDays":1},"nodes":3,"maxNodes":3,"plans":[]}
+            """.utf8))
+        }
+        let fresh = await account.refreshBilling()
+        XCTAssertEqual(fresh?.nodes, 3)
+        XCTAssertEqual(account.billing?.room, 0)
+
+        server.on("GET", "/v1/billing") { _ in .empty(500) }
+        let kept = await account.refreshBilling()
+        XCTAssertEqual(kept?.nodes, 3)
+    }
 }

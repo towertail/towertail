@@ -16,6 +16,8 @@ final class ServerTester {
 
     func clear() { outcome = nil }
 
+    func fail(_ message: String) { outcome = Outcome(ok: false, message: message) }
+
     /// Runs a sample end to end (uploads the sampler if missing). A host
     /// that passes is marked warm and its pacer respawns, so a pacer that
     /// halted on a permanent error resumes.

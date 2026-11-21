@@ -13,6 +13,8 @@ final class AppEnvironment {
     let cloud: CloudSession?
     /// Installs samplers that report to Cloud. Nil in remote mode.
     let installer: CloudInstaller?
+    /// Moves hosts back to SSH and deletes the Cloud account. Nil in remote mode.
+    let exit: CloudExit?
     /// Restarts stopped samplers of Cloud hosts. Nil in remote mode.
     let keeper: SamplerKeeper?
 
@@ -47,9 +49,11 @@ final class AppEnvironment {
             self.backend = local
             let cloud = Self.makeCloud(backend: local)
             self.cloud = cloud
-            self.installer = CloudInstaller(
+            let installer = CloudInstaller(
                 session: cloud, servers: local.servers, nodes: local.nodes, settings: local.serverSettings
             )
+            self.installer = installer
+            self.exit = CloudExit(account: cloud.account, installer: installer, nodes: local.nodes)
             self.keeper = SamplerKeeper(session: cloud, nodes: local.nodes, manifest: SamplerManifestLoader.load())
         case .remote:
             let env = ProcessInfo.processInfo.environment
@@ -65,12 +69,14 @@ final class AppEnvironment {
                 self.backend = LocalBackend()
                 self.cloud = nil
                 self.installer = nil
+                self.exit = nil
                 self.keeper = nil
                 return
             }
             self.backend = RemoteBackend(endpoint: url, token: token)
             self.cloud = nil
             self.installer = nil
+            self.exit = nil
             self.keeper = nil
         }
     }

@@ -16,6 +16,7 @@ struct ServersPane: View {
     @State private var showAdd = false
     @State private var showBulkImport = false
     @State private var confirmRemove = false
+    @State private var roomAlert: String?
 
     private var filteredNodes: [Node] {
         let q = filter.trimmingCharacters(in: .whitespaces)
@@ -65,6 +66,11 @@ struct ServersPane: View {
         }
         .sheet(isPresented: $showBulkImport) {
             BulkImportWizard()
+        }
+        .alert("Not enough room in your plan", isPresented: Binding(get: { roomAlert != nil }, set: { if !$0 { roomAlert = nil } })) {
+            Button("OK") {}
+        } message: {
+            Text(roomAlert ?? "")
         }
         .confirmationDialog(removeTitle, isPresented: $confirmRemove) {
             Button("Remove", role: .destructive, action: removeSelected)
@@ -134,7 +140,7 @@ struct ServersPane: View {
             let on = ssh.filter { $0.cloud != nil }
             Divider()
             if !off.isEmpty {
-                Button("Turn on 24/7 Monitoring") { tester.turnOn(off, installer: installer) }
+                Button("Turn on 24/7 Monitoring") { turnOn(off, installer: installer) }
                     .disabled(tester.running)
             }
             if on.count == 1, let node = on.first {
@@ -145,6 +151,18 @@ struct ServersPane: View {
                 Button("Turn off 24/7 Monitoring") { tester.turnOff(node, installer: installer) }
                     .disabled(tester.running)
             }
+        }
+    }
+
+    /// Starts the install, or tells the user to select fewer hosts.
+    private func turnOn(_ hosts: [Node], installer: CloudInstaller) {
+        Task {
+            if let room = await installer.availableRoom(),
+               let text = installer.overRoomText(selected: hosts.count, room: room) {
+                roomAlert = text
+                return
+            }
+            tester.turnOn(hosts, installer: installer)
         }
     }
 
@@ -207,9 +225,18 @@ struct ServersPane: View {
         let b = backend
         let cloudNodes = selectedNodes.filter { $0.cloud != nil }
         let installer = installer
+        let tester = tester
         Task {
-            for node in cloudNodes { try? await installer?.remove(node: node) }
-            for id in ids { try? await b?.removeNode(id: id) }
+            var kept: Set<Node.ID> = []
+            for node in cloudNodes {
+                do {
+                    try await installer?.remove(node: node)
+                } catch {
+                    kept.insert(node.id)
+                    tester.fail("\(node.displayName): \(error.localizedDescription)")
+                }
+            }
+            for id in ids where !kept.contains(id) { try? await b?.removeNode(id: id) }
         }
         selection = []
     }

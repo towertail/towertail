@@ -63,8 +63,8 @@ final class CloudFeed {
         Task { await stream.send(view) }
     }
 
-    /// Adds hosts that only Cloud knows. Removes the Cloud link of hosts
-    /// that Cloud dropped.
+    /// Adds hosts that only Cloud knows. Links SSH hosts that still report
+    /// to Cloud. Removes the Cloud link of hosts that Cloud dropped.
     func syncNodes() async {
         let remote: [RemoteNode]
         do {
@@ -76,6 +76,11 @@ final class CloudFeed {
         let remoteIDs = Set(remote.map(\.id))
         for r in remote where nodes.node(withId: r.id) == nil {
             nodes.add(Node(id: r.id, displayName: r.displayName, kind: .cloud, cloud: CloudLink(enrolledAt: Date())))
+        }
+        for r in remote where r.enabled {
+            guard var node = nodes.node(withId: r.id), node.kind == .ssh, node.cloud == nil else { continue }
+            node.cloud = CloudLink(enrolledAt: Date())
+            nodes.update(node)
         }
         for node in nodes.nodes where node.isCloud && !remoteIDs.contains(node.id) {
             Logger.shared.info("cloud: host removed in Cloud", category: "cloud", hostID: node.id, host: node.displayName)
