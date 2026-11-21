@@ -415,4 +415,29 @@ final class ServerViewModelTests: XCTestCase {
         XCTAssertFalse(vm.state.isOffline)
         XCTAssertEqual(vm.state, .online)
     }
+
+    func testIngestKeepsCoresAndUsedBytes() {
+        let vm = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x")
+        vm.ingest(makeSample(cpuPct: 10, memFrac: 0.5, diskFrac: 0.1))
+        XCTAssertEqual(vm.cpuCores, 4)
+        XCTAssertEqual(vm.memUsedBytes, 8_000_000_000)
+    }
+
+    func testZeroCoresIsNil() {
+        let vm = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x")
+        vm.applyFacts(HostFacts(os: "linux", arch: "arm64", kernel: nil, cores: 0, memTotal: 0, uptimeS: 1, sampler: "x"))
+        XCTAssertNil(vm.cpuCores)
+        vm.applyFacts(HostFacts(os: "linux", arch: "arm64", kernel: nil, cores: 8, memTotal: 1_000, uptimeS: 1, sampler: "x"))
+        XCTAssertEqual(vm.cpuCores, 8)
+    }
+
+    func testSummaryUsedBytesNeedMemTotal() {
+        let vm = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x")
+        vm.ingest(summary: LiveSummary(ts: Date(), cpu: 10, mem: 0.5, disk: 0.1, rx: 0, tx: 0, load: 0))
+        XCTAssertNil(vm.memUsedBytes)
+        let facts = HostFacts(os: "linux", arch: "arm64", kernel: nil, cores: 2, memTotal: 1_000, uptimeS: 1, sampler: "x")
+        vm.ingest(summary: LiveSummary(ts: Date(), cpu: 10, mem: 0.5, disk: 0.1, rx: 0, tx: 0, load: 0, host: facts))
+        XCTAssertEqual(vm.memUsedBytes, 500)
+        XCTAssertEqual(vm.cpuCores, 2)
+    }
 }

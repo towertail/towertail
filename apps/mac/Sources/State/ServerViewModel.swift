@@ -138,6 +138,11 @@ final class ServerViewModel: Identifiable {
     /// Process count when the latest sample skipped the per-process scan
     /// (`procs.skipped`); nil when the scan ran.
     var procsSkippedTotal: Int?
+    /// Logical core count of the host. Nil when unknown.
+    private(set) var cpuCores: Int?
+    /// Used memory in bytes, from the latest sample or summary.
+    private(set) var memUsedBytes: Int64?
+    @ObservationIgnored private var memTotalBytes: Int64?
 
     var thresholds: MetricThresholds
     var alertRules: AlertRules
@@ -215,6 +220,9 @@ final class ServerViewModel: Identifiable {
         let cpuFrac = computeCPUFraction(from: s.cpu)
         let cpuV = min(max(cpuFrac, 0), 1)
         cpu.append(MetricPoint(t: s.ts, v: cpuV))
+        cpuCores = s.cpu.cores > 0 ? s.cpu.cores : nil
+        memUsedBytes = s.mem.used
+        if s.mem.total > 0 { memTotalBytes = s.mem.total }
 
         let memFrac = s.mem.total > 0 ? Double(s.mem.used) / Double(s.mem.total) : 0
         let memV = min(max(memFrac, 0), 1)
@@ -308,6 +316,7 @@ final class ServerViewModel: Identifiable {
         cpu.append(MetricPoint(t: s.ts, v: cpuV))
         mem.append(MetricPoint(t: s.ts, v: memV))
         disk.append(MetricPoint(t: s.ts, v: diskV))
+        memUsedBytes = memTotalBytes.map { Int64((Double($0) * memV).rounded()) }
 
         netRxMBps = Double(max(s.rx, 0)) / 1_048_576.0
         netTxMBps = Double(max(s.tx, 0)) / 1_048_576.0
@@ -330,6 +339,8 @@ final class ServerViewModel: Identifiable {
 
     func applyFacts(_ f: HostFacts) {
         applyFacts(os: f.os, arch: f.arch, sampler: f.sampler)
+        cpuCores = f.cores > 0 ? f.cores : nil
+        if f.memTotal > 0 { memTotalBytes = f.memTotal }
     }
 
     /// Takes the parts of one tab from a `detail` frame.
