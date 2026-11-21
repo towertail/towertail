@@ -27,6 +27,8 @@ struct PreferencesWindow: View {
 
     @State private var selection: Tab = .servers
     @State private var serverSelection: Set<Node.ID> = []
+    @Environment(CloudSession.self) private var cloud: CloudSession?
+    @Environment(CloudMove.self) private var move: CloudMove?
 
     var body: some View {
         TabView(selection: $selection) {
@@ -38,6 +40,10 @@ struct PreferencesWindow: View {
         }
         .frame(minWidth: 780, idealWidth: 840, minHeight: 560, idealHeight: 660)
         .navigationTitle(selection.title)
+        .sheet(isPresented: Binding(get: { move?.isPresented == true }, set: { if !$0 { move?.close() } })) {
+            if let move { MoveToCloudSheet(move: move) }
+        }
+        .task(id: cloud?.isSignedIn) { await move?.offerOnce() }
     }
 
     /// Only the active tab gets its real pane. Inactive panes stay torn down,

@@ -36,11 +36,9 @@ final class WelcomeFlow {
     private(set) var added: [Node] = []
     private(set) var addFailures: [UUID: String] = [:]
     private(set) var installStarted = false
-    /// The hosts that the plan can still take. Nil means no cap or not read yet.
-    private(set) var room: Int?
     private(set) var roomLoaded = false
     /// The hosts that go to Cloud.
-    private(set) var cloudPicks: Set<UUID> = []
+    private(set) var picks = CloudPicks(room: nil)
 
     /// The window closes through this. The view sets it.
     @ObservationIgnored var close: () -> Void = {}
@@ -53,6 +51,7 @@ final class WelcomeFlow {
     @ObservationIgnored private let probe: Probe
     @ObservationIgnored private let verifyHost: Verify
     @ObservationIgnored private let openURL: (URL) -> Void
+    @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var prebuilt: [ServerCandidate.ID: Node] = [:]
 
     init(
@@ -63,7 +62,8 @@ final class WelcomeFlow {
         discovery: ServerDiscovery = DefaultServerDiscovery(),
         probe: @escaping Probe = WelcomeFlow.sshProbe,
         verify: @escaping Verify = WelcomeFlow.sshVerify,
-        openURL: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) }
+        openURL: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) },
+        defaults: UserDefaults = .standard
     ) {
         self.nodes = nodes
         self.settings = settings
@@ -73,6 +73,7 @@ final class WelcomeFlow {
         self.probe = probe
         self.verifyHost = verify
         self.openURL = openURL
+        self.defaults = defaults
         self.email = UserDefaults.standard.string(forKey: CloudAccount.emailKey) ?? ""
     }
 
@@ -101,6 +102,8 @@ final class WelcomeFlow {
     }
 
     func markDone() {
+        // The welcome picker did the job of the Settings sheet.
+        if isSignedIn { defaults.set(true, forKey: CloudMove.offeredKey) }
         guard !settings.welcomeDone else { return }
         settings.welcomeDone = true
         settings.persist()
@@ -231,6 +234,11 @@ final class WelcomeFlow {
     /// The SSH hosts of this run.
     var cloudCandidates: [Node] { added.filter { $0.kind == .ssh } }
 
+    /// The hosts that the plan can still take. Nil means no cap or not read yet.
+    var room: Int? { picks.room }
+
+    var cloudPicks: Set<UUID> { picks.ids }
+
     /// True when the user picks the hosts for Cloud. With room 0, none go.
     var needsPick: Bool {
         guard roomLoaded, !cloudCandidates.isEmpty else { return false }
@@ -240,32 +248,19 @@ final class WelcomeFlow {
     /// Reads the room once. The default picks are the first hosts of the list.
     func loadRoom() async {
         guard !roomLoaded, let installer else { return }
-        room = await installer.availableRoom()
+        let room = await installer.availableRoom()
         roomLoaded = true
-        cloudPicks = Set(cloudCandidates.prefix(room ?? cloudCandidates.count).map(\.id))
+        picks = CloudPicks(hosts: cloudCandidates, room: room)
     }
 
     /// The text in the info box of the host picker.
     var pickNote: String {
-        let intro = "Cloud hosts get 24/7 alerts, long history and the web and phone apps."
-        guard let room else { return "\(intro) SSH hosts have no limit." }
-        let label = installer?.planLabel ?? "Plan"
-        let name = label == "Plan" ? "Your plan" : "The \(label)"
-        let hosts = "\(room) \(room == 1 ? "Cloud host" : "Cloud hosts")"
-        let used = (cloud?.account.billing?.nodes ?? 0) > 0
-        let plan = used ? "\(name) has room for \(room) more \(room == 1 ? "Cloud host" : "Cloud hosts")." : "\(name) takes \(hosts)."
-        return "\(intro) \(plan) SSH hosts have no limit."
+        CloudPicks.note(room: room, planLabel: installer?.planLabel ?? "Plan", used: (cloud?.account.billing?.nodes ?? 0) > 0)
     }
 
-    func togglePick(_ id: UUID) {
-        if cloudPicks.contains(id) {
-            cloudPicks.remove(id)
-        } else if cloudPicks.count < (room ?? .max) {
-            cloudPicks.insert(id)
-        }
-    }
+    func togglePick(_ id: UUID) { picks.toggle(id) }
 
-    func clearPicks() { cloudPicks = [] }
+    func clearPicks() { picks.clear() }
 
     /// Leaves all hosts on SSH and ends the flow.
     func keepAllOnSSH() {

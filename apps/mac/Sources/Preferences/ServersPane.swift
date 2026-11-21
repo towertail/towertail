@@ -10,6 +10,7 @@ struct ServersPane: View {
     @Environment(\.backend) private var backend
     @Environment(CloudSession.self) private var cloud: CloudSession?
     @Environment(CloudInstaller.self) private var installer: CloudInstaller?
+    @Environment(CloudMove.self) private var move: CloudMove?
 
     @State private var tester = ServerTester()
     @State private var filter = ""
@@ -96,11 +97,15 @@ struct ServersPane: View {
 
     private var sidebar: some View {
         VStack(spacing: 0) {
+            if let move, let cloud, let summary = move.summary {
+                CloudCard(move: move, account: cloud.account, summary: summary)
+                    .padding([.horizontal, .top], 8)
+            }
             TextField("Filter", text: $filter, prompt: Text("Filter"))
                 .textFieldStyle(.roundedBorder)
                 .padding(8)
             List(filteredNodes, selection: $selection) { node in
-                ServerRow(node: node)
+                ServerRow(node: node, showsTag: cloud?.isSignedIn == true)
                     .tag(node.id)
             }
             .listStyle(.sidebar)
@@ -255,9 +260,48 @@ struct ServersPane: View {
     }
 }
 
+/// The Cloud use of the plan, with the way to move SSH hosts to Cloud.
+struct CloudCard: View {
+    let move: CloudMove
+    let account: CloudAccount
+    let summary: String
+
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Towertail Cloud", systemImage: "cloud").font(.system(size: 12, weight: .semibold))
+            Text(summary)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if move.isFull {
+                HStack(spacing: 8) {
+                    Text("Plan full").font(.system(size: 11, weight: .medium))
+                    if account.billing?.canBuy != false {
+                        Button("Upgrade…") { Task { await account.openDashboard(path: "billing", using: { openURL($0) }) } }
+                            .buttonStyle(.link)
+                            .font(.system(size: 11))
+                    }
+                }
+            } else if move.canMove {
+                Button("Move hosts to Cloud…") { Task { await move.open() } }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color("Card/Background")))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.accentColor.opacity(0.3)))
+    }
+}
+
 /// One server in the sidebar: status dot, name, address and badges.
 private struct ServerRow: View {
     let node: Node
+    /// Shows "Cloud" or "SSH" while signed in to Cloud.
+    var showsTag = false
 
     @Environment(ServerStore.self) private var serverStore
     @Environment(SamplerUpdateCoordinator.self) private var samplerUpdater
@@ -283,6 +327,14 @@ private struct ServerRow: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(ThresholdTint.warn.color)
                     .help("Sampler auto-update failed")
+            }
+            if showsTag, node.kind != .local {
+                let cloud = node.isCloud
+                Text(cloud ? "Cloud" : "SSH")
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 4)
+                    .foregroundStyle(cloud ? ThresholdTint.nominal.color : Color.secondary)
+                    .background(RoundedRectangle(cornerRadius: 3).fill((cloud ? ThresholdTint.nominal.color : Color.secondary).opacity(0.15)))
             }
             if node.thresholdOverrides != nil || node.customAlerts != nil || !node.mutedSignals.isEmpty {
                 Text("custom")

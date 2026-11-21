@@ -21,6 +21,7 @@ struct AccountSection: View {
     @Environment(\.openURL) private var openURL
     @Environment(CloudExit.self) private var exit: CloudExit?
     @Environment(NodeStore.self) private var nodeStore
+    @Environment(CloudMove.self) private var move: CloudMove?
     @State private var email = UserDefaults.standard.string(forKey: CloudAccount.emailKey) ?? ""
     @State private var busy = false
     @State private var attempt = 0
@@ -43,7 +44,18 @@ struct AccountSection: View {
             LabeledContent("Organization", value: me.org.name)
             LabeledContent("Plan", value: Self.planText(me: me, billing: account.billing))
             if let b = account.billing {
-                LabeledContent("Cloud hosts", value: "\(b.nodes) of \(b.maxNodes ?? b.plan.maxNodes)")
+                LabeledContent("Cloud hosts") {
+                    HStack(spacing: 10) {
+                        Text("\(b.nodes) of \(b.maxNodes ?? b.plan.maxNodes)")
+                        if let move {
+                            if move.isFull {
+                                Text("Plan full").foregroundStyle(.secondary)
+                            } else if move.canMove {
+                                Button("Move hosts to Cloud…") { Task { await move.open() } }
+                            }
+                        }
+                    }
+                }
             }
             LabeledContent("SSH hosts", value: "\(nodeStore.nodes.filter { $0.kind == .ssh && $0.cloud == nil }.count) (no limit)")
             HStack {

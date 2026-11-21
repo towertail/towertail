@@ -43,8 +43,12 @@ final class WelcomeScreenshotTests: XCTestCase {
     }
 
     private func render(_ flow: WelcomeFlow, name: String) throws {
-        let host = NSHostingView(rootView: WelcomeContent(flow: flow))
-        let rect = CGRect(origin: .zero, size: WelcomeContent.size)
+        try render(WelcomeContent(flow: flow), size: WelcomeContent.size, name: name)
+    }
+
+    private func render<V: View>(_ view: V, size: CGSize, name: String) throws {
+        let host = NSHostingView(rootView: view.background(Color(nsColor: .windowBackgroundColor)))
+        let rect = CGRect(origin: .zero, size: size)
         let window = NSWindow(contentRect: rect, styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: .darkAqua)
@@ -115,5 +119,44 @@ final class WelcomeScreenshotTests: XCTestCase {
         for name in ["1-welcome", "2-servers", "3-cloud", "4-signin", "5-install"] {
             XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("\(name).png").path))
         }
+    }
+
+    func testRenderMoveSheet() async throws {
+        let url = tmp.appendingPathComponent("settings.json")
+        let nodes = NodeStore(nodes: [Node.localMac()], url: url)
+        let names = ["vm", "sling-master", "mpc", "mini", "top", "nuc", "tiny", "mbp"]
+        nodes.addMany(names.map { Node(displayName: $0, kind: .ssh, sshUser: "fritz", sshHost: $0) })
+        server.on("POST", "/v1/sampler/enroll") { req in
+            let sent = (try? JSONSerialization.jsonObject(with: req.body) as? [String: Any]) ?? [:]
+            let id = sent["node_id"] as? String ?? UUID().uuidString
+            return .json(200, Data("{\"node_id\":\"\(id)\",\"sampler_token\":\"t\",\"endpoint\":\"https://api.example.com\"}".utf8))
+        }
+        let client = RemoteClient(config: .init(endpoint: server.baseURL, token: "shot"))
+        let session = FakeSamplerSession()
+        let mpc = nodes.nodes.first { $0.displayName == "mpc" }?.id
+        let installer = CloudInstaller(
+            client: { client }, nodes: nodes, settings: ServerSettings(url: url),
+            planName: { "free" }, room: { 3 },
+            firstSample: { id, _ in id == mpc ? nil : "1.4.0+abc" },
+            connect: { _ in session },
+            upload: { _, _ in "/home/u/.towertail/bin/towertail-sampler" },
+            binary: { _ in URL(fileURLWithPath: "/tmp/towertail-sampler") },
+            clock: ImmediateClock()
+        )
+        let billing = CloudBilling(plan: CloudPlan(id: "free", maxNodes: 3), nodes: 0, maxNodes: 3)
+        let move = CloudMove(
+            nodes: nodes, installer: installer, signedIn: { true }, billing: { billing },
+            defaults: UserDefaults(suiteName: "tt-shot-\(UUID().uuidString)")!
+        )
+        let account = CloudAccount(
+            endpoint: server.baseURL, keychain: FakeTokenKeychain(), client: CloudAuthClient(endpoint: server.baseURL),
+            defaults: UserDefaults(suiteName: "tt-shot-\(UUID().uuidString)")!
+        )
+        let card = CloudCard(move: move, account: account, summary: move.summary ?? "").padding(8).frame(width: 240)
+        try render(card, size: CGSize(width: 240, height: 130), name: "move-0-card")
+        await move.open()
+        try render(MoveToCloudSheet(move: move), size: CGSize(width: 720, height: 560), name: "move-1-pick")
+        await move.start()
+        try render(MoveToCloudSheet(move: move), size: CGSize(width: 720, height: 560), name: "move-2-install")
     }
 }

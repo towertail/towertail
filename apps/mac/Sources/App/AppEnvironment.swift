@@ -17,6 +17,8 @@ final class AppEnvironment {
     let exit: CloudExit?
     /// Restarts stopped samplers of Cloud hosts. Nil in remote mode.
     let keeper: SamplerKeeper?
+    /// Moves SSH hosts that exist already to Cloud. Nil in remote mode.
+    let move: CloudMove?
 
     /// Remote mode is a developer override. It needs the env vars
     /// `TOWERTAIL_REMOTE_URL` and `TOWERTAIL_REMOTE_TOKEN` and a debug
@@ -55,6 +57,7 @@ final class AppEnvironment {
             self.installer = installer
             self.exit = CloudExit(account: cloud.account, installer: installer, nodes: local.nodes)
             self.keeper = SamplerKeeper(session: cloud, nodes: local.nodes, manifest: SamplerManifestLoader.load())
+            self.move = CloudMove(session: cloud, installer: installer, nodes: local.nodes)
         case .remote:
             let env = ProcessInfo.processInfo.environment
             guard
@@ -71,6 +74,7 @@ final class AppEnvironment {
                 self.installer = nil
                 self.exit = nil
                 self.keeper = nil
+                self.move = nil
                 return
             }
             self.backend = RemoteBackend(endpoint: url, token: token)
@@ -78,6 +82,7 @@ final class AppEnvironment {
             self.installer = nil
             self.exit = nil
             self.keeper = nil
+            self.move = nil
         }
     }
 

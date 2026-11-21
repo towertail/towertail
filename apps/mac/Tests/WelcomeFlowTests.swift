@@ -65,6 +65,14 @@ final class WelcomeFlowTests: XCTestCase {
         XCTAssertTrue(reloaded.welcomeDone)
     }
 
+    func testMarkDoneSkipsOfferWhenNotSignedIn() {
+        let defaults = UserDefaults(suiteName: "tt-welcome-\(UUID().uuidString)")!
+        let flow = WelcomeFlow(nodes: nodes, settings: settings, cloud: nil, installer: nil, defaults: defaults)
+        flow.markDone()
+        XCTAssertTrue(settings.welcomeDone)
+        XCTAssertFalse(defaults.bool(forKey: CloudMove.offeredKey))
+    }
+
     func testNotNowEndsWithoutCloud() {
         var closed = false
         let flow = flow(close: { closed = true })
