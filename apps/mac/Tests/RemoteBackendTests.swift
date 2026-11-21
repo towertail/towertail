@@ -516,4 +516,68 @@ final class RemoteBackendTests: XCTestCase {
         XCTAssertEqual(backend.servers.serverVMs.first?.ignoredProcs, ["yes"])
         backend.stop()
     }
+
+    // MARK: - Send working folders
+
+    private func body(_ req: LocalTestServer.CapturedRequest) throws -> [String: Any] {
+        try XCTUnwrap(JSONSerialization.jsonObject(with: req.body) as? [String: Any])
+    }
+
+    func testHideProcFoldersMapsToSendProcFolders() throws {
+        var remote = sampleRemoteNode(name: "x")
+        XCTAssertTrue(Node(remote: remote).sendProcFolders, "an old server means send")
+        remote.hideProcFolders = true
+        XCTAssertFalse(Node(remote: remote).sendProcFolders)
+        var node = Node(remote: remote)
+        node.sendProcFolders = true
+        // The key is sent only when the caller asks for it.
+        let plain = try jsonEncoder().encode(node.toRemote(global: .defaults))
+        XCTAssertNil((try JSONSerialization.jsonObject(with: plain) as? [String: Any])?["hideProcFolders"])
+        let asked = try jsonEncoder().encode(node.toRemote(global: .defaults, hideProcFolders: false))
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: asked) as? [String: Any])?["hideProcFolders"] as? Bool, false)
+    }
+
+    func testNodeSettingsUpdateSendsHideProcFoldersOnlyOnChange() async throws {
+        let node = sampleRemoteNode(name: "node-hp")
+        let payload = try jsonEncoder().encode([node])
+        server.on("GET", "/v1/nodes") { _ in .json(200, payload) }
+        server.on("GET", "/v1/settings") { _ in .json(200, (try? JSONEncoder().encode(RemoteServerSettings(
+            thresholds: .defaults, localPollingIntervalSeconds: 2, sshPollingIntervalSeconds: 10,
+            notificationsEnabled: true, notifyWarn: true, notifyCritical: true, notifyDebounceSeconds: 90,
+            autoUpdateSamplersEnabled: true, postWakeGraceSeconds: 15))) ?? Data()) }
+        server.on("PUT", "/v1/nodes/") { req in .json(200, req.body) }
+
+        let backend = RemoteBackend(endpoint: server.baseURL, token: token)
+        backend.start()
+        try await waitFor(timeout: 5) { backend.nodes.nodes.count == 1 }
+        var n = try XCTUnwrap(backend.nodes.nodes.first)
+
+        n.favorite = true
+        try await backend.updateNode(n)
+        let first = try body(try XCTUnwrap(server.captured.last { $0.method == "PUT" }))
+        XCTAssertNil(first["hideProcFolders"], "an unrelated change keeps the stored value")
+
+        n.sendProcFolders = false
+        try await backend.updateNode(n)
+        let second = try body(try XCTUnwrap(server.captured.last { $0.method == "PUT" }))
+        XCTAssertEqual(second["hideProcFolders"] as? Bool, true)
+        XCTAssertEqual(backend.nodes.nodes.first?.sendProcFolders, false)
+        backend.stop()
+    }
+
+    func testSetHideProcFoldersReadsTheNodeThenPuts() async throws {
+        var node = sampleRemoteNode(name: "cloud-host")
+        node.ignoredProcs = ["postgres"]
+        let payload = try jsonEncoder().encode(node)
+        server.on("GET", "/v1/nodes/") { _ in .json(200, payload) }
+        server.on("PUT", "/v1/nodes/") { req in .json(200, req.body) }
+        let client = RemoteClient(config: .init(endpoint: server.baseURL, token: token))
+        try await client.setHideProcFolders(nodeID: node.id, hide: true)
+        let put = try XCTUnwrap(server.captured.last { $0.method == "PUT" })
+        XCTAssertTrue(put.path.hasSuffix(node.id.uuidString))
+        let sent = try body(put)
+        XCTAssertEqual(sent["hideProcFolders"] as? Bool, true)
+        XCTAssertEqual(sent["displayName"] as? String, "cloud-host")
+        XCTAssertEqual(sent["ignoredProcs"] as? [String], ["postgres"])
+    }
 }

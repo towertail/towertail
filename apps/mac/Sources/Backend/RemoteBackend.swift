@@ -171,7 +171,9 @@ final class RemoteBackend: Backend {
     }
 
     func updateNode(_ node: Node) async throws {
-        let updated = try await client.updateNode(node.toRemote(global: serverSettings.thresholds))
+        // The switch goes to the server only when it changes.
+        let hide = nodes.node(withId: node.id).flatMap { $0.sendProcFolders == node.sendProcFolders ? nil : !node.sendProcFolders }
+        let updated = try await client.updateNode(node.toRemote(global: serverSettings.thresholds, hideProcFolders: hide))
         nodes.update(Node(remote: updated))
         applyLongProc()
     }

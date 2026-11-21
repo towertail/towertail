@@ -80,6 +80,27 @@ final class CloudInstallerTests: XCTestCase {
         XCTAssertTrue(session.closed)
     }
 
+    func testRunKeepsFoldersOffOnTheServer() async throws {
+        serveEnroll()
+        server.on("GET", "/v1/nodes/") { [node] _ in
+            let json = "{\"id\":\"\(node!.id.uuidString)\",\"displayName\":\"web\",\"kind\":\"ssh\",\"tags\":[],\"enabled\":true,\"iconOnWarn\":true,\"iconOnCritical\":true,\"notifyOnWarn\":true,\"notifyOnCritical\":true,\"favorite\":false}"
+            return .json(200, Data(json.utf8))
+        }
+        server.on("PUT", "/v1/nodes/") { req in .json(200, req.body) }
+        var off = node!
+        off.sendProcFolders = false
+        await installer { _, _ in "1.5.0+abc" }.run(nodes: [off])
+
+        let put = try XCTUnwrap(server.captured.first { $0.method == "PUT" })
+        let sent = try XCTUnwrap(JSONSerialization.jsonObject(with: put.body) as? [String: Any])
+        XCTAssertEqual(sent["hideProcFolders"] as? Bool, true)
+        // The switch is set before the sampler starts.
+        let paths = server.captured.map { "\($0.method) \($0.path)" }
+        let enroll = try XCTUnwrap(paths.firstIndex { $0.hasSuffix("/v1/sampler/enroll") })
+        let hide = try XCTUnwrap(paths.firstIndex { $0.hasPrefix("PUT") })
+        XCTAssertLessThan(enroll, hide)
+    }
+
     func testRunPlanFullKeepsSSH() async {
         server.on("POST", "/v1/sampler/enroll") { _ in
             .json(402, Data("{\"error\":{\"code\":\"plan_limit\",\"message\":\"the plan allows 3 hosts\"}}".utf8))

@@ -23,6 +23,7 @@ struct ServerDetailView: View {
     @State private var tab: Tab = .connection
     @State private var showKeyHelp = false
     @State private var terminalError: String?
+    @State private var folderError: String?
     @State private var confirmTurnOff = false
     @FocusState private var focus: Field?
 
@@ -59,6 +60,7 @@ struct ServerDetailView: View {
             if old != nil { commit() }
         }
         .onDisappear(perform: commit)
+        .task(id: draft.id) { await readFolderSwitch() }
         .onAppear {
             if draft.authMethod == .password {
                 savedPassword = (try? KeychainStore.getPassword(for: draft.id)) ?? ""
@@ -193,6 +195,11 @@ struct ServerDetailView: View {
                     TagEditor(tags: Binding(get: { draft.tags }, set: { draft.tags = $0; commit() }))
                 }
                 Toggle("Monitor this server", isOn: Binding(get: { draft.enabled }, set: { draft.enabled = $0; commit() }))
+                Toggle("Send working folders", isOn: Binding(get: { draft.sendProcFolders }, set: setSendFolders))
+                    .help("The sampler sends the working folder and repository of the top processes. Turn off to keep folder paths on this host.")
+                if let folderError {
+                    Text(folderError).font(.caption).foregroundStyle(.red)
+                }
             }
 
             if draft.kind == .ssh {
@@ -465,6 +472,40 @@ struct ServerDetailView: View {
         return nil
     }
 
+    /// A Cloud host gets the switch from the server, so the change goes there first.
+    /// Local, SSH and Remote hosts keep it on the node.
+    private func setSendFolders(_ send: Bool) {
+        guard draft.isCloud else {
+            draft.sendProcFolders = send
+            commit()
+            return
+        }
+        guard let client = cloud?.client else {
+            folderError = "Sign in to Cloud to change this."
+            return
+        }
+        let id = draft.id
+        Task {
+            do {
+                try await client.setHideProcFolders(nodeID: id, hide: !send)
+                draft.sendProcFolders = send
+                folderError = nil
+                commit()
+            } catch {
+                folderError = "Cloud did not save the change. \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// Shows the value that the server holds for a Cloud host.
+    private func readFolderSwitch() async {
+        guard draft.isCloud, let client = cloud?.client,
+              let hide = try? await client.getNode(id: draft.id).hideProcFolders,
+              draft.sendProcFolders == hide else { return }
+        draft.sendProcFolders = !hide
+        commit()
+    }
+
     /// Writes the draft onto the stored node. Starts from the stored copy so
     /// fields this view does not edit (snooze, favorite) stay current.
     private func commit() {
@@ -491,6 +532,7 @@ struct ServerDetailView: View {
         n.customLongProc = draft.customLongProc
         n.ignoredProcs = draft.ignoredProcs
         n.mutedSignals = draft.mutedSignals
+        n.sendProcFolders = draft.sendProcFolders
 
         var passwordChanged = false
         if n.kind == .ssh, n.authMethod == .password, !password.isEmpty, password != savedPassword {

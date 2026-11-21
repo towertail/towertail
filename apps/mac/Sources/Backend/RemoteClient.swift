@@ -57,6 +57,19 @@ final class RemoteClient {
         try await send("PUT", "/v1/nodes/\(node.id.uuidString)", body: node)
     }
 
+    func getNode(id: UUID) async throws -> RemoteNode {
+        try await get("/v1/nodes/\(id.uuidString)")
+    }
+
+    /// Sets "Send working folders" on the server node. The sampler of a push
+    /// host gets the value in the reply of its next push. It reads the node
+    /// first because `PUT` replaces the other fields.
+    func setHideProcFolders(nodeID: UUID, hide: Bool) async throws {
+        var node = try await getNode(id: nodeID)
+        node.hideProcFolders = hide
+        _ = try await updateNode(node)
+    }
+
     func deleteNode(id: UUID) async throws {
         _ = try await raw("DELETE", "/v1/nodes/\(id.uuidString)")
     }
@@ -420,6 +433,9 @@ struct RemoteNode: Codable, Sendable, Identifiable {
     var favorite: Bool
     /// Nil when the server is older than disk scans.
     var allowDiskScan: Bool?
+    /// True keeps the process folders on the host. Nil when the server is
+    /// older than the switch; an update with nil keeps the stored value.
+    var hideProcFolders: Bool?
     /// Nil when the server is older than long-running process alerts.
     var customLongProc: LongProcRule?
     var ignoredProcs: [String]?
@@ -458,13 +474,14 @@ extension Node {
             ignoredProcs: r.ignoredProcs ?? [],
             snoozedUntil: r.snoozedUntil,
             favorite: r.favorite,
-            allowDiskScan: r.allowDiskScan ?? false
+            allowDiskScan: r.allowDiskScan ?? false,
+            sendProcFolders: !(r.hideProcFolders ?? false)
         )
     }
 
     /// The server takes a full threshold set, so unset metrics are filled
-    /// from `global`.
-    func toRemote(global: MetricThresholds) -> RemoteNode {
+    /// from `global`. `hideProcFolders` is sent only when it is not nil.
+    func toRemote(global: MetricThresholds, hideProcFolders: Bool? = nil) -> RemoteNode {
         RemoteNode(
             id: id,
             displayName: displayName,
@@ -481,6 +498,7 @@ extension Node {
             snoozedUntil: snoozedUntil,
             favorite: favorite,
             allowDiskScan: allowDiskScan,
+            hideProcFolders: hideProcFolders,
             customLongProc: customLongProc,
             ignoredProcs: ignoredProcs
         )

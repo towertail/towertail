@@ -255,6 +255,8 @@ final class CloudInstaller {
         let enrollment: Enrollment
         do {
             enrollment = try await lifecycle.enroll(node: node)
+            // The server default sends folders. Keep the choice of the user before the sampler starts.
+            if !node.sendProcFolders { try await client.setHideProcFolders(nodeID: id, hide: true) }
             set(id, .register, .done(nil))
         } catch LifecycleError.planFull(let max) {
             let text = planFullText(max)
