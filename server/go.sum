@@ -220,8 +220,8 @@ github.com/tklauser/go-sysconf v0.3.16 h1:frioLaCQSsF5Cy1jgRBrzr6t502KIIwQ0MArYI
 github.com/tklauser/go-sysconf v0.3.16/go.mod h1:/qNL9xxDhc7tx3HSRsLWNnuzbVfh3e7gh/BmM179nYI=
 github.com/tklauser/numcpus v0.11.0 h1:nSTwhKH5e1dMNsCdVBukSZrURJRoHbSEQjdEbY+9RXw=
 github.com/tklauser/numcpus v0.11.0/go.mod h1:z+LwcLq54uWZTX0u/bGobaV34u6V7KNlTZejzM6/3MQ=
-github.com/towertail/sampler v1.3.0 h1:Z1TNFoSD+2EqE+1dXSl81GalA75ysKVLN0XHeAMO6K8=
-github.com/towertail/sampler v1.3.0/go.mod h1:BerlMXdiNE+b4zCbWwwTlv+xon1QFvNH2yctE5Hc20I=
+github.com/towertail/sampler v1.5.0 h1:7NVCTPsLJ1y07hzgyBsoM8vt2Ih6d7PGByru0LXbOCI=
+github.com/towertail/sampler v1.5.0/go.mod h1:BerlMXdiNE+b4zCbWwwTlv+xon1QFvNH2yctE5Hc20I=
 github.com/urfave/cli/v3 v3.8.0 h1:XqKPrm0q4P0q5JpoclYoCAv0/MIvH/jZ2umzuf8pNTI=
 github.com/urfave/cli/v3 v3.8.0/go.mod h1:ysVLtOEmg2tOy6PknnYVhDoouyC/6N42TMeoMzskhso=
 github.com/valyala/bytebufferpool v1.0.0 h1:GqA5TC/0021Y/b9FG4Oi9Mr3q7XYx6KllzawFIhcdPw=
