@@ -39,7 +39,7 @@ final class WelcomeFlow {
     /// The hosts that the plan can still take. Nil means no cap or not read yet.
     private(set) var room: Int?
     private(set) var roomLoaded = false
-    /// The hosts that go to Cloud when there are more hosts than room.
+    /// The hosts that go to Cloud.
     private(set) var cloudPicks: Set<UUID> = []
 
     /// The window closes through this. The view sets it.
@@ -231,10 +231,10 @@ final class WelcomeFlow {
     /// The SSH hosts of this run.
     var cloudCandidates: [Node] { added.filter { $0.kind == .ssh } }
 
-    /// True when the user must pick the hosts for Cloud. With no room, none go.
+    /// True when the user picks the hosts for Cloud. With room 0, none go.
     var needsPick: Bool {
-        guard let room, room > 0 else { return false }
-        return cloudCandidates.count > room
+        guard roomLoaded, !cloudCandidates.isEmpty else { return false }
+        return room != 0
     }
 
     /// Reads the room once. The default picks are the first hosts of the list.
@@ -245,12 +245,16 @@ final class WelcomeFlow {
         cloudPicks = Set(cloudCandidates.prefix(room ?? cloudCandidates.count).map(\.id))
     }
 
-    /// The text above the host picker.
+    /// The text in the info box of the host picker.
     var pickNote: String {
+        let intro = "Cloud hosts get 24/7 alerts, long history and the web and phone apps."
+        guard let room else { return "\(intro) SSH hosts have no limit." }
         let label = installer?.planLabel ?? "Plan"
         let name = label == "Plan" ? "Your plan" : "The \(label)"
-        let n = room ?? 0
-        return "\(name) takes \(n) \(n == 1 ? "host" : "hosts"). Select the \(n == 1 ? "1 host" : "\(n) hosts") for Cloud. The other hosts stay on this Mac over SSH."
+        let hosts = "\(room) \(room == 1 ? "Cloud host" : "Cloud hosts")"
+        let used = (cloud?.account.billing?.nodes ?? 0) > 0
+        let plan = used ? "\(name) has room for \(room) more \(room == 1 ? "Cloud host" : "Cloud hosts")." : "\(name) takes \(hosts)."
+        return "\(intro) \(plan) SSH hosts have no limit."
     }
 
     func togglePick(_ id: UUID) {
@@ -263,6 +267,13 @@ final class WelcomeFlow {
 
     func clearPicks() { cloudPicks = [] }
 
+    /// Leaves all hosts on SSH and ends the flow.
+    func keepAllOnSSH() {
+        installer?.keepOnSSH(cloudCandidates)
+        installStarted = true
+        finish()
+    }
+
     func install() async {
         guard !installStarted, let installer else { return }
         installStarted = true
@@ -273,9 +284,9 @@ final class WelcomeFlow {
             await installer.run(nodes: hosts)
             return
         }
+        guard !cloudPicks.isEmpty else { return keepAllOnSSH() }
         installer.keepOnSSH(hosts.filter { !cloudPicks.contains($0.id) })
-        let picked = hosts.filter { cloudPicks.contains($0.id) }
-        if !picked.isEmpty { await installer.run(nodes: picked) }
+        await installer.run(nodes: hosts.filter { cloudPicks.contains($0.id) })
     }
 
     /// Hosts that stayed on SSH, or that the plan could not take.

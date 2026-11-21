@@ -6,16 +6,16 @@ struct WelcomeCloudView: View {
     @State private var busy = false
 
     private static let rows: [(String, Bool, Bool)] = [
-        ("Live view of your servers", true, true),
+        ("Live view on this Mac", true, true),
         ("Alerts while this Mac sleeps", false, true),
         ("History for 1 to 365 days", false, true),
-        ("Phone and email alerts", false, true),
+        ("Phone and email alerts, web dashboard", false, true),
     ]
 
     private static let plans: [(name: String, price: String, hosts: String, detail: String)] = [
-        ("Free", "$0", "3 hosts", "1 day of history · email alerts"),
-        ("Solo", "$5/mo", "25 hosts", "30 days of history · push alerts"),
-        ("Team", "$10/user/mo", "100 hosts", "365 days of history · 3 or more seats"),
+        ("Free", "$0", "3 Cloud hosts", "1 day of history · email alerts"),
+        ("Solo", "$5/mo", "25 Cloud hosts", "30 days of history · push alerts"),
+        ("Team", "$10/user/mo", "100 Cloud hosts", "365 days of history · 3 or more seats"),
     ]
 
     var body: some View {
@@ -24,7 +24,7 @@ struct WelcomeCloudView: View {
             VStack(alignment: .leading, spacing: 18) {
                 WelcomeHeading(
                     title: "Keep watching while you sleep",
-                    subtitle: "Towertail Cloud adds 24/7 monitoring. The app on its own keeps working over SSH."
+                    subtitle: "Towertail Cloud adds 24/7 monitoring to the hosts that you pick. The other hosts stay on this Mac over SSH, with no limit."
                 )
                 comparison
                 HStack(spacing: 12) {
@@ -43,6 +43,9 @@ struct WelcomeCloudView: View {
                         .background(RoundedRectangle(cornerRadius: 10).fill(Color("Card/Background")))
                     }
                 }
+                Text("All plans: SSH hosts on this Mac have no limit.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
                 HStack {
                     TextField("Email", text: $flow.email)
                         .textFieldStyle(.roundedBorder)
@@ -75,12 +78,22 @@ struct WelcomeCloudView: View {
         VStack(spacing: 0) {
             HStack {
                 Text("").frame(maxWidth: .infinity, alignment: .leading)
-                Text("App").frame(width: 90)
-                Text("+ Cloud").frame(width: 90)
+                Text("SSH host").frame(width: 90)
+                Text("Cloud host").frame(width: 90)
             }
             .font(Typography.rowColumn)
             .foregroundStyle(.secondary)
             .padding(.vertical, 6)
+            Divider()
+            HStack {
+                Text("Number of hosts").font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading)
+                Text("No limit")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(ThresholdTint.nominal.color)
+                    .frame(width: 90)
+                Text("By plan").font(.system(size: 12)).frame(width: 90)
+            }
+            .padding(.vertical, 5)
             ForEach(Self.rows, id: \.0) { row in
                 Divider()
                 HStack {

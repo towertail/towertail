@@ -115,14 +115,13 @@ final class CloudInstallerTests: XCTestCase {
         var linked = node!
         linked.cloud = CloudLink(enrolledAt: Date())
         nodes.update(linked)
-        let echo = try JSONEncoder().encode(linked.toRemote(global: .defaults))
-        server.on("PUT", "/v1/nodes/") { _ in .json(200, echo) }
+        server.on("DELETE", "/v1/nodes/") { _ in .empty(204) }
 
         try await installer { _, _ in nil }.turnOff(node: linked)
 
-        let put = try XCTUnwrap(server.captured.first { $0.method == "PUT" })
-        XCTAssertTrue(put.path.hasSuffix("/v1/nodes/\(linked.id.uuidString)"))
-        XCTAssertTrue(String(decoding: put.body, as: UTF8.self).contains("\"enabled\":false"))
+        let delete = try XCTUnwrap(server.captured.first { $0.method == "DELETE" })
+        XCTAssertTrue(delete.path.hasSuffix("/v1/nodes/\(linked.id.uuidString)"))
+        XCTAssertNil(server.captured.first { $0.method == "PUT" })
         let stored = try XCTUnwrap(nodes.node(withId: linked.id))
         XCTAssertNil(stored.cloud)
         XCTAssertTrue(stored.enabled)

@@ -114,6 +114,10 @@ final class ServerTester {
         }
     }
 
+    static func turnOffTitle(_ node: Node) -> String { "Turn off 24/7 monitoring for \(node.displayName)?" }
+
+    static let turnOffMessage = "The app removes the sampler and deletes this host from Cloud, with its Cloud history. The host stays on this Mac over SSH."
+
     func turnOff(_ node: Node, installer: CloudInstaller) {
         guard !running else { return }
         running = true
@@ -121,7 +125,7 @@ final class ServerTester {
         Task {
             do {
                 try await installer.turnOff(node: node)
-                outcome = Outcome(ok: true, message: "\(node.displayName): back on SSH polling")
+                outcome = Outcome(ok: true, message: "\(node.displayName): back on SSH")
             } catch {
                 outcome = Outcome(ok: false, message: "\(node.displayName): \(Self.describe(error))")
             }

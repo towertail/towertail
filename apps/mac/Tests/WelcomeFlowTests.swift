@@ -185,16 +185,63 @@ final class WelcomeFlowTests: XCTestCase {
         XCTAssertTrue(flow.cloudPicks.isEmpty)
     }
 
-    func testNoPickerWhenRoomNil() async {
+    func testPickerWhenNoCap() async {
         let flow = await flow(hosts: 5, installer: installer(room: nil))
+        await flow.loadRoom()
+        XCTAssertTrue(flow.needsPick)
+        XCTAssertEqual(flow.cloudPicks.count, 5)
+        flow.clearPicks()
+        for host in flow.cloudCandidates { flow.togglePick(host.id) }
+        XCTAssertEqual(flow.cloudPicks.count, 5)
+        XCTAssertEqual(
+            flow.pickNote,
+            "Cloud hosts get 24/7 alerts, long history and the web and phone apps. SSH hosts have no limit."
+        )
+    }
+
+    func testPickerWhenHostsFit() async {
+        let flow = await flow(hosts: 2, installer: installer(room: 3))
+        await flow.loadRoom()
+        XCTAssertTrue(flow.needsPick)
+        XCTAssertEqual(flow.cloudPicks, Set(flow.cloudCandidates.map(\.id)))
+        XCTAssertEqual(
+            flow.pickNote,
+            "Cloud hosts get 24/7 alerts, long history and the web and phone apps. The Free plan takes 3 Cloud hosts. SSH hosts have no limit."
+        )
+    }
+
+    func testNoPickerWhenRoomZero() async {
+        let flow = await flow(hosts: 2, installer: installer(room: 0))
         await flow.loadRoom()
         XCTAssertFalse(flow.needsPick)
     }
 
-    func testNoPickerWhenHostsFit() async {
-        let flow = await flow(hosts: 3, installer: installer(room: 3))
+    func testKeepAllOnSSH() async {
+        let installer = installer(room: 3)
+        var closed = false
+        let flow = await flow(hosts: 2, installer: installer)
+        flow.close = { closed = true }
         await flow.loadRoom()
-        XCTAssertFalse(flow.needsPick)
+        flow.keepAllOnSSH()
+
+        XCTAssertEqual(installer.stayed, Set(flow.cloudCandidates.map(\.id)))
+        XCTAssertTrue(installer.rows.isEmpty)
+        XCTAssertTrue(flow.installStarted)
+        XCTAssertTrue(closed)
+    }
+
+    func testInstallWithNoPicksKeepsAll() async {
+        let installer = installer(room: 3)
+        var closed = false
+        let flow = await flow(hosts: 2, installer: installer)
+        flow.close = { closed = true }
+        await flow.loadRoom()
+        flow.clearPicks()
+        await flow.install()
+
+        XCTAssertEqual(installer.stayed, Set(flow.cloudCandidates.map(\.id)))
+        XCTAssertTrue(installer.rows.isEmpty)
+        XCTAssertTrue(closed)
     }
 
     func testRunUsesPickedHosts() async {

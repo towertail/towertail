@@ -172,13 +172,9 @@ final class CloudInstaller {
         }
     }
 
-    /// Stops 24/7 monitoring. Cloud orders the sampler to exit at its next push.
+    /// Stops 24/7 monitoring. The host leaves Cloud and its slot is free.
     func turnOff(node: Node) async throws {
-        guard let client = client() else { throw LifecycleError.notSignedIn }
-        var remote = node.toRemote(global: settings.thresholds)
-        remote.enabled = false
-        _ = try await client.updateNode(remote)
-        clearCloud(node.id)
+        try await remove(node: node)
     }
 
     /// Reads the sampler status over SSH and saves it on the host link.

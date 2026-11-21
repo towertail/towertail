@@ -23,6 +23,7 @@ struct ServerDetailView: View {
     @State private var tab: Tab = .connection
     @State private var showKeyHelp = false
     @State private var terminalError: String?
+    @State private var confirmTurnOff = false
     @FocusState private var focus: Field?
 
     enum Tab: Hashable { case connection, alerts }
@@ -66,6 +67,14 @@ struct ServerDetailView: View {
         }
         .sheet(isPresented: $showKeyHelp) {
             SshKeySetupSheet(user: draft.sshUser ?? "", host: draft.sshHost ?? "") { showKeyHelp = false }
+        }
+        .confirmationDialog(ServerTester.turnOffTitle(draft), isPresented: $confirmTurnOff) {
+            Button("Turn Off", role: .destructive) {
+                if let installer { tester.turnOff(draft, installer: installer) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(ServerTester.turnOffMessage)
         }
         .alert("Could not open terminal", isPresented: Binding(get: { terminalError != nil }, set: { if !$0 { terminalError = nil } })) {
             Button("OK", role: .cancel) {}
@@ -234,7 +243,7 @@ struct ServerDetailView: View {
                         .foregroundStyle(.secondary)
                     Button("Check") { tester.checkSampler(draft, installer: installer) }
                     Button("Restart") { tester.restartSampler(draft, installer: installer) }
-                    Button("Turn off") { tester.turnOff(draft, installer: installer) }
+                    Button("Turn off") { confirmTurnOff = true }
                 } else {
                     Button("Turn on") { tester.turnOn([draft], installer: installer) }
                 }

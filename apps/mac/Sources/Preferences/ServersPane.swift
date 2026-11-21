@@ -17,6 +17,7 @@ struct ServersPane: View {
     @State private var showBulkImport = false
     @State private var confirmRemove = false
     @State private var roomAlert: String?
+    @State private var turnOffNode: Node?
 
     private var filteredNodes: [Node] {
         let q = filter.trimmingCharacters(in: .whitespaces)
@@ -71,6 +72,18 @@ struct ServersPane: View {
             Button("OK") {}
         } message: {
             Text(roomAlert ?? "")
+        }
+        .confirmationDialog(
+            turnOffNode.map(ServerTester.turnOffTitle) ?? "",
+            isPresented: Binding(get: { turnOffNode != nil }, set: { if !$0 { turnOffNode = nil } }),
+            presenting: turnOffNode
+        ) { node in
+            Button("Turn Off", role: .destructive) {
+                if let installer { tester.turnOff(node, installer: installer) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text(ServerTester.turnOffMessage)
         }
         .confirmationDialog(removeTitle, isPresented: $confirmRemove) {
             Button("Remove", role: .destructive, action: removeSelected)
@@ -148,7 +161,7 @@ struct ServersPane: View {
                     .disabled(tester.running)
                 Button("Restart Sampler") { tester.restartSampler(node, installer: installer) }
                     .disabled(tester.running)
-                Button("Turn off 24/7 Monitoring") { tester.turnOff(node, installer: installer) }
+                Button("Turn off 24/7 Monitoring") { turnOffNode = node }
                     .disabled(tester.running)
             }
         }

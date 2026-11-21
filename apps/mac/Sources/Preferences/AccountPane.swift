@@ -20,6 +20,7 @@ struct AccountSection: View {
     let account: CloudAccount
     @Environment(\.openURL) private var openURL
     @Environment(CloudExit.self) private var exit: CloudExit?
+    @Environment(NodeStore.self) private var nodeStore
     @State private var email = UserDefaults.standard.string(forKey: CloudAccount.emailKey) ?? ""
     @State private var busy = false
     @State private var attempt = 0
@@ -42,8 +43,9 @@ struct AccountSection: View {
             LabeledContent("Organization", value: me.org.name)
             LabeledContent("Plan", value: Self.planText(me: me, billing: account.billing))
             if let b = account.billing {
-                LabeledContent("Hosts", value: "\(b.nodes) of \(b.maxNodes ?? b.plan.maxNodes)")
+                LabeledContent("Cloud hosts", value: "\(b.nodes) of \(b.maxNodes ?? b.plan.maxNodes)")
             }
+            LabeledContent("SSH hosts", value: "\(nodeStore.nodes.filter { $0.kind == .ssh && $0.cloud == nil }.count) (no limit)")
             HStack {
                 Button("Open dashboard") { Task { await account.openDashboard(using: { openURL($0) }) } }
                 Button("Sign out…") { confirmSignOut = true }
@@ -193,6 +195,6 @@ struct AccountSection: View {
 
     static func planText(me: CloudMe, billing: CloudBilling?) -> String {
         guard let plan = billing?.plan else { return "\(me.org.plan.capitalized) plan" }
-        return "\(plan.id.capitalized) plan, \(plan.maxNodes) hosts"
+        return "\(plan.id.capitalized) plan, \(plan.maxNodes) Cloud hosts"
     }
 }
