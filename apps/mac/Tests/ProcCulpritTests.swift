@@ -210,7 +210,8 @@ final class ProcCulpritTests: XCTestCase {
     func testSharedCaseTable() throws {
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
-            .appendingPathComponent("Fixtures/culprit_cases.json")
+            .appendingPathComponent("../../../server/internal/alerter/testdata/culprit_cases.json")
+            .standardized
         let cases = try JSONDecoder().decode([Case].self, from: Data(contentsOf: url))
         XCTAssertGreaterThanOrEqual(cases.count, 30)
         for (i, tc) in cases.enumerated() {
