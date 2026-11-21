@@ -7,6 +7,13 @@ struct MetricPoint: Identifiable, Equatable, Sendable, TimeStamped {
     var id: Date { t }
 }
 
+/// The points of one time window with their peak and average.
+struct MetricWindow: Equatable, Sendable {
+    let points: [MetricPoint]
+    let peak: Double
+    let average: Double
+}
+
 /// Fixed-capacity ring of `(timestamp, value)` samples. Card sparklines
 /// and the full-view charts both read from this. Backed by the generic
 /// `TimeSeriesBuffer` — keep the public surface stable so callers and
@@ -48,6 +55,20 @@ struct MetricSeries: Sendable {
 
     func snapshot() -> [MetricPoint] {
         buffer.snapshot()
+    }
+
+    /// The last `seconds` before the latest point. Nil when empty.
+    /// `capacity` holds 15 minutes only when the poll is 1.25 s or longer.
+    func window(_ seconds: TimeInterval) -> MetricWindow? {
+        guard let latest else { return nil }
+        let from = latest.t.addingTimeInterval(-seconds)
+        let points = buffer.snapshot().filter { $0.t >= from }
+        let values = points.map(\.v)
+        return MetricWindow(
+            points: points,
+            peak: values.max() ?? latest.v,
+            average: values.reduce(0, +) / Double(max(values.count, 1))
+        )
     }
 
     func tint(warn: Double, critical: Double) -> ThresholdTint {

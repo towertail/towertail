@@ -84,4 +84,30 @@ final class MetricSeriesTests: XCTestCase {
         XCTAssertEqual(s.snapshot().map { $0.t.timeIntervalSince1970 }, [50, 100, 110, 120])
         XCTAssertEqual(s.snapshot().map(\.v), [1, 1, 1, 9])
     }
+
+    func testWindowPeakAndAverage() throws {
+        var s = MetricSeries()
+        let t0 = Date(timeIntervalSince1970: 1_000)
+        for (i, v) in [0.2, 0.6, 0.4].enumerated() {
+            s.append(MetricPoint(t: t0.addingTimeInterval(Double(i)), v: v))
+        }
+        let w = try XCTUnwrap(s.window(900))
+        XCTAssertEqual(w.points.count, 3)
+        XCTAssertEqual(w.peak, 0.6, accuracy: 1e-9)
+        XCTAssertEqual(w.average, 0.4, accuracy: 1e-9)
+    }
+
+    func testWindowKeepsLastSeconds() throws {
+        var s = MetricSeries()
+        let t0 = Date(timeIntervalSince1970: 10_000)
+        s.append(MetricPoint(t: t0, v: 0.9))
+        s.append(MetricPoint(t: t0.addingTimeInterval(16 * 60), v: 0.1))
+        let w = try XCTUnwrap(s.window(900))
+        XCTAssertEqual(w.points.map(\.v), [0.1])
+        XCTAssertEqual(w.peak, 0.1, accuracy: 1e-9)
+    }
+
+    func testWindowNilWhenEmpty() {
+        XCTAssertNil(MetricSeries().window(900))
+    }
 }
