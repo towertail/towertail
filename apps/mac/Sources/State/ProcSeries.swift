@@ -1,5 +1,11 @@
 import Foundation
 
+/// Disk I/O of one process in bytes per second.
+struct ProcIORate: Equatable, Sendable {
+    let read: Double
+    let write: Double
+}
+
 /// A time-windowed buffer of `(timestamp, [ProcSample])` snapshots. The
 /// full-view process table uses this to look up which procs were running
 /// at the user's hovered timestamp on the timeline.
@@ -61,5 +67,30 @@ struct ProcSeries: Sendable {
         // so equality of `t` uniquely identifies the index.
         guard let idx = buffer.index(matching: snap.t), idx > 0 else { return nil }
         return buffer.element(at: idx - 1)
+    }
+
+    /// Mean rates of each PID in the latest snapshot, over the last `n`
+    /// snapshots that list the PID with rates. Empty when none has rates.
+    func ioRates(lastSamples n: Int = 5) -> [Int32: ProcIORate] {
+        guard let latest = buffer.latest else { return [:] }
+        let first = max(0, buffer.count - n)
+        var sums: [Int32: (read: Double, write: Double, count: Int)] = [:]
+        for i in first..<buffer.count {
+            guard let snap = buffer.element(at: i) else { continue }
+            for p in snap.items {
+                guard let r = p.readBps, let w = p.writeBps else { continue }
+                var acc = sums[p.pid] ?? (0, 0, 0)
+                acc.read += Double(r)
+                acc.write += Double(w)
+                acc.count += 1
+                sums[p.pid] = acc
+            }
+        }
+        var out: [Int32: ProcIORate] = [:]
+        for p in latest.items {
+            guard let acc = sums[p.pid] else { continue }
+            out[p.pid] = ProcIORate(read: acc.read / Double(acc.count), write: acc.write / Double(acc.count))
+        }
+        return out
     }
 }

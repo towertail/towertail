@@ -62,4 +62,38 @@ final class ProcSeriesTests: XCTestCase {
         XCTAssertEqual(s.nearest(to: t0.addingTimeInterval(-100))?.t, t0)
         XCTAssertEqual(s.nearest(to: t0.addingTimeInterval(10_000))?.t, t0.addingTimeInterval(90))
     }
+
+    private func ioSnap(at t: Date, _ rates: [(Int32, Int64?, Int64?)]) -> ProcSeries.Snapshot {
+        ProcSeries.Snapshot(t: t, items: rates.map {
+            ProcSample(pid: $0.0, name: "p\($0.0)", cpuPct: 0, rss: 0, readBps: $0.1, writeBps: $0.2)
+        })
+    }
+
+    func testIORatesAverageLastFive() {
+        var s = ProcSeries()
+        let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+        // Reads 100, 200 ... 700 for PID 1: the last five average 500.
+        for i in 1...7 {
+            s.append(ioSnap(at: t0.addingTimeInterval(Double(i)), [(1, Int64(i * 100), Int64(i * 10))]))
+        }
+        let r = s.ioRates()
+        XCTAssertEqual(r[1], ProcIORate(read: 500, write: 50))
+    }
+
+    func testIORatesOnlyForPidsInLatestSnapshot() {
+        var s = ProcSeries()
+        let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+        s.append(ioSnap(at: t0, [(1, 100, 0), (2, 400, 0)]))
+        s.append(ioSnap(at: t0.addingTimeInterval(1), [(1, 300, 0)]))
+        let r = s.ioRates()
+        XCTAssertEqual(r.keys.sorted(), [1])
+        XCTAssertEqual(r[1]?.read, 200)
+    }
+
+    func testIORatesEmptyWithoutRates() {
+        var s = ProcSeries()
+        XCTAssertTrue(s.ioRates().isEmpty)
+        s.append(ioSnap(at: Date(), [(1, nil, nil)]))
+        XCTAssertTrue(s.ioRates().isEmpty)
+    }
 }
