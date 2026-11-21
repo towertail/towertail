@@ -21,6 +21,8 @@ struct CanvasSparkline: View {
     /// 15% headroom (used by the NET sparkline where rates vary wildly).
     var yDomain: ClosedRange<Double>? = 0...1
     var height: CGFloat = 28
+    /// False draws the line only, for charts that overlay two series.
+    var showsArea = true
 
     var body: some View {
         Canvas(opaque: false, rendersAsynchronously: false) { ctx, size in
@@ -69,19 +71,21 @@ struct CanvasSparkline: View {
         // Area fill — close the line path down to the bottom edge and
         // fill with a top-to-bottom tint gradient (matches Chart's
         // AreaMark styling in Sparkline.swift).
-        var areaPath = linePath
-        areaPath.addLine(to: CGPoint(x: pts.last!.x, y: size.height))
-        areaPath.addLine(to: CGPoint(x: pts.first!.x, y: size.height))
-        areaPath.closeSubpath()
-        let gradient = Gradient(colors: [tint.opacity(0.35), tint.opacity(0.02)])
-        ctx.fill(
-            areaPath,
-            with: .linearGradient(
-                gradient,
-                startPoint: CGPoint(x: 0, y: 0),
-                endPoint: CGPoint(x: 0, y: size.height)
+        if showsArea {
+            var areaPath = linePath
+            areaPath.addLine(to: CGPoint(x: pts.last!.x, y: size.height))
+            areaPath.addLine(to: CGPoint(x: pts.first!.x, y: size.height))
+            areaPath.closeSubpath()
+            let gradient = Gradient(colors: [tint.opacity(0.35), tint.opacity(0.02)])
+            ctx.fill(
+                areaPath,
+                with: .linearGradient(
+                    gradient,
+                    startPoint: CGPoint(x: 0, y: 0),
+                    endPoint: CGPoint(x: 0, y: size.height)
+                )
             )
-        )
+        }
 
         // Warn rule — dashed horizontal line at warn, but only when it
         // falls inside the visible y-range (otherwise the reference line
