@@ -72,6 +72,9 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
     var favorite: Bool
     /// Remote mode: the server runs disk scans on this node only when true.
     var allowDiskScan: Bool
+    /// The sampler sends the working folder and repo of the top processes.
+    /// Off keeps the folders on the host.
+    var sendProcFolders: Bool
     /// Timestamp of the most recent successful sample. Persisted so a host
     /// that worked yesterday but is unreachable today still escalates the
     /// menu-bar icon to red on relaunch — without this, every restart
@@ -104,6 +107,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         snoozedUntil: Date? = nil,
         favorite: Bool = false,
         allowDiskScan: Bool = false,
+        sendProcFolders: Bool = true,
         lastSuccessfulConnect: Date? = nil,
         cloud: CloudLink? = nil
     ) {
@@ -129,6 +133,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         self.snoozedUntil = snoozedUntil
         self.favorite = favorite
         self.allowDiskScan = allowDiskScan
+        self.sendProcFolders = sendProcFolders
         self.lastSuccessfulConnect = lastSuccessfulConnect
         self.cloud = cloud
     }
@@ -140,7 +145,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         case iconOnWarn, iconOnCritical, notifyOnWarn, notifyOnCritical
         case thresholdOverrides, customAlerts, snoozedUntil, favorite
         case customLongProc, ignoredProcs, mutedSignals
-        case allowDiskScan
+        case allowDiskScan, sendProcFolders
         case customThresholds
         case lastSuccessfulConnect
         case cloud
@@ -175,6 +180,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         try c.encodeIfPresent(snoozedUntil, forKey: .snoozedUntil)
         try c.encode(favorite, forKey: .favorite)
         try c.encode(allowDiskScan, forKey: .allowDiskScan)
+        try c.encode(sendProcFolders, forKey: .sendProcFolders)
         try c.encodeIfPresent(lastSuccessfulConnect, forKey: .lastSuccessfulConnect)
         try c.encodeIfPresent(cloud, forKey: .cloud)
     }
@@ -215,6 +221,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
         self.snoozedUntil = try c.decodeIfPresent(Date.self, forKey: .snoozedUntil)
         self.favorite = try c.decodeIfPresent(Bool.self, forKey: .favorite) ?? false
         self.allowDiskScan = try c.decodeIfPresent(Bool.self, forKey: .allowDiskScan) ?? false
+        self.sendProcFolders = try c.decodeIfPresent(Bool.self, forKey: .sendProcFolders) ?? true
         self.lastSuccessfulConnect = try c.decodeIfPresent(Date.self, forKey: .lastSuccessfulConnect)
         self.cloud = try c.decodeIfPresent(CloudLink.self, forKey: .cloud)
     }
@@ -249,6 +256,7 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
             && lhs.snoozedUntil == rhs.snoozedUntil
             && lhs.favorite == rhs.favorite
             && lhs.allowDiskScan == rhs.allowDiskScan
+            && lhs.sendProcFolders == rhs.sendProcFolders
             && lhs.cloud == rhs.cloud
     }
 

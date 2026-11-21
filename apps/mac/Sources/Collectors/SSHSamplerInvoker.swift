@@ -70,7 +70,8 @@ struct SSHSamplerInvoker: SamplerInvoker {
 
         let slot = SessionSlot()
         let connect = self.connect
-        let command = "\(Self.remoteSamplerPath) --once"
+        let base = "\(Self.remoteSamplerPath) --once"
+        let command = ([base] + ProcFolderFlag.onceArguments(for: node)).joined(separator: " ")
         // Unstructured on purpose: a hung connect must not block the
         // caller. It finishes in the background and the slot closes it.
         let work = Task.detached { () throws -> Sample in
@@ -81,7 +82,7 @@ struct SSHSamplerInvoker: SamplerInvoker {
             }
             let result: Result<Sample, Error>
             do {
-                let data = try await session.run(command)
+                let data = try await Self.run(command, fallback: base, on: session)
                 guard !data.isEmpty else { throw SamplerInvokeError.emptyOutput }
                 result = .success(try SampleCodec.decode(data))
             } catch {
@@ -113,6 +114,16 @@ struct SSHSamplerInvoker: SamplerInvoker {
         } onCancel: {
             work.cancel()
             race.resume(.failure(CancellationError()))
+        }
+    }
+
+    /// Runs the command. A sampler that does not know the flag gets one more
+    /// run without it, so the host still reports.
+    private static func run(_ command: String, fallback: String, on session: any SamplerSession) async throws -> Data {
+        do {
+            return try await session.run(command)
+        } catch let e as RemoteCommandFailed where command != fallback && ProcFolderFlag.isUnknownFlag(e.stderr) {
+            return try await session.run(fallback)
         }
     }
 

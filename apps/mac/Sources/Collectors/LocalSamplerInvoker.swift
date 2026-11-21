@@ -57,7 +57,7 @@ struct LocalSamplerInvoker: SamplerInvoker {
         guard let binary = Self.resolveBinary() else {
             throw SamplerInvokeError.binaryMissing
         }
-        let result = try await ProcessRunner.run(executable: binary, arguments: ["--once"])
+        let result = try await ProcessRunner.run(executable: binary, arguments: ["--once"] + ProcFolderFlag.onceArguments(for: node))
         if result.exitCode != 0 {
             let err = String(data: result.stderr, encoding: .utf8) ?? ""
             throw SamplerInvokeError.sshFailed(stderr: err, exitCode: result.exitCode)

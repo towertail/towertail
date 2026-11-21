@@ -28,6 +28,16 @@ final class SamplerInvokerTests: XCTestCase {
         XCTAssertGreaterThan(sample.cpu.cores, 0)
     }
 
+    /// The bundled sampler accepts the flag and sends no folders with it.
+    func testLocalInvokerKeepsFoldersOffWhenAsked() async throws {
+        guard resolveLocalBinary() != nil else { throw XCTSkip("darwin binary not available; skipping") }
+        var node = Node.localMac()
+        node.sendProcFolders = false
+        let sample = try await LocalSamplerInvoker().invokeOnce(node: node)
+        let items = sample.procs?.items ?? []
+        XCTAssertTrue(items.allSatisfy { $0.cwd == nil && $0.repo == nil })
+    }
+
     // MARK: - Factory routing
 
     func testMakeInvokerReturnsLocalForLocalNode() {
@@ -119,6 +129,7 @@ final class SamplerInvokerTests: XCTestCase {
         XCTAssertEqual(node.effectiveSshPort, 22)
         XCTAssertEqual(node.authMethod, .key)
         XCTAssertNil(node.knownHostFingerprint)
+        XCTAssertTrue(node.sendProcFolders)
     }
 
     func testNodeRoundTripPreservesSshFields() throws {
@@ -129,7 +140,8 @@ final class SamplerInvokerTests: XCTestCase {
             sshHost: "h",
             sshPort: 2222,
             authMethod: .password,
-            knownHostFingerprint: "SHA256:ZZZZ"
+            knownHostFingerprint: "SHA256:ZZZZ",
+            sendProcFolders: false
         )
         let enc = JSONEncoder()
         let data = try enc.encode(original)
@@ -137,6 +149,7 @@ final class SamplerInvokerTests: XCTestCase {
         XCTAssertEqual(decoded.sshPort, 2222)
         XCTAssertEqual(decoded.authMethod, .password)
         XCTAssertEqual(decoded.knownHostFingerprint, "SHA256:ZZZZ")
+        XCTAssertFalse(decoded.sendProcFolders)
     }
 }
 
@@ -246,5 +259,66 @@ final class SSHSamplerInvokerTimeoutTests: XCTestCase {
         } catch {
             XCTFail("got \(error)")
         }
+    }
+
+    // MARK: - Process folders
+
+    private static let sampleJSON = """
+    {"v":1,"ts":"2026-04-20T12:00:00Z","host":{"name":"h","os":"linux","arch":"arm64","kernel":"6","uptime_s":1,"sampler":"x"},"cpu":{"pct":0,"load_1":0,"load_5":0,"load_15":0,"cores":1},"mem":{"used":1,"total":2},"swap":{"used":0,"total":0},"errors":[]}
+    """
+
+    private func session() -> FakeSamplerSession {
+        let s = FakeSamplerSession()
+        s.reply("--once", Self.sampleJSON)
+        return s
+    }
+
+    func testSSHCommandHasNoProcCwdWhenOff() async throws {
+        let s = session()
+        var off = node
+        off.sendProcFolders = false
+        _ = try await SSHSamplerInvoker(timeout: 5) { _ in s }.invokeOnce(node: off)
+        XCTAssertEqual(s.commands, ["~/.towertail/bin/towertail-sampler --once --no-proc-cwd"])
+    }
+
+    func testSSHCommandPlainWhenOn() async throws {
+        let s = session()
+        _ = try await SSHSamplerInvoker(timeout: 5) { _ in s }.invokeOnce(node: node)
+        XCTAssertEqual(s.commands, ["~/.towertail/bin/towertail-sampler --once"])
+    }
+
+    func testSSHRetriesWithoutFlagForOldSampler() async throws {
+        let s = session()
+        s.fail("--no-proc-cwd", RemoteCommandFailed(exitCode: 1, stderr: "flag provided but not defined: -no-proc-cwd\n"))
+        var off = node
+        off.sendProcFolders = false
+        let sample = try await SSHSamplerInvoker(timeout: 5) { _ in s }.invokeOnce(node: off)
+        XCTAssertEqual(sample.host.name, "h")
+        XCTAssertEqual(s.commands, [
+            "~/.towertail/bin/towertail-sampler --once --no-proc-cwd",
+            "~/.towertail/bin/towertail-sampler --once",
+        ])
+    }
+
+    func testSSHDoesNotRetryOtherFailures() async {
+        let s = session()
+        s.fail("--no-proc-cwd", RemoteCommandFailed(exitCode: 1, stderr: "boom"))
+        var off = node
+        off.sendProcFolders = false
+        do {
+            _ = try await SSHSamplerInvoker(timeout: 5) { _ in s }.invokeOnce(node: off)
+            XCTFail("expected sshFailed")
+        } catch SamplerInvokeError.sshFailed(let stderr, _) {
+            XCTAssertEqual(stderr, "boom")
+        } catch {
+            XCTFail("got \(error)")
+        }
+        XCTAssertEqual(s.commands.count, 1)
+    }
+
+    func testFlagDetectsUnknownFlagText() {
+        XCTAssertTrue(ProcFolderFlag.isUnknownFlag("flag provided but not defined: -no-proc-cwd"))
+        XCTAssertFalse(ProcFolderFlag.isUnknownFlag("flag provided but not defined: -other"))
+        XCTAssertFalse(ProcFolderFlag.isUnknownFlag("permission denied"))
     }
 }
