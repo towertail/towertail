@@ -171,6 +171,67 @@ final class CloudAccountTests: XCTestCase {
         XCTAssertEqual(account.dashboardURL.absoluteString, "https://app.towertail.com")
     }
 
+    func testDashboardLinkUsesHandoff() async throws {
+        serveSignedIn()
+        server.on("POST", "/v1/auth/handoff") { _ in
+            .json(200, Data(#"{"url":"https://api.towertail.com/v1/auth/handoff/callback?code=abc","expiresAt":"2026-01-01T00:00:00Z"}"#.utf8))
+        }
+        let account = makeAccount()
+        await account.sendCode(email: "ana@acme.dev")
+        await account.verify(code: "482913")
+        let url = await account.dashboardLink(path: "billing")
+        XCTAssertEqual(url.absoluteString, "https://api.towertail.com/v1/auth/handoff/callback?code=abc")
+        let req = try XCTUnwrap(server.captured.first { $0.path == "/v1/auth/handoff" })
+        XCTAssertEqual(req.headers["authorization"], "Bearer \(token)")
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: req.body) as? [String: String])
+        XCTAssertEqual(body, ["redirect": "/billing"])
+    }
+
+    func testDashboardLinkSendsEmptyRedirectForRoot() async throws {
+        serveSignedIn()
+        server.on("POST", "/v1/auth/handoff") { _ in .json(200, Data(#"{"url":"https://x.test/c"}"#.utf8)) }
+        let account = makeAccount()
+        await account.sendCode(email: "ana@acme.dev")
+        await account.verify(code: "482913")
+        _ = await account.dashboardLink()
+        let req = try XCTUnwrap(server.captured.first { $0.path == "/v1/auth/handoff" })
+        XCTAssertEqual(String(decoding: req.body, as: UTF8.self), #"{"redirect":""}"#)
+    }
+
+    func testDashboardLinkFallsBackOn404() async {
+        serveSignedIn()
+        server.on("POST", "/v1/auth/handoff") { _ in .json(404, Data(#"{"error":{"message":"not found"}}"#.utf8)) }
+        let account = makeAccount()
+        await account.sendCode(email: "ana@acme.dev")
+        await account.verify(code: "482913")
+        let url = await account.dashboardLink(path: "billing")
+        XCTAssertEqual(url, account.dashboardURL.appendingPathComponent("billing"))
+        let root = await account.dashboardLink()
+        XCTAssertEqual(root, account.dashboardURL)
+    }
+
+    func testDashboardLinkSignedOut() async {
+        let account = makeAccount()
+        let url = await account.dashboardLink(path: "billing")
+        XCTAssertEqual(url, account.dashboardURL.appendingPathComponent("billing"))
+        XCTAssertTrue(server.captured.isEmpty)
+    }
+
+    func testOpenDashboardIgnoresSecondCallWhileBusy() async {
+        serveSignedIn()
+        server.on("POST", "/v1/auth/handoff") { _ in .json(200, Data(#"{"url":"https://x.test/c"}"#.utf8)) }
+        let account = makeAccount()
+        await account.sendCode(email: "ana@acme.dev")
+        await account.verify(code: "482913")
+        var opened: [URL] = []
+        let first = Task { await account.openDashboard(using: { opened.append($0) }) }
+        let second = Task { await account.openDashboard(using: { opened.append($0) }) }
+        await first.value
+        await second.value
+        XCTAssertEqual(opened.count, 1)
+        XCTAssertEqual(server.captured.filter { $0.path == "/v1/auth/handoff" }.count, 1)
+    }
+
     func testFooterSummary() async {
         serveSignedIn()
         let account = makeAccount()

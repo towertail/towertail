@@ -45,6 +45,7 @@ final class CloudAccount {
     private(set) var billing: CloudBilling?
     /// The email that got the last code. The code field is for this email.
     private(set) var pendingEmail: String?
+    @ObservationIgnored private var openingDashboard = false
     @ObservationIgnored var onStatusChange: ((Status) -> Void)?
 
     let endpoint: URL
@@ -89,6 +90,23 @@ final class CloudAccount {
               let host = parts.host, host.hasPrefix("api.") else { return endpoint }
         parts.host = "app." + host.dropFirst(4)
         return parts.url ?? endpoint
+    }
+
+    /// The dashboard link for `path`. With a token, it is a one-time link
+    /// that signs the browser in. On any error it is the plain URL.
+    func dashboardLink(path: String = "") async -> URL {
+        let plain = path.isEmpty ? dashboardURL : dashboardURL.appendingPathComponent(path)
+        guard let token else { return plain }
+        let redirect = path.isEmpty ? "" : "/" + path
+        return (try? await client.handoff(token: token, redirect: redirect)) ?? plain
+    }
+
+    /// Opens the dashboard. It ignores a call while a link request runs.
+    func openDashboard(path: String = "", using open: (URL) -> Void) async {
+        guard !openingDashboard else { return }
+        openingDashboard = true
+        defer { openingDashboard = false }
+        open(await dashboardLink(path: path))
     }
 
     /// Seconds until the user can ask for a new code. 0 means now.

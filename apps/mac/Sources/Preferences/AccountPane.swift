@@ -45,7 +45,7 @@ struct AccountSection: View {
                 LabeledContent("Hosts", value: "\(b.nodes) of \(b.maxNodes ?? b.plan.maxNodes)")
             }
             HStack {
-                Button("Open dashboard") { openURL(account.dashboardURL) }
+                Button("Open dashboard") { Task { await account.openDashboard(using: { openURL($0) }) } }
                 Button("Sign out…") { confirmSignOut = true }
                     .disabled(exit?.isBusy == true)
                 if let exit, exit.isBusy {

@@ -22,7 +22,7 @@ struct PopoverFooter: View {
                 }
                 Spacer(minLength: 0)
                 if let account, summary != nil {
-                    Button("Dashboard") { openURL(account.dashboardURL) }
+                    Button("Dashboard") { Task { await account.openDashboard(using: { openURL($0) }) } }
                         .buttonStyle(.link)
                         .pointingHandOnHover()
                 }

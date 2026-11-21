@@ -306,7 +306,7 @@ final class WelcomeFlow {
 
     func upgrade() {
         guard canBuy, let account = cloud?.account else { return }
-        openURL(account.dashboardURL.appendingPathComponent("billing"))
+        Task { await account.openDashboard(path: "billing", using: openURL) }
     }
 
     // MARK: SSH

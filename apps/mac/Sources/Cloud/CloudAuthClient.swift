@@ -113,6 +113,18 @@ struct CloudAuthClient: Sendable {
         return try decode(CloudMe.self, data, status)
     }
 
+    /// A one-time link that opens the dashboard signed in.
+    func handoff(token: String, redirect: String) async throws -> URL {
+        struct Body: Encodable { let redirect: String }
+        struct Reply: Decodable { let url: String? }
+        let (data, status) = try await call("POST", "/v1/auth/handoff", token: token, body: Body(redirect: redirect))
+        guard status < 300 else { throw CloudAuthError.server(status, Self.message(data)) }
+        guard let text = try? JSONDecoder().decode(Reply.self, from: data).url, let url = URL(string: text) else {
+            throw CloudAuthError.server(status, "Cloud sent no link.")
+        }
+        return url
+    }
+
     /// Nil when this Cloud has no billing routes (404).
     func billing(token: String) async throws -> CloudBilling? {
         let (data, status) = try await call("GET", "/v1/billing", token: token)
