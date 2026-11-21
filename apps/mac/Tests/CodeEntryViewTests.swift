@@ -11,10 +11,12 @@ final class CodeEntryViewTests: XCTestCase {
         XCTAssertEqual(CodeEntryView.digits(from: "482913"), "482913")
     }
 
-    func testPasteRejectsWrongText() {
-        XCTAssertNil(CodeEntryView.digits(from: "48291"))
-        XCTAssertNil(CodeEntryView.digits(from: "4829135"))
-        XCTAssertNil(CodeEntryView.digits(from: "48291a"))
-        XCTAssertNil(CodeEntryView.digits(from: ""))
+    func testKeepsOnlyDigits() {
+        XCTAssertEqual(CodeEntryView.digits(from: "48a2-91"), "48291")
+        XCTAssertEqual(CodeEntryView.digits(from: ""), "")
+    }
+
+    func testStopsAtSixDigits() {
+        XCTAssertEqual(CodeEntryView.digits(from: "4829135"), "482913")
     }
 }

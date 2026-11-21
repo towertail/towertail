@@ -1,70 +1,62 @@
 import SwiftUI
 
-/// Six one-digit fields for the code of the sign-in email. It calls
-/// `onComplete` at the last digit. Give the view a new `.id` to clear it.
+/// Six digit cells for the code of the sign-in email. It calls `onComplete`
+/// at the last digit. Give the view a new `.id` to clear it.
+///
+/// One hidden field takes the keys and the paste. The cells are `Text`, so
+/// the digits keep their font: a focused `TextField` on macOS draws a value
+/// that changes in code with the system font of the field editor.
 struct CodeEntryView: View {
     static let length = 6
 
     let onComplete: (String) -> Void
-    @State private var cells = Array(repeating: "", count: CodeEntryView.length)
-    @FocusState private var focus: Int?
+    @State private var code = ""
+    @FocusState private var focused: Bool
 
-    /// The code in a pasted text: "482913" or "482 913". Nil when the text
-    /// is not six digits.
-    static func digits(from text: String) -> String? {
-        let compact = text.filter { !$0.isWhitespace }
-        guard compact.count == length, compact.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
-        return compact
+    /// The digits of a typed or pasted text, at most six: "482 913" gives
+    /// "482913".
+    static func digits(from text: String) -> String {
+        String(text.filter { $0.isASCII && $0.isNumber }.prefix(length))
     }
 
     var body: some View {
-        HStack(spacing: 8) {
-            ForEach(0..<Self.length, id: \.self) { i in
-                TextField("", text: binding(at: i))
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 22, weight: .semibold, design: .monospaced))
-                    .multilineTextAlignment(.center)
-                    .frame(width: 36, height: 44)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.12)))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(focus == i ? Color.accentColor : Color.secondary.opacity(0.3), lineWidth: 1)
-                    )
-                    .focused($focus, equals: i)
-                    .onKeyPress(.delete) { backspace(at: i) }
-                    .accessibilityLabel("Digit \(i + 1) of \(Self.length)")
+        ZStack {
+            TextField("", text: $code)
+                .textFieldStyle(.plain)
+                .focused($focused)
+                .opacity(0.01)
+                .frame(width: 1, height: 1)
+                .accessibilityLabel("Sign-in code")
+                .onChange(of: code) { _, new in accept(new) }
+            HStack(spacing: 8) {
+                ForEach(0..<Self.length, id: \.self) { cell($0) }
             }
+            .contentShape(Rectangle())
+            .onTapGesture { focused = true }
+            .accessibilityHidden(true)
         }
-        .onAppear { focus = 0 }
+        .onAppear { focused = true }
     }
 
-    private func binding(at i: Int) -> Binding<String> {
-        Binding(get: { cells[i] }, set: { input(String($0), at: i) })
+    private func cell(_ i: Int) -> some View {
+        let chars = Array(code)
+        let active = focused && i == min(chars.count, Self.length - 1)
+        return Text(i < chars.count ? String(chars[i]) : "")
+            .font(.system(size: 22, weight: .semibold, design: .monospaced))
+            .frame(width: 36, height: 44)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.12)))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(active ? Color.accentColor : Color.secondary.opacity(0.3), lineWidth: 1)
+            )
     }
 
-    private func input(_ raw: String, at i: Int) {
-        if let code = Self.digits(from: raw) {
-            cells = code.map(String.init)
-            focus = Self.length - 1
-            onComplete(code)
+    private func accept(_ text: String) {
+        let clean = Self.digits(from: text)
+        guard clean == text else {
+            code = clean
             return
         }
-        guard let digit = raw.last(where: { $0.isASCII && $0.isNumber }) else {
-            cells[i] = ""
-            return
-        }
-        cells[i] = String(digit)
-        if i + 1 < Self.length {
-            focus = i + 1
-        } else if cells.allSatisfy({ !$0.isEmpty }) {
-            onComplete(cells.joined())
-        }
-    }
-
-    private func backspace(at i: Int) -> KeyPress.Result {
-        guard cells[i].isEmpty, i > 0 else { return .ignored }
-        cells[i - 1] = ""
-        focus = i - 1
-        return .handled
+        if clean.count == Self.length { onComplete(clean) }
     }
 }
