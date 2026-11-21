@@ -7,7 +7,8 @@ func makeSample(
     diskFrac: Double,
     rxBps: Int64 = 0,
     txBps: Int64 = 0,
-    t: Date = Date()
+    t: Date = Date(),
+    procs: ProcList? = nil
 ) -> Sample {
     let totalMem: Int64 = 16_000_000_000
     let totalDisk: Int64 = 100_000_000_000
@@ -19,6 +20,7 @@ func makeSample(
         swap: MemInfo(used: 0, total: 0),
         disks: [DiskSample(mount: "/", fs: "apfs", used: Int64(Double(totalDisk) * diskFrac), total: totalDisk)],
         net: NetInfo(rxBps: rxBps, txBps: txBps, rxCum: 0, txCum: 0),
+        procs: procs,
         errors: []
     )
 }

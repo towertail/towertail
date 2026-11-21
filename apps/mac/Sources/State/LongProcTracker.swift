@@ -33,6 +33,8 @@ struct LongProc: Sendable, Equatable, Identifiable {
         return n.count > 24 ? String(n.prefix(23)) + "…" : n
     }
 
+    var culprit: ProcCulprit { ProcCulprit(name: name, pid: pid, cmd: cmd, cpuPct: cpuPct) }
+
     func highFor(at now: Date) -> TimeInterval { now.timeIntervalSince(highSince) }
 }
 

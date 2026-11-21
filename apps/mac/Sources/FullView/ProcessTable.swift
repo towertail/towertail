@@ -389,7 +389,7 @@ struct ProcessTable: View {
         }
     }
 
-    static func formatBytes(_ b: Int64) -> String {
+    nonisolated static func formatBytes(_ b: Int64) -> String {
         let v = Double(max(b, 0))
         if v < 1024 { return String(format: "%.0f B", v) }
         if v < 1_048_576 { return String(format: "%.0f KB", v / 1024) }

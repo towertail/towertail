@@ -22,4 +22,54 @@ final class ThresholdNotifierTests: XCTestCase {
         XCTAssertTrue(body.contains("zombies"), body)
         XCTAssertFalse(body.contains("Memory pressure"), body)
     }
+
+    private func vmWithProcs(_ items: [ProcSample]) -> ServerViewModel {
+        let v = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x")
+        v.ingest(makeSample(
+            cpuPct: 90, memFrac: 0.8, diskFrac: 0.1,
+            procs: ProcList(root: true, topN: 20, total: items.count, visible: items.count, items: items)
+        ))
+        return v
+    }
+
+    private func node(_ pid: Int32, cpu: Double, rss: Int64 = 0) -> ProcSample {
+        ProcSample(pid: pid, name: "node", cmd: "node /p/node_modules/.bin/vitest run", cpuPct: cpu, rss: rss)
+    }
+
+    func testCpuBodyListsMergedCulprits() {
+        let items = [node(1, cpu: 100), node(2, cpu: 90), node(3, cpu: 70), node(4, cpu: 50),
+                     ProcSample(pid: 9, name: "postgres", cpuPct: 40, rss: 0)]
+        let body = ThresholdNotifier.bodyText(vm: vmWithProcs(items), metric: .cpu)
+        XCTAssertTrue(body.contains("Top: node ×4 · vitest run 310%, postgres 40%"), body)
+    }
+
+    func testMemBodyListsBytes() {
+        let gb: Int64 = 1_073_741_824
+        let items = [node(1, cpu: 1, rss: gb), node(2, cpu: 1, rss: gb / 2),
+                     ProcSample(pid: 9, name: "postgres", cpuPct: 0, rss: gb / 4)]
+        let body = ThresholdNotifier.bodyText(vm: vmWithProcs(items), metric: .mem)
+        XCTAssertTrue(body.contains("Top: node ×2 · vitest run 1.50 GB, postgres 256.0 MB"), body)
+    }
+
+    private func longProc(name: String, cmd: String?) -> LongProc {
+        LongProc(
+            key: LongProcKey(ProcSample(pid: 812, name: name, cpuPct: 85, rss: 0)),
+            pid: 812, name: name, cmd: cmd, cpuPct: 85,
+            highSince: Date(timeIntervalSince1970: 0),
+            startTS: Date(timeIntervalSince1970: 0)
+        )
+    }
+
+    func testLongProcBodyUsesWhat() {
+        let p = longProc(name: "node", cmd: "node /p/node_modules/.bin/vitest run")
+        let now = Date(timeIntervalSince1970: 32 * 60)
+        let body = ThresholdNotifier.longProcBody(p, now: now)
+        XCTAssertTrue(body.hasPrefix("node · vitest run (pid 812) at 85% CPU for 32m."), body)
+    }
+
+    func testLongProcBodyWithoutCmdKeepsName() {
+        let p = longProc(name: "OrbStack Helper", cmd: nil)
+        let body = ThresholdNotifier.longProcBody(p, now: Date(timeIntervalSince1970: 32 * 60))
+        XCTAssertTrue(body.hasPrefix("OrbStack Helper (pid 812) at 85% CPU"), body)
+    }
 }

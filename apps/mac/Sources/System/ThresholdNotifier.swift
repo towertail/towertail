@@ -152,9 +152,9 @@ final class ThresholdNotifier {
         }
     }
 
-    /// "OrbStack Helper (pid 812) at 85% CPU for 32m. Started 3d ago."
+    /// "node · vitest run (pid 812) at 85% CPU for 32m. Started 3d ago."
     static func longProcBody(_ p: LongProc, now: Date) -> String {
-        var s = "\(p.shortName) (pid \(p.pid)) at \(Int(p.cpuPct.rounded()))% CPU for \(ShortDuration.text(p.highFor(at: now)))."
+        var s = "\(p.culprit.label) (pid \(p.pid)) at \(Int(p.cpuPct.rounded()))% CPU for \(ShortDuration.text(p.highFor(at: now)))."
         if let start = p.startTS { s += " Started \(ShortDuration.age(now.timeIntervalSince(start))) ago." }
         return s
     }
@@ -226,41 +226,18 @@ final class ThresholdNotifier {
         return "Threshold crossed"
     }
 
-    /// Top-2 processes by the alerting metric, formatted for a notification
-    /// body. Returns nil when there's no proc snapshot yet (hydration lag
-    /// or sampler without proc visibility).
-    private static func topProcesses(vm: ServerViewModel, metric: Metric) -> [String]? {
+    /// Top-2 processes by the alerting metric, merged by name, formatted for a
+    /// notification body. Returns nil when there's no proc snapshot yet
+    /// (hydration lag or sampler without proc visibility).
+    static func topProcesses(vm: ServerViewModel, metric: Metric) -> [String]? {
         guard let items = vm.procs.latest?.items, !items.isEmpty else { return nil }
+        let ranking: ProcCulprit.Ranking
         switch metric {
-        case .cpu:
-            return items
-                .sorted { $0.cpuPct > $1.cpuPct }
-                .prefix(2)
-                .map { "\(procLabel($0)) \(String(format: "%.0f", $0.cpuPct))%" }
-        case .mem:
-            return items
-                .sorted { $0.rss > $1.rss }
-                .prefix(2)
-                .map { "\(procLabel($0)) \(formatBytes($0.rss))" }
-        case .disk, .net, .health:
-            return nil
+        case .cpu: ranking = .cpu
+        case .mem: ranking = .mem
+        case .disk, .net, .health: return nil
         }
-    }
-
-    private static func procLabel(_ p: ProcSample) -> String {
-        // Prefer the short name; it's what the user scans for at a glance.
-        // Truncate very long names so two entries still fit on a notification line.
-        let name = p.name.isEmpty ? "pid \(p.pid)" : p.name
-        if name.count > 24 { return String(name.prefix(23)) + "…" }
-        return name
-    }
-
-    private static func formatBytes(_ b: Int64) -> String {
-        let v = Double(max(b, 0))
-        if v < 1024 { return String(format: "%.0f B", v) }
-        if v < 1_048_576 { return String(format: "%.0f KB", v / 1024) }
-        if v < 1_073_741_824 { return String(format: "%.1f MB", v / 1_048_576) }
-        return String(format: "%.2f GB", v / 1_073_741_824)
+        return ProcCulprit.top(items, by: ranking, limit: 2).map { "\($0.label) \(ranking.text($0))" }
     }
 }
 
