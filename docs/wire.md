@@ -140,7 +140,7 @@ The server sends its orders for a sampler in the reply to `POST /v1/ingest/sampl
 
 - `interval` is a Go duration. The sampler collects at this interval until a later reply says other. An order of the host (for example from the cloud plan) wins. Else the server sends `stream.live_interval` (default `5s`) while a live view lease covers the host, and `stream.idle_interval` (default `30s`) when no lease covers it. The server sends the key in each reply, so the sampler keeps no state. It is left out when the server has no order. A new interval starts at the next post after a collection, so it can take up to one old interval to apply.
 - `update` is the version that the sampler should run. The server sets it when `sampler.latest_version` is set and is newer than the version in the header `User-Agent: towertail-sampler/<version>`. A sampler with no such header gets no `update`.
-- 410 `reason` is `host_removed` (the node does not exist), `cloud_off` (the node has `enabled: false`) or `account_deleted` (reserved; the server does not send it yet).
+- 410 `reason` is `host_removed` (the node does not exist), `cloud_off` (the node has `enabled: false`) or `account_deleted`. Towertail Cloud sends `account_deleted` when the account of the node is deleted. The token stays in a tombstone for 90 days. The self-host server does not send it.
 - 402 means that the plan is full. The nodes of the org are sorted by `createdAt`, then id. A node at or above the `MaxNodes` rank gets 402. The oldest hosts keep their place.
 - The order bodies are flat JSON. They do not use the error envelope.
 

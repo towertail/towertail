@@ -12,6 +12,7 @@ final class CloudSessionTests: XCTestCase {
     private var linked: Node!
     private var plain: Node!
     private var cloudOnly: Node!
+    private var released: ReleasedHosts!
 
     override func setUp() async throws {
         try await super.setUp()
@@ -45,7 +46,8 @@ final class CloudSessionTests: XCTestCase {
             retryDelay: .seconds(3600),
             defaults: UserDefaults(suiteName: "tt-session-\(UUID().uuidString)")!
         )
-        session = CloudSession(account: account, servers: ServerStore(), nodes: nodes)
+        released = ReleasedHosts(defaults: UserDefaults(suiteName: "tt-session-\(UUID().uuidString)")!)
+        session = CloudSession(account: account, servers: ServerStore(), nodes: nodes, released: released)
         await account.restore()
     }
 
@@ -63,6 +65,21 @@ final class CloudSessionTests: XCTestCase {
         XCTAssertNil(stored?.cloud)
         XCTAssertEqual(stored?.kind, .ssh)
         XCTAssertNotNil(nodes.node(withId: plain.id))
+    }
+
+    func testSignOutRecordsReleasedHosts() {
+        account.signOut()
+        XCTAssertEqual(released.ids, [linked.id], "only the SSH host with a link")
+    }
+
+    func testReleasedHostsAddKeepsOldIds() {
+        let store = ReleasedHosts(defaults: UserDefaults(suiteName: "tt-released-\(UUID().uuidString)")!)
+        let a = UUID(), b = UUID()
+        store.add([a])
+        store.add([b])
+        XCTAssertEqual(store.ids, [a, b])
+        store.retain([b])
+        XCTAssertEqual(store.ids, [b])
     }
 
     func testSignOutRemovesCloudOnlyNodes() {

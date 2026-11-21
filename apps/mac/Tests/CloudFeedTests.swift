@@ -9,6 +9,7 @@ final class CloudFeedTests: XCTestCase {
     private var servers: ServerStore!
     private var nodes: NodeStore!
     private var feed: CloudFeed!
+    private var released: ReleasedHosts!
 
     override func setUp() async throws {
         try await super.setUp()
@@ -21,7 +22,8 @@ final class CloudFeedTests: XCTestCase {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         nodes = NodeStore(nodes: [], url: url)
         let client = RemoteClient(config: .init(endpoint: server.baseURL, token: token))
-        feed = CloudFeed(client: client, servers: servers, nodes: nodes)
+        released = ReleasedHosts(defaults: UserDefaults(suiteName: "tt-feed-\(UUID().uuidString)")!)
+        feed = CloudFeed(client: client, servers: servers, nodes: nodes, released: released)
     }
 
     override func tearDown() async throws {
@@ -177,9 +179,10 @@ final class CloudFeedTests: XCTestCase {
         XCTAssertTrue(added.isCloud)
     }
 
-    func testListedSSHNodeIsRelinked() async throws {
+    func testReleasedNodeIsRelinked() async throws {
         let local = Node(displayName: "web", kind: .ssh, sshUser: "u", sshHost: "h")
         nodes.add(local)
+        released.add([local.id])
         serveNodes([local])
         await feed.syncNodes()
         let stored = try XCTUnwrap(nodes.node(withId: local.id))
@@ -187,13 +190,42 @@ final class CloudFeedTests: XCTestCase {
         XCTAssertEqual(stored.kind, .ssh)
     }
 
+    func testFailedInstallNodeIsNotRelinked() async throws {
+        let local = Node(displayName: "web", kind: .ssh, sshUser: "u", sshHost: "h")
+        nodes.add(local)
+        serveNodes([local])
+        await feed.syncNodes()
+        XCTAssertNil(nodes.node(withId: local.id)?.cloud)
+    }
+
     func testDisabledSSHNodeIsNotRelinked() async throws {
         var local = Node(displayName: "web", kind: .ssh, sshUser: "u", sshHost: "h")
         nodes.add(local)
+        released.add([local.id])
         local.enabled = false
         serveNodes([local])
         await feed.syncNodes()
         XCTAssertNil(nodes.node(withId: local.id)?.cloud)
+    }
+
+    func testReleasedSetShrinks() async throws {
+        let back = Node(displayName: "back", kind: .ssh, sshUser: "u", sshHost: "b")
+        let gone = Node(displayName: "gone", kind: .ssh, sshUser: "u", sshHost: "g")
+        nodes.add(back)
+        nodes.add(gone)
+        released.add([back.id, gone.id])
+        serveNodes([back])
+        await feed.syncNodes()
+        XCTAssertTrue(released.ids.isEmpty)
+    }
+
+    func testFailedListKeepsReleasedSet() async {
+        let local = Node(displayName: "web", kind: .ssh, sshUser: "u", sshHost: "h")
+        nodes.add(local)
+        released.add([local.id])
+        server.on("GET", "/v1/nodes") { _ in .empty(500) }
+        await feed.syncNodes()
+        XCTAssertEqual(released.ids, [local.id])
     }
 
     func testCloudNodeStillAdded() async throws {

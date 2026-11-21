@@ -14,13 +14,15 @@ final class CloudFeed {
     @ObservationIgnored private let servers: ServerStore
     @ObservationIgnored private let nodes: NodeStore
     @ObservationIgnored private let viewLease: ViewLeaseController?
+    @ObservationIgnored private let released: ReleasedHosts
     @ObservationIgnored private var stream: RemoteStream?
     /// Reachability events since the last connect. They win over the
     /// open alerts, which can be older than the events.
     @ObservationIgnored private var eventAlerts: [UUID: Bool] = [:]
 
-    init(client: RemoteClient, servers: ServerStore, nodes: NodeStore, viewLease: ViewLeaseController? = nil) {
+    init(client: RemoteClient, servers: ServerStore, nodes: NodeStore, viewLease: ViewLeaseController? = nil, released: ReleasedHosts = ReleasedHosts()) {
         self.client = client
+        self.released = released
         self.servers = servers
         self.nodes = nodes
         self.viewLease = viewLease
@@ -63,8 +65,8 @@ final class CloudFeed {
         Task { await stream.send(view) }
     }
 
-    /// Adds hosts that only Cloud knows. Links SSH hosts that still report
-    /// to Cloud. Removes the Cloud link of hosts that Cloud dropped.
+    /// Adds hosts that only Cloud knows. Links the SSH hosts that a sign-out
+    /// released and that Cloud still holds. Removes the Cloud link of hosts that Cloud dropped.
     func syncNodes() async {
         let remote: [RemoteNode]
         do {
@@ -77,11 +79,15 @@ final class CloudFeed {
         for r in remote where nodes.node(withId: r.id) == nil {
             nodes.add(Node(id: r.id, displayName: r.displayName, kind: .cloud, cloud: CloudLink(enrolledAt: Date())))
         }
-        for r in remote where r.enabled {
+        let freed = released.ids
+        var relinked: Set<UUID> = []
+        for r in remote where r.enabled && freed.contains(r.id) {
             guard var node = nodes.node(withId: r.id), node.kind == .ssh, node.cloud == nil else { continue }
             node.cloud = CloudLink(enrolledAt: Date())
             nodes.update(node)
+            relinked.insert(r.id)
         }
+        released.retain(remoteIDs.subtracting(relinked))
         for node in nodes.nodes where node.isCloud && !remoteIDs.contains(node.id) {
             Logger.shared.info("cloud: host removed in Cloud", category: "cloud", hostID: node.id, host: node.displayName)
             if node.kind == .cloud {

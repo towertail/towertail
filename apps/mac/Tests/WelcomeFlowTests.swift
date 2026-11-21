@@ -245,7 +245,10 @@ final class WelcomeFlowTests: XCTestCase {
             endpoint: server.baseURL, keychain: keychain, client: CloudAuthClient(endpoint: server.baseURL),
             retryDelay: .seconds(3600), defaults: UserDefaults(suiteName: "tt-welcome-\(UUID().uuidString)")!
         )
-        let session = CloudSession(account: account, servers: ServerStore(), nodes: nodes)
+        let session = CloudSession(
+            account: account, servers: ServerStore(), nodes: nodes,
+            released: ReleasedHosts(defaults: UserDefaults(suiteName: "tt-welcome-\(UUID().uuidString)")!)
+        )
         await account.restore()
         defer { account.signOut() }
 
