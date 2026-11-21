@@ -224,25 +224,14 @@ func highFraction(points []procPoint, start, now time.Time) float64 {
 	return float64(high) / float64(span)
 }
 
-// shortName is the name cut at 24 characters, the same as the apps.
-func (c procChange) shortName() string {
-	n := c.proc.Name
-	if n == "" {
-		return fmt.Sprintf("pid %d", c.proc.PID)
-	}
-	if r := []rune(n); len(r) > 24 {
-		return string(r[:23]) + "…"
-	}
-	return n
-}
-
 // detail is the alert text, for example
-// "OrbStack Helper (pid 812) at 85% CPU for 32m".
+// "node · sling (.wt/SLING-40) · vitest (pid 812) at 85% CPU for 32m.".
 func (c procChange) detail(at time.Time) string {
+	label := newCulprit(c.proc).label()
 	if !c.flagged {
-		return fmt.Sprintf("%s (pid %d) is no longer over the CPU limit.", c.shortName(), c.proc.PID)
+		return fmt.Sprintf("%s (pid %d) is no longer over the CPU limit.", label, c.proc.PID)
 	}
-	return fmt.Sprintf("%s (pid %d) at %.0f%% CPU for %s.", c.shortName(), c.proc.PID, c.proc.CPUPct, shortDuration(at.Sub(c.highSince)))
+	return fmt.Sprintf("%s (pid %d) at %.0f%% CPU for %s.", label, c.proc.PID, c.proc.CPUPct, shortDuration(at.Sub(c.highSince)))
 }
 
 func (c procChange) payload() map[string]any {
@@ -256,6 +245,11 @@ func (c procChange) payload() map[string]any {
 	}
 	if !c.proc.StartTS.IsZero() {
 		p["start_ts"] = c.proc.StartTS
+	}
+	for k, v := range map[string]string{"cwd": c.proc.Cwd, "repo": c.proc.Repo, "parent": c.proc.Parent} {
+		if v != "" {
+			p[k] = v
+		}
 	}
 	return p
 }

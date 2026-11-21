@@ -228,12 +228,38 @@ func TestProcTracker_TimeBackwardResets(t *testing.T) {
 	}
 }
 
-func TestProcChange_ShortName(t *testing.T) {
-	c := procChange{proc: clickhouse.ProcRow{PID: 7, Name: "com.apple.WebKit.WebContent.Extra"}}
-	if got := c.shortName(); got != "com.apple.WebKit.WebCon…" {
-		t.Errorf("shortName = %q", got)
+func TestProcChange_DetailUsesLabel(t *testing.T) {
+	at := lpAt(32)
+	c := procChange{
+		flagged:   true,
+		highSince: lpAt(0),
+		proc: clickhouse.ProcRow{
+			PID: 812, Name: "node", Cmd: "node /p/node_modules/.bin/vitest run", CPUPct: 85,
+			Repo: "/w/sling-workspace/.wt/SLING-40/sling", Cwd: "/w/sling-workspace/.wt/SLING-40/sling/pkg", Parent: "zsh",
+		},
 	}
-	if got := (procChange{proc: clickhouse.ProcRow{PID: 7}}).shortName(); got != "pid 7" {
-		t.Errorf("shortName = %q", got)
+	if got, want := c.detail(at), "node · sling (.wt/SLING-40) · vitest run (pid 812) at 85% CPU for 32m."; got != want {
+		t.Errorf("detail = %q, want %q", got, want)
+	}
+	c.flagged = false
+	if got, want := c.detail(at), "node · sling (.wt/SLING-40) · vitest run (pid 812) is no longer over the CPU limit."; got != want {
+		t.Errorf("clear detail = %q, want %q", got, want)
+	}
+	// No folder and no interpreter: the old text.
+	if got, want := (procChange{flagged: true, highSince: lpAt(2), proc: orb(85)}).detail(at), "OrbStack Helper (pid 812) at 85% CPU for 30m."; got != want {
+		t.Errorf("plain detail = %q, want %q", got, want)
+	}
+}
+
+func TestProcChange_PayloadFolders(t *testing.T) {
+	p := procChange{proc: clickhouse.ProcRow{PID: 1, Name: "a", Cwd: "/x", Repo: "/x", Parent: "zsh"}}.payload()
+	if p["cwd"] != "/x" || p["repo"] != "/x" || p["parent"] != "zsh" {
+		t.Errorf("payload = %+v", p)
+	}
+	p = procChange{proc: clickhouse.ProcRow{PID: 1, Name: "a"}}.payload()
+	for _, k := range []string{"cwd", "repo", "parent"} {
+		if _, ok := p[k]; ok {
+			t.Errorf("payload has empty %s", k)
+		}
 	}
 }

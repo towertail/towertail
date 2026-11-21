@@ -308,7 +308,11 @@ func TestAlerter_LongProcNotify(t *testing.T) {
 	node := notifyNode(id)
 	n := newCountingNotifier()
 	e := New(nil, clock, nil, nopStore{}, cfg, n)
-	high := func(int) []clickhouse.ProcRow { return []clickhouse.ProcRow{orb(85)} }
+	high := func(int) []clickhouse.ProcRow {
+		p := orb(85)
+		p.Repo = "/home/u/code/sling"
+		return []clickhouse.ProcRow{p}
+	}
 	gone := func(int) []clickhouse.ProcRow { return []clickhouse.ProcRow{lpProc(1, 1, "sh", lpStarted)} }
 
 	runProcs(e, clock, org, id, &node, 0, 32, high)
@@ -320,7 +324,7 @@ func TestAlerter_LongProcNotify(t *testing.T) {
 	if a.Metric != "long_proc" || a.Instance != "812/1799000000" || a.To != TintWarn || a.Value != 85 {
 		t.Fatalf("alert = %+v", a)
 	}
-	if a.Detail != "OrbStack Helper (pid 812) at 85% CPU for 30m." || a.Text() != a.Detail {
+	if a.Detail != "OrbStack Helper · sling (pid 812) at 85% CPU for 30m." || a.Text() != a.Detail {
 		t.Errorf("detail = %q, text = %q", a.Detail, a.Text())
 	}
 	if a.Title() != "web-1: long-running process" {
