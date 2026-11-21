@@ -20,12 +20,13 @@ struct CanvasSparkline: View {
     /// When nil the y-axis auto-scales to the visible window's peak with
     /// 15% headroom (used by the NET sparkline where rates vary wildly).
     var yDomain: ClosedRange<Double>? = 0...1
+    var height: CGFloat = 28
 
     var body: some View {
         Canvas(opaque: false, rendersAsynchronously: false) { ctx, size in
             draw(into: &ctx, size: size)
         }
-        .frame(height: 28)
+        .frame(height: height)
         .drawingGroup()
     }
 

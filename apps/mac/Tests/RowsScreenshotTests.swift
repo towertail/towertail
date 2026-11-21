@@ -18,14 +18,42 @@ final class RowsScreenshotTests: XCTestCase {
     }
 
     private func addHost(_ store: ServerStore, _ name: String, cpu: Double, mem: Double, disk: Double,
-                         rx: Int64, tx: Int64) {
+                         rx: Int64, tx: Int64, procs: ProcList? = nil, history: Bool = false) {
         let vm = ServerViewModel(hostname: name, dnsName: name, osArch: "linux/arm64")
         store.register(vm)
         let mb: Int64 = 1_048_576
-        vm.ingest(makeSample(cpuPct: cpu, memFrac: mem / 100, diskFrac: disk / 100, rxBps: rx * mb, txBps: tx * mb))
+        if history {
+            // Samples of the last 15 minutes, so the sparkline has a shape.
+            let now = Date()
+            for i in stride(from: 59, through: 1, by: -1) {
+                let load = 55 + 30 * sin(Double(i) / 6) + (i < 12 ? 10 : 0)
+                vm.ingest(makeSample(cpuPct: load, memFrac: mem / 100, diskFrac: disk / 100, t: now.addingTimeInterval(-Double(i) * 15)))
+            }
+        }
+        vm.ingest(makeSample(
+            cpuPct: cpu, memFrac: mem / 100, diskFrac: disk / 100, rxBps: rx * mb, txBps: tx * mb, procs: procs
+        ))
     }
 
-    private func render(layout: PopoverLayout, name: String) throws {
+    private func nodeProcs() -> ProcList {
+        let cmd = "node /srv/app/node_modules/.bin/vitest run --coverage"
+        let gb: Int64 = 1_073_741_824
+        let items = [
+            ProcSample(pid: 812, name: "node", cmd: cmd, cpuPct: 100, rss: gb),
+            ProcSample(pid: 813, name: "node", cmd: cmd, cpuPct: 90, rss: gb / 2),
+            ProcSample(pid: 814, name: "node", cmd: cmd, cpuPct: 70, rss: gb / 2),
+            ProcSample(pid: 815, name: "node", cmd: cmd, cpuPct: 50, rss: gb / 4),
+            ProcSample(pid: 901, name: "postgres", cmd: "postgres: main", cpuPct: 28, rss: gb),
+            ProcSample(pid: 902, name: "nginx", cmd: "nginx: worker process", cpuPct: 12, rss: gb / 8),
+            ProcSample(pid: 903, name: "redis-server", cmd: "redis-server *:6379", cpuPct: 6, rss: gb / 8),
+        ]
+        return ProcList(root: true, topN: 20, total: items.count, visible: items.count, items: items)
+    }
+
+    private func render(
+        layout: PopoverLayout, name: String, withHistory: Bool = false, hover: MetricHoverState = MetricHoverState(),
+        showHover: ((ServerStore) -> MetricHoverTarget?)? = nil
+    ) throws {
         let settingsURL = FileManager.default.temporaryDirectory.appendingPathComponent("tt-rows-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: settingsURL) }
         let settings = ClientSettings(url: settingsURL)
@@ -34,7 +62,7 @@ final class RowsScreenshotTests: XCTestCase {
         addHost(store, "This Mac", cpu: 18, mem: 64, disk: 51, rx: 3, tx: 1)
         addHost(store, "web-1", cpu: 34, mem: 58, disk: 72, rx: 22, tx: 9)
         addHost(store, "web-2", cpu: 27, mem: 61, disk: 44, rx: 14, tx: 6)
-        addHost(store, "web-3", cpu: 91, mem: 70, disk: 46, rx: 38, tx: 21)
+        addHost(store, "web-3", cpu: 91, mem: 70, disk: 46, rx: 38, tx: 21, procs: nodeProcs(), history: withHistory)
         addHost(store, "api-1", cpu: 22, mem: 49, disk: 38, rx: 9, tx: 7)
         let down = ServerViewModel(hostname: "db-1", dnsName: "db-1", osArch: "linux/arm64")
         store.register(down)
@@ -44,7 +72,9 @@ final class RowsScreenshotTests: XCTestCase {
         addHost(store, "cache-1", cpu: 12, mem: 88, disk: 21, rx: 6, tx: 6)
         addHost(store, "edge-1", cpu: 9, mem: 31, disk: 96, rx: 41, tx: 30)
 
-        let view = PopoverRoot()
+        if let target = showHover?(store) { hover.show(target) }
+
+        let view = PopoverRoot(hover: hover)
             .environment(store)
             .environment(settings)
             .environment(NodeStore(nodes: [], url: settingsURL))
@@ -70,6 +100,15 @@ final class RowsScreenshotTests: XCTestCase {
     }
 
     func testRowsPopover() throws {
+        XCTAssertEqual(PopoverLayout.allCases.first, .rows)
         try render(layout: .rows, name: "popover-rows")
+    }
+
+    func testHoverCard() throws {
+        try render(layout: .rows, name: "hover-cpu", withHistory: true) { store in
+            let vm = store.serverVMs.first { $0.hostname == "web-3" }!
+            // CPU column of the web-3 row (fourth row).
+            return MetricHoverTarget(hostId: vm.id, metric: .cpu, anchor: CGRect(x: 128, y: 98, width: 54, height: 32))
+        }
     }
 }

@@ -31,6 +31,11 @@ struct PopoverRoot: View {
     @State private var searchText: String = ""
     @State private var debouncedQuery: String = ""
     @State private var debounceTask: Task<Void, Never>?
+    @State private var hover: MetricHoverState
+
+    init(hover: MetricHoverState = MetricHoverState()) {
+        _hover = State(initialValue: hover)
+    }
 
     /// Felt-out by typing tests: 250ms is too snappy (each keystroke
     /// rebuilds the list mid-word), 600ms feels laggy on backspace.
@@ -51,7 +56,10 @@ struct PopoverRoot: View {
         }
         // Outside the `if`: the active body is gone while the popover is hidden.
         .onAppear { viewLease?.setPopover(visible: scenePhase != .background) }
-        .onChange(of: scenePhase) { _, phase in viewLease?.setPopover(visible: phase != .background) }
+        .onChange(of: scenePhase) { _, phase in
+            viewLease?.setPopover(visible: phase != .background)
+            hover.dismiss()
+        }
         .task(id: scenePhase != .background) { await backfillCards() }
     }
 
@@ -91,7 +99,13 @@ struct PopoverRoot: View {
         }
         .frame(width: 360, height: 620)
         .background(Color(nsColor: .windowBackgroundColor))
+        .coordinateSpace(.named(MetricHoverState.space))
+        .overlay(alignment: .topLeading) { MetricHoverOverlay() }
+        .environment(hover)
+        .onChange(of: filter) { hover.dismiss() }
+        .onChange(of: clientSettings.popoverLayout) { hover.dismiss() }
         .onChange(of: searchText) { _, newValue in
+            hover.dismiss()
             debounceTask?.cancel()
             // Empty transitions should apply immediately — hitting the X
             // or Escape feels broken if it lags behind the debounce.

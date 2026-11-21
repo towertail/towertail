@@ -17,6 +17,10 @@ final class ServerRowViewTests: XCTestCase {
         XCTAssertEqual(m[0].fraction, 0.34, accuracy: 0.0001)
     }
 
+    func testMetricKinds() {
+        XCTAssertEqual(ServerRowView.metrics(for: makeVM()).map(\.metric), [.cpu, .mem, .disk, .net])
+    }
+
     func testMetricTintAtThresholds() {
         XCTAssertEqual(ServerRowView.metrics(for: makeVM(cpu: 91))[0].tint, .critical)
         XCTAssertEqual(ServerRowView.metrics(for: makeVM(cpu: 76))[0].tint, .warn)

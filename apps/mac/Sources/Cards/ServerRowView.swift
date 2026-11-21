@@ -6,6 +6,7 @@ struct NetSplit: Equatable {
 }
 
 struct RowMetric: Equatable {
+    let metric: Metric
     let text: String
     let fraction: Double
     let tint: ThresholdTint
@@ -45,7 +46,7 @@ struct ServerRowView: View {
                     switch state {
                     case .live:
                         ForEach(Array(Self.metrics(for: vm).enumerated()), id: \.offset) { i, m in
-                            MetricColumn(metric: m)
+                            MetricColumn(metric: m, hostId: vm.id)
                                 .frame(width: i == 3 ? RowsLayout.netWidth : RowsLayout.valueWidth)
                         }
                     case .noSample(let text, _):
@@ -113,9 +114,9 @@ extension ServerRowView {
     static func metrics(for vm: ServerViewModel) -> [RowMetric] {
         let t = vm.thresholds
         return [
-            percent(vm.cpu, warn: t.cpuWarn, critical: t.cpuCritical),
-            percent(vm.mem, warn: t.memWarn, critical: t.memCritical),
-            percent(vm.disk, warn: t.diskWarn, critical: t.diskCritical),
+            percent(vm.cpu, metric: .cpu, warn: t.cpuWarn, critical: t.cpuCritical),
+            percent(vm.mem, metric: .mem, warn: t.memWarn, critical: t.memCritical),
+            percent(vm.disk, metric: .disk, warn: t.diskWarn, critical: t.diskCritical),
             net(rx: vm.netRxMBps, tx: vm.netTxMBps),
         ]
     }
@@ -141,9 +142,10 @@ extension ServerRowView {
         m.text.replacingOccurrences(of: "%", with: " percent")
     }
 
-    private static func percent(_ series: MetricSeries, warn: Double, critical: Double) -> RowMetric {
-        guard let v = series.latest?.v else { return RowMetric(text: "—", fraction: 0, tint: .stale) }
+    private static func percent(_ series: MetricSeries, metric: Metric, warn: Double, critical: Double) -> RowMetric {
+        guard let v = series.latest?.v else { return RowMetric(metric: metric, text: "—", fraction: 0, tint: .stale) }
         return RowMetric(
+            metric: metric,
             text: "\(Int(round(v * 100)))%",
             fraction: min(max(v, 0), 1),
             tint: series.tint(warn: warn, critical: critical)
@@ -154,12 +156,14 @@ extension ServerRowView {
         let total = rx + tx
         let text = String(format: total < 10 ? "%.1f MB/s" : "%.0f MB/s", total)
         let split = total > 0 ? NetSplit(rx: rx / total, tx: tx / total) : NetSplit(rx: 0, tx: 0)
-        return RowMetric(text: text, fraction: total > 0 ? 1 : 0, tint: .nominal, split: split)
+        return RowMetric(metric: .net, text: text, fraction: total > 0 ? 1 : 0, tint: .nominal, split: split)
     }
 }
 
 private struct MetricColumn: View {
     let metric: RowMetric
+    let hostId: UUID
+    @Environment(MetricHoverState.self) private var hover: MetricHoverState?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -169,6 +173,27 @@ private struct MetricColumn: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
             bar
+        }
+        .background { hoverZone }
+    }
+
+    /// A zone a little larger than the column. It reports its frame at hover time.
+    @ViewBuilder
+    private var hoverZone: some View {
+        if MetricHoverContent.supports(metric.metric) {
+            GeometryReader { g in
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onHover { inside in
+                        let target = MetricHoverTarget(
+                            hostId: hostId, metric: metric.metric,
+                            anchor: g.frame(in: .named(MetricHoverState.space))
+                        )
+                        if inside { hover?.enter(target) } else { hover?.exit(target) }
+                    }
+            }
+            .padding(.horizontal, -4)
+            .padding(.vertical, -6)
         }
     }
 
