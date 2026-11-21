@@ -113,12 +113,14 @@ func (s *Server) handleIngest(c echo.Context) error {
 	ingestLines.WithLabelValues("accepted").Add(float64(len(bundles)))
 	ingestLines.WithLabelValues("rejected").Add(float64(rejected))
 
+	sendFolders := !gate.node.HideProcFolders
 	return c.JSON(http.StatusAccepted, wire.IngestResponse{
 		Accepted: len(bundles),
 		Rejected: rejected,
 		Error:    firstErr,
 		Interval: s.intervalFor(t.OrgID, *t.NodeID),
 		Update:   s.updateFor(req.Header.Get("User-Agent")),
+		ProcCwd:  &sendFolders,
 	})
 }
 
@@ -206,7 +208,7 @@ func decodeSample(line []byte, orgID, nodeID uuid.UUID) (clickhouse.IngestBundle
 			b.Sample.ProcsRoot = 1
 		}
 		for _, p := range s.Procs.Items {
-			var rb, wb *uint64
+			var rb, wb, rbps, wbps *uint64
 			if p.ReadBytes != nil {
 				v := uint64Positive(*p.ReadBytes)
 				rb = &v
@@ -214,6 +216,14 @@ func decodeSample(line []byte, orgID, nodeID uuid.UUID) (clickhouse.IngestBundle
 			if p.WriteBytes != nil {
 				v := uint64Positive(*p.WriteBytes)
 				wb = &v
+			}
+			if p.ReadBps != nil {
+				v := uint64Positive(*p.ReadBps)
+				rbps = &v
+			}
+			if p.WriteBps != nil {
+				v := uint64Positive(*p.WriteBps)
+				wbps = &v
 			}
 			pts, _ := parseTS(p.StartTS)
 			b.Procs = append(b.Procs, clickhouse.ProcRow{
@@ -232,6 +242,11 @@ func decodeSample(line []byte, orgID, nodeID uuid.UUID) (clickhouse.IngestBundle
 				StartTS:    pts,
 				ReadBytes:  rb,
 				WriteBytes: wb,
+				Cwd:        p.Cwd,
+				Repo:       p.Repo,
+				Parent:     p.Parent,
+				ReadBps:    rbps,
+				WriteBps:   wbps,
 			})
 		}
 	}

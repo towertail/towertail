@@ -73,3 +73,29 @@ func TestNodeLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestUpdateNodeKeepsHideProcFolders(t *testing.T) {
+	e := newScanEnv(t)
+	path := "/v1/nodes/" + e.on.String()
+	get := func() store.Node {
+		var n store.Node
+		decode(t, e.do(http.MethodGet, path, e.user, nil).Body.Bytes(), &n)
+		return n
+	}
+	if get().HideProcFolders {
+		t.Fatal("a node starts with folders on")
+	}
+	wantCode(t, e.do(http.MethodPut, path, e.user, []byte(`{"displayName":"a","kind":"ssh","hideProcFolders":true}`)), http.StatusOK)
+	if !get().HideProcFolders {
+		t.Fatal("hideProcFolders did not save")
+	}
+	// A client that does not send the key keeps the stored value.
+	wantCode(t, e.do(http.MethodPut, path, e.user, []byte(`{"displayName":"b","kind":"ssh"}`)), http.StatusOK)
+	if n := get(); !n.HideProcFolders || n.DisplayName != "b" {
+		t.Fatalf("node: %+v", n)
+	}
+	wantCode(t, e.do(http.MethodPut, path, e.user, []byte(`{"displayName":"b","kind":"ssh","hideProcFolders":false}`)), http.StatusOK)
+	if get().HideProcFolders {
+		t.Fatal("hideProcFolders is still on")
+	}
+}

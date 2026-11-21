@@ -101,19 +101,23 @@ func (s *Server) handleUpdateNode(c echo.Context) error {
 	if err := json.Unmarshal(body, &n); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
-	// A client that does not know allowDiskScan, ignoredProcs or machineId
-	// keeps the stored values. Such a client also does not know
+	// A client that does not know allowDiskScan, hideProcFolders,
+	// ignoredProcs or machineId keeps the stored values. Such a client also does not know
 	// customLongProc.
 	var opt struct {
-		AllowDiskScan *bool           `json:"allowDiskScan"`
-		IgnoredProcs  json.RawMessage `json:"ignoredProcs"`
-		MachineID     *string         `json:"machineId"`
+		AllowDiskScan   *bool           `json:"allowDiskScan"`
+		HideProcFolders *bool           `json:"hideProcFolders"`
+		IgnoredProcs    json.RawMessage `json:"ignoredProcs"`
+		MachineID       *string         `json:"machineId"`
 	}
 	_ = json.Unmarshal(body, &opt)
-	if opt.AllowDiskScan == nil || opt.IgnoredProcs == nil || opt.MachineID == nil {
+	if opt.AllowDiskScan == nil || opt.HideProcFolders == nil || opt.IgnoredProcs == nil || opt.MachineID == nil {
 		if old, err := s.store.GetNode(c.Request().Context(), t.OrgID, id); err == nil {
 			if opt.AllowDiskScan == nil {
 				n.AllowDiskScan = old.AllowDiskScan
+			}
+			if opt.HideProcFolders == nil {
+				n.HideProcFolders = old.HideProcFolders
 			}
 			if opt.IgnoredProcs == nil {
 				n.IgnoredProcs = old.IgnoredProcs

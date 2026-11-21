@@ -52,7 +52,8 @@ func (s *Server) handleProcesses(c echo.Context) error {
 	}
 	for _, p := range procs {
 		out.Processes = append(out.Processes, wire.TopProcess{
-			Name: p.Name, Cmd: p.Cmd, CPUPctAvg: p.CPUPctAvg, CPUPctMax: p.CPUPctMax, RSSMax: p.RSSMax,
+			Name: p.Name, Cmd: p.Cmd, Repo: p.Repo, Cwd: p.Cwd, Parent: p.Parent,
+			CPUPctAvg: p.CPUPctAvg, CPUPctMax: p.CPUPctMax, RSSMax: p.RSSMax,
 		})
 	}
 	return c.JSON(http.StatusOK, out)

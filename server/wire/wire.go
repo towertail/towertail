@@ -141,6 +141,8 @@ type IngestResponse struct {
 	Error    string `json:"error,omitempty"`
 	Interval string `json:"interval,omitempty"`
 	Update   string `json:"update,omitempty"`
+	// ProcCwd tells the sampler to send process folders. The server always sets it.
+	ProcCwd *bool `json:"proc_cwd,omitempty"`
 }
 
 // IngestPlanFull is the 402 body of POST /v1/ingest/samples. The sampler
@@ -255,6 +257,9 @@ type FleetHistoryResponse struct {
 type TopProcess struct {
 	Name      string  `json:"name"`
 	Cmd       string  `json:"cmd"`
+	Repo      string  `json:"repo,omitempty"`
+	Cwd       string  `json:"cwd,omitempty"`
+	Parent    string  `json:"parent,omitempty"`
 	CPUPctAvg float64 `json:"cpu_pct_avg"`
 	CPUPctMax float64 `json:"cpu_pct_max"`
 	RSSMax    uint64  `json:"rss_max"`
@@ -297,6 +302,9 @@ type FleetProcess struct {
 	NodeName  string    `json:"node_name"`
 	Name      string    `json:"name"`
 	Cmd       string    `json:"cmd"`
+	Repo      string    `json:"repo,omitempty"`
+	Cwd       string    `json:"cwd,omitempty"`
+	Parent    string    `json:"parent,omitempty"`
 	CPUPctAvg float64   `json:"cpu_pct_avg"`
 	CPUPctMax float64   `json:"cpu_pct_max"`
 	RSSMax    uint64    `json:"rss_max"`

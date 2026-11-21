@@ -31,6 +31,8 @@ type Node struct {
 	Favorite         bool              `json:"favorite"`
 	// AllowDiskScan lets a user start a disk scan on the node. It is off by default.
 	AllowDiskScan bool `json:"allowDiskScan"`
+	// HideProcFolders tells push samplers not to send process folders.
+	HideProcFolders bool `json:"hideProcFolders"`
 	// CustomLongProc replaces the org rule for this node.
 	CustomLongProc *LongProcRule `json:"customLongProc,omitempty"`
 	// IgnoredProcs is added to the ignore lists of the rule and the org.

@@ -261,6 +261,7 @@ type Process struct {
 	HostID      string  `json:"host_id"`
 	Name        string  `json:"name"`
 	Command     string  `json:"command"`
+	Repo        string  `json:"repo,omitempty"`
 	CPUPctAvg   float64 `json:"cpu_pct_avg"`
 	CPUPctMax   float64 `json:"cpu_pct_max"`
 	RSSMaxBytes uint64  `json:"rss_max_bytes"`
@@ -300,7 +301,7 @@ func (s *Server) topProcesses(ctx context.Context, _ *sdk.CallToolRequest, in To
 	out := TopProcessesOut{From: ts(res.From), To: ts(res.To), By: res.By, Clamped: res.Clamped, Processes: make([]Process, 0, len(res.Processes))}
 	for _, p := range res.Processes {
 		out.Processes = append(out.Processes, Process{
-			Host: p.NodeName, HostID: p.NodeID.String(), Name: p.Name, Command: p.Cmd,
+			Host: p.NodeName, HostID: p.NodeID.String(), Name: p.Name, Command: p.Cmd, Repo: p.Repo,
 			CPUPctAvg: p.CPUPctAvg, CPUPctMax: p.CPUPctMax, RSSMaxBytes: p.RSSMax,
 		})
 	}

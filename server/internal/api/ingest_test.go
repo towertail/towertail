@@ -157,6 +157,19 @@ func TestIngest_PlanFull(t *testing.T) {
 	}
 }
 
+func TestIngestReplyCarriesProcCwd(t *testing.T) {
+	e := newIngestEnv(t, config.Config{}, nil, nil)
+	_, on := e.node(nil)
+	_, off := e.node(func(n *store.Node) { n.HideProcFolders = true })
+	for tok, want := range map[string]bool{on: true, off: false} {
+		rec := e.post(tok, []byte(sampleLine))
+		wantCode(t, rec, http.StatusAccepted)
+		if got, ok := bodyKeys(t, rec)["proc_cwd"]; !ok || got != want {
+			t.Errorf("proc_cwd = %v (%v), want %v: %s", got, ok, want, rec.Body)
+		}
+	}
+}
+
 func TestIngest_NoLimits(t *testing.T) {
 	e := newIngestEnv(t, config.Config{}, nil, nil)
 	for range 3 {
@@ -324,6 +337,34 @@ func TestDecodeSample(t *testing.T) {
 	}
 	if bundle.Sample.DiskWriteBps != 2 {
 		t.Errorf("disk io: %v", bundle.Sample.DiskWriteBps)
+	}
+}
+
+func TestDecodeSample_ProcFolders(t *testing.T) {
+	line := []byte(`{"v":1,"ts":"2026-04-23T10:00:00.000Z",
+		"host":{"name":"x","os":"linux","arch":"amd64","kernel":"6.6","uptime_s":1,"sampler":"1.5.0"},
+		"cpu":{"pct":1,"load_1":0,"load_5":0,"load_15":0,"cores":2},
+		"mem":{"used":1,"total":100},"swap":{"used":0,"total":0},
+		"procs":{"root":false,"top_n":2,"total":2,"visible":2,"items":[
+			{"pid":10,"ppid":1,"name":"node","cpu_pct":50,"rss":5,"cwd":"/srv/app/api","repo":"/srv/app","parent":"zsh","read_bps":1024,"write_bps":0},
+			{"pid":11,"name":"sh","cpu_pct":1,"rss":1}]},
+		"errors":[]}`)
+	b, _, err := decodeSample(line, uuid.New(), uuid.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Procs) != 2 {
+		t.Fatalf("procs = %d", len(b.Procs))
+	}
+	a, o := b.Procs[0], b.Procs[1]
+	if a.Cwd != "/srv/app/api" || a.Repo != "/srv/app" || a.Parent != "zsh" {
+		t.Errorf("folders = %q %q %q", a.Cwd, a.Repo, a.Parent)
+	}
+	if a.ReadBps == nil || *a.ReadBps != 1024 || a.WriteBps == nil || *a.WriteBps != 0 {
+		t.Errorf("rates = %v %v", a.ReadBps, a.WriteBps)
+	}
+	if o.Cwd != "" || o.Repo != "" || o.Parent != "" || o.ReadBps != nil || o.WriteBps != nil {
+		t.Errorf("a row without the fields has values: %+v", o)
 	}
 }
 

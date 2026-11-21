@@ -222,3 +222,25 @@ func TestSummaryFixtures(t *testing.T) {
 		}
 	}
 }
+
+func TestDetailKeepsProcFolders(t *testing.T) {
+	s := loadSample(t, []byte(`{"v":1,"ts":"t","host":{},"cpu":{},"mem":{},"swap":{},
+"procs":{"root":true,"top_n":1,"total":1,"visible":1,"items":[
+ {"pid":10,"name":"node","cpu_pct":5,"rss":2,"cwd":"/srv/app/api","repo":"/srv/app","parent":"zsh","read_bps":2048,"write_bps":0}]},
+"errors":[]}`))
+	for _, tab := range []DetailTab{DetailProcesses, DetailDisks, DetailHealth} {
+		d, ok := s.Detail(tab)
+		if !ok {
+			t.Fatalf("%s: no parts", tab)
+		}
+		b, err := json.Marshal(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{`"cwd":"/srv/app/api"`, `"repo":"/srv/app"`, `"parent":"zsh"`, `"read_bps":2048`, `"write_bps":0`} {
+			if !bytes.Contains(b, []byte(want)) {
+				t.Errorf("%s: %s is missing %s", tab, b, want)
+			}
+		}
+	}
+}

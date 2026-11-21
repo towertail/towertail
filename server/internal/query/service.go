@@ -274,6 +274,7 @@ func (s *Service) TopProcesses(ctx context.Context, q ProcQuery) (wire.FleetProc
 	for _, p := range procs {
 		out.Processes = append(out.Processes, wire.FleetProcess{
 			NodeID: p.NodeID, NodeName: names[p.NodeID], Name: p.Name, Cmd: p.Cmd,
+			Repo: p.Repo, Cwd: p.Cwd, Parent: p.Parent,
 			CPUPctAvg: p.CPUPctAvg, CPUPctMax: p.CPUPctMax, RSSMax: p.RSSMax,
 		})
 	}
