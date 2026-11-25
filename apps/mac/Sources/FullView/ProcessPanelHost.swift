@@ -8,6 +8,7 @@ struct ProcessPanelHost: View {
     let frame: WorkbenchFrame
     var node: Node? = nil
     var onIgnore: ((String, LongProcIgnore.Scope) -> Void)? = nil
+    private let isCloud: Bool
 
     @Environment(ServerSettings.self) private var settings
     @State private var panel: ProcessPanelModel
@@ -21,7 +22,8 @@ struct ProcessPanelHost: View {
 
     init(
         vm: ServerViewModel, model: FullViewModel, ref: ProcessRef, frame: WorkbenchFrame,
-        node: Node? = nil, onIgnore: ((String, LongProcIgnore.Scope) -> Void)? = nil
+        node: Node? = nil, cloud: (any CloudHistoryLoader)? = nil,
+        onIgnore: ((String, LongProcIgnore.Scope) -> Void)? = nil
     ) {
         self.vm = vm
         self.model = model
@@ -29,12 +31,23 @@ struct ProcessPanelHost: View {
         self.frame = frame
         self.node = node
         self.onIgnore = onIgnore
-        _panel = State(initialValue: ProcessPanelModel(ref: ref, source: LocalProcessSource(vm: vm)))
+        let source: any ProcessDetailSource
+        if vm.liveSource == .cloud, let cloud {
+            source = CloudProcessSource(host: vm.id, loader: cloud)
+        } else {
+            source = LocalProcessSource(vm: vm)
+        }
+        isCloud = vm.liveSource == .cloud && cloud != nil
+        _panel = State(initialValue: ProcessPanelModel(ref: ref, source: source))
     }
 
     var body: some View {
         let latest = vm.procs.latest?.t
-        let key = LoadKey(from: Self.round(frame.window.lowerBound), to: Self.round(frame.window.upperBound), latest: latest.map(Self.round))
+        let grid: TimeInterval = isCloud ? 60 : 10
+        let key = LoadKey(
+            from: Self.round(frame.window.lowerBound, grid), to: Self.round(frame.window.upperBound, grid),
+            latest: isCloud ? nil : latest.map { Self.round($0, 10) }
+        )
         ProcessPanel(
             model: panel,
             cursor: model.effectiveTimestamp(latest: latest),
@@ -47,6 +60,7 @@ struct ProcessPanelHost: View {
             hostCores: vm.cpuCores,
             hostMemTotal: vm.memTotalBytes,
             longRunningFor: longProc.map { $0.highFor(at: Date()) },
+            bucketLabel: isCloud ? ProcBucket.of(model.effectiveTimestamp(latest: latest) ?? Date(), now: Date()).label : "each sample",
             alerts: alerts,
             onIgnore: { name, scope in onIgnore?(name, scope) },
             onCompare: { model.compare(ref) },
@@ -57,18 +71,20 @@ struct ProcessPanelHost: View {
         .task(id: key) { await panel.load(window: frame.window) }
     }
 
-    /// The window moves each second. A key of 10 s steps reloads rarely.
-    private static func round(_ d: Date) -> Date {
-        Date(timeIntervalSince1970: (d.timeIntervalSince1970 / 10).rounded(.down) * 10)
+    /// The window moves each second. A key of 10 s (60 s for Cloud) steps reloads rarely.
+    private static func round(_ d: Date, _ grid: TimeInterval) -> Date {
+        Date(timeIntervalSince1970: (d.timeIntervalSince1970 / grid).rounded(.down) * grid)
     }
 
     private var longProc: LongProc? {
-        vm.longProcs.first { ProcessRef.key(name: $0.name, cmd: $0.cmd) == ref.key }
+        vm.longProcs.first {
+            ProcessRef.key(name: $0.name, cmd: $0.cmd) == ref.key || ($0.pid == ref.pid && $0.name == ref.name)
+        }
     }
 
     /// The PID that runs now. The row may hold a PID of an older run.
     private var livePid: Int32? {
-        let items = vm.procs.latest?.items.filter { ProcessRef.key(name: $0.name, cmd: $0.cmd) == ref.key } ?? []
+        let items = vm.procs.latest?.items.filter { ProcessRef.key(of: $0) == ref.key } ?? []
         return items.first { $0.pid == ref.pid }?.pid ?? items.first?.pid
     }
 

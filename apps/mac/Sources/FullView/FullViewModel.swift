@@ -241,6 +241,13 @@ final class FullViewModel {
         zoomRange ?? now.addingTimeInterval(-range.seconds)...now
     }
 
+    /// The bucket of the REST history for the window. About 300 points fill it.
+    func historyStep(now: Date) -> Duration {
+        guard zoomRange != nil else { return range.step }
+        let span = window(now: now)
+        return .seconds(max(10, Int((span.upperBound.timeIntervalSince(span.lowerBound) / 300).rounded(.up))))
+    }
+
     /// True when the range shows more than the smaller range before it.
     /// `oldest` is the oldest time that the host has data for.
     func isAvailable(_ r: HostRange, oldest: Date?, now: Date) -> Bool {

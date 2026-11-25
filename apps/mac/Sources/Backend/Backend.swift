@@ -92,10 +92,14 @@ protocol Backend: AnyObject {
 protocol CloudHistoryLoader: AnyObject {
     /// Fills the 30 min card series of the hosts.
     func backfillCards(_ ids: [UUID]) async
-    /// Fills the 2 h series of the tab. Throws the client error.
-    func loadFullView(host: UUID, metric: Metric) async throws
-    /// The aggregate process list of a past range.
-    func pastProcesses(host: UUID, from: Date, to: Date) async throws -> [RemoteTopProcess]
+    /// The series of a window. Throws the client error.
+    func window(host: UUID, metrics: [String], window: ClosedRange<Date>, step: Duration) async throws -> RemoteHistoryResponse
+    func disks(host: UUID, window: ClosedRange<Date>) async throws -> RemoteDiskHistory
+    func processesAt(host: UUID, bucket: ProcBucket, by: ProcSort) async throws -> RemoteProcessSnapshot
+    /// The stored snapshot of a bucket. It sends no request.
+    func cachedProcessesAt(host: UUID, bucket: ProcBucket, by: ProcSort) async -> RemoteProcessSnapshot?
+    func offenders(host: UUID, window: ClosedRange<Date>, by: ProcSort) async throws -> RemoteOffenders
+    func process(host: UUID, key: String, window: ClosedRange<Date>, step: Duration) async throws -> RemoteProcessDetail
 }
 
 /// SwiftUI environment key for the active backend. Views that mutate

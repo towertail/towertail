@@ -293,11 +293,13 @@ struct ProcSample: Codable, Sendable, Identifiable {
     /// Disk I/O rates in bytes per second. Nil means no visibility.
     let readBps: Int64?
     let writeBps: Int64?
+    /// The process key that Cloud sends. Nil for local and SSH hosts.
+    let key: String?
 
     var id: Int32 { pid }
 
     enum CodingKeys: String, CodingKey {
-        case pid, ppid, name, cmd, user
+        case pid, ppid, name, cmd, user, key
         case cpuPct = "cpu_pct"
         case rss, threads, state
         case startTS = "start_ts"
@@ -325,8 +327,10 @@ struct ProcSample: Codable, Sendable, Identifiable {
         repo: String? = nil,
         parent: String? = nil,
         readBps: Int64? = nil,
-        writeBps: Int64? = nil
+        writeBps: Int64? = nil,
+        key: String? = nil
     ) {
+        self.key = key
         self.pid = pid
         self.ppid = ppid
         self.name = name

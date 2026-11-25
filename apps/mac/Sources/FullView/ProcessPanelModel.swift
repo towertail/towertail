@@ -131,7 +131,7 @@ final class LocalProcessSource: ProcessDetailSource {
         var io: [MetricPoint] = []
         var newest: (t: Date, items: [ProcSample])?
         for snap in vm.procs.snapshots(in: window).sorted(by: { $0.t < $1.t }) {
-            let hits = snap.items.filter { ProcessRef.key(name: $0.name, cmd: $0.cmd) == ref.key }
+            let hits = snap.items.filter { ProcessRef.key(of: $0) == ref.key }
             guard !hits.isEmpty else { continue }
             cpu.append(MetricPoint(t: snap.t, v: hits.reduce(0) { $0 + $1.cpuPct }))
             rss.append(MetricPoint(t: snap.t, v: Double(hits.reduce(Int64(0)) { $0 + $1.rss })))

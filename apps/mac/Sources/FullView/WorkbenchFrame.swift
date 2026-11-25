@@ -74,10 +74,50 @@ struct WorkbenchFrame: Equatable {
     var latest: Date?
     /// Time of the oldest point that the host has.
     var oldest: Date?
+    /// Series of the health checks, by the history name (`procs`, `zombies`, ...).
+    var named: [String: [MetricPoint]] = [:]
 
     static let empty = WorkbenchFrame(
         window: Date()...Date(), series: [:], latest: nil, oldest: nil
     )
+
+    /// A Cloud host: the REST series of the window, then the live points.
+    @MainActor
+    init(vm: ServerViewModel, window: ClosedRange<Date>, cloud: WorkbenchSeries) {
+        self.window = window
+        func pts(_ name: String, _ live: MetricSeries?) -> [MetricPoint] {
+            cloud.points(name, live: live).filter { window.contains($0.t) }
+        }
+        func one(_ name: String, _ color: Color, _ points: [MetricPoint]) -> [ChartSeries] {
+            [ChartSeries(name: name, color: color, points: points)]
+        }
+        let linux = vm.hostOS == "linux"
+        let rest = cloud.scorePoints(thresholds: vm.thresholds, muted: vm.mutedSignals, linux: linux)
+        let score = (rest + vm.healthScoreSeries.snapshot().filter { $0.t > (rest.last?.t ?? .distantPast) })
+            .filter { window.contains($0.t) }
+        var out: [RailMetric: [ChartSeries]] = [:]
+        out[.cpu] = one("CPU", WB.cpu, pts("cpu", vm.cpu))
+        out[.mem] = one("Memory", WB.mem, pts("mem", vm.mem))
+        out[.load] = one("Load", WB.load, pts("load", vm.load))
+        out[.disk] = one("Disk", WB.disk, pts("disk", vm.disk))
+        out[.net] = [
+            ChartSeries(name: "In", color: WB.netIn, points: pts("net_rx", vm.netRx)),
+            ChartSeries(name: "Out", color: WB.netOut, points: pts("net_tx", vm.netTx)),
+        ]
+        out[.io] = [
+            ChartSeries(name: "Read", color: WB.read, points: pts("disk_read", vm.diskIO.total.read)),
+            ChartSeries(name: "Write", color: WB.write, points: pts("disk_write", vm.diskIO.total.write)),
+        ]
+        out[.health] = one("Score", WB.health, score)
+        series = out
+        var extra: [String: [MetricPoint]] = [:]
+        for name in ["procs", "zombies", "pids", "files", "inodes", "mem_pressure", "psi_mem", "psi_io_full"] {
+            extra[name] = pts(name, name == "procs" ? vm.procCount : nil)
+        }
+        named = extra
+        latest = vm.cpu.latest?.t
+        oldest = out[.cpu]?.first?.points.first?.t
+    }
 
     @MainActor
     init(vm: ServerViewModel, window: ClosedRange<Date>, older: [HistoryPoint]) {
@@ -109,6 +149,7 @@ struct WorkbenchFrame: Equatable {
         ]
         out[.health] = one("Score", WB.health, join(vm.healthScoreSeries, \.score))
         series = out
+        named = ["procs": clip(vm.procCount)]
         latest = vm.cpu.latest?.t
         oldest = ([vm.cpu.snapshot().first?.t, older.first?.t].compactMap { $0 }).min()
     }

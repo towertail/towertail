@@ -91,7 +91,7 @@ struct HealthScore: Sendable, Equatable {
     }
 
     /// Linux memory pressure goes critical on "full" and warns on "some".
-    private static func psiScore(some: Double, full: Double, pair: ThresholdPair) -> Double {
+    static func psiScore(some: Double, full: Double, pair: ThresholdPair) -> Double {
         if full >= pair.critical { return score(value: full, warn: pair.critical, critical: pair.critical) }
         let s = score(value: some, warn: pair.warn, critical: pair.critical)
         return some >= pair.warn ? max(41, s) : s

@@ -40,6 +40,16 @@ final class CloudHistoryCacheTests: XCTestCase {
         return CloudHistoryCache(client: client, ttl: .seconds(60), now: { clock.now() })
     }
 
+    /// A fixed window of two hours with a 10 s step.
+    private func twoHours(
+        _ cache: CloudHistoryCache, _ clock: Clock, _ id: UUID? = nil, metrics: [String] = ["cpu"]
+    ) async throws -> RemoteHistoryResponse {
+        let to = Date(timeIntervalSince1970: 1_800_000_000)
+        return try await cache.nodeHistory(
+            id ?? node, metrics: metrics, from: to.addingTimeInterval(-7200), to: to, step: .seconds(10)
+        )
+    }
+
     private var historyRequests: Int {
         server.captured.filter { $0.path.hasPrefix("/v1/nodes/\(node.uuidString)/history") }.count
     }
@@ -49,9 +59,9 @@ final class CloudHistoryCacheTests: XCTestCase {
         server.on("GET", "/v1/nodes/\(node.uuidString)/history") { _ in .json(200, body) }
         let clock = Clock()
         let cache = makeCache(clock)
-        _ = try await cache.nodeHistory(node, metrics: ["cpu"], range: 7200)
+        _ = try await twoHours(cache, clock)
         clock.advance(30)
-        _ = try await cache.nodeHistory(node, metrics: ["cpu"], range: 7200)
+        _ = try await twoHours(cache, clock)
         XCTAssertEqual(historyRequests, 1)
     }
 
@@ -60,18 +70,19 @@ final class CloudHistoryCacheTests: XCTestCase {
         server.on("GET", "/v1/nodes/\(node.uuidString)/history") { _ in .json(200, body) }
         let clock = Clock()
         let cache = makeCache(clock)
-        _ = try await cache.nodeHistory(node, metrics: ["cpu"], range: 7200)
+        _ = try await twoHours(cache, clock)
         clock.advance(61)
-        _ = try await cache.nodeHistory(node, metrics: ["cpu"], range: 7200)
+        _ = try await twoHours(cache, clock)
         XCTAssertEqual(historyRequests, 2)
     }
 
     func testOtherMetricsUseOtherEntry() async throws {
         let body = nodeBody(node)
         server.on("GET", "/v1/nodes/\(node.uuidString)/history") { _ in .json(200, body) }
-        let cache = makeCache(Clock())
-        _ = try await cache.nodeHistory(node, metrics: ["cpu"], range: 7200)
-        _ = try await cache.nodeHistory(node, metrics: ["mem"], range: 7200)
+        let clock = Clock()
+        let cache = makeCache(clock)
+        _ = try await twoHours(cache, clock)
+        _ = try await twoHours(cache, clock, metrics: ["mem"])
         XCTAssertEqual(historyRequests, 2)
     }
 
@@ -81,10 +92,11 @@ final class CloudHistoryCacheTests: XCTestCase {
             Thread.sleep(forTimeInterval: 0.2)
             return .json(200, body)
         }
-        let cache = makeCache(Clock())
+        let clock = Clock()
+        let cache = makeCache(clock)
         let id = node
-        async let a = cache.nodeHistory(id, metrics: ["cpu"], range: 7200)
-        async let b = cache.nodeHistory(id, metrics: ["cpu"], range: 7200)
+        async let a = twoHours(cache, clock, id)
+        async let b = twoHours(cache, clock, id)
         _ = try await (a, b)
         XCTAssertEqual(historyRequests, 1)
     }
@@ -97,14 +109,15 @@ final class CloudHistoryCacheTests: XCTestCase {
                 ? .json(500, Data(#"{"error":{"code":"boom","message":"kaput"}}"#.utf8))
                 : .json(200, body)
         }
-        let cache = makeCache(Clock())
+        let clock = Clock()
+        let cache = makeCache(clock)
         do {
-            _ = try await cache.nodeHistory(node, metrics: ["cpu"], range: 7200)
+            _ = try await twoHours(cache, clock)
             XCTFail("expected an error")
         } catch RemoteClient.RemoteError.http(let code, _) {
             XCTAssertEqual(code, 500)
         }
-        let ok = try await cache.nodeHistory(node, metrics: ["cpu"], range: 7200)
+        let ok = try await twoHours(cache, clock)
         XCTAssertEqual(ok.nodeID, node)
         XCTAssertEqual(historyRequests, 2)
     }
@@ -112,11 +125,85 @@ final class CloudHistoryCacheTests: XCTestCase {
     func testTwoHourRangeAsksForTenSecondStep() async throws {
         let body = nodeBody(node)
         server.on("GET", "/v1/nodes/\(node.uuidString)/history") { _ in .json(200, body) }
-        let cache = makeCache(Clock())
-        _ = try await cache.nodeHistory(node, metrics: ["cpu", "mem"], range: 7200)
+        let clock = Clock()
+        let cache = makeCache(clock)
+        _ = try await twoHours(cache, clock, metrics: ["cpu", "mem"])
         let items = URLComponents(string: "http://x" + (server.captured.last?.path ?? ""))?.queryItems
         XCTAssertEqual(items?.first { $0.name == "step" }?.value, "10s")
         XCTAssertEqual(items?.first { $0.name == "metrics" }?.value, "cpu,mem")
+    }
+
+    func testWindowKeyRoundsToStep() async throws {
+        let body = nodeBody(node)
+        server.on("GET", "/v1/nodes/\(node.uuidString)/history") { _ in .json(200, body) }
+        let cache = makeCache(Clock())
+        let to = Date(timeIntervalSince1970: 1_800_000_001)
+        _ = try await cache.nodeHistory(node, metrics: ["cpu"], from: to.addingTimeInterval(-3600), to: to, step: .seconds(10))
+        let later = to.addingTimeInterval(3)
+        _ = try await cache.nodeHistory(node, metrics: ["cpu"], from: later.addingTimeInterval(-3600), to: later, step: .seconds(10))
+        XCTAssertEqual(historyRequests, 1)
+    }
+
+    // MARK: Process snapshots
+
+    private nonisolated func snapshotBody(_ ts: Date) -> Data {
+        let f = ISO8601DateFormatter()
+        return Data("""
+        {"node_id":"\(node)","ts":"\(f.string(from: ts))","tier":"raw","bucket_s":0,"by":"cpu","total":1,\
+        "processes":[{"key":"k.bg","pid":1,"name":"a","cmd":"a","cpu_pct":1,"rss":1}]}
+        """.utf8)
+    }
+
+    private var snapshotRequests: Int {
+        server.captured.filter { $0.path.hasPrefix("/v1/nodes/\(node.uuidString)/processes/at") }.count
+    }
+
+    private func snapshotServer() {
+        server.on("GET", "/v1/nodes/\(node.uuidString)/processes/at") { req in
+            let items = URLComponents(string: "http://x" + req.path)?.queryItems
+            let ts = items?.first { $0.name == "ts" }?.value.flatMap { ISO8601DateFormatter().date(from: $0) } ?? Date()
+            return .json(200, self.snapshotBody(ts))
+        }
+    }
+
+    func testProcessesAtLRUEvictsOldestAt200() async throws {
+        snapshotServer()
+        let clock = Clock()
+        let cache = makeCache(clock)
+        let first = ProcBucket.of(clock.now().addingTimeInterval(-100_000), now: clock.now())
+        for i in 0..<201 {
+            _ = try await cache.processesAt(node, bucket: first.shifted(i), by: .cpu)
+        }
+        XCTAssertEqual(snapshotRequests, 201)
+        _ = try await cache.processesAt(node, bucket: first.shifted(200), by: .cpu)
+        XCTAssertEqual(snapshotRequests, 201, "the newest entry stays")
+        _ = try await cache.processesAt(node, bucket: first, by: .cpu)
+        XCTAssertEqual(snapshotRequests, 202, "the oldest entry went out")
+    }
+
+    func testClosedBucketNeverExpires() async throws {
+        snapshotServer()
+        let clock = Clock()
+        let cache = makeCache(clock)
+        let bucket = ProcBucket.of(clock.now().addingTimeInterval(-7200), now: clock.now())
+        _ = try await cache.processesAt(node, bucket: bucket, by: .cpu)
+        clock.advance(86_400)
+        _ = try await cache.processesAt(node, bucket: bucket, by: .cpu)
+        XCTAssertEqual(snapshotRequests, 1)
+    }
+
+    func testOpenBucketExpiresAfter10s() async throws {
+        snapshotServer()
+        let clock = Clock()
+        let cache = makeCache(clock)
+        let bucket = ProcBucket.of(clock.now(), now: clock.now())
+        _ = try await cache.processesAt(node, bucket: bucket, by: .cpu)
+        clock.advance(5)
+        _ = try await cache.processesAt(node, bucket: bucket, by: .cpu)
+        XCTAssertEqual(snapshotRequests, 1)
+        clock.advance(6)
+        _ = try await cache.processesAt(node, bucket: bucket, by: .cpu)
+        XCTAssertEqual(snapshotRequests, 2)
     }
 
     func testFleetSplitsAt200Nodes() async throws {

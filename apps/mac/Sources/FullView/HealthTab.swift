@@ -167,10 +167,21 @@ struct HealthTab: View {
             case .cpu: return (frame.points(.cpu), 0...1)
             case .mem: return (frame.points(.mem), 0...1)
             case .disk: return (frame.points(.disk), 0...1)
-            case .signal(.procs):
-                let pts = vm.procCount.snapshot().filter { frame.window.contains($0.t) }
-                return (pts, 0...max(1, (pts.map(\.v).max() ?? 1) * 1.15))
-            default: return nil
+            case .signal(let sig):
+                let (name, domain): (String, ClosedRange<Double>?) = {
+                    switch sig {
+                    case .procs: return ("procs", nil)
+                    case .zombies: return ("zombies", nil)
+                    case .pids: return ("pids", 0...1)
+                    case .files: return ("files", 0...1)
+                    case .inodes: return ("inodes", 0...1)
+                    case .memPressure: return (vm.hostOS == "linux" ? "psi_mem" : "mem_pressure", 0...100)
+                    case .ioPressure: return ("psi_io_full", 0...100)
+                    case .longProc: return ("", nil)
+                    }
+                }()
+                let pts = frame.named[name] ?? []
+                return pts.isEmpty ? nil : (pts, domain ?? 0...max(1, (pts.map(\.v).max() ?? 1) * 1.15))
             }
         }()
         if let source {

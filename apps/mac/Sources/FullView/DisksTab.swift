@@ -6,6 +6,8 @@ struct DisksTab: View {
     @Bindable var model: FullViewModel
     let frame: WorkbenchFrame
     let node: Node?
+    /// The REST series of a Cloud host. Nil for local and SSH hosts.
+    var cloud: WorkbenchSeries? = nil
     @Environment(NodeStore.self) private var nodeStore
     @Environment(\.backend) private var backend
 
@@ -60,6 +62,16 @@ struct DisksTab: View {
         return nil
     }
 
+    /// The points of one mount: the REST points of a Cloud host, else the live series.
+    private func mountPoints(_ mount: String) -> [MetricPoint] {
+        if let cloud { return cloud.mountPoints(mount) }
+        return vm.disksPerMount.series(forMount: mount)?.snapshot() ?? []
+    }
+
+    private var mountNames: [String] {
+        cloud == nil ? vm.disksPerMount.mounts : vm.latestDisks.map(\.mount).sorted()
+    }
+
     // MARK: Mounts
 
     private var mounts: some View {
@@ -88,7 +100,7 @@ struct DisksTab: View {
         let frac = d.total > 0 ? Double(d.used) / Double(d.total) : 0
         let tint = RailMetric.disk.tint(of: frac, thresholds: vm.thresholds)
         let selected = model.diskMount == .mount(d.mount)
-        let series = vm.disksPerMount.series(forMount: d.mount)
+        let points = mountPoints(d.mount)
         return HStack(spacing: 10) {
             Text(d.mount).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.middle)
                 .frame(width: 180, alignment: .leading)
@@ -108,13 +120,13 @@ struct DisksTab: View {
             .frame(width: 110, height: 5)
             Text(inodeText(d)).font(.system(size: 12, design: .monospaced)).foregroundStyle(WB.faint)
                 .frame(width: 100, alignment: .leading)
-            Text(growth(series, now: frame.window.upperBound) ?? "")
+            Text(growth(points, now: frame.window.upperBound) ?? "")
                 .font(.system(size: 12, design: .monospaced)).foregroundStyle(WB.pin)
                 .lineLimit(1)
             Spacer(minLength: 8)
-            if let series, series.snapshot().count > 1 {
+            if points.count > 1 {
                 CanvasSparkline(
-                    samples: series.snapshot().filter { frame.window.contains($0.t) },
+                    samples: points.filter { frame.window.contains($0.t) },
                     tint: tint.color, warn: nil,
                     windowSeconds: frame.window.upperBound.timeIntervalSince(frame.window.lowerBound),
                     yDomain: 0...1, height: 22, xDomain: frame.window
@@ -129,14 +141,14 @@ struct DisksTab: View {
     }
 
     private func inodeText(_ d: DiskSample) -> String {
-        guard let f = HealthStatus.fraction(d.inodesUsed, d.inodesTotal) else { return "" }
+        guard let f = HealthStatus.fraction(d.inodesUsed, d.inodesTotal) ?? cloud?.inodeRatio(d.mount) else { return "" }
         return "inodes \(Int((f * 100).rounded()))%"
     }
 
     /// Least-squares slope of the series. Returns text when the disk
     /// fills in less than a year.
-    private func growth(_ series: MetricSeries?, now: Date) -> String? {
-        guard let pts = series?.snapshot(), pts.count >= 20,
+    private func growth(_ pts: [MetricPoint], now: Date) -> String? {
+        guard pts.count >= 20,
               let first = pts.first, let last = pts.last,
               last.t.timeIntervalSince(first.t) >= 600 else { return nil }
         let xs = pts.map { $0.t.timeIntervalSince(first.t) }
@@ -156,15 +168,13 @@ struct DisksTab: View {
     // MARK: Charts
 
     private var capacityCard: some View {
-        let series: MetricSeries = {
-            switch model.diskMount {
-            case .max: return vm.disksPerMount.max
-            case .mount(let m): return vm.disksPerMount.series(forMount: m) ?? vm.disksPerMount.max
-            }
-        }()
-        let points = model.diskMount == .max
-            ? frame.points(.disk)
-            : series.snapshot().filter { frame.window.contains($0.t) }
+        let points: [MetricPoint]
+        switch model.diskMount {
+        case .max: points = frame.points(.disk)
+        case .mount(let m):
+            let own = mountPoints(m)
+            points = (own.isEmpty ? frame.points(.disk) : own).filter { frame.window.contains($0.t) }
+        }
         let lim = RailMetric.disk.limits(vm.thresholds)
         let v = cursorValue(points)
         return VStack(alignment: .leading, spacing: 6) {
@@ -194,14 +204,19 @@ struct DisksTab: View {
     }
 
     private var ioCard: some View {
-        let dev: DiskIOSeries.DeviceSeries = {
-            switch model.diskDevice {
-            case .total: return vm.diskIO.total
-            case .device(let n): return vm.diskIO.series(forDevice: n) ?? vm.diskIO.total
-            }
-        }()
-        func clip(_ s: MetricSeries) -> [MetricPoint] { s.snapshot().filter { frame.window.contains($0.t) } }
-        let read = clip(dev.read), write = clip(dev.write)
+        let read: [MetricPoint], write: [MetricPoint]
+        if cloud != nil {
+            (read, write) = (frame.points(.io, 0), frame.points(.io, 1))
+        } else {
+            let dev: DiskIOSeries.DeviceSeries = {
+                switch model.diskDevice {
+                case .total: return vm.diskIO.total
+                case .device(let n): return vm.diskIO.series(forDevice: n) ?? vm.diskIO.total
+                }
+            }()
+            func clip(_ s: MetricSeries) -> [MetricPoint] { s.snapshot().filter { frame.window.contains($0.t) } }
+            (read, write) = (clip(dev.read), clip(dev.write))
+        }
         let m = RailMetric.io
         let r = cursorValue(read), w = cursorValue(write)
         return VStack(alignment: .leading, spacing: 6) {
@@ -247,7 +262,7 @@ struct DisksTab: View {
             } label: {
                 Label("Max (worst mount)", systemImage: model.diskMount == .max ? "checkmark" : "")
             }
-            let all = vm.disksPerMount.mounts
+            let all = mountNames
             if !all.isEmpty { Divider() }
             ForEach(all, id: \.self) { m in
                 Button {

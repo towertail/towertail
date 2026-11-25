@@ -154,21 +154,248 @@ struct RemoteFleetHistory: Decodable, Sendable {
     }
 }
 
-/// One item of `NodeProcessesResponse.processes`.
-struct RemoteTopProcess: Decodable, Sendable, Identifiable, Equatable {
+/// `ProcessSnapshot`. Raw rows have a PID. Rollup rows have a peak.
+struct RemoteProcessSnapshot: Decodable, Sendable {
+    let nodeID: UUID
+    let ts: Date
+    let tier: String
+    let bucketS: Int
+    let by: String
+    let total: Int?
+    let prev: Date?
+    let next: Date?
+    let clamped: Bool?
+    let processes: [RemoteSnapshotProcess]
+    /// Size of the response body. The client sets it after the decode.
+    var bytes = 0
+
+    enum CodingKeys: String, CodingKey {
+        case nodeID = "node_id"
+        case ts, tier, by, total, prev, next, clamped, processes
+        case bucketS = "bucket_s"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        nodeID = try c.decode(UUID.self, forKey: .nodeID)
+        ts = try c.decode(Date.self, forKey: .ts)
+        tier = try c.decode(String.self, forKey: .tier)
+        bucketS = try c.decodeIfPresent(Int.self, forKey: .bucketS) ?? 0
+        by = try c.decodeIfPresent(String.self, forKey: .by) ?? "cpu"
+        total = try c.decodeIfPresent(Int.self, forKey: .total)
+        prev = try c.decodeIfPresent(Date.self, forKey: .prev)
+        next = try c.decodeIfPresent(Date.self, forKey: .next)
+        clamped = try c.decodeIfPresent(Bool.self, forKey: .clamped)
+        processes = try c.decodeIfPresent([RemoteSnapshotProcess].self, forKey: .processes) ?? []
+    }
+}
+
+/// `SnapshotProcess`.
+struct RemoteSnapshotProcess: Decodable, Sendable, Identifiable {
+    let key: String
+    let pid: Int32?
+    let ppid: Int32?
+    let parent: String?
+    let user: String?
     let name: String
     let cmd: String
+    let repo: String?
+    let cwd: String?
+    let cpuPct: Double
+    let cpuPctMax: Double?
+    let rss: UInt64
+    let ioBps: Double?
+    let threads: Int32?
+    let state: String?
+    let startTS: Date?
+
+    /// Commands repeat, so a raw row needs its PID in the id.
+    var id: String { pid.map { "\($0)#\(key)" } ?? key }
+
+    enum CodingKeys: String, CodingKey {
+        case key, pid, ppid, parent, user, name, cmd, repo, cwd, rss, threads, state
+        case cpuPct = "cpu_pct"
+        case cpuPctMax = "cpu_pct_max"
+        case ioBps = "io_bps"
+        case startTS = "start_ts"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        key = try c.decode(String.self, forKey: .key)
+        pid = try c.decodeIfPresent(Int32.self, forKey: .pid)
+        ppid = try c.decodeIfPresent(Int32.self, forKey: .ppid)
+        parent = try c.decodeIfPresent(String.self, forKey: .parent)
+        user = try c.decodeIfPresent(String.self, forKey: .user)
+        name = try c.decode(String.self, forKey: .name)
+        cmd = try c.decodeIfPresent(String.self, forKey: .cmd) ?? ""
+        repo = try c.decodeIfPresent(String.self, forKey: .repo)
+        cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
+        cpuPct = try c.decodeIfPresent(Double.self, forKey: .cpuPct) ?? 0
+        cpuPctMax = try c.decodeIfPresent(Double.self, forKey: .cpuPctMax)
+        rss = try c.decodeIfPresent(UInt64.self, forKey: .rss) ?? 0
+        ioBps = try c.decodeIfPresent(Double.self, forKey: .ioBps)
+        threads = try c.decodeIfPresent(Int32.self, forKey: .threads)
+        state = try c.decodeIfPresent(String.self, forKey: .state)
+        startTS = try c.decodeIfPresent(Date.self, forKey: .startTS)
+    }
+}
+
+/// `NodeProcessesResponse`. Point i of a series is at
+/// `seriesFrom + i * seriesStepS`.
+struct RemoteOffenders: Decodable, Sendable {
+    let nodeID: UUID
+    let from: Date
+    let to: Date
+    let clamped: Bool?
+    let seriesFrom: Date?
+    let seriesStepS: Int?
+    let processes: [RemoteOffender]
+
+    enum CodingKeys: String, CodingKey {
+        case nodeID = "node_id"
+        case from, to, clamped, processes
+        case seriesFrom = "series_from"
+        case seriesStepS = "series_step_s"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        nodeID = try c.decode(UUID.self, forKey: .nodeID)
+        from = try c.decode(Date.self, forKey: .from)
+        to = try c.decode(Date.self, forKey: .to)
+        clamped = try c.decodeIfPresent(Bool.self, forKey: .clamped)
+        seriesFrom = try c.decodeIfPresent(Date.self, forKey: .seriesFrom)
+        seriesStepS = try c.decodeIfPresent(Int.self, forKey: .seriesStepS)
+        processes = try c.decodeIfPresent([RemoteOffender].self, forKey: .processes) ?? []
+    }
+}
+
+/// `TopProcess`.
+struct RemoteOffender: Decodable, Sendable, Identifiable, Equatable {
+    let key: String
+    let name: String
+    let cmd: String
+    let repo: String?
+    let cwd: String?
+    let parent: String?
     let cpuPctAvg: Double
     let cpuPctMax: Double
     let rssMax: UInt64
+    let ioBpsAvg: Double?
+    let series: RemoteProcSeries?
 
-    var id: String { name + "\u{0}" + cmd }
+    var id: String { key + "\u{0}" + (repo ?? "") }
 
     enum CodingKeys: String, CodingKey {
-        case name, cmd
+        case key, name, cmd, repo, cwd, parent, series
         case cpuPctAvg = "cpu_pct_avg"
         case cpuPctMax = "cpu_pct_max"
         case rssMax = "rss_max"
+        case ioBpsAvg = "io_bps_avg"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        key = try c.decode(String.self, forKey: .key)
+        name = try c.decode(String.self, forKey: .name)
+        cmd = try c.decodeIfPresent(String.self, forKey: .cmd) ?? ""
+        repo = try c.decodeIfPresent(String.self, forKey: .repo)
+        cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
+        parent = try c.decodeIfPresent(String.self, forKey: .parent)
+        cpuPctAvg = try c.decodeIfPresent(Double.self, forKey: .cpuPctAvg) ?? 0
+        cpuPctMax = try c.decodeIfPresent(Double.self, forKey: .cpuPctMax) ?? 0
+        rssMax = try c.decodeIfPresent(UInt64.self, forKey: .rssMax) ?? 0
+        ioBpsAvg = try c.decodeIfPresent(Double.self, forKey: .ioBpsAvg)
+        series = try c.decodeIfPresent(RemoteProcSeries.self, forKey: .series)
+    }
+}
+
+/// `ProcSeries`. `io` is absent when the host has no I/O data.
+struct RemoteProcSeries: Decodable, Sendable, Equatable {
+    let cpu: [Double]
+    let rss: [UInt64]
+    let io: [Double]?
+
+    enum CodingKeys: String, CodingKey { case cpu, rss, io }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        cpu = try c.decodeIfPresent([Double].self, forKey: .cpu) ?? []
+        rss = try c.decodeIfPresent([UInt64].self, forKey: .rss) ?? []
+        io = try c.decodeIfPresent([Double].self, forKey: .io)
+    }
+}
+
+/// `ProcessDetail`. `facts` is nil when the window ends more than 1 h ago.
+struct RemoteProcessDetail: Decodable, Sendable {
+    let nodeID: UUID
+    let key: String
+    let name: String
+    let cmd: String
+    let repo: String?
+    let from: Date
+    let to: Date
+    let resolution: String
+    let clamped: Bool?
+    let points: [RemoteProcPoint]
+    let facts: RemoteProcessFacts?
+
+    enum CodingKeys: String, CodingKey {
+        case nodeID = "node_id"
+        case key, name, cmd, repo, from, to, resolution, clamped, points, facts
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        nodeID = try c.decode(UUID.self, forKey: .nodeID)
+        key = try c.decode(String.self, forKey: .key)
+        name = try c.decode(String.self, forKey: .name)
+        cmd = try c.decodeIfPresent(String.self, forKey: .cmd) ?? ""
+        repo = try c.decodeIfPresent(String.self, forKey: .repo)
+        from = try c.decode(Date.self, forKey: .from)
+        to = try c.decode(Date.self, forKey: .to)
+        resolution = try c.decodeIfPresent(String.self, forKey: .resolution) ?? ""
+        clamped = try c.decodeIfPresent(Bool.self, forKey: .clamped)
+        points = try c.decodeIfPresent([RemoteProcPoint].self, forKey: .points) ?? []
+        facts = try c.decodeIfPresent(RemoteProcessFacts.self, forKey: .facts)
+    }
+}
+
+/// `ProcPoint`.
+struct RemoteProcPoint: Decodable, Sendable {
+    let ts: Date
+    let cpuPct: Double
+    let rss: UInt64
+    let ioBps: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case ts, rss
+        case cpuPct = "cpu_pct"
+        case ioBps = "io_bps"
+    }
+}
+
+/// `ProcessFacts`.
+struct RemoteProcessFacts: Decodable, Sendable {
+    let seenAt: Date
+    let pid: Int32
+    let ppid: Int32?
+    let parent: String?
+    let user: String?
+    let cwd: String?
+    let state: String?
+    let threads: Int32?
+    let startTS: Date?
+    let listenTCP: [UInt16]?
+    let listenUDP: [UInt16]?
+
+    enum CodingKeys: String, CodingKey {
+        case pid, ppid, parent, user, cwd, state, threads
+        case seenAt = "seen_at"
+        case startTS = "start_ts"
+        case listenTCP = "listen_tcp"
+        case listenUDP = "listen_udp"
     }
 }
 
@@ -178,6 +405,14 @@ struct RemoteDiskHistory: Decodable, Sendable {
         let ts: Date
         let used: UInt64
         let total: UInt64
+        let inodesUsed: UInt64?
+        let inodesTotal: UInt64?
+
+        enum CodingKeys: String, CodingKey {
+            case ts, used, total
+            case inodesUsed = "inodes_used"
+            case inodesTotal = "inodes_total"
+        }
     }
 
     struct Mount: Decodable, Sendable {
@@ -225,7 +460,6 @@ struct RemoteDiskHistory: Decodable, Sendable {
 @MainActor
 final class RemoteHistoryLoader: CloudHistoryLoader {
     private static let cardRange: TimeInterval = 30 * 60
-    static let fullViewRange: TimeInterval = 2 * 3600
 
     private let cache: CloudHistoryCache
     private let store: ServerStore
@@ -247,21 +481,41 @@ final class RemoteHistoryLoader: CloudHistoryLoader {
         }
     }
 
-    func loadFullView(host: UUID, metric: Metric) async throws {
-        if metric == .disk {
-            async let disks = cache.disks(host, range: Self.fullViewRange)
-            async let io = cache.nodeHistory(host, metrics: ["disk_read", "disk_write"], range: Self.fullViewRange)
-            let (d, r) = try await (disks, io)
-            store.merge(diskCapacity: d.capacityRows(), diskIO: r.diskIORows(), for: host)
-        } else {
-            let r = try await cache.nodeHistory(
-                host, metrics: ["cpu", "mem", "net_rx", "net_tx", "procs"], range: Self.fullViewRange
-            )
-            store.merge(history: r.historyPoints(), for: host)
-        }
+    func window(
+        host: UUID, metrics: [String], window: ClosedRange<Date>, step: Duration
+    ) async throws -> RemoteHistoryResponse {
+        try await cache.nodeHistory(host, metrics: metrics, from: window.lowerBound, to: window.upperBound, step: step)
     }
 
-    func pastProcesses(host: UUID, from: Date, to: Date) async throws -> [RemoteTopProcess] {
-        try await cache.processes(host, from: from, to: to)
+    func disks(host: UUID, window: ClosedRange<Date>) async throws -> RemoteDiskHistory {
+        try await cache.disks(host, from: window.lowerBound, to: window.upperBound)
+    }
+
+    func processesAt(host: UUID, bucket: ProcBucket, by: ProcSort) async throws -> RemoteProcessSnapshot {
+        try await cache.processesAt(host, bucket: bucket, by: by)
+    }
+
+    func cachedProcessesAt(host: UUID, bucket: ProcBucket, by: ProcSort) async -> RemoteProcessSnapshot? {
+        await cache.cachedProcessesAt(host, bucket: bucket, by: by)
+    }
+
+    func offenders(host: UUID, window: ClosedRange<Date>, by: ProcSort) async throws -> RemoteOffenders {
+        try await cache.offenders(host, from: window.lowerBound, to: window.upperBound, by: by)
+    }
+
+    func process(host: UUID, key: String, window: ClosedRange<Date>, step: Duration) async throws -> RemoteProcessDetail {
+        try await cache.process(host, key: key, from: window.lowerBound, to: window.upperBound, step: step)
+    }
+}
+
+@MainActor
+enum CloudHistoryError {
+    /// The server text of an error envelope, else the error text.
+    static func message(_ error: Error) -> String {
+        if case RemoteClient.RemoteError.http(_, let body) = error,
+           let text = RemoteClient.errorMessage(Data(body.utf8)) {
+            return text
+        }
+        return error.localizedDescription
     }
 }

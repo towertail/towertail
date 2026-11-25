@@ -9,8 +9,46 @@ struct Offender: Identifiable, Sendable, Equatable {
     /// Seconds with a CPU use of 50 % or more.
     let highFor: TimeInterval
     let series: [Double]
+    /// Time of point 0 and the gap of the points, for a Cloud series.
+    /// Nil: the points fill the window.
+    var seriesFrom: Date? = nil
+    var seriesStep: TimeInterval? = nil
+    /// Tells apart two rows of one key (a split by repository).
+    var variant = ""
 
-    var id: String { ref.key }
+    var id: String { ref.key + variant }
+
+    /// The series time of point `i` in a window of `count` points.
+    func time(of i: Int, in window: ClosedRange<Date>, count: Int) -> Date {
+        if let seriesFrom, let seriesStep { return seriesFrom.addingTimeInterval(Double(i) * seriesStep) }
+        let step = window.upperBound.timeIntervalSince(window.lowerBound) / Double(max(count, 1))
+        return window.lowerBound.addingTimeInterval(Double(i) * step)
+    }
+
+    /// A row of the offenders route of Cloud. The server sends no "time at 50 %":
+    /// it comes from the series.
+    init(_ r: RemoteOffender, in response: RemoteOffenders) {
+        let step = response.seriesStepS.map(Double.init)
+        let cpu = r.series?.cpu ?? []
+        ref = ProcessRef(key: r.key, pid: nil, name: r.name, cmd: r.cmd)
+        avg = r.cpuPctAvg
+        peak = r.cpuPctMax
+        rssMax = Int64(clamping: r.rssMax)
+        highFor = Double(cpu.filter { $0 >= OffenderRanking.highCPU }.count) * (step ?? 0)
+        series = cpu
+        seriesFrom = response.seriesFrom
+        seriesStep = step
+        variant = r.repo ?? ""
+    }
+
+    init(ref: ProcessRef, avg: Double, peak: Double, rssMax: Int64, highFor: TimeInterval, series: [Double]) {
+        self.ref = ref
+        self.avg = avg
+        self.peak = peak
+        self.rssMax = rssMax
+        self.highFor = highFor
+        self.series = series
+    }
 }
 
 /// Ranks the processes of a window. Groups the PIDs of one command, averages

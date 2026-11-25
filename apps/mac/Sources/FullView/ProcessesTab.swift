@@ -7,8 +7,12 @@ struct ProcessesTab: View {
     let frame: WorkbenchFrame
     var node: Node? = nil
     var onIgnore: ((String, LongProcIgnore.Scope) -> Void)? = nil
+    /// Set for a Cloud host: the offenders come from the server.
+    var loader: (any CloudHistoryLoader)? = nil
 
     @State private var offenders: [Offender] = []
+    @State private var loading = false
+    @State private var loadError: String?
 
     private struct RankKey: Hashable {
         let window: ClosedRange<Date>
@@ -19,8 +23,8 @@ struct ProcessesTab: View {
     var body: some View {
         // The key moves with the window, so a new ranking runs about every 10 s.
         let key = RankKey(
-            window: Self.rounded(frame.window), sort: model.procSort,
-            latest: vm.procs.latest.map { Date(timeIntervalSince1970: ($0.t.timeIntervalSince1970 / 10).rounded(.down) * 10) }
+            window: Self.rounded(frame.window, grid: loader == nil ? 10 : 60), sort: model.procSort,
+            latest: loader == nil ? vm.procs.latest.map { Date(timeIntervalSince1970: ($0.t.timeIntervalSince1970 / 10).rounded(.down) * 10) } : nil
         )
         VStack(spacing: 12) {
             HStack {
@@ -48,12 +52,27 @@ struct ProcessesTab: View {
         .task(id: key) { await rank(key) }
     }
 
-    private static func rounded(_ w: ClosedRange<Date>) -> ClosedRange<Date> {
-        func r(_ d: Date) -> Date { Date(timeIntervalSince1970: (d.timeIntervalSince1970 / 10).rounded(.down) * 10) }
+    private static func rounded(_ w: ClosedRange<Date>, grid: TimeInterval) -> ClosedRange<Date> {
+        func r(_ d: Date) -> Date { Date(timeIntervalSince1970: (d.timeIntervalSince1970 / grid).rounded(.down) * grid) }
         return r(w.lowerBound)...r(w.upperBound)
     }
 
     private func rank(_ key: RankKey) async {
+        if let loader {
+            loading = true
+            loadError = nil
+            do {
+                let r = try await loader.offenders(host: vm.id, window: key.window, by: key.sort)
+                guard !Task.isCancelled else { return }
+                offenders = r.processes.map { Offender($0, in: r) }
+            } catch {
+                guard !Task.isCancelled else { return }
+                offenders = []
+                loadError = CloudHistoryError.message(error)
+            }
+            loading = false
+            return
+        }
         let snaps = vm.procs.snapshots(in: key.window)
         let result = await Task.detached(priority: .userInitiated) {
             OffenderRanking(snapshots: snaps, window: key.window, by: key.sort).top(100)
@@ -78,11 +97,10 @@ struct ProcessesTab: View {
         var series = host
         let cores = Double(max(vm.cpuCores ?? 1, 1))
         if let sel = selected {
-            let span = frame.window.upperBound.timeIntervalSince(frame.window.lowerBound)
-            let step = span / Double(max(sel.series.count, 1))
             let pts = sel.series.enumerated().map { i, v in
-                MetricPoint(t: frame.window.lowerBound.addingTimeInterval(Double(i) * step + step / 2), v: v / (100 * cores))
+                MetricPoint(t: sel.time(of: i, in: frame.window, count: sel.series.count), v: v / (100 * cores))
             }
+            .filter { frame.window.contains($0.t) }
             series.append(ChartSeries(name: sel.ref.name, color: WB.write, points: pts))
         }
         return VStack(alignment: .leading, spacing: 6) {
@@ -122,12 +140,12 @@ struct ProcessesTab: View {
         let maxAvg = max(offenders.map(\.avg).max() ?? 1, 1)
         return Group {
             if offenders.isEmpty {
-                Text(vm.procsAvailable ? "No process data in this window." : "Per-process collection is off on this host.")
+                Text(loadError ?? (loading ? "Loading the offenders…" : vm.procsAvailable || loader != nil ? "No process data in this window." : "Per-process collection is off on this host."))
                     .font(.callout).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Table(offenders, selection: Binding(
-                    get: { model.offenderSelected?.key },
+                    get: { selected?.id },
                     set: { key in
                         let ref = offenders.first { $0.id == key }?.ref
                         model.offenderSelected = ref
@@ -178,10 +196,10 @@ struct ProcessesTab: View {
     private func sparkline(_ o: Offender) -> some View {
         let w = frame.window
         let span = w.upperBound.timeIntervalSince(w.lowerBound)
-        let step = span / Double(max(o.series.count, 1))
         let pts = o.series.enumerated().map { i, v in
-            MetricPoint(t: w.lowerBound.addingTimeInterval(Double(i) * step), v: v)
+            MetricPoint(t: o.time(of: i, in: w, count: o.series.count), v: v)
         }
+        .filter { w.contains($0.t) }
         return CanvasSparkline(
             samples: pts, tint: WB.cpu, warn: nil, windowSeconds: span,
             yDomain: nil, height: 20, xDomain: w

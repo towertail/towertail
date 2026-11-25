@@ -6,10 +6,13 @@ private struct TaskKey: Hashable {
     let active: Bool
 }
 
-/// Restarts the Cloud history load on a host, tab or source change.
-private struct HistoryKey: Hashable {
+/// Restarts the Cloud history load on a host, tab, window or source change.
+private struct CloudKey: Hashable {
     let host: UUID
-    let disks: Bool
+    let tab: HostTab
+    let from: Date
+    let to: Date
+    let step: Duration
     let cloud: Bool
 }
 
@@ -42,15 +45,23 @@ struct FullViewWindow: View {
     @State private var olderAt = Date.distantPast
     /// Oldest time of the local store, for the range control.
     @State private var storeOldest: Date?
-    @State private var historyLoading = false
-    @State private var historyError: String?
+    /// The REST series of a Cloud host, and its process snapshot at the cursor.
+    @State private var cloudSeries = WorkbenchSeries()
+    @State private var snapshots: ProcessSnapshotLoader?
 
     private static let frameInterval: Duration = .seconds(1)
     private static let olderPoints = 300
     private static let olderRefresh: TimeInterval = 30
 
-    init(context: FullViewContext, initialTab: HostTab? = nil, prepare: ((FullViewModel) -> Void)? = nil) {
+    /// Replaces `backend.cloudHistory`. Tests set it.
+    private let loaderOverride: (any CloudHistoryLoader)?
+
+    init(
+        context: FullViewContext, initialTab: HostTab? = nil, cloudLoader: (any CloudHistoryLoader)? = nil,
+        prepare: ((FullViewModel) -> Void)? = nil
+    ) {
         self.context = context
+        loaderOverride = cloudLoader
         let model = FullViewModel(context: context, source: .poll)
         if let initialTab { model.tab = initialTab }
         prepare?(model)
@@ -86,6 +97,23 @@ struct FullViewWindow: View {
         store.serverVMs.first(where: { $0.id == activeHostId })
     }
 
+    private var loader: (any CloudHistoryLoader)? { loaderOverride ?? backend?.cloudHistory }
+
+    /// A Cloud host with a history loader: REST data, not the local store.
+    private var isCloud: Bool { vm?.liveSource == .cloud && loader != nil }
+
+    /// The window of the REST load, on a grid so that a moving window reloads rarely.
+    private var cloudKey: CloudKey {
+        let now = Date()
+        let step = model.historyStep(now: now)
+        let w = model.window(now: now)
+        let grid = min(max(TimeInterval(step.components.seconds), 60), 600)
+        func r(_ d: Date) -> Date { Date(timeIntervalSince1970: (d.timeIntervalSince1970 / grid).rounded(.down) * grid) }
+        return CloudKey(
+            host: activeHostId, tab: model.tab, from: r(w.lowerBound), to: r(w.upperBound), step: step, cloud: isCloud
+        )
+    }
+
     @ViewBuilder
     private var activeBody: some View {
         let vm = vm
@@ -95,7 +123,7 @@ struct FullViewWindow: View {
                 Divider().overlay(WB.border)
                 WorkbenchTabBar(
                     model: model, lastSample: frame.latest ?? vm.cpu.latest?.t,
-                    oldest: [frame.oldest, storeOldest].compactMap { $0 }.min()
+                    oldest: [frame.oldest, storeOldest].compactMap { $0 }.min(), allRanges: isCloud
                 )
                 HStack(alignment: .top, spacing: 0) {
                     tabBody(vm: vm)
@@ -103,7 +131,7 @@ struct FullViewWindow: View {
                     if let ref = model.openProcess, model.tab != .alerts {
                         ProcessPanelHost(
                             vm: vm, model: model, ref: ref, frame: frame,
-                            node: nodeStore.node(withId: activeHostId), onIgnore: ignoreProc
+                            node: nodeStore.node(withId: activeHostId), cloud: isCloud ? loader : nil, onIgnore: ignoreProc
                         )
                         .id(ref)
                         .padding(.trailing, 14).padding(.bottom, 12)
@@ -128,12 +156,16 @@ struct FullViewWindow: View {
         .onKeyPress(.leftArrow) { model.stepPin(by: -1, span: stepSpan, now: Date()) ? .handled : .ignored }
         .onKeyPress(.rightArrow) { model.stepPin(by: 1, span: stepSpan, now: Date()) ? .handled : .ignored }
         .onAppear {
+            resetCloud()
             ActivationPolicyCoordinator.shared.acquire()
             // Only this window reads proc history, so the SQLite load waits for it.
             store.ensureProcsHydrated(for: activeHostId)
             rebuild(force: true)
         }
-        .onDisappear { ActivationPolicyCoordinator.shared.release() }
+        .onDisappear {
+            ActivationPolicyCoordinator.shared.release()
+            snapshots?.cancel()
+        }
         // `.task` ends with the view. A hidden window (scene phase) builds no frames.
         .task(id: TaskKey(host: activeHostId, active: scenePhase == .active)) {
             guard scenePhase == .active else { return }
@@ -142,9 +174,8 @@ struct FullViewWindow: View {
                 try? await Task.sleep(for: Self.frameInterval)
             }
         }
-        .task(id: HistoryKey(host: activeHostId, disks: model.tab == .disks, cloud: vm?.liveSource == .cloud)) {
-            await loadCloudHistory()
-        }
+        .task(id: cloudKey) { await loadCloud(cloudKey) }
+        .onChange(of: isCloud) { _, _ in resetCloud() }
         .onChange(of: model.range) { _, _ in rebuild(force: true) }
         .onChange(of: model.zoomRange) { _, _ in rebuild(force: true) }
         .onChange(of: model.diskMount) { _, _ in rebuild(force: true) }
@@ -160,12 +191,24 @@ struct FullViewWindow: View {
             model.offenderSelected = nil
             model.openProcess = nil
             store.ensureProcsHydrated(for: newId)
+            resetCloud()
             rebuild(force: true)
         }
     }
 
+    /// A Cloud host starts at 24 h and has its own series and snapshot loader.
+    private func resetCloud() {
+        snapshots?.cancel()
+        snapshots = nil
+        cloudSeries = WorkbenchSeries()
+        guard isCloud, let vm, let loader else { return }
+        snapshots = ProcessSnapshotLoader(host: vm.id, hostLabel: vm.hostname, loader: loader)
+        if model.range == .h1 { model.range = .h24 }
+    }
+
     /// The time of one sample, for the arrow keys.
     private var stepSpan: TimeInterval {
+        if isCloud, case .pinned(let t) = model.mode { return ProcBucket.of(t, now: Date()).span }
         let pts = frame.points(.cpu)
         guard pts.count >= 2 else { return 5 }
         let dt = pts[pts.count - 1].t.timeIntervalSince(pts[pts.count - 2].t)
@@ -178,8 +221,13 @@ struct FullViewWindow: View {
         guard let vm else { return }
         let now = Date()
         let w = model.window(now: now)
-        if vm.liveSource != .cloud { loadOlder(vm: vm, window: w, now: now, force: force) }
-        let next = WorkbenchFrame(vm: vm, window: w, older: older)
+        let next: WorkbenchFrame
+        if isCloud {
+            next = WorkbenchFrame(vm: vm, window: w, cloud: cloudSeries)
+        } else {
+            if vm.liveSource != .cloud { loadOlder(vm: vm, window: w, now: now, force: force) }
+            next = WorkbenchFrame(vm: vm, window: w, older: older)
+        }
         if next != frame { frame = next }
     }
 
@@ -210,38 +258,36 @@ struct FullViewWindow: View {
         olderAt = now
     }
 
-    /// Loads the 2 h series of a Cloud host over REST. Local and SSH hosts
-    /// read SQLite instead.
-    private func loadCloudHistory() async {
-        guard let loader = backend?.cloudHistory, vm?.liveSource == .cloud else {
-            historyLoading = false
-            historyError = nil
-            return
-        }
-        historyLoading = true
-        historyError = nil
-        do {
-            try await loader.loadFullView(host: activeHostId, metric: model.tab == .disks ? .disk : .cpu)
-        } catch {
-            guard !Task.isCancelled else { return }
-            historyError = CloudHistoryError.message(error)
-        }
+    /// Loads the series of the tab and window of a Cloud host over REST.
+    private func loadCloud(_ key: CloudKey) async {
+        guard isCloud, let loader else { return }
+        let w = key.from...max(key.to, key.from)
+        await cloudSeries.load(
+            host: key.host, tab: key.tab, window: w, step: key.step, hostOS: vm?.hostOS ?? "", loader: loader
+        )
         guard !Task.isCancelled else { return }
-        historyLoading = false
         rebuild(force: true)
     }
 
     @ViewBuilder
     private var historyOverlay: some View {
-        if let historyError {
-            Text(historyError)
+        if let error = cloudSeries.error, isCloud {
+            Text(error)
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .padding(10)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
                 .padding(.top, 40)
-        } else if historyLoading {
+        } else if cloudSeries.loading, isCloud, frame.series[.cpu]?.first?.points.isEmpty ?? true {
             ProgressView().controlSize(.large).padding(.top, 60)
+        } else if cloudSeries.clamped, isCloud {
+            Text("The history of your plan is shorter than this range.")
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(WB.muted)
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .background(WB.surface, in: Capsule())
+                .overlay(Capsule().stroke(WB.border, lineWidth: 1))
+                .padding(.top, 6)
         }
     }
 
@@ -252,13 +298,16 @@ struct FullViewWindow: View {
         let node = nodeStore.node(withId: activeHostId)
         switch model.tab {
         case .overview:
-            OverviewTab(vm: vm, model: model, frame: frame, score: vm.healthScore, node: node, onIgnore: ignoreProc)
+            OverviewTab(
+                vm: vm, model: model, frame: frame, score: vm.healthScore, node: node,
+                onIgnore: ignoreProc, cloud: isCloud ? snapshots : nil
+            )
         case .processes:
-            ProcessesTab(vm: vm, model: model, frame: frame, node: node, onIgnore: ignoreProc)
+            ProcessesTab(vm: vm, model: model, frame: frame, node: node, onIgnore: ignoreProc, loader: isCloud ? loader : nil)
         case .health:
             HealthTab(vm: vm, model: model, frame: frame, score: vm.healthScore, node: node, onIgnore: ignoreProc)
         case .disks:
-            DisksTab(vm: vm, model: model, frame: frame, node: node)
+            DisksTab(vm: vm, model: model, frame: frame, node: node, cloud: isCloud ? cloudSeries : nil)
         case .alerts:
             AlertsTab(vm: vm)
         case .settings:

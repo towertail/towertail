@@ -9,6 +9,8 @@ struct OverviewTab: View {
     let score: HealthScore
     var node: Node? = nil
     var onIgnore: ((String, LongProcIgnore.Scope) -> Void)? = nil
+    /// The snapshot of a Cloud host at a hover or a pinned time.
+    var cloud: ProcessSnapshotLoader? = nil
 
     @State private var snapshot = LocalSnapshot.empty
 
@@ -17,13 +19,21 @@ struct OverviewTab: View {
         let sort: ProcSort
         let latest: Date?
         let hovering: Bool
+        /// A Cloud host in live mode has local rows from the stream until a cursor moves.
+        let cloudLive: Bool
+    }
+
+    /// The rows come from REST when a Cloud host has a cursor or no stream rows.
+    private var usesCloud: Bool {
+        guard cloud != nil else { return false }
+        return model.effectiveTimestamp(latest: nil) != nil || vm.procs.latest == nil
     }
 
     var body: some View {
         let latestProc = vm.procs.latest?.t
         let key = SnapKey(
             at: model.effectiveTimestamp(latest: latestProc), sort: model.procSort,
-            latest: latestProc, hovering: model.hoverAt != nil
+            latest: latestProc, hovering: model.hoverAt != nil, cloudLive: usesCloud
         )
         HStack(alignment: .top, spacing: 12) {
             MetricRail(
@@ -34,11 +44,12 @@ struct OverviewTab: View {
                 VStack(spacing: 12) {
                     chartCard.frame(height: max(190, geo.size.height * 0.42))
                     TopProcessPanel(
-                        rows: snapshot.rows, bucketLabel: snapshot.label(now: Date()),
-                        state: CursorState(model: model), loading: false,
+                        rows: rows, bucketLabel: bucketLabel,
+                        state: CursorState(model: model), loading: usesCloud && cloud?.showsLoading == true,
                         sort: Binding(get: { model.procSort }, set: { model.procSortOverride = $0 }),
                         onOpen: { model.openProcess = $0 },
-                        placeholder: placeholder, total: snapshot.total, node: node,
+                        placeholder: placeholder, total: usesCloud ? nil : snapshot.total,
+                        note: usesCloud ? cloud?.note : nil, request: usesCloud ? cloud?.lastRequest : nil, node: node,
                         longProcs: vm.longProcs, onIgnore: onIgnore,
                         compact: model.openProcess != nil
                     )
@@ -47,6 +58,11 @@ struct OverviewTab: View {
         }
         .padding(.horizontal, 14).padding(.bottom, 12)
         .task(id: key) {
+            if usesCloud, let cloud {
+                // The loader waits for the cursor to rest.
+                cloud.request(at: key.at ?? Date(), by: key.sort)
+                return
+            }
             // A moving cursor builds only its last position, at about 10 fps.
             if key.hovering {
                 try? await Task.sleep(for: .milliseconds(100))
@@ -61,7 +77,21 @@ struct OverviewTab: View {
         return nil
     }
 
+    private var rows: [ProcessSnapshotRow] {
+        usesCloud ? cloud?.rows ?? [] : snapshot.rows
+    }
+
+    private var bucketLabel: String {
+        usesCloud ? cloud?.whenLabel(now: Date()) ?? "loading" : snapshot.label(now: Date())
+    }
+
     private var placeholder: String? {
+        if usesCloud, let cloud {
+            if let e = cloud.error { return e }
+            guard let snap = cloud.snapshot else { return "Loading the processes…" }
+            if snap.clamped == true { return "This time is older than the history of your plan." }
+            return snap.processes.isEmpty ? "No process data in this bucket." : nil
+        }
         if !vm.procsAvailable { return "Per-process collection is off on this host." }
         if let n = vm.procsSkippedTotal {
             return "Process scan skipped: \(HealthStatus.count(n)) processes (over the sampler's scan limit)."

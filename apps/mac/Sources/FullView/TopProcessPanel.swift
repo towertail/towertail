@@ -51,6 +51,10 @@ struct TopProcessPanel: View {
     var placeholder: String? = nil
     /// "N of M processes" in the footer.
     var total: Int? = nil
+    /// Replaces the count text at the left of the footer.
+    var note: String? = nil
+    /// The request of a Cloud host, in the middle of the footer.
+    var request: String? = nil
     var node: Node? = nil
     var longProcs: [LongProc] = []
     var onIgnore: ((String, LongProcIgnore.Scope) -> Void)? = nil
@@ -127,8 +131,13 @@ struct TopProcessPanel: View {
 
     private var foot: some View {
         HStack(spacing: 10) {
-            Text(total.map { "\(rows.count) of \($0) processes" } ?? "\(rows.count) processes")
-            Spacer()
+            Text(note ?? total.map { "\(rows.count) of \($0) processes" } ?? "\(rows.count) processes")
+            if let request {
+                Text(request)
+                    .foregroundStyle(request.hasPrefix("cache hit") ? WB.cpu : WB.muted)
+                    .lineLimit(1).truncationMode(.middle)
+            }
+            Spacer(minLength: 8)
             HStack(spacing: 4) {
                 Kbd("←"); Kbd("→"); Text("step when pinned")
             }

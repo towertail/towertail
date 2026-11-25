@@ -132,12 +132,45 @@ final class RemoteClient {
         return merged ?? RemoteFleetHistory(from: from, to: to, resolution: "raw", clamped: nil, nodes: [])
     }
 
-    func topProcesses(nodeID: UUID, from: Date, to: Date, limit: Int) async throws -> [RemoteTopProcess] {
-        struct List: Decodable { let processes: [RemoteTopProcess]? }
-        let query = Self.rangeItems(from: from, to: to) + [URLQueryItem(name: "limit", value: String(limit))]
-        let list: List = try await get("/v1/nodes/\(nodeID.uuidString)/processes", query: query,
-                                       decoder: SampleCodec.decoder())
-        return list.processes ?? []
+    func processesAt(nodeID: UUID, ts: Date, by: ProcSort, limit: Int) async throws -> RemoteProcessSnapshot {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        let query = [
+            URLQueryItem(name: "ts", value: f.string(from: ts)),
+            URLQueryItem(name: "by", value: by.rawValue),
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+        var c = URLComponents()
+        c.queryItems = query
+        let data = try await raw("GET", "/v1/nodes/\(nodeID.uuidString)/processes/at?" + (c.percentEncodedQuery ?? ""))
+        do {
+            var snapshot = try SampleCodec.decoder().decode(RemoteProcessSnapshot.self, from: data)
+            snapshot.bytes = data.count
+            return snapshot
+        } catch {
+            throw RemoteError.decode(String(describing: error))
+        }
+    }
+
+    func offenders(
+        nodeID: UUID, from: Date, to: Date, by: ProcSort, limit: Int, series: Int
+    ) async throws -> RemoteOffenders {
+        let query = Self.rangeItems(from: from, to: to) + [
+            URLQueryItem(name: "by", value: by.rawValue),
+            URLQueryItem(name: "limit", value: String(limit)),
+            URLQueryItem(name: "series", value: String(series)),
+        ]
+        return try await get("/v1/nodes/\(nodeID.uuidString)/processes", query: query, decoder: SampleCodec.decoder())
+    }
+
+    func process(nodeID: UUID, key: String, from: Date, to: Date, step: Duration) async throws -> RemoteProcessDetail {
+        let query = Self.rangeItems(from: from, to: to) + [
+            URLQueryItem(name: "step", value: "\(step.components.seconds)s"),
+        ]
+        let safe = key.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-._~"))) ?? key
+        return try await get(
+            "/v1/nodes/\(nodeID.uuidString)/processes/\(safe)", query: query, decoder: SampleCodec.decoder()
+        )
     }
 
     func diskHistory(nodeID: UUID, from: Date, to: Date) async throws -> RemoteDiskHistory {
