@@ -250,3 +250,24 @@ struct RemoteRulesImportResult: Decodable, Sendable, Equatable {
     var hosts: Int
     var org: Bool
 }
+
+/// `GET /v1/rules/backups`: the rules that an import or a restore replaced.
+struct RemoteRulesBackup: Decodable, Sendable, Equatable, Identifiable {
+    var id: UUID
+    var at: Date?
+    var origin: RemoteRulesOrigin?
+    var org: RemoteOrgRules?
+    var hosts: [UUID: RemoteHostRules]
+
+    enum CodingKeys: String, CodingKey { case id, at, origin, org, hosts }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        at = (try? c.decodeIfPresent(String.self, forKey: .at)).flatMap { $0 }.flatMap(SampleCodec.parseRFC3339UTC)
+        origin = try? c.decodeIfPresent(RemoteRulesOrigin.self, forKey: .origin)
+        org = try? c.decodeIfPresent(RemoteOrgRules.self, forKey: .org)
+        let raw = (try? c.decodeIfPresent([String: RemoteHostRules].self, forKey: .hosts)) ?? [:]
+        hosts = Dictionary(raw.compactMap { k, v in UUID(uuidString: k).map { ($0, v) } }, uniquingKeysWith: { _, last in last })
+    }
+}

@@ -22,6 +22,7 @@ struct AccountSection: View {
     @Environment(CloudExit.self) private var exit: CloudExit?
     @Environment(NodeStore.self) private var nodeStore
     @Environment(CloudMove.self) private var move: CloudMove?
+    @Environment(CloudRulesMove.self) private var rulesMove: CloudRulesMove?
     @State private var email = UserDefaults.standard.string(forKey: CloudAccount.emailKey) ?? ""
     @State private var busy = false
     @State private var attempt = 0
@@ -55,6 +56,11 @@ struct AccountSection: View {
                             }
                         }
                     }
+                }
+            }
+            if let rulesMove, rulesMove.canMove {
+                LabeledContent("Rules") {
+                    Button("Move rules to cloud…") { Task { await rulesMove.open() } }
                 }
             }
             LabeledContent("SSH hosts", value: "\(nodeStore.nodes.filter { $0.kind == .ssh && $0.cloud == nil }.count) (no limit)")

@@ -96,6 +96,17 @@ final class RemoteClient {
         return try decode(RemoteRulesImportResult.self, data)
     }
 
+    /// The backups of the last 30 days, newest first. Needs the admin role.
+    func rulesBackups() async throws -> [RemoteRulesBackup] {
+        try await get("/v1/rules/backups", decoder: SampleCodec.decoder())
+    }
+
+    func restoreRules(backupID: UUID, device: String) async throws -> RemoteRulesImportResult {
+        struct Body: Encodable { let client = "mac"; let device: String }
+        let data = try await rulesCall("POST", "/v1/rules/backups/\(backupID.uuidString)/restore", body: try encoder.encode(Body(device: device)))
+        return try decode(RemoteRulesImportResult.self, data)
+    }
+
     /// A 403 gives a plain message: the role of the user is too low.
     private func rulesCall(_ method: String, _ path: String, body: Data) async throws -> Data {
         let (data, http) = try await response(method, path, body: body)

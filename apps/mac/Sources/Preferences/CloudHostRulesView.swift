@@ -314,6 +314,7 @@ struct CloudHostRulesForm: View {
 /// The org rules, read only. The web edits them.
 struct CloudOrgRulesSummary: View {
     @Environment(CloudSession.self) private var cloud: CloudSession?
+    @Environment(CloudRulesMove.self) private var rulesMove: CloudRulesMove?
 
     var body: some View {
         if let cloud, let org = cloud.rules?.org {
@@ -328,6 +329,10 @@ struct CloudOrgRulesSummary: View {
                     Task { await cloud.account.openDashboard(path: "settings") { NSWorkspace.shared.open($0) } }
                 }
                 .buttonStyle(.link)
+                if let rulesMove, rulesMove.canMove {
+                    Button("Move rules to cloud…") { Task { await rulesMove.open() } }
+                        .buttonStyle(.link)
+                }
             } header: {
                 Text("Org rules in the cloud")
             } footer: {

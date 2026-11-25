@@ -29,6 +29,7 @@ struct PreferencesWindow: View {
     @State private var serverSelection: Set<Node.ID> = []
     @Environment(CloudSession.self) private var cloud: CloudSession?
     @Environment(CloudMove.self) private var move: CloudMove?
+    @Environment(CloudRulesMove.self) private var rulesMove: CloudRulesMove?
 
     var body: some View {
         TabView(selection: $selection) {
@@ -43,7 +44,33 @@ struct PreferencesWindow: View {
         .sheet(isPresented: Binding(get: { move?.isPresented == true }, set: { if !$0 { move?.close() } })) {
             if let move { MoveToCloudSheet(move: move) }
         }
-        .task(id: cloud?.isSignedIn) { await move?.offerOnce() }
+        .sheet(isPresented: Binding(get: { rulesMove?.isPresented == true }, set: { if !$0 { rulesMove?.close() } })) {
+            if let rulesMove { MoveRulesToCloudSheet(move: rulesMove) }
+        }
+        .overlay(alignment: .bottom) {
+            if let text = rulesMove?.toast {
+                RulesMovedToast(text: text)
+                    .padding(.bottom, 20)
+                    .transition(.opacity)
+                    .task(id: text) {
+                        try? await Task.sleep(for: .seconds(6))
+                        rulesMove?.clearToast()
+                    }
+            }
+        }
+        .task(id: cloud?.isSignedIn) {
+            await move?.offerOnce()
+            await offerRules()
+        }
+        .onChange(of: move?.isPresented) { _, shown in
+            if shown == false { Task { await offerRules() } }
+        }
+    }
+
+    /// The rules sheet comes after the host sheet.
+    private func offerRules() async {
+        guard move?.isPresented != true else { return }
+        await rulesMove?.offerOnce()
     }
 
     /// Only the active tab gets its real pane. Inactive panes stay torn down,

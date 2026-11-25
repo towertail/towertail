@@ -60,6 +60,7 @@ struct TowertailApp: App {
                 .environment(env.installer)
                 .environment(env.exit)
                 .environment(env.move)
+                .environment(env.rulesMove)
                 // Settings is an .accessory-policy scene by default, so
                 // without flipping activation policy the app never gets a
                 // Dock icon while it's open — meaning the user can't ⌘-Tab
