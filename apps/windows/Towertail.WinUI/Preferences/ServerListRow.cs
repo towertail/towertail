@@ -1,7 +1,9 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using Microsoft.UI;
+using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
+using Towertail.WinUI.Design;
 using Towertail.WinUI.State;
 
 namespace Towertail.WinUI.Preferences;
@@ -19,10 +21,13 @@ public sealed class ServerListRow : INotifyPropertyChanged
     public Node Node { get; private set; }
     private readonly ServerViewModel? _vm;
 
-    public ServerListRow(Node node, ServerViewModel? vm)
+    private readonly Func<Node, HostTag?>? _tagFor;
+
+    public ServerListRow(Node node, ServerViewModel? vm, Func<Node, HostTag?>? tagFor = null)
     {
         Node = node;
         _vm = vm;
+        _tagFor = tagFor;
         if (_vm is not null)
         {
             _vm.PropertyChanged += OnVmChanged;
@@ -57,6 +62,19 @@ public sealed class ServerListRow : INotifyPropertyChanged
         _ => Node.Kind.ToString(),
     };
     public string UserAtHost => Node.UserAtHost;
+
+    private HostTag? Tag => _tagFor?.Invoke(Node);
+    public string TagText => Tag?.Label() ?? "";
+    public Visibility TagVisibility => Tag is null ? Visibility.Collapsed : Visibility.Visible;
+    public Brush TagBrush => HostTagStyle.Brush(Tag ?? HostTag.SshOnly);
+
+    /// <summary>The sign-in or the feed changed. The tag can differ.</summary>
+    public void RefreshTag()
+    {
+        Notify(nameof(TagText));
+        Notify(nameof(TagVisibility));
+        Notify(nameof(TagBrush));
+    }
     public string EnabledText => Node.Enabled ? "True" : "False";
 
     public string StatusText
@@ -89,6 +107,7 @@ public sealed class ServerListRow : INotifyPropertyChanged
         Notify(nameof(DisplayName));
         Notify(nameof(KindLabel));
         Notify(nameof(UserAtHost));
+        RefreshTag();
         Notify(nameof(EnabledText));
         Notify(nameof(StatusText));
         Notify(nameof(StatusBrush));

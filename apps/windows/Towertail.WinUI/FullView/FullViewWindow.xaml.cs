@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Towertail.WinUI.Backend;
 using Towertail.WinUI.State;
 
 namespace Towertail.WinUI.FullView;
@@ -13,6 +14,9 @@ public sealed partial class FullViewWindow : Window
     // Kept while the window is open, so that a scan continues when the user changes tabs.
     private DiskUsageView? _usage;
     private string _diskSubTab = "capacity";
+    private string _tag = "cpu";
+    private bool _netPorts;
+    private bool _leased;
 
     public FullViewWindow()
     {
@@ -20,7 +24,30 @@ public sealed partial class FullViewWindow : Window
         Title = "Towertail — Full View";
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
-        Closed += (_, _) => _usage?.Stop();
+        Closed += (_, _) =>
+        {
+            _usage?.Stop();
+            ReportLease(false);
+        };
+        Activated += (_, e) =>
+        {
+            if (e.WindowActivationState != WindowActivationState.Deactivated) ReportLease();
+        };
+    }
+
+    /// <summary>
+    /// Tells the cloud lease which host and detail tab this window shows. Only cloud hosts
+    /// use it. A window that closes, or a host that leaves the cloud, gives the lease back.
+    /// </summary>
+    private void ReportLease(bool visible = true)
+    {
+        if (_vm is null) return;
+        var node = _vm.Node;
+        if (!node.IsCloud) visible = false;
+        if (!visible && !_leased) return;
+        var tab = DetailTabMap.For(_tag, _netPorts, _diskSubTab == "usage");
+        App.Current.Environment.Cloud.Lease.SetFullView(this, node.Id, tab, visible);
+        _leased = visible;
     }
 
     public void Bind(ServerViewModel vm)
@@ -59,6 +86,8 @@ public sealed partial class FullViewWindow : Window
         if (_vm is null) return;
         Host.Children.Clear();
         _charts.Clear();
+        _tag = tag;
+        _netPorts = false;
         UIElement content = tag switch
         {
             "cpu"   => MakeChart(_vm.CpuSeries, "CPU %"),
@@ -70,6 +99,7 @@ public sealed partial class FullViewWindow : Window
             _ => new TextBlock { Text = "—" },
         };
         Host.Children.Add(content);
+        ReportLease();
     }
 
     private UIElement MakeChart(MetricSeries series, string label)
@@ -107,6 +137,7 @@ public sealed partial class FullViewWindow : Window
         void Show(string tag)
         {
             _diskSubTab = tag;
+            ReportLease();
             slot.Content = tag == "usage"
                 ? _usage ??= new DiskUsageView(_vm, App.Current.Environment)
                 : capacity;
@@ -168,9 +199,9 @@ public sealed partial class FullViewWindow : Window
 
         selector.SelectionChanged += (_, _) =>
         {
-            slot.Content = (selector.SelectedItem?.Tag as string) == "ports"
-                ? (UIElement)ports
-                : procs;
+            _netPorts = (selector.SelectedItem?.Tag as string) == "ports";
+            slot.Content = _netPorts ? (UIElement)ports : procs;
+            ReportLease();
         };
 
         return grid;

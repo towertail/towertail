@@ -52,6 +52,18 @@
                 <NavigationViewItem Content="Notifications" Tag="notifications">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xEA8F;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
+                <NavigationViewItem Tag="account" AutomationProperties.Name="Account"
+                                    HorizontalContentAlignment="Stretch">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE753;" /></NavigationViewItem.Icon>
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8" Width="120">
+                        <TextBlock Text="Account" VerticalAlignment="Center" />
+                        <Border Grid.Column="1" VerticalAlignment="Center" CornerRadius="8" BorderThickness="1" Padding="6,0,6,0"
+                                BorderBrush="{ThemeResource AccentTextFillColorPrimaryBrush}">
+                            <TextBlock Text="new" FontSize="10"
+                                       Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                        </Border>
+                    </Grid>
+                </NavigationViewItem>
                 <NavigationViewItem Content="General"       Tag="general">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE713;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>

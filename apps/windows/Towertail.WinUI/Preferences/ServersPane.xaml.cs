@@ -22,14 +22,21 @@ public sealed partial class ServersPane : UserControl
         SyncRows();
         env.Nodes.Nodes.CollectionChanged += OnNodesChanged;
         env.Nodes.NodeUpdated += (_, id) => UpdateRow(id);
+        Loaded += (_, _) => env.Cloud.StateChanged += OnCloudChanged;
+        Unloaded += (_, _) => env.Cloud.StateChanged -= OnCloudChanged;
     }
+
+    private void OnCloudChanged() => DispatcherQueue.TryEnqueue(() =>
+    {
+        foreach (var row in _rows) row.RefreshTag();
+    });
 
     private void SyncRows()
     {
         _rows.Clear();
         foreach (var n in _env.Nodes.Nodes)
         {
-            _rows.Add(new ServerListRow(n, _env.Servers.Find(n.Id)));
+            _rows.Add(new ServerListRow(n, _env.Servers.Find(n.Id), _env.Cloud.TagFor));
         }
     }
 

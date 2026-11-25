@@ -29,7 +29,15 @@
         <Grid RowDefinitions="Auto,Auto,Auto" RowSpacing="6">
             <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto">
                 <StackPanel Grid.Column="0" Orientation="Vertical" Spacing="0">
-                    <TextBlock x:Name="NameText" FontSize="14" FontWeight="SemiBold" />
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock x:Name="NameText" FontSize="14" FontWeight="SemiBold"
+                                   TextTrimming="CharacterEllipsis" MaxWidth="150" />
+                        <Border x:Name="TagChip" Visibility="Collapsed" VerticalAlignment="Center"
+                                CornerRadius="9" BorderThickness="1" Padding="6,0,6,0">
+                            <TextBlock x:Name="TagText" FontSize="10" FontWeight="SemiBold"
+                                       CharacterSpacing="50" TextWrapping="NoWrap" />
+                        </Border>
+                    </StackPanel>
                     <TextBlock x:Name="HostText" FontSize="11" Opacity="0.7" />
                 </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="2"

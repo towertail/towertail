@@ -27,7 +27,39 @@ public sealed partial class PopoverRoot : UserControl
     {
         _env = env;
         Refresh();
+        env.Nodes.NodeUpdated += (_, _) => DispatcherQueue.TryEnqueue(() => { if (_leaseOn) SetLease(true); });
         env.Servers.Servers.CollectionChanged += (_, _) => Refresh();
+    }
+
+    private bool _leaseOn;
+
+    /// <summary>Tells the cloud lease that the popover shows or hides, with the cloud cards that are on screen.</summary>
+    public void SetLease(bool visible)
+    {
+        if (_env is null) return;
+        _leaseOn = visible;
+        _env.Cloud.Lease.SetPopover(visible, visible ? RealizedCloudHosts() : []);
+    }
+
+    private List<Guid> RealizedCloudHosts()
+    {
+        var hosts = new List<Guid>();
+        for (var i = 0; i < FilteredServers.Count; i++)
+            if (Repeater.TryGetElement(i) is not null && FilteredServers[i].Node is { IsCloud: true } node)
+                hosts.Add(node.Id);
+        return hosts;
+    }
+
+    private void OnCardPrepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs args)
+    {
+        if (_env is null || args.Index >= FilteredServers.Count) return;
+        if (FilteredServers[args.Index].Node is { IsCloud: true } node) _env.Cloud.Lease.SetCard(node.Id, true);
+    }
+
+    private void OnCardClearing(ItemsRepeater sender, ItemsRepeaterElementClearingEventArgs args)
+    {
+        if (_env is null || args.Element is not Cards.ServerCardView { ViewModel: { } vm }) return;
+        _env.Cloud.Lease.SetCard(vm.Node.Id, false);
     }
 
     private void OnSearchChanged(object sender, TextChangedEventArgs e)

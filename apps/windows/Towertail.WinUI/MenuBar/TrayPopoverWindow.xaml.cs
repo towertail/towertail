@@ -51,12 +51,14 @@ public sealed partial class TrayPopoverWindow : Window
         _appWindow.Show();
         this.Activate();
         IsVisible = true;
+        Root.SetLease(true);
     }
 
     public void HidePopover()
     {
         _appWindow?.Hide();
         IsVisible = false;
+        Root.SetLease(false);
     }
 
     private void OnActivated(object sender, WindowActivatedEventArgs args)

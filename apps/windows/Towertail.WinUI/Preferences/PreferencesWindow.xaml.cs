@@ -19,7 +19,7 @@ public sealed partial class PreferencesWindow : Window
         Title = "Towertail Preferences";
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
-        ResizeInitial(880, 640);
+        ResizeInitial(980, 640);
         Nav.SelectedItem = Nav.MenuItems[0];
         ShowPane("servers");
     }
@@ -33,6 +33,13 @@ public sealed partial class PreferencesWindow : Window
             AppWindow.GetFromWindowId(id)?.Resize(new SizeInt32(w, h));
         }
         catch { }
+    }
+
+    /// <summary>Opens the pane with <paramref name="tag"/>.</summary>
+    public void SelectPane(string tag)
+    {
+        var item = Nav.MenuItems.OfType<NavigationViewItem>().FirstOrDefault(i => i.Tag is string t && t == tag);
+        if (item is not null) Nav.SelectedItem = item;
     }
 
     private void OnNavSelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
@@ -49,6 +56,7 @@ public sealed partial class PreferencesWindow : Window
             "general"       => new GeneralPane(_env),
             "thresholds"    => new ThresholdsPane(_env),
             "notifications" => new NotificationsPane(_env),
+            "account"       => new AccountPane(_env),
             "servers"       => new ServersPane(_env),
             "logs"          => new LogsPane(),
             "about"         => new AboutPane(),

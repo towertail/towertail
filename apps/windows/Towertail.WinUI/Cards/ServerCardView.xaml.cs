@@ -27,6 +27,8 @@ public sealed partial class ServerCardView : UserControl
     public ServerCardView()
     {
         InitializeComponent();
+        Loaded += OnLoaded;
+        Unloaded += OnUnloaded;
     }
 
     private static void OnViewModelChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
@@ -53,7 +55,44 @@ public sealed partial class ServerCardView : UserControl
             : Visibility.Collapsed;
         UpdateFavoriteIcon();
         Update();
-        ViewModel.PropertyChanged += (_, _) => Update();
+        UpdateTag();
+        ViewModel.PropertyChanged += (_, e) =>
+        {
+            Update();
+            if (e.PropertyName != nameof(ServerViewModel.Node) || ViewModel is null) return;
+            NameText.Text = ViewModel.Node.DisplayName;
+            HostText.Text = ViewModel.Node.UserAtHost;
+            UpdateTag();
+        };
+    }
+
+    // The tag follows the sign-in and the feed. The card listens only while it is in the tree.
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        Cloud.StateChanged += OnCloudStateChanged;
+        UpdateTag();
+    }
+
+    private void OnUnloaded(object sender, RoutedEventArgs e) => Cloud.StateChanged -= OnCloudStateChanged;
+
+    private static Towertail.WinUI.Cloud.CloudSession Cloud => Towertail.WinUI.App.Current.Environment.Cloud;
+
+    private void OnCloudStateChanged() => DispatcherQueue.TryEnqueue(UpdateTag);
+
+    private void UpdateTag()
+    {
+        if (ViewModel is null) return;
+        TerminalBtn.Visibility = ViewModel.Node.Kind == NodeKind.Ssh ? Visibility.Visible : Visibility.Collapsed;
+        if (Cloud.TagFor(ViewModel.Node) is not { } tag)
+        {
+            TagChip.Visibility = Visibility.Collapsed;
+            return;
+        }
+        var brush = HostTagStyle.Brush(tag);
+        TagText.Text = tag.Label();
+        TagText.Foreground = brush;
+        TagChip.BorderBrush = brush;
+        TagChip.Visibility = Visibility.Visible;
     }
 
     private void Update()

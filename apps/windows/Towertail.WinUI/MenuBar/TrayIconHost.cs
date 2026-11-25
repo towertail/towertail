@@ -150,6 +150,12 @@ public sealed class TrayIconHost
         _icon = null;
     }
 
+    public void ShowPopover()
+    {
+        _popover ??= new TrayPopoverWindow(_env);
+        if (!_popover.IsVisible) _popover.ShowAtTray();
+    }
+
     private void TogglePopover()
     {
         _popover ??= new TrayPopoverWindow(_env);

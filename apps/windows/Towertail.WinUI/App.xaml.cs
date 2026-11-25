@@ -2,6 +2,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.Windows.AppLifecycle;
 using Towertail.WinUI.Bootstrap;
 using Towertail.WinUI.MenuBar;
+using Towertail.WinUI.Preferences;
 
 namespace Towertail.WinUI;
 
@@ -62,8 +63,35 @@ public partial class App : Application
 
         _tray = new TrayIconHost(Environment);
         _tray.Show();
+#if DEBUG
+        OpenForDebug();
+#endif
 
         // No main window shown — we live in the tray. A hidden window is created
         // on demand via TrayPopoverWindow when the user clicks the tray icon.
     }
+
+#if DEBUG
+    private PreferencesWindow? _debugPrefs;
+
+    /// <summary>Opens a window at launch, for renders: <c>TOWERTAIL_DEBUG_OPEN</c> is <c>account</c>, <c>servers</c> or <c>popover</c>. <c>TOWERTAIL_DEBUG_EMAIL</c> asks for a sign-in code.</summary>
+    private void OpenForDebug()
+    {
+        if (System.Environment.GetEnvironmentVariable("TOWERTAIL_DEBUG_EMAIL") is { Length: > 0 } email)
+            _ = Environment.Cloud.Account.SendCodeAsync(email);
+        switch (System.Environment.GetEnvironmentVariable("TOWERTAIL_DEBUG_OPEN"))
+        {
+            case "account":
+            case "servers":
+                _debugPrefs = new PreferencesWindow();
+                _debugPrefs.SelectPane(System.Environment.GetEnvironmentVariable("TOWERTAIL_DEBUG_OPEN")!);
+                _debugPrefs.Activate();
+                break;
+            case "popover":
+                TestPinPopover = true;
+                _tray?.ShowPopover();
+                break;
+        }
+    }
+#endif
 }

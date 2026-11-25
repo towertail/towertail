@@ -18,7 +18,8 @@
             </ComboBox>
         </StackPanel>
         <ScrollViewer Grid.Row="2" VerticalScrollMode="Auto" VerticalScrollBarVisibility="Auto">
-            <ItemsRepeater x:Name="Repeater" ItemsSource="{x:Bind FilteredServers}">
+            <ItemsRepeater x:Name="Repeater" ItemsSource="{x:Bind FilteredServers}"
+                           ElementPrepared="OnCardPrepared" ElementClearing="OnCardClearing">
                 <ItemsRepeater.Layout>
                     <StackLayout Spacing="6" />
                 </ItemsRepeater.Layout>

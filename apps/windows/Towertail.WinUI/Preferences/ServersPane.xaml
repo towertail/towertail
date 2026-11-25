@@ -44,11 +44,11 @@
             <Grid RowDefinitions="Auto,Auto,*">
                 <Grid Grid.Row="0" Padding="16,10,16,10" ColumnSpacing="12">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="2*" MinWidth="120" />
+                        <ColumnDefinition Width="3*" MinWidth="210" />
                         <ColumnDefinition Width="Auto" MinWidth="60" />
-                        <ColumnDefinition Width="3*" MinWidth="140" />
+                        <ColumnDefinition Width="2*" MinWidth="90" />
                         <ColumnDefinition Width="Auto" MinWidth="72" />
-                        <ColumnDefinition Width="Auto" MinWidth="120" />
+                        <ColumnDefinition Width="Auto" MinWidth="100" />
                         <ColumnDefinition Width="Auto" MinWidth="70" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0" Text="Name"
@@ -86,17 +86,27 @@
                         <DataTemplate>
                             <Grid ColumnSpacing="12">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="2*" MinWidth="120" />
+                                    <ColumnDefinition Width="3*" MinWidth="210" />
                                     <ColumnDefinition Width="Auto" MinWidth="60" />
-                                    <ColumnDefinition Width="3*" MinWidth="140" />
+                                    <ColumnDefinition Width="2*" MinWidth="90" />
                                     <ColumnDefinition Width="Auto" MinWidth="72" />
-                                    <ColumnDefinition Width="Auto" MinWidth="120" />
+                                    <ColumnDefinition Width="Auto" MinWidth="100" />
                                     <ColumnDefinition Width="Auto" MinWidth="70" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="{Binding DisplayName}"
-                                           Style="{ThemeResource BodyStrongTextBlockStyle}"
-                                           TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
-                                           VerticalAlignment="Center" />
+                                <Grid Grid.Column="0" ColumnDefinitions="Auto,Auto" ColumnSpacing="8"
+                                      VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding DisplayName}" MaxWidth="150"
+                                               Style="{ThemeResource BodyStrongTextBlockStyle}"
+                                               TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                                               VerticalAlignment="Center" />
+                                    <Border Grid.Column="1" Visibility="{Binding TagVisibility}" VerticalAlignment="Center"
+                                            CornerRadius="9" BorderThickness="1" Padding="6,0,6,0"
+                                            BorderBrush="{Binding TagBrush}">
+                                        <TextBlock Text="{Binding TagText}" FontSize="10" FontWeight="SemiBold"
+                                                   CharacterSpacing="50" TextWrapping="NoWrap"
+                                                   Foreground="{Binding TagBrush}" />
+                                    </Border>
+                                </Grid>
                                 <TextBlock Grid.Column="1" Text="{Binding KindLabel}" TextWrapping="NoWrap"
                                            Style="{ThemeResource BodyTextBlockStyle}"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
