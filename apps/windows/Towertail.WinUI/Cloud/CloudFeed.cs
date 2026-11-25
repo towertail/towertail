@@ -12,7 +12,8 @@ namespace Towertail.WinUI.Cloud;
 /// </summary>
 public sealed class CloudFeed(
     RemoteClient client, NodeStore nodes, ServerStore servers, ReleasedHosts released,
-    ViewLeaseController lease, Action onUnauthorized, Func<Action, Task>? marshal, Logger? log)
+    ViewLeaseController lease, Action onUnauthorized, Func<Action, Task>? marshal, Logger? log,
+    ICloudAlertPoster? poster = null)
     : IDiskScanUpdates
 {
     private readonly object _gate = new();
@@ -149,6 +150,9 @@ public sealed class CloudFeed(
             case StreamMessage.NodeUpdatedFrame f:
                 ApplyNodeUpdated(f.Node);
                 break;
+            case StreamMessage.AlertUpdatedFrame f:
+                if (f.Alert.IsSilenced(DateTimeOffset.UtcNow)) poster?.Withdraw(f.Alert.Id);
+                break;
             case StreamMessage.HelloFrame f:
                 // The server runs in lease mode: no data comes while no view is open.
                 foreach (var vm in servers.Servers.Where(v => v.Node.IsCloud)) vm.LiveSource = LiveSource.Cloud;
@@ -166,6 +170,9 @@ public sealed class CloudFeed(
     private void ApplyEvent(StreamEvent e)
     {
         EventReceived?.Invoke(e);
+        // The app runs no rules for cloud hosts. It shows what the server says to show.
+        if (e is { Notify: true, AlertId: not null } && nodes.ById(e.NodeId) is { IsCloud: true } host)
+            poster?.Post(e, host.DisplayName);
         if (e.Metric != "reachability") return;
         servers.ApplyReachability(e);
         var open = e.Tint == "critical";

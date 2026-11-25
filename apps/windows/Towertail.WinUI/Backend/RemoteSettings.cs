@@ -54,11 +54,18 @@ public sealed record RemoteThresholds(
 public sealed record RemoteClientSettings(
     [property: JsonPropertyName("cardDensity")] string CardDensity);
 
-/// <summary>One open alert of <c>GET /v1/alerts</c>. Other fields come with the alert tickets.</summary>
+/// <summary>An alert of the server: one item of <c>GET /v1/alerts</c> and the body of <c>alert_updated</c>.</summary>
 public sealed record RemoteAlert(
+    [property: JsonPropertyName("id")] Guid Id,
     [property: JsonPropertyName("node_id")] Guid NodeId,
     [property: JsonPropertyName("metric")] string Metric,
-    [property: JsonPropertyName("tint")] string Tint);
+    [property: JsonPropertyName("tint")] string Tint,
+    [property: JsonPropertyName("acked_at")] DateTimeOffset? AckedAt = null,
+    [property: JsonPropertyName("snoozed_until")] DateTimeOffset? SnoozedUntil = null)
+{
+    /// <summary>True while an ack or a snooze stops the notifications of the alert.</summary>
+    public bool IsSilenced(DateTimeOffset now) => AckedAt is not null || SnoozedUntil > now;
+}
 
 public sealed record RemoteAlertList(
     [property: JsonPropertyName("alerts")] IReadOnlyList<RemoteAlert>? Alerts);

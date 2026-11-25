@@ -14,6 +14,8 @@ public sealed class CloudSessionTests : IAsyncLifetime
     private HistoryStore _history = null!;
     private NodeStore _nodes = null!;
     private CloudSession _session = null!;
+    private readonly FailurePoster _poster = new();
+    private static readonly DateTimeOffset Now = new(2026, 5, 1, 10, 0, 0, TimeSpan.Zero);
     private string _prefsPath = "";
     private string _settingsPath = "";
     private string _historyPath = "";
@@ -42,7 +44,7 @@ public sealed class CloudSessionTests : IAsyncLifetime
         _nodes = new NodeStore(_settingsPath);
         var servers = new ServerStore(_nodes, new ServerSettings(_settingsPath), _history);
         var account = new CloudAccount(endpoint, _vault, new CloudAuthClient(endpoint), _prefs);
-        _session = new CloudSession(account, _nodes, servers, _prefs, null, null);
+        _session = new CloudSession(account, _nodes, servers, _prefs, null, null, _poster, () => Now);
         return ValueTask.CompletedTask;
     }
 
@@ -162,5 +164,83 @@ public sealed class CloudSessionTests : IAsyncLifetime
 
         afterSignIn.Should().BeGreaterThan(0);
         count.Should().BeGreaterThan(afterSignIn);
+    }
+
+    private sealed class FailurePoster : ICloudAlertPoster
+    {
+        public List<string> Failures { get; } = [];
+        public void Post(Towertail.WinUI.Backend.StreamEvent e, string hostName) { }
+        public void Withdraw(Guid alertId) { }
+        public void PostFailure(string text) => Failures.Add(text);
+    }
+
+    private async Task SignInAsync()
+    {
+        _vault.Tokens[TokenKey] = "tok-1";
+        await _session.StartAsync();
+    }
+
+    [Fact]
+    public async Task PerformAckCallsTheAckRoute()
+    {
+        var id = Guid.NewGuid();
+        _server.Handlers["POST /v1/alerts/"] = ctx => LocalTestHttpServer.ReplyAsync(ctx, 200,
+            $$"""{"id":"{{id}}","node_id":"{{Guid.NewGuid()}}","metric":"cpu","tint":"warn"}""");
+        await SignInAsync();
+
+        await _session.PerformAsync(CloudAlertAction.Ack, id);
+
+        _server.Requests.Should().Contain(r => r.Method == "POST" && r.Path == $"/v1/alerts/{id}/ack");
+        _poster.Failures.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task PerformSnoozeSendsOneHourFromNow()
+    {
+        var id = Guid.NewGuid();
+        _server.Handlers["POST /v1/alerts/"] = ctx => LocalTestHttpServer.ReplyAsync(ctx, 200,
+            $$"""{"id":"{{id}}","node_id":"{{Guid.NewGuid()}}","metric":"cpu","tint":"warn"}""");
+        await SignInAsync();
+
+        await _session.PerformAsync(CloudAlertAction.Snooze, id);
+
+        var req = _server.Requests.Single(r => r.Path.EndsWith("/snooze"));
+        Uri.UnescapeDataString(req.Query).Should().Be("until=2026-05-01T11:00:00Z");
+    }
+
+    [Fact]
+    public async Task PerformFailureShowsAToast()
+    {
+        _server.Handlers["POST /v1/alerts/"] = ctx => LocalTestHttpServer.ReplyAsync(ctx, 403);
+        await SignInAsync();
+
+        await _session.PerformAsync(CloudAlertAction.Ack, Guid.NewGuid());
+
+        _poster.Failures.Should().Equal("Ack failed: server said 403");
+    }
+
+    [Fact]
+    public async Task PerformWithoutSignInDoesNothing()
+    {
+        await _session.PerformAsync(CloudAlertAction.Ack, Guid.NewGuid());
+
+        _server.Requests.Should().BeEmpty();
+        _poster.Failures.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("ack", CloudAlertAction.Ack)]
+    [InlineData("snooze", CloudAlertAction.Snooze)]
+    public void ToastActionIdsMapToActions(string id, CloudAlertAction action)
+    {
+        CloudAlertActions.Parse(id).Should().Be(action);
+        action.Id().Should().Be(id);
+    }
+
+    [Fact]
+    public void TapHasNoAction()
+    {
+        CloudAlertActions.Parse(null).Should().BeNull();
+        CloudAlertActions.Parse("open").Should().BeNull();
     }
 }

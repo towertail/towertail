@@ -137,6 +137,17 @@ public sealed class RemoteClient : IEnroller, IAsyncDisposable
         => (await GetJsonAsync<RemoteAlertList>("/v1/alerts", ct).ConfigureAwait(false))?.Alerts
            ?? Array.Empty<RemoteAlert>();
 
+    /// <summary>Acks the alert. The server stops all notifications of it until it recovers.</summary>
+    public Task<RemoteAlert> AckAlertAsync(Guid id, CancellationToken ct = default)
+        => SendJsonAsync<object, RemoteAlert>(HttpMethod.Post, $"/v1/alerts/{id}/ack", new { }, ct);
+
+    /// <summary>Snoozes the alert until the time. The server stops its notifications until then.</summary>
+    public Task<RemoteAlert> SnoozeAlertAsync(Guid id, DateTimeOffset until, CancellationToken ct = default)
+    {
+        var stamp = Uri.EscapeDataString(until.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"));
+        return SendJsonAsync<object, RemoteAlert>(HttpMethod.Post, $"/v1/alerts/{id}/snooze?until={stamp}", new { }, ct);
+    }
+
     private async Task<T?> GetJsonAsync<T>(string path, CancellationToken ct)
     {
         using var req = Build(HttpMethod.Get, path);

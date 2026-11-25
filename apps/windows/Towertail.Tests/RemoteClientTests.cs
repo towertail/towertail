@@ -88,4 +88,49 @@ public sealed class RemoteClientTests : IAsyncLifetime
         System.Text.Json.JsonSerializer.Serialize(new EnrollRequest("web", id, "m-1"))
             .Should().Be($$"""{"display_name":"web","node_id":"{{id}}","machine_id":"m-1"}""");
     }
+
+    [Fact]
+    public async Task AckAlertPostsToAckRoute()
+    {
+        var id = Guid.NewGuid();
+        var node = Guid.NewGuid();
+        _server.Handlers["POST /v1/alerts/"] = ctx => LocalTestHttpServer.ReplyAsync(ctx, 200,
+            $$"""{"id":"{{id}}","node_id":"{{node}}","metric":"cpu","tint":"critical","acked_at":"2026-05-01T10:00:00Z"}""");
+
+        var alert = await _client.AckAlertAsync(id);
+
+        var req = _server.Requests.Single();
+        req.Method.Should().Be("POST");
+        req.Path.Should().Be($"/v1/alerts/{id}/ack");
+        req.Authorization.Should().Be("Bearer test-token");
+        alert.Id.Should().Be(id);
+        alert.NodeId.Should().Be(node);
+        alert.AckedAt.Should().NotBeNull();
+        alert.IsSilenced(DateTimeOffset.UtcNow).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task SnoozeAlertSendsUntil()
+    {
+        var id = Guid.NewGuid();
+        _server.Handlers["POST /v1/alerts/"] = ctx => LocalTestHttpServer.ReplyAsync(ctx, 200,
+            $$"""{"id":"{{id}}","node_id":"{{Guid.NewGuid()}}","metric":"cpu","tint":"warn","snoozed_until":"2026-05-01T11:00:00Z"}""");
+
+        var alert = await _client.SnoozeAlertAsync(id, new DateTimeOffset(2026, 5, 1, 13, 0, 0, TimeSpan.FromHours(2)));
+
+        var req = _server.Requests.Single();
+        req.Path.Should().Be($"/v1/alerts/{id}/snooze");
+        Uri.UnescapeDataString(req.Query).Should().Be("until=2026-05-01T11:00:00Z");
+        alert.SnoozedUntil.Should().Be(new DateTimeOffset(2026, 5, 1, 11, 0, 0, TimeSpan.Zero));
+    }
+
+    [Fact]
+    public async Task AckAlertThrowsOnForbidden()
+    {
+        _server.Handlers["POST /v1/alerts/"] = ctx => LocalTestHttpServer.ReplyAsync(ctx, 403);
+
+        var act = async () => await _client.AckAlertAsync(Guid.NewGuid());
+
+        await act.Should().ThrowAsync<RemoteException>().Where(e => e.Status == 403);
+    }
 }

@@ -7,12 +7,17 @@ namespace Towertail.WinUI.Backend;
 /// <summary>
 /// An event frame of <c>/v1/stream</c>. <c>Metric</c> and <c>Tint</c> are absent for some
 /// kinds. A reachability change has the metric "reachability" and the tint "critical" or "ok".
+/// <c>Notify</c> says that the server sends a notification, with <c>Title</c> and <c>Text</c>, for the alert <c>AlertId</c>.
 /// </summary>
 public sealed record StreamEvent(
     [property: JsonPropertyName("nodeId")] Guid NodeId,
     [property: JsonPropertyName("metric")] string? Metric,
     [property: JsonPropertyName("tint")] string? Tint,
-    [property: JsonPropertyName("kind")] string Kind);
+    [property: JsonPropertyName("kind")] string Kind,
+    [property: JsonPropertyName("alertId")] Guid? AlertId = null,
+    [property: JsonPropertyName("notify")] bool Notify = false,
+    [property: JsonPropertyName("title")] string? Title = null,
+    [property: JsonPropertyName("text")] string? Text = null);
 
 /// <summary>One text frame of <c>/v1/stream</c> (docs/wire.md §4), decoded.</summary>
 public abstract record StreamMessage
@@ -22,6 +27,7 @@ public abstract record StreamMessage
     public sealed record SettingsUpdatedFrame(RemoteServerSettings Settings) : StreamMessage;
     public sealed record DiskScanUpdatedFrame(Guid NodeId, DiskScanJob Job) : StreamMessage;
     public sealed record EventFrame(StreamEvent Event) : StreamMessage;
+    public sealed record AlertUpdatedFrame(RemoteAlert Alert) : StreamMessage;
     public sealed record HelloFrame(StreamHello Hello) : StreamMessage;
     public sealed record SummaryFrame(Guid NodeId, LiveSummary Summary) : StreamMessage;
     public sealed record DetailFrame(Guid NodeId, DetailTab Tab, LiveDetail Detail) : StreamMessage;
@@ -63,6 +69,8 @@ public abstract record StreamMessage
                     ? new DiskScanUpdatedFrame(ReadNodeId(root) ?? job.NodeId, job) : null;
             case "event":
                 return root.GetProperty("event").Deserialize<StreamEvent>(o) is { } e ? new EventFrame(e) : null;
+            case "alert_updated":
+                return root.GetProperty("alert").Deserialize<RemoteAlert>(o) is { } a ? new AlertUpdatedFrame(a) : null;
             case "hello":
                 return root.GetProperty("hello").Deserialize<StreamHello>(o) is { } h ? new HelloFrame(h) : null;
             case "summary":

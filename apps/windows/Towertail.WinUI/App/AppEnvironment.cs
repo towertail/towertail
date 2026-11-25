@@ -1,4 +1,5 @@
 using Microsoft.UI.Dispatching;
+using Microsoft.Windows.AppNotifications;
 using Towertail.WinUI.Backend;
 using Towertail.WinUI.Cloud;
 using Towertail.WinUI.Collectors;
@@ -114,7 +115,16 @@ public sealed class AppEnvironment
             new DpapiTokenVault(TowertailApp.AppDataPath(DpapiTokenVault.FileName)),
             new CloudAuthClient(cloudPrefs.Endpoint),
             cloudPrefs, log: logger);
-        var cloud = new CloudSession(account, nodes, servers, cloudPrefs, collector.UiMarshaller, logger);
+        var toasts = new AppNotifier(logger);
+        var cloud = new CloudSession(account, nodes, servers, cloudPrefs, collector.UiMarshaller, logger, toasts);
+        NotificationTapRouter.ActionHandler = cloud.PerformAsync;
+        try
+        {
+            // The handler comes before Register, so a click that starts the app is not lost.
+            AppNotificationManager.Default.NotificationInvoked += (_, args) => NotificationTapRouter.Handle(args);
+            toasts.Register();
+        }
+        catch (Exception ex) { logger.Warning($"toast: register failed: {ex.Message}"); }
 
         Func<Node, ISamplerSession> connect = node => new SshSamplerSession(node, hostKeyPrompt, onTrust);
         Func<string, string?> samplerBinary = CloudInstaller.BundledBinary;

@@ -58,6 +58,27 @@ public sealed class StreamMessageTests
     }
 
     [Fact]
+    public void EventFrameCarriesTheNotification()
+    {
+        var alert = Guid.Parse("aaaaaaaa-2222-3333-4444-555555555555");
+        var m = Decode($$$$"""{"type":"event","event":{"id":"{{{{Guid.NewGuid()}}}}","alertId":"{{{{alert}}}}","nodeId":"{{{{Id}}}}","metric":"cpu","tint":"warn","kind":"threshold_crossed","notify":true,"title":"web: CPU warn","text":"CPU is at 91%."}}""");
+        m.Should().BeOfType<EventFrame>().Which.Event.Should().Be(
+            new StreamEvent(Id, "cpu", "warn", "threshold_crossed", alert, true, "web: CPU warn", "CPU is at 91%."));
+    }
+
+    [Fact]
+    public void AlertUpdatedFrame()
+    {
+        var alert = Guid.Parse("aaaaaaaa-2222-3333-4444-555555555555");
+        var m = Decode($$$$"""{"type":"alert_updated","nodeId":"{{{{Id}}}}","alert":{"id":"{{{{alert}}}}","node_id":"{{{{Id}}}}","kind":"threshold_crossed","metric":"cpu","tint":"critical","acked_by":"u1","acked_at":"2026-05-01T10:00:00Z"}}""");
+        var a = m.Should().BeOfType<AlertUpdatedFrame>().Subject.Alert;
+        a.Id.Should().Be(alert);
+        a.NodeId.Should().Be(Id);
+        a.AckedAt.Should().Be(new DateTimeOffset(2026, 5, 1, 10, 0, 0, TimeSpan.Zero));
+        a.SnoozedUntil.Should().BeNull();
+    }
+
+    [Fact]
     public void HelloFrame()
     {
         var m = Decode("""{"type":"hello","hello":{"lease":true,"renew_s":30,"max_ttl_s":120}}""");

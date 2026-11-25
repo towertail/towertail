@@ -16,12 +16,15 @@ public sealed class CloudSession : IDiskScanUpdates
     private readonly CloudPrefs _prefs;
     private readonly Func<Action, Task>? _marshal;
     private readonly Logger? _log;
+    private readonly ICloudAlertPoster? _poster;
+    private readonly Func<DateTimeOffset> _now;
     private readonly object _gate = new();
     private string? _feedToken;
 
     public CloudSession(
         CloudAccount account, NodeStore nodes, ServerStore servers, CloudPrefs prefs,
-        Func<Action, Task>? marshal, Logger? log)
+        Func<Action, Task>? marshal, Logger? log,
+        ICloudAlertPoster? poster = null, Func<DateTimeOffset>? now = null)
     {
         Account = account;
         _nodes = nodes;
@@ -29,6 +32,8 @@ public sealed class CloudSession : IDiskScanUpdates
         _prefs = prefs;
         _marshal = marshal;
         _log = log;
+        _poster = poster;
+        _now = now ?? (() => DateTimeOffset.UtcNow);
         Released = new ReleasedHosts(prefs);
         // The lease outlives the feed, so a sign-in while the popover is open sends the view.
         Lease = new ViewLeaseController(view => Feed?.SendAsync(view) ?? Task.CompletedTask);
@@ -86,7 +91,7 @@ public sealed class CloudSession : IDiskScanUpdates
             old = Feed;
             oldClient = Client;
             var client = new RemoteClient(_prefs.Endpoint, token);
-            feed = new CloudFeed(client, _nodes, Servers, Released, Lease, Account.HandleUnauthorized, _marshal, _log);
+            feed = new CloudFeed(client, _nodes, Servers, Released, Lease, Account.HandleUnauthorized, _marshal, _log, _poster);
             feed.DiskScanUpdated += OnDiskScanUpdated;
             feed.StateChanged += OnFeedStateChanged;
             Client = client;
@@ -97,6 +102,23 @@ public sealed class CloudSession : IDiskScanUpdates
         _log?.Info("cloud: start feed");
         feed.Start();
         StateChanged?.Invoke();
+    }
+
+    /// <summary>Runs a button of a cloud toast. A failure shows a short toast.</summary>
+    public async Task PerformAsync(CloudAlertAction action, Guid alertId)
+    {
+        if (Client is not { } client) return;
+        try
+        {
+            if (action == CloudAlertAction.Ack) await client.AckAlertAsync(alertId).ConfigureAwait(false);
+            else await client.SnoozeAlertAsync(alertId, _now() + CloudAlertActions.SnoozeSpan).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            var reason = ex is RemoteException r ? $"server said {r.Status}" : ex.Message;
+            _log?.Warning($"cloud: {action} failed: {ex.Message}");
+            _poster?.PostFailure($"{action} failed: {reason}");
+        }
     }
 
     public async Task StopFeedAsync()

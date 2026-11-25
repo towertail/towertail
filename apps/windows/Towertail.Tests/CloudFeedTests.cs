@@ -26,6 +26,7 @@ public sealed class CloudFeedTests : IAsyncLifetime
     private ManualDelay _delay = null!;
     private ViewLeaseController _lease = null!;
     private CloudFeed _feed = null!;
+    private readonly FakePoster _poster = new();
     private int _unauthorized;
     private List<RemoteNode> _remote = new();
     private string _alerts = """{"alerts":[]}""";
@@ -47,7 +48,7 @@ public sealed class CloudFeedTests : IAsyncLifetime
         _client = new RemoteClient(new Uri(_server.BaseUrl), _server.ExpectedToken);
         _delay = new ManualDelay();
         _lease = new ViewLeaseController(v => _feed.SendAsync(v), _delay.Func);
-        _feed = new CloudFeed(_client, _nodes, _servers, _released, _lease, () => _unauthorized++, null, null);
+        _feed = new CloudFeed(_client, _nodes, _servers, _released, _lease, () => _unauthorized++, null, null, _poster);
         return ValueTask.CompletedTask;
     }
 
@@ -246,6 +247,89 @@ public sealed class CloudFeedTests : IAsyncLifetime
 
         seen.Should().ContainSingle();
         _feed.Alerted.Should().BeEmpty();
+    }
+
+    private static StreamEvent Notice(Guid node, string tint = "critical", bool notify = true, Guid? alert = null)
+        => new(node, "cpu", tint, "threshold_crossed", alert ?? Guid.NewGuid(), notify, "cloud: CPU", "CPU is high.");
+
+    [Fact]
+    public void EventWithNotifyPostsToast()
+    {
+        var cloud = AddCloud("db");
+        var e = Notice(cloud.Id);
+
+        _feed.Handle(new EventFrame(e));
+
+        _poster.Posted.Should().Equal((e, "db"));
+    }
+
+    [Fact]
+    public void EventWithoutNotifyPostsNothing()
+    {
+        var cloud = AddCloud();
+
+        _feed.Handle(new EventFrame(Notice(cloud.Id, notify: false)));
+
+        _poster.Posted.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void EventOfSshHostPostsNothing()
+    {
+        var ssh = AddSsh();
+
+        _feed.Handle(new EventFrame(Notice(ssh.Id)));
+
+        _poster.Posted.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void EventWithoutAlertIdPostsNothing()
+    {
+        var cloud = AddCloud();
+
+        _feed.Handle(new EventFrame(new StreamEvent(cloud.Id, "cpu", "warn", "threshold_crossed", null, true, "t", "x")));
+
+        _poster.Posted.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void AckedAlertUpdateWithdrawsToast()
+    {
+        var alert = Guid.NewGuid();
+
+        _feed.Handle(new AlertUpdatedFrame(new RemoteAlert(alert, Guid.NewGuid(), "cpu", "critical", DateTimeOffset.UtcNow)));
+
+        _poster.Withdrawn.Should().Equal(alert);
+    }
+
+    [Fact]
+    public void SnoozedAlertUpdateWithdrawsToast()
+    {
+        var alert = Guid.NewGuid();
+
+        _feed.Handle(new AlertUpdatedFrame(new RemoteAlert(alert, Guid.NewGuid(), "cpu", "critical", null, DateTimeOffset.UtcNow.AddHours(1))));
+
+        _poster.Withdrawn.Should().Equal(alert);
+    }
+
+    [Fact]
+    public void ExpiredSnoozeKeepsToast()
+    {
+        var expired = DateTimeOffset.UtcNow.AddMinutes(-1);
+
+        _feed.Handle(new AlertUpdatedFrame(new RemoteAlert(Guid.NewGuid(), Guid.NewGuid(), "cpu", "critical", null, expired)));
+
+        _poster.Withdrawn.Should().BeEmpty();
+    }
+
+    private sealed class FakePoster : ICloudAlertPoster
+    {
+        public List<(StreamEvent Event, string Host)> Posted { get; } = [];
+        public List<Guid> Withdrawn { get; } = [];
+        public void Post(StreamEvent e, string hostName) => Posted.Add((e, hostName));
+        public void Withdraw(Guid alertId) => Withdrawn.Add(alertId);
+        public void PostFailure(string text) { }
     }
 
     [Fact]
