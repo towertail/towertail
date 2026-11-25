@@ -51,6 +51,9 @@ func httpErrorHandler(log *slog.Logger) echo.HTTPErrorHandler {
 		} else if errors.Is(err, store.ErrNotFound) {
 			status = http.StatusNotFound
 			code = "not_found"
+		} else if errors.Is(err, store.ErrInvalidRules) {
+			status = http.StatusBadRequest
+			code = "bad_request"
 		} else if errors.Is(err, store.ErrNotImplemented) {
 			status = http.StatusNotImplemented
 			code = "not_implemented"

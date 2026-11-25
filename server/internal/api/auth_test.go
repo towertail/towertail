@@ -95,7 +95,7 @@ func newRoleServer(t *testing.T, roles Roles) *Server {
 		}
 	}
 	return New(Deps{
-		Config:     &config.Config{},
+		Config:     &config.Config{HTTP: config.HTTPConfig{RateLimitRPS: 1000}},
 		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Store:      st,
 		Issuer:     auth.NewIssuer(st),

@@ -103,17 +103,23 @@ func (s *Server) handleUpdateNode(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	// A client that does not know allowDiskScan, hideProcFolders,
-	// ignoredProcs, machineId or mutedSignals keeps the stored values. Such a client also does not know
-	// customLongProc.
+	// ignoredProcs, machineId, mutedSignals or the rule keys keeps the
+	// stored values. Such a client also does not know customLongProc.
 	var opt struct {
-		AllowDiskScan   *bool           `json:"allowDiskScan"`
-		HideProcFolders *bool           `json:"hideProcFolders"`
-		IgnoredProcs    json.RawMessage `json:"ignoredProcs"`
-		MachineID       *string         `json:"machineId"`
-		MutedSignals    json.RawMessage `json:"mutedSignals"`
+		AllowDiskScan      *bool           `json:"allowDiskScan"`
+		HideProcFolders    *bool           `json:"hideProcFolders"`
+		IgnoredProcs       json.RawMessage `json:"ignoredProcs"`
+		MachineID          *string         `json:"machineId"`
+		MutedSignals       json.RawMessage `json:"mutedSignals"`
+		ThresholdOverrides json.RawMessage `json:"thresholdOverrides"`
+		AlertOverrides     json.RawMessage `json:"alertOverrides"`
+		RulesOrigin        json.RawMessage `json:"rulesOrigin"`
 	}
 	_ = json.Unmarshal(body, &opt)
-	if opt.AllowDiskScan == nil || opt.HideProcFolders == nil || opt.IgnoredProcs == nil || opt.MachineID == nil || opt.MutedSignals == nil {
+	// The decode of the body sets the overrides from customThresholds only
+	// when the body has no thresholdOverrides key.
+	legacy := n.ThresholdOverrides
+	if opt.ThresholdOverrides == nil || opt.AlertOverrides == nil || opt.RulesOrigin == nil || opt.AllowDiskScan == nil || opt.HideProcFolders == nil || opt.IgnoredProcs == nil || opt.MachineID == nil || opt.MutedSignals == nil {
 		if old, err := s.store.GetNode(c.Request().Context(), t.OrgID, id); err == nil {
 			if opt.AllowDiskScan == nil {
 				n.AllowDiskScan = old.AllowDiskScan
@@ -131,7 +137,31 @@ func (s *Server) handleUpdateNode(c echo.Context) error {
 			if opt.MutedSignals == nil {
 				n.MutedSignals = old.MutedSignals
 			}
+			if opt.ThresholdOverrides == nil {
+				n.ThresholdOverrides = old.ThresholdOverrides
+				if legacy != nil {
+					m := *legacy
+					if old.ThresholdOverrides != nil {
+						m = old.ThresholdOverrides.Merge(*legacy)
+					}
+					n.ThresholdOverrides = &m
+				}
+			}
+			if opt.AlertOverrides == nil {
+				n.AlertOverrides = old.AlertOverrides
+			}
+			if opt.RulesOrigin == nil {
+				n.RulesOrigin = old.RulesOrigin
+			}
 		}
+	}
+	if opt.RulesOrigin != nil && n.RulesOrigin != nil {
+		o := newRulesOrigin(t, n.RulesOrigin.Client, n.RulesOrigin.Device)
+		n.RulesOrigin = &o
+	}
+	n.SetRules(n.Rules())
+	if err := n.Rules().Validate(); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	n.ID = id
 	if err := s.checkNodeLimit(c.Request().Context(), t.OrgID, id); err != nil {

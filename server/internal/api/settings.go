@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -21,18 +22,49 @@ func (s *Server) handleGetSettings(c echo.Context) error {
 	return c.JSON(http.StatusOK, cfg)
 }
 
+// handlePutSettings decodes the body onto the stored settings, so a key
+// that the body leaves out keeps its stored value. When the body changes
+// a rule, the server sets the origin of the rules.
 func (s *Server) handlePutSettings(c echo.Context) error {
 	t, _ := authctx.TokenFrom(c)
-	var cfg store.ServerSettings
-	// A client that does not know longProc or muted keeps the stored values.
-	if old, err := s.store.GetSettings(c.Request().Context(), t.OrgID); err == nil {
-		cfg.LongProc = old.LongProc
-		cfg.Muted = old.Muted
-	}
-	if err := c.Bind(&cfg); err != nil {
+	body, err := io.ReadAll(c.Request().Body)
+	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
-	if err := s.store.PutSettings(c.Request().Context(), t.OrgID, cfg); err != nil {
+	var in struct {
+		RulesOrigin *struct {
+			Client string `json:"client"`
+			Device string `json:"device"`
+		} `json:"rulesOrigin"`
+	}
+	if err := json.Unmarshal(body, &in); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	cfg, err := s.store.EditSettings(c.Request().Context(), t.OrgID, func(cfg *store.ServerSettings) error {
+		var oldOrigin *store.RulesOrigin // a copy: the decode writes through the pointer
+		if cfg.RulesOrigin != nil {
+			o := *cfg.RulesOrigin
+			oldOrigin = &o
+		}
+		before := ruleKey(*cfg)
+		if err := json.Unmarshal(body, cfg); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		if err := cfg.Rules().Validate(); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		cfg.RulesOrigin = oldOrigin
+		if ruleKey(*cfg) != before {
+			var client, device string
+			if in.RulesOrigin != nil {
+				client, device = in.RulesOrigin.Client, in.RulesOrigin.Device
+			}
+			o := newRulesOrigin(t, client, device)
+			cfg.RulesOrigin = &o
+		}
+		return nil
+	})
+	if err != nil {
 		return err
 	}
 	s.audit(c, "update", "settings", uuid.Nil)
@@ -41,6 +73,15 @@ func (s *Server) handlePutSettings(c echo.Context) error {
 	}
 	s.broadcastSettings(t.OrgID, cfg)
 	return c.JSON(http.StatusOK, cfg)
+}
+
+// ruleKey is the JSON of the org rules without the origin. Two equal keys
+// mean that the rules did not change.
+func ruleKey(cfg store.ServerSettings) string {
+	r := cfg.Rules()
+	r.Origin = nil
+	b, _ := json.Marshal(r)
+	return string(b)
 }
 
 func (s *Server) broadcastSettings(orgID uuid.UUID, cfg store.ServerSettings) {
