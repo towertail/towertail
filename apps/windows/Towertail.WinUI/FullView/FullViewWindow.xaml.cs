@@ -19,6 +19,9 @@ public sealed partial class FullViewWindow : Window
     private ServerViewModel? _vm;
     private readonly WorkbenchCursor _cursor = new();
     private WorkbenchData? _data;
+    private CloudHistoryCache? _cache;
+    private WorkbenchSeries? _series;
+    private ProcessSnapshotLoader? _snapshots;
     private readonly Segmented _tabBar = new(Tabs.Select(t => t.Title()), mono: true);
     private readonly Segmented _rangeBar = new(Enum.GetValues<HostRange>().Select(r => r.Label()), mono: true);
     private readonly Dictionary<HostTab, UIElement> _built = new();
@@ -47,6 +50,7 @@ public sealed partial class FullViewWindow : Window
         Closed += (_, _) =>
         {
             _timer.Stop();
+            _snapshots?.Cancel();
             (_built.GetValueOrDefault(HostTab.Disks) as DisksTab)?.Stop();
             ReportLease(false);
         };
@@ -74,7 +78,12 @@ public sealed partial class FullViewWindow : Window
     public void Bind(ServerViewModel vm)
     {
         _vm = vm;
-        _data = new WorkbenchData(vm, App.Current.Environment.History, _cursor);
+        var env = App.Current.Environment;
+        _cache = env.HistoryFor(vm.Node);
+        _series = _cache is null ? null : new WorkbenchSeries(_cache);
+        _snapshots = _cache is null ? null : new ProcessSnapshotLoader(vm.Node.Id, _cache, hostLabel: vm.Node.DisplayName);
+        _data = new WorkbenchData(vm, env.History, _cursor, _series);
+        if (_series is not null) _series.Changed += () => DispatcherQueue.TryEnqueue(UpdateHistoryNote);
         Title = $"Towertail — {vm.Node.DisplayName}";
         SubtitleText.Text = vm.Node.DisplayName;
         HostName.Text = vm.Node.DisplayName;
@@ -109,12 +118,12 @@ public sealed partial class FullViewWindow : Window
         {
             case HostTab.Overview:
                 var o = new OverviewTab();
-                o.Bind(vm, _cursor, data);
+                o.Bind(vm, _cursor, data, _snapshots);
                 view = o;
                 break;
             case HostTab.Processes:
                 var p = new ProcessesTab();
-                p.Bind(vm, _cursor);
+                p.Bind(vm, _cursor, _cache);
                 p.PortsShown += shown => { _portsShown = shown; ReportLease(); };
                 view = p;
                 break;
@@ -151,7 +160,7 @@ public sealed partial class FullViewWindow : Window
         Host.Children.Add(Build(tab));
         if (!_panelBound)
         {
-            Panel.Bind(_vm, _cursor, new LocalProcessSource(_vm));
+            Panel.Bind(_vm, _cursor, _cache is null ? new LocalProcessSource(_vm) : new CloudProcessSource(_vm.Node.Id, _cache));
             _panelBound = true;
         }
         UpdatePanel();
@@ -223,6 +232,21 @@ public sealed partial class FullViewWindow : Window
         FactsText.Text = _vm.FactsLine ?? _vm.Node.UserAtHost;
     }
 
+    /// <summary>The state of the REST history of a cloud host: an error, a plan limit or a load.</summary>
+    private void UpdateHistoryNote()
+    {
+        var text = _series switch
+        {
+            null => null,
+            { Error: { } e } => e,
+            { Clamped: true } => "The history of your plan is shorter than this range.",
+            { Loading: true } => "Loading the history…",
+            _ => null,
+        };
+        HistoryNote.Text = text ?? "";
+        HistoryNote.Visibility = text is null ? Visibility.Collapsed : Visibility.Visible;
+    }
+
     /// <summary>Every second: the live badge and the ranges that have data.</summary>
     private void Tick()
     {
@@ -241,7 +265,8 @@ public sealed partial class FullViewWindow : Window
         var now = DateTime.UtcNow;
         DateTime? oldest = _vm.CpuSeries.Points.Count > 0 ? _vm.CpuSeries.Points[0].T : null;
         foreach (var r in Enum.GetValues<HostRange>())
-            _rangeBar.SetEnabled((int)r, WorkbenchCursor.IsAvailable(r, oldest, now));
+            _rangeBar.SetEnabled((int)r, _series is not null || WorkbenchCursor.IsAvailable(r, oldest, now));
+        UpdateHistoryNote();
     }
 
     private void AddAccelerators()

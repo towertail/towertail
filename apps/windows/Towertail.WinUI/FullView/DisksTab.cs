@@ -103,7 +103,7 @@ public sealed class DisksTab : UserControl
     {
         if (_vm is null || _cursor is null || _data is null) return;
         if (!IsLoaded) return;
-        _data.EnsureHistory();
+        _data.EnsureHistory(HostTab.Disks);
         var dark = WB.IsDark(this);
         _capacity.Bind(_data.Lines(RailMetric.Disk, dark), _data.Window, _data.Format(RailMetric.Disk), _cursor);
         _io.Bind(_data.Lines(RailMetric.Io, dark), _data.Window, _data.Format(RailMetric.Io), _cursor);
@@ -116,7 +116,7 @@ public sealed class DisksTab : UserControl
             var level = m.Frac >= t.Critical ? HealthLevel.Critical : m.Frac >= t.Warn ? HealthLevel.Warn : HealthLevel.Nominal;
             var color = WB.Brush(level == HealthLevel.Nominal ? WB.Metric(RailMetric.Disk, dark) : WB.Level(level, dark));
             var row = new Grid { ColumnSpacing = 12 };
-            foreach (var w in new[] { 160.0, 80.0, 0.0, 190.0 })
+            foreach (var w in new[] { 160.0, 80.0, 0.0, 260.0 })
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = w == 0 ? new GridLength(1, GridUnitType.Star) : new GridLength(w) });
             var back = new Grid { Height = 6, VerticalAlignment = VerticalAlignment.Center };
             back.Children.Add(new Border { Background = WB.Stroke, CornerRadius = new CornerRadius(3) });
@@ -125,7 +125,8 @@ public sealed class DisksTab : UserControl
             back.SizeChanged += (_, e) => bar.Width = e.NewSize.Width * frac;
             back.Children.Add(bar);
             var fs = WB.Text(m.Fs, 11, true, WB.Muted);
-            var amount = WB.Text($"{StringFormatters.Bytes(m.Used)} of {StringFormatters.Bytes(m.Total)} · {m.Frac:P0}", 12, true, level == HealthLevel.Nominal ? null : color);
+            var inodes = _data.Cloud?.InodeRatio(m.Mount) is double ir ? $" · inodes {ir:P0}" : "";
+            var amount = WB.Text($"{StringFormatters.Bytes(m.Used)} of {StringFormatters.Bytes(m.Total)} · {m.Frac:P0}{inodes}", 12, true, level == HealthLevel.Nominal ? null : color);
             Grid.SetColumn(fs, 1);
             Grid.SetColumn(back, 2);
             Grid.SetColumn(amount, 3);

@@ -2,7 +2,8 @@ namespace Towertail.WinUI.State;
 
 public sealed record ProcessFacts(
     string? User = null, int? Ppid = null, string? Parent = null, string? Cwd = null, string? Repo = null,
-    IReadOnlyList<string>? Ports = null, DateTime? Started = null, DateTime? FactsAt = null, int? Threads = null)
+    IReadOnlyList<string>? Ports = null, DateTime? Started = null, DateTime? FactsAt = null, int? Threads = null,
+    int? Pid = null, bool Stale = false)
 {
     public static readonly ProcessFacts Empty = new();
 }
@@ -32,7 +33,7 @@ public sealed class LocalProcessSource(ServerViewModel vm) : IProcessDetailSourc
         foreach (var snap in vm.Procs.In(window).OrderBy(s => s.T))
         {
             ct.ThrowIfCancellationRequested();
-            var hits = snap.Items.Where(p => ProcessRef.KeyOf(p.Name, p.Cmd) == r.Key).ToList();
+            var hits = snap.Items.Where(p => ProcessRef.KeyOf(p) == r.Key).ToList();
             if (hits.Count == 0) continue;
             cpu.Add(new TimedValue(snap.T, hits.Sum(p => p.CpuPct)));
             rss.Add(new TimedValue(snap.T, hits.Sum(p => (double)p.Rss)));

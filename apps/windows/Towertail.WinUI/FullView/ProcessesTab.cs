@@ -2,6 +2,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
+using Towertail.WinUI.Backend;
 using Towertail.WinUI.Design;
 using Towertail.WinUI.State;
 
@@ -23,6 +24,9 @@ public sealed class ProcessesTab : UserControl
     private ProcSort _sort = ProcSort.Cpu;
     private DateTime _builtAt;
     private bool _portsBound;
+    private CloudHistoryCache? _cache;
+    private CancellationTokenSource? _loadCts;
+    private (DateTime, ProcSort)? _loadedKey;
 
     public event Action<bool>? PortsShown;
 
@@ -84,7 +88,7 @@ public sealed class ProcessesTab : UserControl
             if (i == 1 && !_portsBound && _vm is not null) { _ports.Bind(_vm); _portsBound = true; }
             PortsShown?.Invoke(i == 1);
         };
-        _sortBar.SelectionChanged += i => { _sort = (ProcSort)i; _builtAt = DateTime.MinValue; Refresh(); };
+        _sortBar.SelectionChanged += i => { _sort = (ProcSort)i; _builtAt = DateTime.MinValue; _loadedKey = null; Refresh(); };
     }
 
     private static Grid Columns(double[] widths)
@@ -95,10 +99,12 @@ public sealed class ProcessesTab : UserControl
         return g;
     }
 
-    public void Bind(ServerViewModel vm, WorkbenchCursor cursor)
+    /// <summary>A cloud host passes the cache. Its offenders then come from the server.</summary>
+    public void Bind(ServerViewModel vm, WorkbenchCursor cursor, CloudHistoryCache? cache = null)
     {
         _vm = vm;
         _cursor = cursor;
+        _cache = cache;
         vm.PropertyChanged += (_, a) =>
         {
             if (a.PropertyName == nameof(ServerViewModel.LastSeen)) DispatcherQueue.TryEnqueue(Refresh);
@@ -106,7 +112,7 @@ public sealed class ProcessesTab : UserControl
         cursor.PropertyChanged += (_, a) =>
         {
             if (a.PropertyName is nameof(WorkbenchCursor.Range) or nameof(WorkbenchCursor.Zoom))
-                DispatcherQueue.TryEnqueue(() => { _builtAt = DateTime.MinValue; Refresh(); });
+                DispatcherQueue.TryEnqueue(() => { _builtAt = DateTime.MinValue; _loadedKey = null; Refresh(); });
         };
         Loaded += (_, _) => { _builtAt = DateTime.MinValue; Refresh(); };
         Refresh();
@@ -119,14 +125,56 @@ public sealed class ProcessesTab : UserControl
         var now = DateTime.UtcNow;
         if (now - _builtAt < TimeSpan.FromSeconds(5)) return;
         _builtAt = now;
-        var dark = WB.IsDark(this);
         var w = _cursor.Window(now);
         _title.Text = $"{w.From.ToLocalTime():HH:mm} → {w.To.ToLocalTime():HH:mm}";
-        var top = new OffenderRanking(_vm.Procs.In(w), w, _sort).Top(50);
+        if (_cache is not null)
+        {
+            LoadCloud(w);
+            return;
+        }
+        Show(new OffenderRanking(_vm.Procs.In(w), w, _sort).Top(50), "No process data in this window.");
+    }
+
+    /// <summary>The window rounds down to a minute, so a live window asks once a minute.</summary>
+    private async void LoadCloud((DateTime From, DateTime To) window)
+    {
+        static DateTime Floor(DateTime t) => new(t.Ticks - t.Ticks % TimeSpan.TicksPerMinute, DateTimeKind.Utc);
+        var from = Floor(window.From);
+        var to = Floor(window.To);
+        if (_loadedKey == (to, _sort) && _rows.Children.Count > 0) return;
+        _loadedKey = (to, _sort);
+        _loadCts?.Cancel();
+        var cts = _loadCts = new CancellationTokenSource();
+        var sort = _sort;
+        if (_rows.Children.Count == 0) Message("Loading the offenders…");
+        try
+        {
+            var r = await _cache!.OffendersAsync(_vm!.Node.Id, from, to, sort, cts.Token);
+            if (cts.IsCancellationRequested) return;
+            Show(r.Processes.Select(o => Offender.FromRemote(o, r)).ToList(), "No process data in this window.");
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            if (cts.IsCancellationRequested) return;
+            _loadedKey = null;
+            Message(CloudHistoryError.Message(ex));
+        }
+    }
+
+    private void Message(string text)
+    {
+        _rows.Children.Clear();
+        _rows.Children.Add(WB.Text(text, 12, false, WB.Muted));
+    }
+
+    private void Show(IReadOnlyList<Offender> top, string empty)
+    {
+        var dark = WB.IsDark(this);
         _rows.Children.Clear();
         if (top.Count == 0)
         {
-            _rows.Children.Add(WB.Text("No process data in this window.", 12, false, WB.Muted));
+            Message(empty);
             return;
         }
         var maxAvg = Math.Max(100, top.Max(o => o.Avg));

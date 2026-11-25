@@ -68,7 +68,7 @@ public sealed partial class ProcessPanel : UserControl
 
         Facts.Children.Clear();
         var f = detail.Facts;
-        Fact("PID", r.Pid?.ToString());
+        Fact("PID", (r.Pid ?? f.Pid)?.ToString());
         Fact("User", f.User);
         Fact("Parent", f.Parent is null ? f.Ppid?.ToString() : f.Ppid is int pp ? $"{f.Parent} ({pp})" : f.Parent);
         Fact("Folder", f.Cwd);
@@ -76,6 +76,12 @@ public sealed partial class ProcessPanel : UserControl
         Fact("Ports", f.Ports is { Count: > 0 } ps ? string.Join(", ", ps) : null);
         Fact("Started", f.Started is { } s ? s.ToLocalTime().ToString("MMM d HH:mm") + " (" + ShortDuration.Age(DateTime.UtcNow - s) + " ago)" : null);
         Fact("Threads", f.Threads?.ToString());
+        if (f.Stale && !empty)
+        {
+            var note = WB.Text("The server keeps PID, parent and folder for 1 h.", 11, false, WB.Muted);
+            note.TextWrapping = TextWrapping.Wrap;
+            Facts.Children.Add(note);
+        }
 
         var cursor = _cursor;
         CpuChart.Bind(new[] { new ChartSeries("CPU", WB.Metric(RailMetric.Cpu, dark), detail.Cpu) }, window, new ChartFormat(v => $"{v:0.#}%"), cursor);

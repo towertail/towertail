@@ -143,19 +143,23 @@ public partial class App : Application
 
     /// <summary>
     /// Opens the workbench of the first host after the first samples. <c>TOWERTAIL_DEBUG_TAB</c> is a tab name,
-    /// <c>TOWERTAIL_DEBUG_RAIL</c> a rail metric. <c>TOWERTAIL_DEBUG_CURSOR</c> is <c>hover</c>, <c>pin</c> or <c>panel</c>.
+    /// <c>TOWERTAIL_DEBUG_RAIL</c> a rail metric. <c>TOWERTAIL_DEBUG_HOST=cloud</c> picks the first Cloud host. <c>TOWERTAIL_DEBUG_AGE</c> moves the cursor back by minutes. <c>TOWERTAIL_DEBUG_RANGE</c> is a range name such as <c>H24</c>. <c>TOWERTAIL_DEBUG_CURSOR</c> is <c>hover</c>, <c>pin</c> or <c>panel</c>.
     /// </summary>
     private async Task OpenWorkbenchForDebugAsync()
     {
         var seconds = int.TryParse(System.Environment.GetEnvironmentVariable("TOWERTAIL_DEBUG_WAIT"), out var w) ? w : 20;
         await Task.Delay(TimeSpan.FromSeconds(seconds));
-        var vm = Environment.Servers.Servers.FirstOrDefault();
+        var cloud = System.Environment.GetEnvironmentVariable("TOWERTAIL_DEBUG_HOST") == "cloud";
+        for (var i = 0; cloud && i < 100 && !Environment.Servers.Servers.Any(x => x.Node.IsCloud && x.Procs.Latest is not null); i++) await Task.Delay(300);
+        var vm = Environment.Servers.Servers.FirstOrDefault(x => !cloud || x.Node.IsCloud);
         if (vm is null) return;
         var win = FullViewRegistry.Open(vm);
         var tab = Enum.TryParse<HostTab>(System.Environment.GetEnvironmentVariable("TOWERTAIL_DEBUG_TAB"), true, out var t) ? t : HostTab.Overview;
         RailMetric? rail = Enum.TryParse<RailMetric>(System.Environment.GetEnvironmentVariable("TOWERTAIL_DEBUG_RAIL"), true, out var r) ? r : null;
         win.SelectTab(tab, rail);
+        if (Enum.TryParse<HostRange>(System.Environment.GetEnvironmentVariable("TOWERTAIL_DEBUG_RANGE"), true, out var range)) win.Cursor.Range = range;
         var at = (vm.Procs.Latest?.T ?? DateTime.UtcNow).AddSeconds(-Math.Min(60, seconds / 2));
+        if (double.TryParse(System.Environment.GetEnvironmentVariable("TOWERTAIL_DEBUG_AGE"), out var age)) at = at.AddMinutes(-age);
         switch (System.Environment.GetEnvironmentVariable("TOWERTAIL_DEBUG_CURSOR"))
         {
             case "hover": win.Cursor.HoverAt = at; break;

@@ -32,6 +32,12 @@ public sealed class AppEnvironment
     public required CloudExit Exit { get; init; }
     public required SamplerKeeper Keeper { get; init; }
 
+    /// <summary>The history of the debug server override. Null in a release build and without the override.</summary>
+    public CloudHistoryCache? DebugHistory { get; init; }
+
+    /// <summary>The history source of a cloud host: the cloud session, else the debug server. Null for other hosts.</summary>
+    public CloudHistoryCache? HistoryFor(Node node) => node.IsCloud ? Cloud.History ?? DebugHistory : null;
+
     /// <summary>Watches sleep and wake for the cloud lease. Held here so that it lives as long as the app.</summary>
     public SystemReachabilityMonitor? Reachability { get; init; }
 
@@ -57,6 +63,7 @@ public sealed class AppEnvironment
         var servers = new ServerStore(nodes, serverSettings, history);
 
         IBackend backend = new LocalBackend(nodes, servers, clientSettings, serverSettings);
+        CloudHistoryCache? debugHistory = null;
 #if DEBUG
         // Developer override: use a server as the backend, with no cloud account.
         var remoteMode = false;
@@ -64,7 +71,9 @@ public sealed class AppEnvironment
             && System.Environment.GetEnvironmentVariable("TOWERTAIL_REMOTE_TOKEN") is { Length: > 0 } remoteToken
             && Uri.TryCreate(remoteUrl, UriKind.Absolute, out var remoteUri))
         {
-            backend = new RemoteBackend(new RemoteClient(remoteUri, remoteToken), nodes, servers, clientSettings, serverSettings);
+            var debugClient = new RemoteClient(remoteUri, remoteToken);
+            backend = new RemoteBackend(debugClient, nodes, servers, clientSettings, serverSettings);
+            debugHistory = new CloudHistoryCache(debugClient);
             remoteMode = true;
         }
 #endif
@@ -196,6 +205,7 @@ public sealed class AppEnvironment
             Exit = exit,
             Keeper = keeper,
             Reachability = reachability,
+            DebugHistory = debugHistory,
             HostKeyPrompt = hostKeyPrompt,
             OnHostKeyTrust = onTrust,
         };

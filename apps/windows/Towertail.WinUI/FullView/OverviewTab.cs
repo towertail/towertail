@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Towertail.WinUI.Backend;
 using Towertail.WinUI.Design;
 using Towertail.WinUI.State;
 
@@ -86,12 +87,12 @@ public sealed class OverviewTab : UserControl
         }
     }
 
-    public void Bind(ServerViewModel vm, WorkbenchCursor cursor, WorkbenchData data)
+    public void Bind(ServerViewModel vm, WorkbenchCursor cursor, WorkbenchData data, ProcessSnapshotLoader? snapshots = null)
     {
         _vm = vm;
         _cursor = cursor;
         _data = data;
-        _table.Bind(vm, cursor);
+        _table.Bind(vm, cursor, snapshots);
         _rail.Select(_metric);
         vm.PropertyChanged += (_, a) =>
         {

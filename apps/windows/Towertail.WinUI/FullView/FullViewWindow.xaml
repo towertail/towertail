@@ -58,6 +58,10 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <ContentPresenter Grid.Column="0" x:Name="TabsHost" />
+                <TextBlock Grid.Column="1" x:Name="HistoryNote" Visibility="Collapsed" FontSize="12"
+                           FontFamily="{StaticResource MonoFont}" VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                     <Button x:Name="ResetZoomBtn" Visibility="Collapsed" Click="OnResetZoom" Padding="10,4,10,4" />
                     <ContentPresenter x:Name="RangeHost" />

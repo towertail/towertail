@@ -1,9 +1,29 @@
 namespace Towertail.WinUI.State;
 
-/// <summary>One process group in the offenders table.</summary>
-public sealed record Offender(ProcessRef Ref, double Avg, double Peak, long RssMax, TimeSpan HighFor, IReadOnlyList<double> Series)
+/// <summary>
+/// One process group in the offenders table. A cloud series has its own start and step.
+/// <see cref="Variant"/> tells apart two rows of one key (a split by repository).
+/// </summary>
+public sealed record Offender(ProcessRef Ref, double Avg, double Peak, long RssMax, TimeSpan HighFor, IReadOnlyList<double> Series,
+    DateTime? SeriesFrom = null, TimeSpan? SeriesStep = null, string Variant = "")
 {
-    public string Id => Ref.Key;
+    public string Id => Ref.Key + Variant;
+
+    /// <summary>The time of point <paramref name="i"/> of <see cref="Series"/> in a window.</summary>
+    public DateTime TimeOf(int i, (DateTime From, DateTime To) window)
+        => SeriesFrom is { } from && SeriesStep is { } step
+            ? from + i * step
+            : window.From + TimeSpan.FromSeconds(i * (window.To - window.From).TotalSeconds / Math.Max(Series.Count, 1));
+
+    /// <summary>The row of a cloud answer. The time at 50 % CPU or more counts the points of the series.</summary>
+    public static Offender FromRemote(Backend.RemoteOffender r, Backend.RemoteOffenders response)
+    {
+        TimeSpan? step = response.SeriesStepS is int s ? TimeSpan.FromSeconds(s) : null;
+        var cpu = (IReadOnlyList<double>?)r.Series?.Cpu ?? Array.Empty<double>();
+        var high = cpu.Count(v => v >= OffenderRanking.HighCpu) * (step ?? TimeSpan.Zero);
+        return new Offender(new ProcessRef(r.Key, null, r.Name, r.Cmd), r.CpuPctAvg, r.CpuPctMax,
+            (long)Math.Min(r.RssMax, long.MaxValue), high, cpu, response.SeriesFrom, step, r.Repo ?? "");
+    }
 }
 
 /// <summary>

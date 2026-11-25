@@ -20,7 +20,7 @@ public interface IEnroller
 /// on every request, a matching <see cref="RemoteException"/> for 4xx/5xx, and a factory for
 /// the self-reconnecting <see cref="RemoteStream"/>.
 /// </summary>
-public sealed class RemoteClient : IEnroller, IAsyncDisposable
+public sealed class RemoteClient : IEnroller, IHistorySource, IAsyncDisposable
 {
     private readonly HttpClient _http;
     private readonly Uri _baseUri;
@@ -191,6 +191,71 @@ public sealed class RemoteClient : IEnroller, IAsyncDisposable
     {
         var stamp = Uri.EscapeDataString(until.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"));
         return SendJsonAsync<object, RemoteAlert>(HttpMethod.Post, $"/v1/alerts/{id}/snooze?until={stamp}", new { }, ct);
+    }
+
+    /// <summary>The history of the named metrics (16 at most). <paramref name="step"/> is the point spacing.</summary>
+    public Task<RemoteHistoryResponse> HistoryAsync(
+        Guid nodeId, IReadOnlyList<string> metrics, DateTime from, DateTime to, TimeSpan? step = null, CancellationToken ct = default)
+    {
+        var q = "metrics=" + string.Join(",", metrics.Select(Uri.EscapeDataString)) + "&" + Range(from, to);
+        if (step is { } s) q += "&step=" + StepText(s);
+        return GetRequiredAsync<RemoteHistoryResponse>($"/v1/nodes/{nodeId}/history?{q}", ct);
+    }
+
+    /// <summary>The used space of each mount over time.</summary>
+    public Task<RemoteDiskHistory> DiskHistoryAsync(Guid nodeId, DateTime from, DateTime to, CancellationToken ct = default)
+        => GetRequiredAsync<RemoteDiskHistory>($"/v1/nodes/{nodeId}/disks?{Range(from, to)}", ct);
+
+    /// <summary>The process snapshot at a time. The server picks the tier from the age of <paramref name="ts"/>.</summary>
+    public async Task<RemoteProcessSnapshot> ProcessesAtAsync(
+        Guid nodeId, DateTime ts, ProcSort by, int limit, CancellationToken ct = default)
+    {
+        var path = $"/v1/nodes/{nodeId}/processes/at?ts={Uri.EscapeDataString(Stamp(ts))}&by={SortName(by)}&limit={limit}";
+        var (text, size) = await GetTextAsync(path, ct).ConfigureAwait(false);
+        return Decode<RemoteProcessSnapshot>(text) with { Bytes = size };
+    }
+
+    /// <summary>The worst processes of a window, with <paramref name="series"/> points for each.</summary>
+    public Task<RemoteOffenders> OffendersAsync(
+        Guid nodeId, DateTime from, DateTime to, ProcSort by, int limit, int series, CancellationToken ct = default)
+        => GetRequiredAsync<RemoteOffenders>(
+            $"/v1/nodes/{nodeId}/processes?{Range(from, to)}&by={SortName(by)}&limit={limit}&series={series}", ct);
+
+    /// <summary>One process over a window. The key is percent-encoded.</summary>
+    public Task<RemoteProcessDetail> ProcessAsync(
+        Guid nodeId, string key, DateTime from, DateTime to, TimeSpan step, CancellationToken ct = default)
+        => GetRequiredAsync<RemoteProcessDetail>(
+            $"/v1/nodes/{nodeId}/processes/{Uri.EscapeDataString(key)}?{Range(from, to)}&step={StepText(step)}", ct);
+
+    internal static string SortName(ProcSort by) => by switch { ProcSort.Rss => "mem", ProcSort.Io => "io", _ => "cpu" };
+
+    /// <summary>Go duration text, for example <c>"60s"</c>.</summary>
+    private static string StepText(TimeSpan step) => $"{(long)Math.Max(1, Math.Round(step.TotalSeconds))}s";
+
+    private static string Stamp(DateTime t) => t.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'");
+
+    private static string Range(DateTime from, DateTime to)
+        => $"from={Uri.EscapeDataString(Stamp(from))}&to={Uri.EscapeDataString(Stamp(to))}";
+
+    private async Task<T> GetRequiredAsync<T>(string path, CancellationToken ct)
+    {
+        var (text, _) = await GetTextAsync(path, ct).ConfigureAwait(false);
+        return Decode<T>(text);
+    }
+
+    private T Decode<T>(string text)
+    {
+        try { return JsonSerializer.Deserialize<T>(text, _json) ?? throw new JsonException("empty body"); }
+        catch (JsonException ex) { throw new RemoteException(200, text, "The cloud sent an answer that the app cannot read: " + ex.Message); }
+    }
+
+    private async Task<(string Text, int Size)> GetTextAsync(string path, CancellationToken ct)
+    {
+        using var req = Build(HttpMethod.Get, path);
+        using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+        await EnsureOkAsync(resp, ct).ConfigureAwait(false);
+        var bytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+        return (Encoding.UTF8.GetString(bytes), bytes.Length);
     }
 
     private async Task<T?> GetJsonAsync<T>(string path, CancellationToken ct)

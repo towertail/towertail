@@ -208,4 +208,82 @@ public sealed class RemoteClientTests : IAsyncLifetime
         ex.Status.Should().Be(403);
         ex.UserMessage.Should().NotBeNullOrEmpty();
     }
+
+    private const string EmptySnapshot = """{"node_id":"00000000-0000-0000-0000-000000000001","ts":"2026-04-20T12:00:10Z","tier":"raw","bucket_s":0,"by":"cpu","processes":[]}""";
+
+    [Fact]
+    public async Task ProcessesAtHitsCorrectPathAndQuery()
+    {
+        var id = Guid.NewGuid();
+        _server.Handlers["GET /v1/nodes/"] = ctx => LocalTestHttpServer.ReplyAsync(ctx, 200, EmptySnapshot);
+
+        var snap = await _client.ProcessesAtAsync(id, new DateTime(2026, 4, 20, 12, 0, 10, DateTimeKind.Utc), ProcSort.Rss, 20);
+
+        var req = _server.Requests.Single();
+        req.Path.Should().Be($"/v1/nodes/{id}/processes/at");
+        Uri.UnescapeDataString(req.Query).Should().Be("ts=2026-04-20T12:00:10Z&by=mem&limit=20");
+        snap.Bytes.Should().Be(EmptySnapshot.Length);
+    }
+
+    [Fact]
+    public async Task OffendersSendsSeries60()
+    {
+        var id = Guid.NewGuid();
+        _server.Handlers["GET /v1/nodes/"] = ctx => LocalTestHttpServer.ReplyAsync(ctx, 200,
+            """{"node_id":"00000000-0000-0000-0000-000000000001","from":"2026-04-20T11:00:00Z","to":"2026-04-20T12:00:00Z","processes":[]}""");
+
+        await _client.OffendersAsync(id, new DateTime(2026, 4, 20, 11, 0, 0, DateTimeKind.Utc),
+            new DateTime(2026, 4, 20, 12, 0, 0, DateTimeKind.Utc), ProcSort.Cpu, 10, 60);
+
+        var req = _server.Requests.Single();
+        req.Path.Should().Be($"/v1/nodes/{id}/processes");
+        Uri.UnescapeDataString(req.Query).Should().Be("from=2026-04-20T11:00:00Z&to=2026-04-20T12:00:00Z&by=cpu&limit=10&series=60");
+    }
+
+    [Fact]
+    public async Task ProcessKeyIsPercentEncoded()
+    {
+        var id = Guid.NewGuid();
+        string? raw = null;
+        _server.Handlers["GET /v1/nodes/"] = ctx =>
+        {
+            raw = ctx.Request.RawUrl;
+            return LocalTestHttpServer.ReplyAsync(ctx, 200,
+                """{"node_id":"00000000-0000-0000-0000-000000000001","key":"a/b+c","from":"2026-04-20T11:00:00Z","to":"2026-04-20T12:00:00Z","points":[]}""");
+        };
+
+        var d = await _client.ProcessAsync(id, "a/b+c", new DateTime(2026, 4, 20, 11, 0, 0, DateTimeKind.Utc),
+            new DateTime(2026, 4, 20, 12, 0, 0, DateTimeKind.Utc), TimeSpan.FromSeconds(60));
+
+        raw.Should().StartWith($"/v1/nodes/{id}/processes/a%2Fb%2Bc?");
+        raw.Should().EndWith("&step=60s");
+        d.Key.Should().Be("a/b+c");
+    }
+
+    [Fact]
+    public async Task HistorySendsMetricsListAndStep()
+    {
+        var id = Guid.NewGuid();
+        _server.Handlers["GET /v1/nodes/"] = ctx => LocalTestHttpServer.ReplyAsync(ctx, 200,
+            """{"node_id":"00000000-0000-0000-0000-000000000001","series":{"cpu":[{"ts":"2026-04-20T11:00:00Z","value":12.5,"max":40}],"mem":[]},"from":"2026-04-20T11:00:00Z","to":"2026-04-20T12:00:00Z","resolution":"60s"}""");
+
+        var h = await _client.HistoryAsync(id, new[] { "cpu", "mem" },
+            new DateTime(2026, 4, 20, 11, 0, 0, DateTimeKind.Utc), new DateTime(2026, 4, 20, 12, 0, 0, DateTimeKind.Utc), TimeSpan.FromSeconds(60));
+
+        var req = _server.Requests.Single();
+        req.Path.Should().Be($"/v1/nodes/{id}/history");
+        Uri.UnescapeDataString(req.Query).Should().Be("metrics=cpu,mem&from=2026-04-20T11:00:00Z&to=2026-04-20T12:00:00Z&step=60s");
+        h.Series["cpu"].Should().ContainSingle().Which.Max.Should().Be(40);
+        h.Series["mem"].Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task BrokenJsonThrowsRemoteException()
+    {
+        _server.Handlers["GET /v1/nodes/"] = ctx => LocalTestHttpServer.ReplyAsync(ctx, 200, "{not json");
+
+        var act = async () => await _client.DiskHistoryAsync(Guid.NewGuid(), DateTime.UtcNow.AddHours(-1), DateTime.UtcNow);
+
+        await act.Should().ThrowAsync<RemoteException>();
+    }
 }

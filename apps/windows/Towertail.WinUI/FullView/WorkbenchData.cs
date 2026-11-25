@@ -1,3 +1,4 @@
+using Towertail.WinUI.Backend;
 using Towertail.WinUI.Design;
 using Towertail.WinUI.State;
 using Windows.UI;
@@ -6,7 +7,8 @@ namespace Towertail.WinUI.FullView;
 
 /// <summary>
 /// The chart series of one host for the window of the cursor. A short, live window reads the
-/// memory series. A longer or zoomed window reads <see cref="HistoryStore.LoadRange"/>.
+/// memory series. A longer or zoomed window reads <see cref="HistoryStore.LoadRange"/>. A cloud host
+/// reads the REST series of the cloud, then the live points after the last one.
 /// </summary>
 public sealed class WorkbenchData
 {
@@ -19,24 +21,39 @@ public sealed class WorkbenchData
     private (HostRange, (DateTime, DateTime)?) _rowsKey;
     private DateTime _rowsAt;
     private bool _loading;
+    private (HostRange, (DateTime, DateTime)?, HostTab)? _cloudKey;
+    private ((DateTime From, DateTime To) Window, TimeSpan Step)? _cloudView;
+    private DateTime _cloudAt;
 
     /// <summary>Raised on the loading thread after new history rows arrive.</summary>
     public event Action? HistoryLoaded;
 
-    public WorkbenchData(ServerViewModel vm, HistoryStore history, WorkbenchCursor cursor)
+    /// <summary>The cloud series of a cloud host, else null.</summary>
+    public WorkbenchSeries? Cloud { get; }
+
+    public WorkbenchData(ServerViewModel vm, HistoryStore history, WorkbenchCursor cursor, WorkbenchSeries? cloud = null)
     {
         _vm = vm;
         _history = history;
         _cursor = cursor;
+        Cloud = cloud;
+        if (cloud is not null) cloud.Changed += () => HistoryLoaded?.Invoke();
     }
 
     public (DateTime From, DateTime To) Window => _cursor.Window(DateTime.UtcNow);
 
-    private bool UsesHistory => _cursor.Zoom is not null || _cursor.Range != HostRange.H1;
+    private bool UsesHistory => Cloud is null && (_cursor.Zoom is not null || _cursor.Range != HostRange.H1);
 
-    /// <summary>Starts a history read when the window needs one and the rows are old.</summary>
-    public async void EnsureHistory()
+    private bool IsLinux => string.Equals(_vm.HostOs, "linux", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Starts a history read when the window needs one and the rows are old. <paramref name="tab"/> picks the cloud metrics.</summary>
+    public async void EnsureHistory(HostTab tab = HostTab.Overview)
     {
+        if (Cloud is not null)
+        {
+            await EnsureCloudAsync(tab).ConfigureAwait(false);
+            return;
+        }
         if (!UsesHistory || _loading) return;
         var key = (_cursor.Range, _cursor.Zoom is { } z ? ((DateTime, DateTime)?)(z.From, z.To) : null);
         if (_rows is not null && key == _rowsKey && DateTime.UtcNow - _rowsAt < HistoryEvery) return;
@@ -54,11 +71,27 @@ public sealed class WorkbenchData
         finally { _loading = false; }
     }
 
+    /// <summary>The window of a cloud load stays the same for 30 s, so a tab switch reuses the entry.</summary>
+    private async Task EnsureCloudAsync(HostTab tab)
+    {
+        var key = (_cursor.Range, _cursor.Zoom is { } z ? ((DateTime, DateTime)?)(z.From, z.To) : null, tab);
+        var now = DateTime.UtcNow;
+        if (_cloudView is null || key != _cloudKey || now - _cloudAt >= HistoryEvery * 2)
+        {
+            _cloudKey = key;
+            _cloudAt = now;
+            _cloudView = (_cursor.Window(now), _cursor.HistoryStep(now));
+        }
+        var (window, step) = _cloudView.Value;
+        await Cloud!.LoadAsync(_vm.Node.Id, tab, window, step, IsLinux).ConfigureAwait(false);
+    }
+
     private IReadOnlyList<TimedValue> Memory(MetricSeries s) => SeriesMath.In(s.Points.ToArray(), Window);
 
-    private IReadOnlyList<TimedValue> Pick(MetricSeries memory, Func<HistoryPoint, double?> field)
+    private IReadOnlyList<TimedValue> Pick(MetricSeries memory, Func<HistoryPoint, double?>? field, string metric)
     {
-        if (!UsesHistory || _rows is null) return Memory(memory);
+        if (Cloud is not null) return SeriesMath.In(Cloud.Points(metric, memory), Window);
+        if (!UsesHistory || _rows is null || field is null) return Memory(memory);
         return _rows.Where(r => field(r) is not null).Select(r => new TimedValue(r.T, field(r)!.Value)).ToList();
     }
 
@@ -67,22 +100,29 @@ public sealed class WorkbenchData
         Color C(int line = 0) => WB.Metric(m, dark, line);
         return m switch
         {
-            RailMetric.Cpu => new[] { new ChartSeries("CPU", C(), Pick(_vm.CpuSeries, r => r.Cpu)) },
-            RailMetric.Mem => new[] { new ChartSeries("Memory", C(), Pick(_vm.MemSeries, r => r.Mem)) },
-            RailMetric.Load => new[] { new ChartSeries("Load", C(), Pick(_vm.LoadSeries, r => r.Load)) },
-            RailMetric.Disk => new[] { new ChartSeries("Disk", C(), Pick(_vm.DiskSeries, r => r.Disk)) },
+            RailMetric.Cpu => new[] { new ChartSeries("CPU", C(), Pick(_vm.CpuSeries, r => r.Cpu, "cpu")) },
+            RailMetric.Mem => new[] { new ChartSeries("Memory", C(), Pick(_vm.MemSeries, r => r.Mem, "mem")) },
+            RailMetric.Load => new[] { new ChartSeries("Load", C(), Pick(_vm.LoadSeries, r => r.Load, "load")) },
+            RailMetric.Disk => new[] { new ChartSeries("Disk", C(), Pick(_vm.DiskSeries, r => r.Disk, "disk")) },
             RailMetric.Net => new[]
             {
-                new ChartSeries("in", C(0), Pick(_vm.RxSeries, r => r.RxMBps)),
-                new ChartSeries("out", C(1), Pick(_vm.TxSeries, r => r.TxMBps)),
+                new ChartSeries("in", C(0), Pick(_vm.RxSeries, r => r.RxMBps, "net_rx")),
+                new ChartSeries("out", C(1), Pick(_vm.TxSeries, r => r.TxMBps, "net_tx")),
             },
             RailMetric.Io => new[]
             {
-                new ChartSeries("read", C(0), Memory(_vm.DiskReadSeries)),
-                new ChartSeries("write", C(1), Memory(_vm.DiskWriteSeries)),
+                new ChartSeries("read", C(0), Pick(_vm.DiskReadSeries, null, "disk_read")),
+                new ChartSeries("write", C(1), Pick(_vm.DiskWriteSeries, null, "disk_write")),
             },
-            _ => new[] { new ChartSeries("Health", C(), Pick(_vm.HealthScoreSeries, r => r.Score)) },
+            _ => new[] { new ChartSeries("Health", C(), HealthLine()) },
         };
+    }
+
+    private IReadOnlyList<TimedValue> HealthLine()
+    {
+        if (Cloud is null) return Pick(_vm.HealthScoreSeries, r => r.Score, "health");
+        var rest = Cloud.ScorePoints(_vm.Thresholds, _vm.Muted, IsLinux);
+        return SeriesMath.In(WorkbenchSeries.Append(rest, _vm.HealthScoreSeries), Window);
     }
 
     public static string Rate(double mbps) => Bytes(mbps * 1_048_576) + "/s";

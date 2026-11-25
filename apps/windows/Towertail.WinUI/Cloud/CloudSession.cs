@@ -53,6 +53,9 @@ public sealed class CloudSession : IDiskScanUpdates, ICloudRulesSource
     public RemoteClient? Client { get; private set; }
     public CloudFeed? Feed { get; private set; }
 
+    /// <summary>The history answers of the cloud. Not null while the user is signed in.</summary>
+    public CloudHistoryCache? History { get; private set; }
+
     /// <summary>The rules of the cloud. Not null while the user is signed in.</summary>
     public CloudRules? Rules { get; private set; }
 
@@ -117,6 +120,7 @@ public sealed class CloudSession : IDiskScanUpdates, ICloudRulesSource
             feed.NodeUpdated += _ => rules.RefreshSoon();
             feed.SettingsUpdated += rules.RefreshSoon;
             Client = client;
+            History = new CloudHistoryCache(client);
             Feed = feed;
             Rules = rules;
             _feedToken = token;
@@ -157,6 +161,7 @@ public sealed class CloudSession : IDiskScanUpdates, ICloudRulesSource
             rules = Rules;
             Feed = null;
             Client = null;
+            History = null;
             Rules = null;
             _feedToken = null;
         }

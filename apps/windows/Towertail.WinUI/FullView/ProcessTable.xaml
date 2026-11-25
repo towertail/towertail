@@ -29,12 +29,14 @@
                 <ContentPresenter Grid.Column="4" x:Name="SortHost" />
             </Grid>
             <Border Grid.Row="1" Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
+            <ProgressBar Grid.Row="1" x:Name="LoadBar" IsIndeterminate="True" Visibility="Collapsed"
+                         Height="2" MinHeight="2" VerticalAlignment="Top" />
             <Grid Grid.Row="2" Padding="24,8,24,8" ColumnSpacing="8">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="96" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="100" />
-                    <ColumnDefinition Width="116" />
+                    <ColumnDefinition Width="150" />
                     <ColumnDefinition Width="84" />
                     <ColumnDefinition Width="84" />
                     <ColumnDefinition Width="64" />
@@ -71,20 +73,25 @@
                                 <ColumnDefinition Width="96" />
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="100" />
-                                <ColumnDefinition Width="116" />
+                                <ColumnDefinition Width="150" />
                                 <ColumnDefinition Width="84" />
                                 <ColumnDefinition Width="84" />
                                 <ColumnDefinition Width="64" />
                                 <ColumnDefinition Width="76" />
                             </Grid.ColumnDefinitions>
                             <fv:PidCell Grid.Column="0" Pid="{x:Bind Pid}" Name="{x:Bind Name}"
+                                        Visibility="{x:Bind PidVisibility}"
                                         CanKill="{x:Bind CanKill}" Killed="OnKillRequested" />
-                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <Grid Grid.Column="1" ColumnSpacing="8" VerticalAlignment="Center">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
                                 <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxWidth="220" />
-                                <TextBlock Text="{x:Bind Cmd}" FontSize="11" FontFamily="{StaticResource MonoFont}"
-                                           TextTrimming="CharacterEllipsis"
+                                <TextBlock Grid.Column="1" Text="{x:Bind Cmd}" FontSize="11" FontFamily="{StaticResource MonoFont}"
+                                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            </StackPanel>
+                            </Grid>
                             <TextBlock Grid.Column="2" Text="{x:Bind User}" TextTrimming="CharacterEllipsis"
                                        VerticalAlignment="Center"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -96,7 +103,7 @@
                             <TextBlock Grid.Column="4" Text="{x:Bind RssText}" FontFamily="{StaticResource MonoFont}" VerticalAlignment="Center" />
                             <TextBlock Grid.Column="5" Text="{x:Bind IoText}" FontFamily="{StaticResource MonoFont}" VerticalAlignment="Center"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                            <TextBlock Grid.Column="6" Text="{x:Bind Threads}" FontFamily="{StaticResource MonoFont}" VerticalAlignment="Center"
+                            <TextBlock Grid.Column="6" Text="{x:Bind ThreadsText}" FontFamily="{StaticResource MonoFont}" VerticalAlignment="Center"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                             <TextBlock Grid.Column="7" Text="{x:Bind StartedText}" VerticalAlignment="Center"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -106,11 +113,18 @@
             </ListView>
             <Border Grid.Row="4" BorderThickness="0,1,0,0" Padding="16,6,16,6"
                     BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}">
-                <Grid>
-                    <TextBlock x:Name="CountText" FontSize="11" FontFamily="{StaticResource MonoFont}"
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" x:Name="CountText" FontSize="11" FontFamily="{StaticResource MonoFont}"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <TextBlock Text="← → step when pinned" FontSize="11" FontFamily="{StaticResource MonoFont}"
-                               HorizontalAlignment="Right"
+                    <TextBlock Grid.Column="1" x:Name="RequestText" FontSize="11" FontFamily="{StaticResource MonoFont}"
+                               HorizontalAlignment="Right" TextTrimming="CharacterEllipsis"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Grid.Column="2" Text="← → step when pinned" FontSize="11" FontFamily="{StaticResource MonoFont}"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 </Grid>
             </Border>

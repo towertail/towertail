@@ -127,7 +127,9 @@ public sealed record ProcSample(
     [property: JsonPropertyName("parent")] string? Parent = null,
     // Null when the sampler cannot read the I/O counters of the process.
     [property: JsonPropertyName("read_bps")] long? ReadBps = null,
-    [property: JsonPropertyName("write_bps")] long? WriteBps = null
+    [property: JsonPropertyName("write_bps")] long? WriteBps = null,
+    // The process key of the cloud. Null for local and SSH hosts.
+    [property: JsonPropertyName("key")] string? Key = null
 );
 
 /// <summary>

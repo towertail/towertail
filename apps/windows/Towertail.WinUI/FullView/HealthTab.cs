@@ -103,7 +103,7 @@ public sealed class HealthTab : UserControl
         if (_vm is null || _cursor is null || _data is null) return;
         if (!IsLoaded) return;
         _dirty = false;
-        _data.EnsureHistory();
+        _data.EnsureHistory(HostTab.Health);
         var dark = WB.IsDark(this);
         var hs = _vm.HealthScore;
         var tint = WB.Brush(WB.Level(hs.Level, dark));

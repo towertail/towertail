@@ -110,7 +110,7 @@ public sealed record HealthScore
         => score >= 81 ? HealthLevel.Nominal : score >= 41 ? HealthLevel.Warn : HealthLevel.Critical;
 
     /// <summary>Linux memory pressure goes critical on "full" and warns on "some".</summary>
-    private static double PsiScore(double some, double full, ThresholdPair pair)
+    public static double PsiScore(double some, double full, ThresholdPair pair)
     {
         if (full >= pair.Critical) return ScoreOf(full, pair.Critical, pair.Critical);
         var s = ScoreOf(some, pair.Warn, pair.Critical);
