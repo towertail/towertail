@@ -252,6 +252,8 @@ func TestRulesValidate(t *testing.T) {
 		"tolerance 0.4":      func(r *OrgRules) { r.Alerts.Tolerance = 0.4 },
 		"unknown notify":     func(r *OrgRules) { r.Alerts.Mem.Notify = "loud" },
 		"zero warn":          func(r *OrgRules) { r.Thresholds.Health.PIDs.Warn = 0 },
+		"cooldown 90000":     func(r *OrgRules) { r.NotifyCooldownSeconds = 90000 },
+		"cooldown -1":        func(r *OrgRules) { r.NotifyCooldownSeconds = -1 },
 	}
 	for name, mutate := range cases {
 		r := d

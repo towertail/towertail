@@ -25,6 +25,7 @@ func testContract(t *testing.T, h storeHarness) {
 	t.Run("EditNode", func(t *testing.T) { contractEditNode(t, h) })
 	t.Run("EditSettings", func(t *testing.T) { contractEditSettings(t, h) })
 	t.Run("Rules", func(t *testing.T) { contractRules(t, h) })
+	t.Run("EditRules", func(t *testing.T) { contractEditRules(t, h) })
 	t.Run("Tokens", func(t *testing.T) { contractTokens(t, h) })
 	t.Run("OAuthTokens", func(t *testing.T) { contractOAuthTokens(t, h) })
 	t.Run("Users", func(t *testing.T) { contractUsers(t, h) })
@@ -512,6 +513,168 @@ func contractRules(t *testing.T, h storeHarness) {
 	}
 	if list[0].At.Before(list[1].At) {
 		t.Error("list is not newest first")
+	}
+}
+
+func contractEditRules(t *testing.T, h storeHarness) {
+	ctx := context.Background()
+	org, other := h.newOrg(t), h.newOrg(t)
+	a, b, foreign := uuid.New(), uuid.New(), uuid.New()
+	for _, id := range []uuid.UUID{a, b} {
+		if err := h.s.PutNode(ctx, org, Node{ID: id, DisplayName: "n-" + id.String()[:4], HideProcFolders: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.s.PutNode(ctx, other, Node{ID: foreign}); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().UTC().Truncate(time.Second)
+	origin := RulesOrigin{Client: ClientAI, Device: "Claude", UserID: uuid.New(), At: at}
+	cpu := func(w float64) func(*ServerSettings, map[uuid.UUID]*Node) error {
+		return func(s *ServerSettings, nodes map[uuid.UUID]*Node) error {
+			s.Thresholds.CPUWarn = w
+			s.NotifyCooldownSeconds = 1800
+			nodes[a].MutedSignals = nodes[a].MutedSignals.Set(MetricDisk, true)
+			nodes[a].DisplayName = "renamed"
+			return nil
+		}
+	}
+
+	bk, err := h.s.EditRules(ctx, org, RulesEdit{Org: true, Hosts: []uuid.UUID{a, b, a}, Origin: origin, Apply: cpu(0.8)})
+	if err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+	cfg, _ := h.s.GetSettings(ctx, org)
+	if cfg.Thresholds.CPUWarn != 0.8 || cfg.NotifyCooldownSeconds != 1800 || cfg.RulesOrigin == nil ||
+		cfg.RulesOrigin.Client != ClientAI || !cfg.RulesOrigin.At.Equal(at) {
+		t.Errorf("settings: %+v", cfg)
+	}
+	na, _ := h.s.GetNode(ctx, org, a)
+	if !na.MutedSignals.Has(MetricDisk) || na.DisplayName != "renamed" || na.RulesOrigin == nil || na.RulesOrigin.Device != "Claude" {
+		t.Errorf("node a: %+v", na)
+	}
+	if nb, _ := h.s.GetNode(ctx, org, b); nb.RulesOrigin != nil {
+		t.Errorf("node b has no change but got an origin: %+v", nb.RulesOrigin)
+	}
+	if bk.ID == uuid.Nil || !bk.At.Equal(at) || bk.Org == nil || bk.Org.Thresholds.CPUWarn != 0.75 || bk.Org.NotifyCooldownSeconds != 600 {
+		t.Errorf("backup: %+v", bk)
+	}
+	if _, ok := bk.Hosts[a]; !ok || len(bk.Hosts) != 1 || bk.Hosts[a].Muted.Has(MetricDisk) {
+		t.Errorf("backup hosts: %+v", bk.Hosts)
+	}
+	if got, err := h.s.GetRulesBackup(ctx, org, bk.ID); err != nil || got.Org == nil || got.Org.NotifyCooldownSeconds != 600 {
+		t.Errorf("get backup: %+v, %v", got, err)
+	}
+	if list, _ := h.s.ListRulesBackups(ctx, org); len(list) != 1 {
+		t.Errorf("list: %d backups, want 1", len(list))
+	}
+
+	// An Apply error writes nothing.
+	boom := errors.New("boom")
+	_, err = h.s.EditRules(ctx, org, RulesEdit{Org: true, Hosts: []uuid.UUID{a}, Origin: origin, Apply: func(s *ServerSettings, nodes map[uuid.UUID]*Node) error {
+		s.Thresholds.CPUWarn = 0.5
+		return boom
+	}})
+	if !errors.Is(err, boom) {
+		t.Errorf("apply error: %v", err)
+	}
+	// A bad rule writes nothing.
+	_, err = h.s.EditRules(ctx, org, RulesEdit{Org: true, Origin: origin, Apply: func(s *ServerSettings, _ map[uuid.UUID]*Node) error {
+		s.Thresholds.CPUWarn = 0.99
+		return nil
+	}})
+	if !errors.Is(err, ErrInvalidRules) {
+		t.Errorf("warn over critical: %v, want ErrInvalidRules", err)
+	}
+	_, err = h.s.EditRules(ctx, org, RulesEdit{Org: true, Origin: origin, Apply: func(s *ServerSettings, _ map[uuid.UUID]*Node) error {
+		s.NotifyCooldownSeconds = 90000
+		return nil
+	}})
+	if !errors.Is(err, ErrInvalidRules) {
+		t.Errorf("cooldown 90000: %v, want ErrInvalidRules", err)
+	}
+	if cfg, _ := h.s.GetSettings(ctx, org); cfg.Thresholds.CPUWarn != 0.8 || cfg.NotifyCooldownSeconds != 1800 {
+		t.Errorf("a failed edit wrote: %+v", cfg)
+	}
+
+	// A host of another org: nothing is written.
+	_, err = h.s.EditRules(ctx, org, RulesEdit{Org: true, Hosts: []uuid.UUID{foreign}, Origin: origin, Apply: cpu(0.7)})
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("foreign host: %v, want ErrNotFound", err)
+	}
+	if cfg, _ := h.s.GetSettings(ctx, org); cfg.Thresholds.CPUWarn != 0.8 {
+		t.Errorf("a failed edit wrote: %+v", cfg.Thresholds)
+	}
+
+	// No rule change: the other fields are written, there is no backup, and
+	// the origin stays.
+	later := origin
+	later.At = at.Add(time.Minute)
+	bk, err = h.s.EditRules(ctx, org, RulesEdit{Hosts: []uuid.UUID{b}, Origin: later, Apply: func(_ *ServerSettings, nodes map[uuid.UUID]*Node) error {
+		nodes[b].Favorite = true
+		return nil
+	}})
+	if err != nil || bk.ID != uuid.Nil {
+		t.Fatalf("no change: %+v, %v", bk, err)
+	}
+	if nb, _ := h.s.GetNode(ctx, org, b); !nb.Favorite || nb.RulesOrigin != nil {
+		t.Errorf("node b: %+v", nb)
+	}
+	bk, err = h.s.EditRules(ctx, org, RulesEdit{Org: true, Origin: later, Apply: func(s *ServerSettings, _ map[uuid.UUID]*Node) error {
+		s.SSHPollingIntervalSeconds = 45
+		return nil
+	}})
+	if err != nil || bk.ID != uuid.Nil {
+		t.Fatalf("no rule change: %+v, %v", bk, err)
+	}
+	if cfg, _ := h.s.GetSettings(ctx, org); cfg.SSHPollingIntervalSeconds != 45 || !cfg.RulesOrigin.At.Equal(at) {
+		t.Errorf("settings: %+v origin %+v", cfg, cfg.RulesOrigin)
+	}
+	if list, _ := h.s.ListRulesBackups(ctx, org); len(list) != 1 {
+		t.Errorf("list: %d backups, want 1", len(list))
+	}
+
+	// Apply must not change the backup through a shared pointer.
+	bk, err = h.s.EditRules(ctx, org, RulesEdit{Hosts: []uuid.UUID{b}, Origin: later, Apply: func(_ *ServerSettings, nodes map[uuid.UUID]*Node) error {
+		nodes[b].ThresholdOverrides = &ThresholdOverrides{Mem: &ThresholdPair{Warn: 0.8, Critical: 0.9}}
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	later.At = at.Add(2 * time.Minute)
+	if _, err = h.s.EditRules(ctx, org, RulesEdit{Hosts: []uuid.UUID{b}, Origin: later, Apply: func(_ *ServerSettings, nodes map[uuid.UUID]*Node) error {
+		nodes[b].ThresholdOverrides.Mem.Warn = 0.85
+		return nil
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := h.s.ListRulesBackups(ctx, org)
+	if len(list) != 3 || list[0].Hosts[b].Thresholds == nil || list[0].Hosts[b].Thresholds.Mem.Warn != 0.8 {
+		t.Errorf("second backup: %+v", list)
+	}
+	if bk.Hosts[b].Thresholds != nil {
+		t.Errorf("first backup: %+v", bk.Hosts[b])
+	}
+
+	// A backup older than the TTL is gone after the next edit with a backup.
+	old := origin
+	old.At = at.Add(-RulesBackupTTL - 24*time.Hour)
+	oldBk, err := h.s.EditRules(ctx, org, RulesEdit{Org: true, Origin: old, Apply: func(s *ServerSettings, _ map[uuid.UUID]*Node) error {
+		s.Muted = s.Muted.Set(MetricMem, true)
+		return nil
+	}})
+	if err != nil || oldBk.ID == uuid.Nil {
+		t.Fatal(err)
+	}
+	if _, err := h.s.EditRules(ctx, org, RulesEdit{Org: true, Origin: later, Apply: func(s *ServerSettings, _ map[uuid.UUID]*Node) error {
+		s.Muted = s.Muted.Set(MetricMem, false)
+		return nil
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.s.GetRulesBackup(ctx, org, oldBk.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("old backup: %v, want ErrNotFound", err)
 	}
 }
 

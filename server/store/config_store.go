@@ -51,6 +51,15 @@ type ConfigStore interface {
 	// ErrNotFound for a host that is not in the org (nothing is written),
 	// and ErrInvalidRules for a bad rule.
 	ReplaceRules(ctx context.Context, orgID uuid.UUID, ch RulesChange) (RulesBackup, error)
+	// EditRules runs ed.Apply on the org settings (when ed.Org is set) and on
+	// the named hosts in one transaction. It validates the new rules, sets
+	// ed.Origin on each target whose rules changed, and writes the targets.
+	// It keeps the old rules of the changed targets in one backup and deletes
+	// the backups older than RulesBackupTTL. When no rule changed, it writes
+	// the other fields and gives a zero backup (ID is uuid.Nil). It returns
+	// ErrNotFound for a host that is not in the org, ErrInvalidRules for a bad
+	// rule, and the error of Apply. These errors write nothing.
+	EditRules(ctx context.Context, orgID uuid.UUID, ed RulesEdit) (RulesBackup, error)
 	// ListRulesBackups gives the backups younger than the TTL, newest first.
 	ListRulesBackups(ctx context.Context, orgID uuid.UUID) ([]RulesBackup, error)
 	// GetRulesBackup returns ErrNotFound for an unknown or old backup.

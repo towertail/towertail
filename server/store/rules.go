@@ -516,7 +516,7 @@ func (o AlertOverrides) Validate() error {
 
 // RulesOrigin tells which client set rules last.
 type RulesOrigin struct {
-	// Client is web, mac, windows or api.
+	// Client is web, mac, windows, api or ai.
 	Client string    `json:"client"`
 	Device string    `json:"device,omitempty"`
 	UserID uuid.UUID `json:"userId"`
@@ -529,12 +529,13 @@ const (
 	ClientMac     = "mac"
 	ClientWindows = "windows"
 	ClientAPI     = "api"
+	ClientAI      = "ai"
 )
 
 // NormalizeClient gives a known client name, or api.
 func NormalizeClient(c string) string {
 	switch c {
-	case ClientWeb, ClientMac, ClientWindows:
+	case ClientWeb, ClientMac, ClientWindows, ClientAI:
 		return c
 	}
 	return ClientAPI
@@ -546,8 +547,14 @@ type OrgRules struct {
 	Alerts     AlertRules       `json:"alerts"`
 	Muted      MutedSignals     `json:"muted"`
 	LongProc   LongProcRule     `json:"longProc"`
-	Origin     *RulesOrigin     `json:"origin,omitempty"`
+	// NotifyCooldownSeconds is the minimum time between two alerts with the
+	// same host, metric and tint. 0 means the default (600).
+	NotifyCooldownSeconds int          `json:"notifyCooldownSeconds"`
+	Origin                *RulesOrigin `json:"origin,omitempty"`
 }
+
+// MaxNotifyCooldownSeconds is the longest cooldown.
+const MaxNotifyCooldownSeconds = 86400
 
 // UnmarshalJSON starts from the default rules, so a missing key has the
 // default value.
@@ -564,6 +571,9 @@ func (r *OrgRules) UnmarshalJSON(b []byte) error {
 func (r OrgRules) Validate() error {
 	if err := r.Thresholds.Validate(); err != nil {
 		return err
+	}
+	if r.NotifyCooldownSeconds < 0 || r.NotifyCooldownSeconds > MaxNotifyCooldownSeconds {
+		return invalidRules("notifyCooldownSeconds must be from 0 to %d", MaxNotifyCooldownSeconds)
 	}
 	return r.Alerts.Validate()
 }
@@ -592,12 +602,16 @@ func (r HostRules) Validate() error {
 
 // Rules gives the rules of the org.
 func (s ServerSettings) Rules() OrgRules {
-	return OrgRules{Thresholds: s.Thresholds, Alerts: s.Alerts, Muted: s.Muted, LongProc: s.LongProc, Origin: s.RulesOrigin}
+	return OrgRules{
+		Thresholds: s.Thresholds, Alerts: s.Alerts, Muted: s.Muted, LongProc: s.LongProc,
+		NotifyCooldownSeconds: s.NotifyCooldownSeconds, Origin: s.RulesOrigin,
+	}
 }
 
 // SetRules replaces the rule fields. It leaves the other fields.
 func (s *ServerSettings) SetRules(r OrgRules) {
 	s.Thresholds, s.Alerts, s.Muted, s.LongProc, s.RulesOrigin = r.Thresholds, r.Alerts, r.Muted, r.LongProc, r.Origin
+	s.NotifyCooldownSeconds = r.NotifyCooldownSeconds
 }
 
 // Rules gives the rules of the host. Empty overrides are nil.

@@ -1,6 +1,8 @@
 package store
 
 import (
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -72,4 +74,106 @@ func (ch RulesChange) apply(s *ServerSettings, nodes map[uuid.UUID]*Node) RulesB
 		n.SetRules(h)
 	}
 	return b
+}
+
+// RulesEdit changes the rules of the org (when Org is set) and of the named
+// hosts in one transaction. Origin is the origin that each changed target
+// gets. Origin.At is the time of the change. The backup uses it as its time.
+// Apply changes the targets in place. It gets a nil settings value when Org
+// is not set.
+type RulesEdit struct {
+	Org    bool
+	Hosts  []uuid.UUID
+	Origin RulesOrigin
+	Apply  func(s *ServerSettings, nodes map[uuid.UUID]*Node) error
+}
+
+func (ed RulesEdit) at() time.Time {
+	if ed.Origin.At.IsZero() {
+		return time.Now().UTC()
+	}
+	return ed.Origin.At.UTC()
+}
+
+// run applies the edit to the loaded targets and validates the new rules.
+// A target whose rules changed gets the origin. A target whose rules did not
+// change keeps its origin. It gives the backup of the old rules of the
+// changed targets, or a zero backup when no rule changed. A nil s is left
+// alone.
+func (ed RulesEdit) run(s *ServerSettings, nodes map[uuid.UUID]*Node) (RulesBackup, error) {
+	var oldOrg OrgRules
+	if s != nil {
+		oldOrg = s.Rules().clone()
+	}
+	oldHosts := make(map[uuid.UUID]HostRules, len(nodes))
+	for id, n := range nodes {
+		oldHosts[id] = n.Rules().clone()
+	}
+	if err := ed.Apply(s, nodes); err != nil {
+		return RulesBackup{}, err
+	}
+	origin := ed.Origin
+	origin.At = ed.at()
+	b := RulesBackup{ID: uuid.New(), At: origin.At, Origin: origin}
+	if s != nil {
+		cur := s.Rules()
+		if err := cur.Validate(); err != nil {
+			return RulesBackup{}, err
+		}
+		if cur.Equal(oldOrg) {
+			s.RulesOrigin = oldOrg.Origin
+		} else {
+			o := origin
+			s.RulesOrigin = &o
+			b.Org = &oldOrg
+		}
+	}
+	for id, n := range nodes {
+		cur := n.Rules()
+		if err := cur.Validate(); err != nil {
+			return RulesBackup{}, err
+		}
+		if cur.Equal(oldHosts[id]) {
+			n.RulesOrigin = oldHosts[id].Origin
+			continue
+		}
+		o := origin
+		n.RulesOrigin = &o
+		if b.Hosts == nil {
+			b.Hosts = map[uuid.UUID]HostRules{}
+		}
+		b.Hosts[id] = oldHosts[id]
+	}
+	if b.Org == nil && len(b.Hosts) == 0 {
+		return RulesBackup{}, nil
+	}
+	return b, nil
+}
+
+// ChangedSince gives the targets of the backup whose rules changed after
+// the backup: the origin time is not the time of the backup, or the host
+// does not exist any more. A target is "org", the display name of a host,
+// or the id of a host that does not exist any more. A host mute that the
+// REST route sets does not change the origin, so this does not see it.
+func (b RulesBackup) ChangedSince(s ServerSettings, nodes []Node) []string {
+	var out []string
+	if b.Org != nil && (s.RulesOrigin == nil || !s.RulesOrigin.At.Equal(b.At)) {
+		out = append(out, "org")
+	}
+	byID := make(map[uuid.UUID]Node, len(nodes))
+	for _, n := range nodes {
+		byID[n.ID] = n
+	}
+	var hosts []string
+	for id := range b.Hosts {
+		n, ok := byID[id]
+		switch {
+		case !ok:
+			hosts = append(hosts, id.String())
+		case n.RulesOrigin == nil || !n.RulesOrigin.At.Equal(b.At):
+			hosts = append(hosts, n.DisplayName)
+		}
+	}
+	slices.SortFunc(hosts, strings.Compare)
+	return append(out, hosts...)
 }
