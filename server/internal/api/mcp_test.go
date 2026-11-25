@@ -70,6 +70,9 @@ func TestMCPHTTP(t *testing.T) {
 		if rec.Code != http.StatusOK || !strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") || !strings.Contains(rec.Body.String(), `"list_hosts"`) {
 			t.Errorf("%s: tools/list = %d %s %s", name, rec.Code, rec.Header().Get("Content-Type"), rec.Body)
 		}
+		if n := strings.Count(rec.Body.String(), `"readOnlyHint"`); n != 18 {
+			t.Errorf("%s: tools/list has %d tools, want 18", name, n)
+		}
 	}
 
 	// The test server has no ClickHouse.

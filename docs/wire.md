@@ -528,4 +528,4 @@ The server has a read-only [Model Context Protocol](https://modelcontextprotocol
 
 Start time: `started_at` is the start time that the sampler read, and `start_exact` is `true`. It comes from raw rows (1 h). Without it, `first_seen` is the oldest stored time of the process, so the process is older than that. `run_seconds` is the time from `started_at` to the end of the range, or to `at`. The tool sets it only when `start_exact` is `true`. `facts` of `process_history` exist only when `to` is less than 1 h ago.
 
-All tools are read-only. Tools that change a host (for example `kill_process`) are not part of this version.
+All tools in this table are read-only. Tools that change data or a host (for example `kill_process`) are not part of it.
