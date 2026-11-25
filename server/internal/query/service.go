@@ -63,6 +63,7 @@ type Reader interface {
 	TopProcesses(ctx context.Context, q clickhouse.RangeQuery, by clickhouse.ProcOrder, limit int) ([]clickhouse.TopProc, error)
 	WindowStats(ctx context.Context, q clickhouse.StatsQuery) ([]clickhouse.NodeStat, error)
 	QueryHistory(ctx context.Context, q clickhouse.HistoryQuery) ([]clickhouse.HistoryPoint, time.Duration, error)
+	QueryHistoryMulti(ctx context.Context, q clickhouse.HistoryMultiQuery) (map[uuid.UUID]map[string][]clickhouse.HistoryPoint, time.Duration, error)
 	DiskHistory(ctx context.Context, q clickhouse.RangeQuery) ([]clickhouse.DiskPoint, time.Duration, error)
 	OpenAlerts(ctx context.Context, orgID uuid.UUID) ([]clickhouse.AlertRow, error)
 	RecentAlerts(ctx context.Context, orgID uuid.UUID, since time.Time, limit int) ([]clickhouse.AlertRow, error)

@@ -29,15 +29,15 @@ type FleetQueries interface {
 	Hosts(ctx context.Context, orgID uuid.UUID, sort query.HostSort, limit int) (wire.FleetHosts, error)
 	HostNames(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID]string, error)
 	ResolveHost(ctx context.Context, orgID uuid.UUID, ref string) (store.Node, error)
+	HostsByTag(ctx context.Context, orgID uuid.UUID, tag string) ([]store.Node, error)
 	HostDetail(ctx context.Context, orgID, nodeID uuid.UUID) (query.HostDetail, error)
 	FleetSummary(ctx context.Context, orgID uuid.UUID) (query.FleetSummary, error)
 }
 
 // HistoryQueries are the metric and disk reads.
 type HistoryQueries interface {
-	History(ctx context.Context, r query.HistoryRequest) ([]clickhouse.HistoryPoint, time.Duration, bool, error)
+	HistoryMulti(ctx context.Context, r query.HistoryMultiRequest) (query.HistoryMultiResult, error)
 	Disks(ctx context.Context, orgID, nodeID uuid.UUID, from, to time.Time) (query.DiskResult, error)
-	Compare(ctx context.Context, q query.CompareQuery) (wire.Compare, error)
 }
 
 // ProcessQueries are the process reads.
@@ -156,11 +156,10 @@ func New(q Queries, o Options) *Server {
 	addTool(s, readTool("fleet_summary", "Fleet summary", "Get the state of the fleet at a glance: host counts, open alerts, hosts over a limit, the top 5 hosts by CPU, memory and disk, and the alerts and notifications of the last 24 hours."), s.fleetSummary)
 	addTool(s, readTool("list_hosts", "List hosts", "List the hosts of the fleet with the latest CPU (percent), memory and disk (ratio 0 to 1), load and network (bytes each second). Offline hosts have no values."), s.listHosts)
 	addTool(s, readTool("get_host", "Get host", "Get one host: its latest values, facts (OS, kernel, cores, memory, uptime), open alerts and the effective limits with their source (org or host)."), s.getHost)
-	addTool(s, readTool("host_metrics", "Host metrics", "Get the history of metrics of one host: min, avg, max, last, and at most 300 points for each metric. The plan can shorten the range (clamped)."), s.hostMetrics)
+	addTool(s, readTool("host_metrics", "Host metrics", "Get the history of metrics of one host, of many hosts or of a tag: min, avg, max, last and a capped list of points for each metric. Any history metric works (see reference). With compare, each metric also has the window before the range and the change of the average. The plan can shorten the range (clamped)."), s.hostMetrics)
 	addTool(s, readTool("top_processes", "Top processes", "Get the top processes of one host, or of the fleet, by CPU or memory over a range."), s.topProcesses)
 	addTool(s, readTool("alerts", "Alerts", "List the open alerts, or the recent alerts, of the fleet or of one host."), s.alerts)
 	addTool(s, readTool("disks", "Disk usage", "Get the use of each disk mount of one host and the change over a range."), s.disks)
-	addTool(s, readTool("compare", "Compare hosts", "Compare a metric of each host in the last window with the window before it."), s.compare)
 	addTool(s, readTool("reference", "Reference facts", "Get the facts behind a metric, a rule or a plan limit. Topics: metrics, thresholds, alerts, long_process, history and plan."), s.reference)
 	addTool(s, readTool("whoami", "Who am I", "Get the organization, the plan, the history limit and the sign-in (token kind and role) of this connection."), s.whoami)
 	return s

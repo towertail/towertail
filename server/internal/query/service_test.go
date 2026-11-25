@@ -37,6 +37,8 @@ type fakeReader struct {
 
 	history     []clickhouse.HistoryPoint
 	gotHistory  clickhouse.HistoryQuery
+	multi       map[uuid.UUID]map[string][]clickhouse.HistoryPoint
+	gotMulti    []clickhouse.HistoryMultiQuery
 	disk        []clickhouse.DiskPoint
 	gotDisk     clickhouse.RangeQuery
 	open, rows  []clickhouse.AlertRow
@@ -81,6 +83,11 @@ func (f *fakeReader) WindowStats(_ context.Context, q clickhouse.StatsQuery) ([]
 func (f *fakeReader) QueryHistory(_ context.Context, q clickhouse.HistoryQuery) ([]clickhouse.HistoryPoint, time.Duration, error) {
 	f.gotHistory = q
 	return f.history, time.Minute, nil
+}
+
+func (f *fakeReader) QueryHistoryMulti(_ context.Context, q clickhouse.HistoryMultiQuery) (map[uuid.UUID]map[string][]clickhouse.HistoryPoint, time.Duration, error) {
+	f.gotMulti = append(f.gotMulti, q)
+	return f.multi, time.Minute, nil
 }
 
 func (f *fakeReader) DiskHistory(_ context.Context, q clickhouse.RangeQuery) ([]clickhouse.DiskPoint, time.Duration, error) {
@@ -390,6 +397,78 @@ func TestServiceHistoryClamp(t *testing.T) {
 	}
 	if _, _, _, err := NewService(nil, fakeNodes(nil), nil, nil).History(context.Background(), HistoryRequest{}); !errors.Is(err, ErrNoHistory) {
 		t.Errorf("no ClickHouse: %v", err)
+	}
+}
+
+func TestServiceHistoryMultiClamp(t *testing.T) {
+	day := 24 * time.Hour
+	id := uuid.New()
+	r := &fakeReader{multi: map[uuid.UUID]map[string][]clickhouse.HistoryPoint{id: {"cpu": {{TS: now, Value: 1}}}}}
+	s := newService(r, nil, 10)
+	ctx := context.Background()
+	req := HistoryMultiRequest{OrgID: uuid.New(), NodeIDs: []uuid.UUID{id}, Metrics: []string{"cpu"}, From: now.Add(-20 * day), To: now, Step: time.Minute}
+
+	got, err := s.HistoryMulti(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Clamped || !got.From.Equal(now.Add(-10*day)) || len(got.Series[id]["cpu"]) != 1 || got.Previous != nil {
+		t.Fatalf("clamp: %+v", got)
+	}
+
+	// Window [now-6d, now-3d]: the previous window starts at now-9d, inside the plan.
+	r.gotMulti = nil
+	req.From, req.To, req.Previous = now.Add(-3*day), now, true
+	got, err = s.HistoryMulti(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Clamped || got.Previous == nil || !got.Previous.From.Equal(now.Add(-6*day)) || !got.Previous.To.Equal(now.Add(-3*day)) || len(r.gotMulti) != 2 {
+		t.Fatalf("previous inside the plan: %+v, calls %d", got, len(r.gotMulti))
+	}
+
+	// The previous window starts at now-16d: the plan moves it to now-10d.
+	req.From, req.To = now.Add(-8*day), now
+	got, err = s.HistoryMulti(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Clamped || !got.Previous.From.Equal(now.Add(-10*day)) || !got.Previous.To.Equal(now.Add(-8*day)) {
+		t.Fatalf("previous clamped: %+v", got.Previous)
+	}
+
+	// The previous window is fully outside the plan.
+	r.gotMulti = nil
+	req.From, req.To = now.Add(-15*day), now.Add(-12*day)
+	got, err = s.HistoryMulti(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Clamped || got.Previous == nil || !got.Previous.From.Equal(got.Previous.To) || len(got.Previous.Series) != 0 || len(r.gotMulti) != 1 {
+		t.Fatalf("previous outside the plan: %+v, calls %d", got.Previous, len(r.gotMulti))
+	}
+
+	if _, err := s.HistoryMulti(ctx, HistoryMultiRequest{Metrics: []string{"bogus"}}); !errors.Is(err, clickhouse.ErrUnknownMetric) {
+		t.Errorf("unknown metric: %v", err)
+	}
+	if _, err := NewService(nil, fakeNodes(nil), nil, nil).HistoryMulti(ctx, HistoryMultiRequest{}); !errors.Is(err, ErrNoHistory) {
+		t.Errorf("no ClickHouse: %v", err)
+	}
+}
+
+func TestHostsByTag(t *testing.T) {
+	nodes := []store.Node{
+		{ID: uuid.New(), DisplayName: "a", Tags: []string{"Web", "prod"}},
+		{ID: uuid.New(), DisplayName: "b", Tags: []string{"prod"}},
+		{ID: uuid.New(), DisplayName: "c", Tags: []string{"web"}},
+	}
+	s := newService(&fakeReader{}, nodes, 0)
+	got, err := s.HostsByTag(context.Background(), uuid.New(), "WEB")
+	if err != nil || len(got) != 2 || got[0].DisplayName != "a" || got[1].DisplayName != "c" {
+		t.Fatalf("web: %v, %v", got, err)
+	}
+	if got, err = s.HostsByTag(context.Background(), uuid.New(), "none"); err != nil || len(got) != 0 {
+		t.Fatalf("none: %v, %v", got, err)
 	}
 }
 

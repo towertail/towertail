@@ -32,16 +32,21 @@ var now = time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 // fakeQueries gives fixed data and records the org and the last
 // requests.
 type fakeQueries struct {
-	orgs    []uuid.UUID
-	nodes   []store.Node
-	points  []clickhouse.HistoryPoint
-	gotHist query.HistoryRequest
-	gotProc query.ProcQuery
-	gotAlrt query.AlertsRequest
-	gotCmp  query.CompareQuery
-	days    int
-	detail  *query.HostDetail
-	summary query.FleetSummary
+	orgs   []uuid.UUID
+	nodes  []store.Node
+	points []clickhouse.HistoryPoint
+	// prev holds the points of the previous window. A nil value gives none.
+	prev []clickhouse.HistoryPoint
+	// prevOutside gives an empty previous window, as when the plan cuts it.
+	prevOutside bool
+	// hostPoints overrides points for one host.
+	hostPoints map[uuid.UUID][]clickhouse.HistoryPoint
+	gotHist    query.HistoryMultiRequest
+	gotProc    query.ProcQuery
+	gotAlrt    query.AlertsRequest
+	days       int
+	detail     *query.HostDetail
+	summary    query.FleetSummary
 }
 
 func (f *fakeQueries) seen(org uuid.UUID) { f.orgs = append(f.orgs, org) }
@@ -75,10 +80,46 @@ func (f *fakeQueries) ResolveHost(_ context.Context, org uuid.UUID, ref string) 
 	return store.Node{}, query.ErrHostNotFound
 }
 
-func (f *fakeQueries) History(_ context.Context, r query.HistoryRequest) ([]clickhouse.HistoryPoint, time.Duration, bool, error) {
+func (f *fakeQueries) HistoryMulti(_ context.Context, r query.HistoryMultiRequest) (query.HistoryMultiResult, error) {
 	f.seen(r.OrgID)
 	f.gotHist = r
-	return f.points, time.Minute, true, nil
+	fill := func(pts []clickhouse.HistoryPoint, over map[uuid.UUID][]clickhouse.HistoryPoint) map[uuid.UUID]map[string][]clickhouse.HistoryPoint {
+		out := map[uuid.UUID]map[string][]clickhouse.HistoryPoint{}
+		for _, id := range r.NodeIDs {
+			out[id] = map[string][]clickhouse.HistoryPoint{}
+			for _, m := range r.Metrics {
+				out[id][m] = pts
+				if o, ok := over[id]; ok {
+					out[id][m] = o
+				}
+			}
+		}
+		return out
+	}
+	res := query.HistoryMultiResult{
+		HistoryWindow: query.HistoryWindow{From: r.From, To: r.To, Series: fill(f.points, f.hostPoints)},
+		Bucket:        time.Minute,
+		Clamped:       true,
+	}
+	if r.Previous {
+		span := r.To.Sub(r.From)
+		res.Previous = &query.HistoryWindow{From: r.From.Add(-span), To: r.From, Series: fill(f.prev, nil)}
+		if f.prevOutside {
+			res.Previous = &query.HistoryWindow{From: r.From, To: r.From}
+		}
+	}
+	return res, nil
+}
+
+func (f *fakeQueries) HostsByTag(_ context.Context, org uuid.UUID, tag string) ([]store.Node, error) {
+	f.seen(org)
+	var out []store.Node
+	for _, n := range f.nodes {
+		if slices.Contains(n.Tags, tag) {
+			out = append(out, n)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeQueries) TopProcesses(_ context.Context, q query.ProcQuery) (wire.FleetProcesses, error) {
@@ -107,21 +148,6 @@ func (f *fakeQueries) Disks(_ context.Context, org, node uuid.UUID, from, to tim
 	}}, nil
 }
 
-func (f *fakeQueries) Compare(_ context.Context, q query.CompareQuery) (wire.Compare, error) {
-	f.seen(q.OrgID)
-	f.gotCmp = q
-	delta := 5.0
-	return wire.Compare{
-		Metric:   q.Metric,
-		Current:  wire.Window{From: now.Add(-q.Window), To: now},
-		Previous: wire.Window{From: now.Add(-2 * q.Window), To: now.Add(-q.Window)},
-		Hosts: []wire.CompareHost{{
-			NodeID: f.nodes[0].ID, Name: f.nodes[0].DisplayName,
-			Current: wire.Stat{Avg: 30, Max: 60, Points: 10}, Previous: &wire.Stat{Avg: 25, Max: 50, Points: 10}, DeltaAvg: &delta,
-		}},
-	}, nil
-}
-
 func (f *fakeQueries) HistoryDays(_ context.Context, org uuid.UUID) int {
 	f.seen(org)
 	return f.days
@@ -146,7 +172,7 @@ func (f *fakeQueries) FleetSummary(_ context.Context, org uuid.UUID) (query.Flee
 }
 
 func newFake() *fakeQueries {
-	return &fakeQueries{nodes: []store.Node{{ID: uuid.New(), DisplayName: "web-1"}, {ID: uuid.New(), DisplayName: "db-1"}}}
+	return &fakeQueries{nodes: []store.Node{{ID: uuid.New(), DisplayName: "web-1", Tags: []string{"web"}}, {ID: uuid.New(), DisplayName: "db-1"}}}
 }
 
 // connect starts a client session. The server side gets the token on its
@@ -250,7 +276,7 @@ func TestTools(t *testing.T) {
 		}
 	}
 	slices.Sort(names)
-	want := []string{"alerts", "compare", "disks", "fleet_summary", "get_host", "host_metrics", "list_hosts", "reference", "top_processes", "whoami"}
+	want := []string{"alerts", "disks", "fleet_summary", "get_host", "host_metrics", "list_hosts", "reference", "top_processes", "whoami"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("tools = %v, want %v", names, want)
 	}
@@ -264,14 +290,14 @@ func TestTools(t *testing.T) {
 	t.Run("host_metrics", func(t *testing.T) {
 		f.points = []clickhouse.HistoryPoint{{TS: now.Add(-2 * time.Minute), Value: 10, Max: 30}, {TS: now.Add(-time.Minute), Value: 20, Max: 25}}
 		out := decode[HostMetricsOut](t, call(t, cs, "host_metrics", map[string]any{"host": "web-1", "metrics": []string{"cpu", "mem"}, "range": "2h"}))
-		if len(out.Metrics) != 2 || out.Host != "web-1" || !out.Clamped {
+		if len(out.Hosts) != 1 || out.Hosts[0].Host != "web-1" || len(out.Hosts[0].Metrics) != 2 || !out.Clamped || out.Resolution != "1m0s" || out.Previous != nil {
 			t.Fatalf("out = %+v", out)
 		}
-		sr := out.Metrics[0]
-		if sr.Metric != "cpu" || sr.Count != 2 || sr.Min != 10 || sr.Avg != 15 || sr.Max != 30 || sr.Last != 20 || len(sr.Points) != 2 {
+		sr := out.Hosts[0].Metrics[0]
+		if sr.Metric != "cpu" || sr.Unit != "percent" || sr.Count != 2 || sr.Min != 10 || sr.Avg != 15 || sr.Max != 30 || sr.Last != 20 || len(sr.Points) != 2 {
 			t.Fatalf("cpu series = %+v", sr)
 		}
-		if f.gotHist.OrgID != orgA || !f.gotHist.From.Equal(now.Add(-2*time.Hour)) || f.gotHist.Step < 24*time.Second {
+		if f.gotHist.OrgID != orgA || !f.gotHist.From.Equal(now.Add(-2*time.Hour)) || f.gotHist.Step < 24*time.Second || f.gotHist.Previous {
 			t.Fatalf("request = %+v", f.gotHist)
 		}
 	})
@@ -317,15 +343,6 @@ func TestTools(t *testing.T) {
 			t.Errorf("default range: from = %s, want 24h", out.From)
 		}
 	})
-	t.Run("compare", func(t *testing.T) {
-		out := decode[CompareOut](t, call(t, cs, "compare", map[string]any{"metric": "mem", "window": "1d"}))
-		if f.gotCmp.Window != 24*time.Hour || f.gotCmp.Metric != "mem" || f.gotCmp.NodeID != uuid.Nil {
-			t.Fatalf("request = %+v", f.gotCmp)
-		}
-		if len(out.Hosts) != 1 || out.TotalHosts != 1 || out.Hosts[0].ChangeAvg == nil || *out.Hosts[0].ChangeAvg != 5 || out.Hosts[0].Previous == nil {
-			t.Fatalf("out = %+v", out)
-		}
-	})
 }
 
 func TestToolInputErrors(t *testing.T) {
@@ -338,14 +355,17 @@ func TestToolInputErrors(t *testing.T) {
 	}{
 		{"range too long", "host_metrics", map[string]any{"host": "web-1", "range": "400d"}, "range must be 15m to 365d"},
 		{"unknown metric", "host_metrics", map[string]any{"host": "web-1", "metrics": []string{"bogus"}}, "metric must be one of"},
+		{"no host", "host_metrics", map[string]any{}, "host, hosts or tag is required"},
+		{"host and tag", "host_metrics", map[string]any{"host": "web-1", "tag": "web"}, "use one of host, hosts or tag"},
+		{"unknown tag", "host_metrics", map[string]any{"tag": "none"}, "no host has the tag"},
+		{"too many metrics", "host_metrics", map[string]any{"host": "web-1", "metrics": clickhouse.MetricNames()}, "metrics has too many names"},
+		{"many hosts long range", "host_metrics", map[string]any{"hosts": []string{"web-1", "db-1"}, "range": "31d"}, "at most 30d"},
 		{"unknown host", "host_metrics", map[string]any{"host": "ghost"}, "host not found"},
 		{"empty host", "disks", map[string]any{"host": ""}, "host is required"},
 		{"resolution", "host_metrics", map[string]any{"host": "web-1", "resolution": "2m"}, "resolution must be"},
 		{"sort", "list_hosts", map[string]any{"sort": "bogus"}, "sort must be"},
 		{"order", "top_processes", map[string]any{"by": "disk"}, "by must be cpu or mem"},
 		{"state", "alerts", map[string]any{"state": "closed"}, "state must be"},
-		{"window", "compare", map[string]any{"window": "soon"}, "bad duration"},
-		{"compare metric", "compare", map[string]any{"metric": "procs"}, "metric must be one of"},
 		{"get_host no host", "get_host", map[string]any{"host": ""}, "host is required"},
 		{"get_host unknown host", "get_host", map[string]any{"host": "ghost"}, "host not found"},
 		{"reference topic", "reference", map[string]any{"topic": "bogus"}, "topic must be one of"},
@@ -378,7 +398,7 @@ func TestHostMetricsPointCap(t *testing.T) {
 	}
 	cs := connect(t, f, tokenA())
 	out := decode[HostMetricsOut](t, call(t, cs, "host_metrics", map[string]any{"host": "web-1", "metrics": []string{"cpu", "mem"}, "range": "6h", "resolution": "raw"}))
-	for _, sr := range out.Metrics {
+	for _, sr := range out.Hosts[0].Metrics {
 		if len(sr.Points) == 0 || len(sr.Points) > 300 || sr.Count != 2000 {
 			t.Errorf("%s: %d points, count %d; want 1 to 300 points, count 2000", sr.Metric, len(sr.Points), sr.Count)
 		}
@@ -409,6 +429,7 @@ func TestMCPOrgScope(t *testing.T) {
 			{"get_host", map[string]any{"host": "web-1"}},
 			{"whoami", nil},
 			{"reference", map[string]any{"topic": "plan"}},
+			{"host_metrics", map[string]any{"tag": "web", "compare": true}},
 		} {
 			f.orgs = nil
 			if res := call(t, cs, tc.tool, tc.args); res.IsError {
@@ -490,7 +511,7 @@ func TestToolsRegistrationOrder(t *testing.T) {
 	for _, tl := range newServer(newFake()).Tools(ToolSetV1) {
 		names = append(names, tl.Name)
 	}
-	want := []string{"fleet_summary", "list_hosts", "get_host", "host_metrics", "top_processes", "alerts", "disks", "compare", "reference", "whoami"}
+	want := []string{"fleet_summary", "list_hosts", "get_host", "host_metrics", "top_processes", "alerts", "disks", "reference", "whoami"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("names = %v, want %v", names, want)
 	}
@@ -532,7 +553,6 @@ func TestToolResultHasJSONText(t *testing.T) {
 		{"top_processes", nil},
 		{"alerts", nil},
 		{"disks", map[string]any{"host": "web-1"}},
-		{"compare", nil},
 		{"fleet_summary", nil},
 		{"get_host", map[string]any{"host": "web-1"}},
 		{"reference", map[string]any{"topic": "metrics"}},

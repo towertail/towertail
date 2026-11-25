@@ -2,11 +2,14 @@ package query
 
 import (
 	"context"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/towertail/towertail/server/internal/clickhouse"
+	"github.com/towertail/towertail/server/store"
 )
 
 // HistoryRequest asks for one metric of one node. A zero To means now.
@@ -30,6 +33,93 @@ func (s *Service) History(ctx context.Context, r HistoryRequest) ([]clickhouse.H
 		OrgID: r.OrgID, NodeID: r.NodeID, Metric: r.Metric, From: from, To: to, Step: r.Step,
 	})
 	return pts, bucket, clamped, err
+}
+
+// HistoryMultiRequest asks for many metrics of many nodes. A zero To means
+// now. With Previous, the result also holds the window of the same length
+// that ends at From.
+type HistoryMultiRequest struct {
+	OrgID    uuid.UUID
+	NodeIDs  []uuid.UUID
+	Metrics  []string
+	From, To time.Time
+	Step     time.Duration
+	Previous bool
+}
+
+// HistoryWindow is a range and the points in it, by node and metric.
+type HistoryWindow struct {
+	From, To time.Time
+	Series   map[uuid.UUID]map[string][]clickhouse.HistoryPoint
+}
+
+// HistoryMultiResult is the points of the range. Bucket is the bucket of
+// the points. Clamped is true when the plan moved the start of a window.
+type HistoryMultiResult struct {
+	HistoryWindow
+	Bucket   time.Duration
+	Clamped  bool
+	Previous *HistoryWindow
+}
+
+// HistoryMulti gives the points of many metrics of many nodes. The plan
+// clamps From. A previous window fully outside the plan has From equal to
+// To and no series.
+func (s *Service) HistoryMulti(ctx context.Context, r HistoryMultiRequest) (HistoryMultiResult, error) {
+	if s.ch == nil {
+		return HistoryMultiResult{}, ErrNoHistory
+	}
+	names := clickhouse.MetricNames()
+	for _, m := range r.Metrics {
+		if !slices.Contains(names, m) {
+			return HistoryMultiResult{}, clickhouse.ErrUnknownMetric
+		}
+	}
+	now := s.now().UTC()
+	from, to, clamped := s.clampRange(ctx, r.OrgID, r.From, r.To, now)
+	q := clickhouse.HistoryMultiQuery{OrgID: r.OrgID, NodeIDs: r.NodeIDs, Metrics: r.Metrics, From: from, To: to, Step: r.Step}
+	series, bucket, err := s.ch.QueryHistoryMulti(ctx, q)
+	if err != nil {
+		return HistoryMultiResult{}, err
+	}
+	out := HistoryMultiResult{HistoryWindow: HistoryWindow{From: from, To: to, Series: series}, Bucket: bucket, Clamped: clamped}
+	if !r.Previous {
+		return out, nil
+	}
+	span := r.To.Sub(r.From)
+	if r.To.IsZero() {
+		span = now.Sub(r.From)
+	}
+	end := r.From
+	start, prevClamped := s.Clamp(ctx, r.OrgID, end.Add(-span), now)
+	out.Clamped = out.Clamped || prevClamped
+	if !start.Before(end) {
+		out.Previous = &HistoryWindow{From: start, To: start}
+		return out, nil
+	}
+	q.From, q.To = start, end
+	prev, _, err := s.ch.QueryHistoryMulti(ctx, q)
+	if err != nil {
+		return HistoryMultiResult{}, err
+	}
+	out.Previous = &HistoryWindow{From: start, To: end, Series: prev}
+	return out, nil
+}
+
+// HostsByTag gives the nodes of the org that have the tag, with no case.
+func (s *Service) HostsByTag(ctx context.Context, orgID uuid.UUID, tag string) ([]store.Node, error) {
+	nodes, err := s.nodes.ListNodes(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	tag = strings.TrimSpace(tag)
+	var out []store.Node
+	for _, n := range nodes {
+		if slices.ContainsFunc(n.Tags, func(t string) bool { return strings.EqualFold(t, tag) }) {
+			out = append(out, n)
+		}
+	}
+	return out, nil
 }
 
 // DiskResult is the use of the mounts of a node over a range. The rows

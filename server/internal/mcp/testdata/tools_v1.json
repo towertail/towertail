@@ -683,20 +683,34 @@
       "readOnlyHint": true,
       "title": "Host metrics"
     },
-    "description": "Get the history of metrics of one host: min, avg, max, last, and at most 300 points for each metric. The plan can shorten the range (clamped).",
+    "description": "Get the history of metrics of one host, of many hosts or of a tag: min, avg, max, last and a capped list of points for each metric. Any history metric works (see reference). With compare, each metric also has the window before the range and the change of the average. The plan can shorten the range (clamped).",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "compare": {
+          "description": "also read the window of the same length before the range. Each series then has previous and change_avg, and the biggest change comes first.",
+          "type": "boolean"
+        },
         "from": {
           "description": "start of the range in RFC 3339. Use it with to, instead of range.",
           "type": "string"
         },
         "host": {
-          "description": "host ID or name",
+          "description": "one host, by ID or name. Give one of host, hosts or tag.",
           "type": "string"
         },
+        "hosts": {
+          "description": "at most 50 hosts, by ID or name",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "metrics": {
-          "description": "metrics to read, at most 6: cpu (percent), mem (ratio 0 to 1), net_rx and net_tx (bytes each second), disk_read and disk_write (bytes each second). Default cpu.",
+          "description": "history metrics to read: cpu, mem, net_rx, net_tx, disk_read, disk_write, load_1, load (the same as load_1), procs, disk, inodes, zombies, pids, files, psi_cpu, psi_mem, psi_mem_full, psi_io, psi_io_full and mem_pressure. At most 16 for one host and 8 for many hosts. Default cpu. Call reference with topic metrics for the units.",
           "items": {
             "type": "string"
           },
@@ -706,11 +720,15 @@
           ]
         },
         "range": {
-          "description": "span up to now, 15m to 365d, for example 1h, 24h or 7d. Default 1h. Do not use with from.",
+          "description": "span up to now, 15m to 365d (30d for many hosts), for example 1h, 24h or 7d. Default 1h. Do not use with from.",
           "type": "string"
         },
         "resolution": {
           "description": "auto, raw, 1m, 5m or 1h. Default auto. The server raises the step to keep at most 300 points.",
+          "type": "string"
+        },
+        "tag": {
+          "description": "all hosts with this tag, at most 50",
           "type": "string"
         },
         "to": {
@@ -718,9 +736,6 @@
           "type": "string"
         }
       },
-      "required": [
-        "host"
-      ],
       "type": "object"
     },
     "name": "host_metrics",
@@ -733,51 +748,113 @@
         "from": {
           "type": "string"
         },
-        "host": {
-          "type": "string"
-        },
-        "host_id": {
-          "type": "string"
-        },
-        "metrics": {
+        "hosts": {
           "items": {
             "additionalProperties": false,
             "properties": {
-              "avg": {
-                "type": "number"
-              },
-              "count": {
-                "type": "integer"
-              },
-              "last": {
-                "type": "number"
-              },
-              "max": {
-                "type": "number"
-              },
-              "metric": {
+              "host": {
                 "type": "string"
               },
-              "min": {
-                "type": "number"
+              "host_id": {
+                "type": "string"
               },
-              "points": {
+              "metrics": {
                 "items": {
                   "additionalProperties": false,
                   "properties": {
+                    "avg": {
+                      "type": "number"
+                    },
+                    "change_avg": {
+                      "type": [
+                        "null",
+                        "number"
+                      ]
+                    },
+                    "count": {
+                      "type": "integer"
+                    },
+                    "last": {
+                      "type": "number"
+                    },
                     "max": {
                       "type": "number"
                     },
-                    "ts": {
+                    "metric": {
                       "type": "string"
                     },
-                    "value": {
+                    "min": {
                       "type": "number"
+                    },
+                    "points": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "max": {
+                            "type": "number"
+                          },
+                          "ts": {
+                            "type": "string"
+                          },
+                          "value": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "ts",
+                          "value"
+                        ],
+                        "type": "object"
+                      },
+                      "type": [
+                        "null",
+                        "array"
+                      ]
+                    },
+                    "previous": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "avg": {
+                          "type": "number"
+                        },
+                        "count": {
+                          "type": "integer"
+                        },
+                        "max": {
+                          "type": "number"
+                        },
+                        "min": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "avg",
+                        "max",
+                        "min",
+                        "count"
+                      ],
+                      "type": [
+                        "null",
+                        "object"
+                      ]
+                    },
+                    "resolution": {
+                      "type": "string"
+                    },
+                    "unit": {
+                      "type": "string"
                     }
                   },
                   "required": [
-                    "ts",
-                    "value"
+                    "metric",
+                    "unit",
+                    "resolution",
+                    "count",
+                    "min",
+                    "avg",
+                    "max",
+                    "last",
+                    "points"
                   ],
                   "type": "object"
                 },
@@ -785,20 +862,12 @@
                   "null",
                   "array"
                 ]
-              },
-              "resolution": {
-                "type": "string"
               }
             },
             "required": [
-              "metric",
-              "resolution",
-              "count",
-              "min",
-              "avg",
-              "max",
-              "last",
-              "points"
+              "host",
+              "host_id",
+              "metrics"
             ],
             "type": "object"
           },
@@ -807,16 +876,37 @@
             "array"
           ]
         },
+        "previous": {
+          "additionalProperties": false,
+          "properties": {
+            "from": {
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "from",
+            "to"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "resolution": {
+          "type": "string"
+        },
         "to": {
           "type": "string"
         }
       },
       "required": [
-        "host",
-        "host_id",
         "from",
         "to",
-        "metrics"
+        "resolution",
+        "hosts"
       ],
       "type": "object"
     },
@@ -1119,162 +1209,6 @@
       "type": "object"
     },
     "title": "Disk usage"
-  },
-  {
-    "annotations": {
-      "destructiveHint": false,
-      "idempotentHint": true,
-      "openWorldHint": false,
-      "readOnlyHint": true,
-      "title": "Compare hosts"
-    },
-    "description": "Compare a metric of each host in the last window with the window before it.",
-    "inputSchema": {
-      "additionalProperties": false,
-      "properties": {
-        "host": {
-          "description": "host ID or name. Empty means all hosts.",
-          "type": "string"
-        },
-        "metric": {
-          "description": "metric to compare: cpu (percent), mem (ratio 0 to 1), net_rx, net_tx, disk_read or disk_write (bytes each second). Default cpu.",
-          "type": "string"
-        },
-        "window": {
-          "description": "length of each window, 15m to 30d, for example 1h, 1d or 7d. The last window ends now. Default 1h.",
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
-    "name": "compare",
-    "outputSchema": {
-      "additionalProperties": false,
-      "properties": {
-        "clamped": {
-          "type": "boolean"
-        },
-        "current": {
-          "additionalProperties": false,
-          "properties": {
-            "from": {
-              "type": "string"
-            },
-            "to": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "from",
-            "to"
-          ],
-          "type": "object"
-        },
-        "hosts": {
-          "items": {
-            "additionalProperties": false,
-            "properties": {
-              "change_avg": {
-                "type": [
-                  "null",
-                  "number"
-                ]
-              },
-              "current": {
-                "additionalProperties": false,
-                "properties": {
-                  "avg": {
-                    "type": "number"
-                  },
-                  "max": {
-                    "type": "number"
-                  },
-                  "points": {
-                    "type": "integer"
-                  }
-                },
-                "required": [
-                  "avg",
-                  "max",
-                  "points"
-                ],
-                "type": "object"
-              },
-              "host": {
-                "type": "string"
-              },
-              "host_id": {
-                "type": "string"
-              },
-              "previous": {
-                "additionalProperties": false,
-                "properties": {
-                  "avg": {
-                    "type": "number"
-                  },
-                  "max": {
-                    "type": "number"
-                  },
-                  "points": {
-                    "type": "integer"
-                  }
-                },
-                "required": [
-                  "avg",
-                  "max",
-                  "points"
-                ],
-                "type": [
-                  "null",
-                  "object"
-                ]
-              }
-            },
-            "required": [
-              "host",
-              "host_id",
-              "current"
-            ],
-            "type": "object"
-          },
-          "type": [
-            "null",
-            "array"
-          ]
-        },
-        "metric": {
-          "type": "string"
-        },
-        "previous": {
-          "additionalProperties": false,
-          "properties": {
-            "from": {
-              "type": "string"
-            },
-            "to": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "from",
-            "to"
-          ],
-          "type": "object"
-        },
-        "total_hosts": {
-          "type": "integer"
-        }
-      },
-      "required": [
-        "metric",
-        "current",
-        "previous",
-        "total_hosts",
-        "hosts"
-      ],
-      "type": "object"
-    },
-    "title": "Compare hosts"
   },
   {
     "annotations": {
