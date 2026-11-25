@@ -82,7 +82,7 @@ protocol Backend: AnyObject {
     /// Scanner for the Usage sub-tab of DISK.
     func diskScanner(for node: Node) -> any DiskScanner
 
-    /// Loads Cloud history over REST. Nil outside Cloud. The name is not
+    /// Loads Cloud history over REST. Nil when no Cloud account is signed in. The name is not
     /// `history`, because `LocalBackend` has a `HistoryStore` with that name.
     var cloudHistory: (any CloudHistoryLoader)? { get }
 }

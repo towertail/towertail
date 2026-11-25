@@ -44,13 +44,15 @@ struct MetricSeries: Sendable {
         buffer.replace(with: older + live)
     }
 
-    /// Takes REST history. It replaces the live points up to the last
-    /// point of `points`. Newer live points stay.
+    /// Takes REST history. It replaces the points in the range of `points`.
+    /// Older points (for example SSH data before a move to Cloud) and newer
+    /// live points stay.
     mutating func merge(history points: [MetricPoint]) {
-        guard let last = points.last else { return }
-        let newer = buffer.snapshot().filter { $0.t > last.t }
-        buffer = TimeSeriesBuffer(trim: .maxCount(Self.capacity), reserveCapacity: Self.capacity)
-        buffer.replace(with: points + newer)
+        guard let first = points.first, let last = points.last else { return }
+        let current = buffer.snapshot()
+        let older = current.filter { $0.t < first.t }
+        let newer = current.filter { $0.t > last.t }
+        buffer.replace(with: older + points + newer)
     }
 
     func snapshot() -> [MetricPoint] {

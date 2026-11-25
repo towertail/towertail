@@ -50,6 +50,7 @@ final class AppEnvironment {
             let local = LocalBackend()
             self.backend = local
             let cloud = Self.makeCloud(backend: local)
+            local.cloud = cloud
             self.cloud = cloud
             let installer = CloudInstaller(
                 session: cloud, servers: local.servers, nodes: local.nodes, settings: local.serverSettings

@@ -15,7 +15,9 @@ final class LocalBackend: Backend {
     let diskScans: DiskScanStore
 
     let history: HistoryStore
-    let cloudHistory: (any CloudHistoryLoader)? = nil
+    /// Gives the history loader of Cloud hosts while signed in.
+    weak var cloud: CloudSession?
+    var cloudHistory: (any CloudHistoryLoader)? { cloud?.history }
     let collector: any Collector
     let notifier: ThresholdNotifier
     let reachability: SystemReachabilityMonitor

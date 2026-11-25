@@ -77,12 +77,21 @@ final class MetricSeriesTests: XCTestCase {
         XCTAssertEqual(s.latest?.t.timeIntervalSince1970, 799)
     }
 
-    func testMergeHistoryReplacesLivePointsUpToLastRestPoint() {
+    func testMergeHistoryReplacesPointsInRestRange() {
         var s = MetricSeries()
-        for p in points([10, 100, 110, 120], value: 9) { s.append(p) }
+        for p in points([10, 60, 100, 110, 120], value: 9) { s.append(p) }
         s.merge(history: points([50, 100, 110], value: 1))
-        XCTAssertEqual(s.snapshot().map { $0.t.timeIntervalSince1970 }, [50, 100, 110, 120])
-        XCTAssertEqual(s.snapshot().map(\.v), [1, 1, 1, 9])
+        XCTAssertEqual(s.snapshot().map { $0.t.timeIntervalSince1970 }, [10, 50, 100, 110, 120])
+        XCTAssertEqual(s.snapshot().map(\.v), [9, 1, 1, 1, 9])
+    }
+
+    func testMergeHistoryTrimsToCapacity() {
+        var s = MetricSeries()
+        for p in points((0..<600).map(Double.init), value: 9) { s.append(p) }
+        s.merge(history: points((600..<800).map(Double.init), value: 1))
+        XCTAssertEqual(s.count, MetricSeries.capacity)
+        XCTAssertEqual(s.snapshot().first?.t.timeIntervalSince1970, 80)
+        XCTAssertEqual(s.latest?.v, 1)
     }
 
     func testWindowPeakAndAverage() throws {

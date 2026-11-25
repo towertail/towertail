@@ -9,6 +9,8 @@ final class CloudSession {
     let account: CloudAccount
     private(set) var client: RemoteClient?
     private(set) var feed: CloudFeed?
+    /// Loads the history of Cloud hosts over REST while signed in.
+    @ObservationIgnored private(set) var history: RemoteHistoryLoader?
 
     /// Reports what the user looks at. It outlives the feed, so a
     /// sign-in while the popover is open sends the view.
@@ -74,12 +76,14 @@ final class CloudSession {
         let feed = CloudFeed(client: client, servers: servers, nodes: nodes, viewLease: viewLease, released: released)
         self.client = client
         self.feed = feed
+        history = RemoteHistoryLoader(cache: CloudHistoryCache(client: client), store: servers)
         feed.start()
     }
 
     private func stopFeed() {
         feed?.stop()
         feed = nil
+        history = nil
         client = nil
     }
 }

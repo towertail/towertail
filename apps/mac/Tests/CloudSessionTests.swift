@@ -95,4 +95,19 @@ final class CloudSessionTests: XCTestCase {
         XCTAssertNil(session.feed)
         XCTAssertNil(session.client)
     }
+
+    func testSignInGivesHistoryLoader() {
+        XCTAssertNotNil(session.history)
+        account.signOut()
+        XCTAssertNil(session.history)
+    }
+
+    func testLocalBackendUsesSessionHistory() {
+        let backend = LocalBackend()
+        XCTAssertNil(backend.cloudHistory)
+        backend.cloud = session
+        XCTAssertTrue(backend.cloudHistory === session.history)
+        account.signOut()
+        XCTAssertNil(backend.cloudHistory)
+    }
 }
