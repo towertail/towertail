@@ -33,6 +33,9 @@ type Config struct {
 	Sampler    SamplerConfig
 	Stream     StreamConfig
 	MCP        MCPConfig
+	// Assistant comes from the env var TT_ASSISTANT (one JSON object), so
+	// koanf does not decode it.
+	Assistant AssistantConfig `koanf:"-"`
 }
 
 // MCPConfig is for the MCP server at /mcp.
@@ -275,6 +278,15 @@ func Load(path string) (*Config, error) {
 	cfg.MCP.ResourceURL = strings.TrimRight(cfg.MCP.ResourceURL, "/")
 	if err := cfg.MCP.validate(); err != nil {
 		return nil, err
+	}
+	if cfg.Assistant, err = loadAssistant(os.Getenv); err != nil {
+		return nil, err
+	}
+	if err := cfg.Assistant.Validate(); err != nil {
+		return nil, err
+	}
+	if cfg.Assistant.Model != "" && !cfg.Assistant.Enabled() {
+		slog.Warn("assistant is off: no API key", "assistant", cfg.Assistant)
 	}
 	if cfg.ClickHouse.SpillDir == "" {
 		cfg.ClickHouse.SpillDir = filepath.Join(cfg.Storage.Path, "spill")

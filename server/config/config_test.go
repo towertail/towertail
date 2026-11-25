@@ -163,3 +163,34 @@ func TestMCPOAuthConfig(t *testing.T) {
 		t.Errorf("empty config: err = %v", err)
 	}
 }
+
+func TestLoadAssistantFromEnv(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil || cfg.Assistant.Enabled() {
+		t.Fatalf("no TT_ASSISTANT: err = %v, enabled = %v", err, cfg.Assistant.Enabled())
+	}
+	t.Setenv("TT_ASSISTANT", `{"model":"m1","api_key":"fake-key","effort":"high","limits":{"plans":{"pro":{"questions_per_day":9}}}}`)
+	cfg, err = Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cfg.Assistant
+	if a.Model != "m1" || a.EffortOrDefault() != "high" || !a.Enabled() || a.PlanLimits("pro").QuestionsPerDay != 9 {
+		t.Errorf("assistant = %+v", a)
+	}
+	for _, bad := range []string{`{"model":`, `{"nope":1}`, `{"api_format":"gemini"}`} {
+		t.Setenv("TT_ASSISTANT", bad)
+		if _, err := Load(""); err == nil {
+			t.Errorf("TT_ASSISTANT=%s: want error", bad)
+		}
+	}
+}
+
+func TestLoadAssistantNoKeyIsOff(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("TT_ASSISTANT", `{"model":"m1"}`)
+	cfg, err := Load("")
+	if err != nil || cfg.Assistant.Enabled() {
+		t.Errorf("err = %v, enabled = %v; want no error and off", err, cfg.Assistant.Enabled())
+	}
+}
