@@ -14,6 +14,9 @@ public sealed class SystemReachabilityMonitor : IDisposable
 
     public event EventHandler? Changed;
 
+    /// <summary>Raised with false at suspend and with true at resume.</summary>
+    public event Action<bool>? AwakeChanged;
+
     public SystemReachabilityMonitor()
     {
         NetworkInformation.NetworkStatusChanged += OnNetworkChanged;
@@ -31,6 +34,7 @@ public sealed class SystemReachabilityMonitor : IDisposable
             case PowerModes.Resume: ShouldPoll = true; LastResumeAt = DateTime.UtcNow; break;
         }
         Changed?.Invoke(this, EventArgs.Empty);
+        if (e.Mode is PowerModes.Suspend or PowerModes.Resume) AwakeChanged?.Invoke(e.Mode == PowerModes.Resume);
     }
 
     private void OnSessionSwitch(object? sender, SessionSwitchEventArgs e)

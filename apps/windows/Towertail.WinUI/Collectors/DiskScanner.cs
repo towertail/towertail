@@ -23,7 +23,7 @@ public sealed class DiskScannerFactory
     private readonly HostKeyPrompt? _hostKeyPrompt;
     private readonly Action<Guid, string>? _onTrust;
     private readonly SamplerUpdateCoordinator? _updater;
-    private readonly RemoteClient? _remote;
+    private readonly Func<Node, RemoteClient?> _remoteFor;
     private readonly IDiskScanUpdates? _updates;
 
     public DiskScannerFactory(
@@ -31,23 +31,20 @@ public sealed class DiskScannerFactory
         HostKeyPrompt? hostKeyPrompt = null,
         Action<Guid, string>? onTrust = null,
         SamplerUpdateCoordinator? updater = null,
-        RemoteClient? remote = null,
+        Func<Node, RemoteClient?>? remoteFor = null,
         IDiskScanUpdates? updates = null)
     {
         _runner = runner ?? new DefaultProcessRunner();
         _hostKeyPrompt = hostKeyPrompt;
         _onTrust = onTrust;
         _updater = updater;
-        _remote = remote;
+        _remoteFor = remoteFor ?? (_ => null);
         _updates = updates;
     }
 
-    /// <summary>True when the scans go through the server.</summary>
-    public bool IsRemote => _remote != null;
-
     public IDiskScanner Create(Node node)
     {
-        if (_remote != null) return new RemoteDiskScanner(_remote, _updates);
+        if (_remoteFor(node) is { } remote) return new RemoteDiskScanner(remote, _updates);
         return node.Kind switch
         {
             NodeKind.Local => new LocalDiskScanner(_runner),

@@ -23,6 +23,7 @@
     <Compile Include="..\Towertail.WinUI\State\**\*.cs" LinkBase="State" />
     <Compile Include="..\Towertail.WinUI\Backend\**\*.cs" LinkBase="Backend" />
     <Compile Include="..\Towertail.WinUI\Collectors\**\*.cs" LinkBase="Collectors" />
+    <Compile Include="..\Towertail.WinUI\Cloud\**\*.cs" LinkBase="Cloud" />
     <!-- Portable subset of the System/ folder. WinUI-bound files (AppNotifier,
          NotificationTapRouter, ActivationPolicyCoordinator, SystemReachability
          Monitor) stay in the WinUI project. -->
@@ -35,6 +36,7 @@
     <Compile Include="..\Towertail.WinUI\System\TerminalLauncher.cs" LinkBase="System" />
     <Compile Include="..\Towertail.WinUI\System\CsvParser.cs" LinkBase="System" />
     <Compile Include="..\Towertail.WinUI\System\DpapiStore.cs" LinkBase="System" />
+    <Compile Include="..\Towertail.WinUI\System\DpapiTokenVault.cs" LinkBase="System" />
   </ItemGroup>
 
   <ItemGroup>

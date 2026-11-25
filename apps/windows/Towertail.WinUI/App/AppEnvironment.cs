@@ -1,5 +1,6 @@
 using Microsoft.UI.Dispatching;
 using Towertail.WinUI.Backend;
+using Towertail.WinUI.Cloud;
 using Towertail.WinUI.Collectors;
 using Towertail.WinUI.State;
 using Towertail.WinUI.SystemServices;
@@ -23,10 +24,16 @@ public sealed class AppEnvironment
     public required Logger Logger { get; init; }
     public required DiskScannerFactory DiskScanners { get; init; }
     public required DiskScanStore DiskScans { get; init; }
+    public required CloudSession Cloud { get; init; }
+
+    /// <summary>Watches sleep and wake for the cloud lease. Held here so that it lives as long as the app.</summary>
+    public SystemReachabilityMonitor? Reachability { get; init; }
 
     /// <summary>Optional TOFU prompter shared by collector + bulk-import Test path.</summary>
     public HostKeyPrompt? HostKeyPrompt { get; init; }
     public Action<Guid, string>? OnHostKeyTrust { get; init; }
+
+    public const string CloudFileName = "cloud.json";
 
     public static AppEnvironment Bootstrap()
     {
@@ -43,6 +50,17 @@ public sealed class AppEnvironment
         var servers = new ServerStore(nodes, serverSettings, history);
 
         IBackend backend = new LocalBackend(nodes, servers, clientSettings, serverSettings);
+#if DEBUG
+        // Developer override: use a server as the backend, with no cloud account.
+        var remoteMode = false;
+        if (System.Environment.GetEnvironmentVariable("TOWERTAIL_REMOTE_URL") is { Length: > 0 } remoteUrl
+            && System.Environment.GetEnvironmentVariable("TOWERTAIL_REMOTE_TOKEN") is { Length: > 0 } remoteToken
+            && Uri.TryCreate(remoteUrl, UriKind.Absolute, out var remoteUri))
+        {
+            backend = new RemoteBackend(new RemoteClient(remoteUri, remoteToken), nodes, servers, clientSettings, serverSettings);
+            remoteMode = true;
+        }
+#endif
         var notifier = new ThresholdNotifier(serverSettings, nodes);
         servers.AttachNotifier(notifier);
         servers.AttachLogger(logger);
@@ -85,15 +103,38 @@ public sealed class AppEnvironment
                 return tcs.Task;
             };
         }
-        collector.Start();
+
+        var cloudPrefs = new CloudPrefs(TowertailApp.AppDataPath(CloudFileName), logger);
+        var account = new CloudAccount(
+            cloudPrefs.Endpoint,
+            new DpapiTokenVault(TowertailApp.AppDataPath(DpapiTokenVault.FileName)),
+            new CloudAuthClient(cloudPrefs.Endpoint),
+            cloudPrefs, log: logger);
+        var cloud = new CloudSession(account, nodes, servers, cloudPrefs, collector.UiMarshaller, logger);
+
+        // The lease stops at sleep and comes back at wake.
+        var reachability = new SystemReachabilityMonitor();
+        reachability.AwakeChanged += cloud.Lease.SetSystemAwake;
+
+        var startLocal = true;
+#if DEBUG
+        startLocal = !remoteMode;
+        if (remoteMode) _ = ((RemoteBackend)backend).StartAsync();
+#endif
+        if (startLocal)
+        {
+            collector.Start();
+            _ = cloud.StartAsync();
+        }
         servers.StartStaleWatchdog(collector.UiMarshaller);
         _ = servers.HydrateAllProcsAsync(collector.UiMarshaller);
 
-        // Disk scans go through the server only in remote mode.
+        // Disk scans of cloud hosts go through the cloud. The debug server override scans through the server.
         var remote = backend as RemoteBackend;
         var diskScanners = new DiskScannerFactory(
             hostKeyPrompt: hostKeyPrompt, onTrust: onTrust, updater: updater,
-            remote: remote?.Client, updates: remote);
+            remoteFor: n => n.IsCloud ? cloud.Client : remote?.Client,
+            updates: (IDiskScanUpdates?)remote ?? cloud);
         var diskScans = new DiskScanStore(TowertailApp.AppDataPath(DiskScanStore.FileName));
 
         return new AppEnvironment
@@ -109,6 +150,8 @@ public sealed class AppEnvironment
             Logger = logger,
             DiskScanners = diskScanners,
             DiskScans = diskScans,
+            Cloud = cloud,
+            Reachability = reachability,
             HostKeyPrompt = hostKeyPrompt,
             OnHostKeyTrust = onTrust,
         };

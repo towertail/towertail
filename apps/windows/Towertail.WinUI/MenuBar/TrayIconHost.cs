@@ -125,13 +125,21 @@ public sealed class TrayIconHost
             switch (cmd)
             {
                 case 1: TogglePopover(); break;
-                case 2: Dispose(); Application.Current.Exit(); break;
+                case 2: ExitAsync(); break;
             }
         }
         finally
         {
             DestroyMenu(menu);
         }
+    }
+
+    private async void ExitAsync()
+    {
+        Dispose();
+        try { await _env.Cloud.StopFeedAsync().WaitAsync(TimeSpan.FromSeconds(2)); }
+        catch { }
+        Application.Current.Exit();
     }
 
     public void Dispose()

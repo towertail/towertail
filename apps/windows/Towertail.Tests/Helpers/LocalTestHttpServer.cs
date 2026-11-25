@@ -121,6 +121,15 @@ public sealed class LocalTestHttpServer : IAsyncDisposable
         }
     }
 
+    /// <summary>Writes a JSON reply with a status code.</summary>
+    public static async Task ReplyAsync(HttpListenerContext ctx, int status, string json = "{}")
+    {
+        ctx.Response.StatusCode = status;
+        ctx.Response.ContentType = "application/json";
+        await using var w = new StreamWriter(ctx.Response.OutputStream);
+        await w.WriteAsync(json).ConfigureAwait(false);
+    }
+
     public async Task AcceptWebSocketAsync(HttpListenerContext ctx)
     {
         var wsCtx = await ctx.AcceptWebSocketAsync(null).ConfigureAwait(false);

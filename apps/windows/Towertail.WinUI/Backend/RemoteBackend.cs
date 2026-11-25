@@ -45,12 +45,13 @@ public sealed class RemoteBackend : IBackend, IDiskScanUpdates
 
     public async Task StartAsync(CancellationToken ct = default)
     {
-        var remoteNodes = await _client.ListNodesAsync(ct).ConfigureAwait(false);
+        // Resume on the caller context: the next lines change the node list that the UI binds.
+        var remoteNodes = await _client.ListNodesAsync(ct);
         Nodes.Nodes.Clear();
         foreach (var rn in remoteNodes)
             Nodes.Nodes.Add(ToNode(rn));
 
-        var settings = await _client.GetSettingsAsync(ct).ConfigureAwait(false);
+        var settings = await _client.GetSettingsAsync(ct);
         ApplyServerSettings(settings);
 
         _stream = _client.OpenStream(lease: false);
