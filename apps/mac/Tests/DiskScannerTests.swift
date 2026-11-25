@@ -114,6 +114,17 @@ final class DiskScannerTests: XCTestCase {
         XCTAssertTrue(stderr.contains("unknown command"))
     }
 
+    func testNonZeroExitKeepsStderrEachTime() async throws {
+        let s = try scanner("echo 'unknown command \"scan\"' >&2\nexit 2\n")
+        for i in 0..<50 {
+            let (_, error) = await collect(s)
+            guard case .exited(_, let stderr)? = error as? DiskScanError else {
+                return XCTFail("run \(i): \(String(describing: error))")
+            }
+            XCTAssertTrue(stderr.contains("unknown command"), "run \(i): \(stderr)")
+        }
+    }
+
     func testErrorLineEndsStream() async throws {
         let s = try scanner("""
         echo '{"t":"error","v":1,"message":"lstat /nope: no such file or directory"}'

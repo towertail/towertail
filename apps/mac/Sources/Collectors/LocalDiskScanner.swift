@@ -32,6 +32,9 @@ struct LocalDiskScanner: DiskScanner {
             process.standardInput = stdin
             process.standardOutput = stdout
             process.standardError = stderr
+            // Not waitUntilExit: on a GCD thread it can miss the exit and wait until the watchdog.
+            let exited = DispatchSemaphore(value: 0)
+            process.terminationHandler = { _ in exited.signal() }
             do {
                 try process.run()
             } catch {
@@ -43,9 +46,12 @@ struct LocalDiskScanner: DiskScanner {
             let dog = feed.startWatchdog(timeout: watchdog) {
                 kill(pid, SIGTERM)
             }
+            let stderrRead = DispatchGroup()
+            stderrRead.enter()
             DispatchQueue.global(qos: .utility).async {
                 let data = stderr.fileHandleForReading.readDataToEndOfFile()
                 feed.appendStderr(data)
+                stderrRead.leave()
             }
             DispatchQueue.global(qos: .utility).async {
                 let handle = stdout.fileHandleForReading
@@ -54,10 +60,12 @@ struct LocalDiskScanner: DiskScanner {
                     if chunk.isEmpty { break }
                     feed.feed(chunk)
                 }
-                process.waitUntilExit()
+                exited.wait()
                 dog.cancel()
                 // Keep the stdin pipe open until the process ends.
                 withExtendedLifetime(stdin) {}
+                // The error needs all of stderr. A child that keeps stderr open must not block the end.
+                _ = stderrRead.wait(timeout: .now() + 1)
                 feed.end(exitCode: process.terminationStatus)
             }
 
