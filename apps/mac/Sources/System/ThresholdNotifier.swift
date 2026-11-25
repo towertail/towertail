@@ -14,7 +14,8 @@ import AppKit
 /// A tap posts to `NotificationTapRouter`, which invokes a handler
 /// registered by the App layer.
 @MainActor
-final class ThresholdNotifier {
+final class ThresholdNotifier: CloudAlertPoster {
+    static let cloudAlertCategory = "towertail.cloudAlert"
     private let settings: ServerSettings
     private let reachability: SystemReachabilityMonitor?
     private var lastTint: [Key: ThresholdTint] = [:]
@@ -49,8 +50,72 @@ final class ThresholdNotifier {
         started = true
         let center = UNUserNotificationCenter.current()
         center.delegate = NotificationTapRouter.shared
+        center.setNotificationCategories([Self.cloudCategory()])
         // Authorization is requested lazily on the first would-be fire so the
         // user doesn't get prompted at launch before they've set anything up.
+    }
+
+    static func cloudCategory() -> UNNotificationCategory {
+        UNNotificationCategory(
+            identifier: cloudAlertCategory,
+            actions: [
+                UNNotificationAction(identifier: CloudAlertAction.ackID, title: "Ack", options: []),
+                UNNotificationAction(identifier: CloudAlertAction.snoozeID, title: "Snooze 1 h", options: []),
+            ],
+            intentIdentifiers: [],
+            options: []
+        )
+    }
+
+    static func cloudIdentifier(alertId: UUID) -> String { "towertail.cloud.\(alertId.uuidString)" }
+
+    /// Builds the notification of a cloud alert event. A change to ok has no actions.
+    static func cloudContent(event: StreamEvent, hostName: String, alertId: UUID) -> UNNotificationContent {
+        let content = UNMutableNotificationContent()
+        content.title = event.title ?? hostName
+        content.body = event.text ?? ""
+        let isOk = event.tint == "ok"
+        content.sound = event.tint == "critical" ? .defaultCritical : .default
+        if !isOk { content.categoryIdentifier = cloudAlertCategory }
+        // A tap opens a tab. Metrics that have no tab open the CPU tab.
+        let metric = event.metric.flatMap(Metric.init(rawValue:)) ?? .cpu
+        content.userInfo = [
+            "hostId": event.nodeId.uuidString,
+            "metric": metric.rawValue,
+            "alertId": alertId.uuidString,
+        ]
+        return content
+    }
+
+    func postCloud(event: StreamEvent, hostName: String) {
+        guard let alertId = event.alertId else { return }
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        let req = UNNotificationRequest(
+            identifier: Self.cloudIdentifier(alertId: alertId),
+            content: Self.cloudContent(event: event, hostName: hostName, alertId: alertId),
+            trigger: nil
+        )
+        center.add(req, withCompletionHandler: nil)
+        Logger.shared.info(
+            "notification: cloud",
+            category: "notifications",
+            hostID: event.nodeId, host: hostName,
+            kv: ["metric": event.metric ?? "", "tint": event.tint ?? ""]
+        )
+    }
+
+    func withdrawCloud(alertId: UUID) {
+        UNUserNotificationCenter.current()
+            .removeDeliveredNotifications(withIdentifiers: [Self.cloudIdentifier(alertId: alertId)])
+    }
+
+    /// A short notice when an action of a cloud notification fails.
+    func postCloudFailure(_ text: String) {
+        let content = UNMutableNotificationContent()
+        content.title = text
+        let req = UNNotificationRequest(identifier: "towertail.cloud.failure.\(UUID().uuidString)", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(req, withCompletionHandler: nil)
     }
 
     func evaluate(vm: ServerViewModel, node: Node) {
@@ -241,6 +306,31 @@ final class ThresholdNotifier {
     }
 }
 
+/// The notifier calls of `CloudFeed`. A fake replaces the notifier in tests.
+@MainActor
+protocol CloudAlertPoster: AnyObject {
+    func postCloud(event: StreamEvent, hostName: String)
+    func withdrawCloud(alertId: UUID)
+}
+
+/// An action button of a cloud alert notification.
+enum CloudAlertAction: Equatable, Sendable {
+    case ack
+    case snooze(Date)
+
+    static let ackID = "ACK"
+    static let snoozeID = "SNOOZE_1H"
+
+    /// Maps an action identifier. Other identifiers (the tap) give nil.
+    static func from(identifier: String, now: Date = Date()) -> CloudAlertAction? {
+        switch identifier {
+        case ackID: return .ack
+        case snoozeID: return .snooze(now.addingTimeInterval(3600))
+        default: return nil
+        }
+    }
+}
+
 /// UNUserNotificationCenter delegate singleton. When the user taps a
 /// notification this invokes the `onTap` handler that the App layer
 /// registers at launch. Using a direct callback (rather than SwiftUI's
@@ -254,6 +344,13 @@ final class NotificationTapRouter: NSObject, UNUserNotificationCenterDelegate, @
     private let lock = NSLock()
     private var handler: ((FullViewContext) -> Void)?
     private var buffered: [FullViewContext] = []
+    private var actionHandler: (@Sendable (UUID, CloudAlertAction) async -> Void)?
+
+    func setActionHandler(_ h: @escaping @Sendable (UUID, CloudAlertAction) async -> Void) {
+        lock.lock()
+        actionHandler = h
+        lock.unlock()
+    }
 
     func setHandler(_ h: @escaping (FullViewContext) -> Void) {
         lock.lock()
@@ -283,6 +380,22 @@ final class NotificationTapRouter: NSObject, UNUserNotificationCenterDelegate, @
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         let userInfo = response.notification.request.content.userInfo
+        if let action = CloudAlertAction.from(identifier: response.actionIdentifier) {
+            lock.lock()
+            let h = actionHandler
+            lock.unlock()
+            guard let h, let idStr = userInfo["alertId"] as? String, let alertId = UUID(uuidString: idStr) else {
+                completionHandler()
+                return
+            }
+            // The handler is `@Sendable`, so the completion handler stays out of its closure.
+            nonisolated(unsafe) let done = completionHandler
+            Task {
+                await h(alertId, action)
+                done()
+            }
+            return
+        }
         if let idStr = userInfo["hostId"] as? String,
            let id = UUID(uuidString: idStr),
            let metricStr = userInfo["metric"] as? String,

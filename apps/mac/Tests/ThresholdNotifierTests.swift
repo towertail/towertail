@@ -1,4 +1,5 @@
 import XCTest
+import UserNotifications
 @testable import Towertail
 
 @MainActor
@@ -83,5 +84,32 @@ final class ThresholdNotifierTests: XCTestCase {
         ]
         let body = ThresholdNotifier.bodyText(vm: vmWithProcs(items), metric: .cpu)
         XCTAssertTrue(body.contains("Top: node ×2 · sling (.wt/SLING-40) · vitest run 190%, node · api · x.js 50%"), body)
+    }
+
+    func testCloudAlertActions() throws {
+        let category = ThresholdNotifier.cloudCategory()
+        XCTAssertEqual(category.identifier, "towertail.cloudAlert")
+        XCTAssertEqual(category.actions.map(\.identifier), ["ACK", "SNOOZE_1H"])
+        XCTAssertEqual(category.actions.map(\.title), ["Ack", "Snooze 1 h"])
+        XCTAssertTrue(category.actions.allSatisfy { !$0.options.contains(.foreground) })
+
+        let alert = UUID(), node = UUID()
+        func event(_ tint: String) throws -> StreamEvent {
+            let json = #"{"kind":"threshold_crossed","nodeId":"\#(node)","alertId":"\#(alert)","metric":"cpu","tint":"\#(tint)","notify":true,"title":"t","text":"b"}"#
+            return try JSONDecoder().decode(StreamEvent.self, from: Data(json.utf8))
+        }
+        XCTAssertEqual(ThresholdNotifier.cloudIdentifier(alertId: alert), "towertail.cloud.\(alert.uuidString)")
+        let open = ThresholdNotifier.cloudContent(event: try event("critical"), hostName: "web", alertId: alert)
+        XCTAssertEqual(open.categoryIdentifier, "towertail.cloudAlert")
+        XCTAssertEqual(open.title, "t")
+        XCTAssertEqual(open.userInfo["alertId"] as? String, alert.uuidString)
+        XCTAssertEqual(open.userInfo["hostId"] as? String, node.uuidString)
+        let recovered = ThresholdNotifier.cloudContent(event: try event("ok"), hostName: "web", alertId: alert)
+        XCTAssertEqual(recovered.categoryIdentifier, "")
+
+        XCTAssertEqual(CloudAlertAction.from(identifier: "ACK"), .ack)
+        let now = Date()
+        XCTAssertEqual(CloudAlertAction.from(identifier: "SNOOZE_1H", now: now), .snooze(now.addingTimeInterval(3600)))
+        XCTAssertNil(CloudAlertAction.from(identifier: UNNotificationDefaultActionIdentifier))
     }
 }

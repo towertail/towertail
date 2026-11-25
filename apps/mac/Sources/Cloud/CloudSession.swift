@@ -21,6 +21,7 @@ final class CloudSession {
     @ObservationIgnored private let servers: ServerStore
     @ObservationIgnored private let nodes: NodeStore
     @ObservationIgnored private let released: ReleasedHosts
+    @ObservationIgnored private let notifier: ThresholdNotifier?
 
     var isSignedIn: Bool {
         if case .signedIn = account.status { return true }
@@ -28,10 +29,11 @@ final class CloudSession {
     }
 
     convenience init(account: CloudAccount, backend: LocalBackend) {
-        self.init(account: account, servers: backend.servers, nodes: backend.nodes)
+        self.init(account: account, servers: backend.servers, nodes: backend.nodes, notifier: backend.notifier)
     }
 
-    init(account: CloudAccount, servers: ServerStore, nodes: NodeStore, released: ReleasedHosts = ReleasedHosts()) {
+    init(account: CloudAccount, servers: ServerStore, nodes: NodeStore, released: ReleasedHosts = ReleasedHosts(), notifier: ThresholdNotifier? = nil) {
+        self.notifier = notifier
         self.account = account
         self.servers = servers
         self.nodes = nodes
@@ -73,11 +75,32 @@ final class CloudSession {
         if let client, client.config.token == token, feed != nil { return }
         stopFeed()
         let client = RemoteClient(config: .init(endpoint: account.endpoint, token: token))
-        let feed = CloudFeed(client: client, servers: servers, nodes: nodes, viewLease: viewLease, released: released)
+        let feed = CloudFeed(client: client, servers: servers, nodes: nodes, viewLease: viewLease, released: released, notifier: notifier)
         self.client = client
         self.feed = feed
         history = RemoteHistoryLoader(cache: CloudHistoryCache(client: client), store: servers)
+        NotificationTapRouter.shared.setActionHandler { [weak self] alertId, action in
+            await self?.perform(action, alertId: alertId)
+        }
         feed.start()
+    }
+
+    /// Runs an action button of a cloud notification.
+    func perform(_ action: CloudAlertAction, alertId: UUID) async {
+        guard let client else { return }
+        do {
+            switch action {
+            case .ack: _ = try await client.ackAlert(id: alertId)
+            case .snooze(let until): _ = try await client.snoozeAlert(id: alertId, until: until)
+            }
+        } catch {
+            let name: String
+            switch action {
+            case .ack: name = "Ack"
+            case .snooze: name = "Snooze"
+            }
+            notifier?.postCloudFailure("\(name) failed: \(error.localizedDescription)")
+        }
     }
 
     private func stopFeed() {

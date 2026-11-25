@@ -133,7 +133,7 @@ final class RemoteBackend: Backend {
                 // remote dispatcher lands. For now log and move on.
                 Logger.shared.info("remote: event", category: "alerts", kv: ["raw": raw])
             }
-        case .other:
+        case .alertUpdated, .other:
             break
         }
     }

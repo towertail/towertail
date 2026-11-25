@@ -15,12 +15,14 @@ final class CloudFeed {
     @ObservationIgnored private let nodes: NodeStore
     @ObservationIgnored private let viewLease: ViewLeaseController?
     @ObservationIgnored private let released: ReleasedHosts
+    @ObservationIgnored private let notifier: CloudAlertPoster?
     @ObservationIgnored private var stream: RemoteStream?
     /// Reachability events since the last connect. They win over the
     /// open alerts, which can be older than the events.
     @ObservationIgnored private var eventAlerts: [UUID: Bool] = [:]
 
-    init(client: RemoteClient, servers: ServerStore, nodes: NodeStore, viewLease: ViewLeaseController? = nil, released: ReleasedHosts = ReleasedHosts()) {
+    init(client: RemoteClient, servers: ServerStore, nodes: NodeStore, viewLease: ViewLeaseController? = nil, released: ReleasedHosts = ReleasedHosts(), notifier: CloudAlertPoster? = nil) {
+        self.notifier = notifier
         self.client = client
         self.released = released
         self.servers = servers
@@ -112,6 +114,7 @@ final class CloudFeed {
             guard nodes.node(withId: id)?.isCloud == true else { return }
             servers.apply(detail: detail, tab: tab, for: id)
         case .event(let event):
+            postIfNotify(event)
             guard event.metric == "reachability" else { return }
             if nodes.node(withId: event.nodeId)?.isCloud == true { servers.apply(reachability: event) }
             let open = event.tint == "critical"
@@ -129,9 +132,17 @@ final class CloudFeed {
             }
         case .lease(let notice):
             if notice.isLimit { viewLease?.didReceiveLimit() }
+        case .alertUpdated(let alert):
+            if alert.isSilenced() { notifier?.withdrawCloud(alertId: alert.id) }
         case .settingsUpdated, .diskScan, .other:
             break
         }
+    }
+
+    /// The apps run no rules for cloud hosts. They show what the server says to show.
+    private func postIfNotify(_ event: StreamEvent) {
+        guard event.notify == true, let node = nodes.node(withId: event.nodeId), node.isCloud else { return }
+        notifier?.postCloud(event: event, hostName: node.displayName)
     }
 
     /// Seeds `alerted` with the alerts that opened before the connection.

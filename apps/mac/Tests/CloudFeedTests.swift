@@ -289,4 +289,64 @@ final class CloudFeedTests: XCTestCase {
         server.closeAllWebSockets()
         try await waitFor { !self.feed.connected }
     }
+
+    @MainActor
+    private final class FakePoster: CloudAlertPoster {
+        var posted: [(StreamEvent, String)] = []
+        var withdrawn: [UUID] = []
+        func postCloud(event: StreamEvent, hostName: String) { posted.append((event, hostName)) }
+        func withdrawCloud(alertId: UUID) { withdrawn.append(alertId) }
+    }
+
+    private func makeFeed(poster: FakePoster) -> CloudFeed {
+        feed.stop()
+        let f = CloudFeed(client: RemoteClient(config: .init(endpoint: server.baseURL, token: token)),
+                          servers: servers, nodes: nodes, released: released, notifier: poster)
+        feed = f
+        return f
+    }
+
+    private func alertEventFrame(node: UUID, alert: UUID, notify: Bool) -> String {
+        """
+        {"type":"event","event":{"id":"\(UUID().uuidString)","alertId":"\(alert.uuidString)","ts":"2026-11-25T10:00:00Z","kind":"threshold_crossed","nodeId":"\(node.uuidString)","metric":"cpu","tint":"critical","notify":\(notify),"title":"web: CPU critical","text":"CPU at 97%."}}
+        """
+    }
+
+    func testEventWithNotifyPostsCloudNotification() async throws {
+        let poster = FakePoster()
+        _ = makeFeed(poster: poster)
+        let node = Node(displayName: "web", kind: .ssh, sshUser: "u", sshHost: "h", cloud: CloudLink(enrolledAt: Date()))
+        let plain = Node(displayName: "db", kind: .ssh, sshUser: "u", sshHost: "d")
+        serveNodes([node])
+        addHost(node)
+        addHost(plain)
+        try await connect()
+        let alert = UUID()
+        server.sendToAllWebSockets(text: alertEventFrame(node: node.id, alert: alert, notify: false))
+        server.sendToAllWebSockets(text: alertEventFrame(node: plain.id, alert: alert, notify: true))
+        server.sendToAllWebSockets(text: alertEventFrame(node: node.id, alert: alert, notify: true))
+        try await waitFor { !poster.posted.isEmpty }
+        XCTAssertEqual(poster.posted.count, 1)
+        XCTAssertEqual(poster.posted.first?.0.alertId, alert)
+        XCTAssertEqual(poster.posted.first?.1, "web")
+    }
+
+    func testAlertUpdatedWithdraws() async throws {
+        let poster = FakePoster()
+        _ = makeFeed(poster: poster)
+        let node = Node(displayName: "web", kind: .ssh, sshUser: "u", sshHost: "h", cloud: CloudLink(enrolledAt: Date()))
+        serveNodes([node])
+        addHost(node)
+        try await connect()
+        let alert = UUID()
+        func frame(_ extra: String) -> String {
+            """
+            {"type":"alert_updated","nodeId":"\(node.id.uuidString)","alert":{"id":"\(alert.uuidString)","node_id":"\(node.id.uuidString)","kind":"threshold_crossed","metric":"cpu","tint":"critical","ts":"2026-11-25T10:00:00Z","value":0.97\(extra)}}
+            """
+        }
+        server.sendToAllWebSockets(text: frame(""))
+        server.sendToAllWebSockets(text: frame(#","acked_by":"\#(UUID().uuidString)""#))
+        try await waitFor { !poster.withdrawn.isEmpty }
+        XCTAssertEqual(poster.withdrawn, [alert])
+    }
 }

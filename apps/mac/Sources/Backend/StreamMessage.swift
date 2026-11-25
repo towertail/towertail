@@ -8,6 +8,11 @@ struct StreamEvent: Decodable, Equatable, Sendable {
     let metric: String?
     let tint: String?
     let kind: String
+    let alertId: UUID?
+    /// True when the server sends a notification for the event.
+    let notify: Bool?
+    let title: String?
+    let text: String?
 }
 
 /// One text frame of `/v1/stream` (docs/wire.md §4), decoded.
@@ -17,6 +22,7 @@ enum StreamMessage {
     case settingsUpdated(RemoteServerSettings)
     case diskScan(DiskScanJob)
     case event(StreamEvent)
+    case alertUpdated(RemoteAlert)
     case hello
     case summary(UUID, LiveSummary)
     case detail(UUID, DetailTab, LiveDetail)
@@ -60,6 +66,9 @@ enum StreamMessage {
         case "event":
             struct Wrap: Decodable { let event: StreamEvent }
             return (try? decoder.decode(Wrap.self, from: data)).map { .event($0.event) } ?? .other
+        case "alert_updated":
+            struct Wrap: Decodable { let alert: RemoteAlert }
+            return (try? decoder.decode(Wrap.self, from: data)).map { .alertUpdated($0.alert) } ?? .other
         case "hello":
             return .hello
         case "summary":

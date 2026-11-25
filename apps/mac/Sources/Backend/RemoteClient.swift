@@ -89,6 +89,15 @@ final class RemoteClient {
         return list.alerts
     }
 
+    func ackAlert(id: UUID) async throws -> RemoteAlert {
+        try await send("POST", "/v1/alerts/\(id.uuidString)/ack", body: EmptyBody())
+    }
+
+    func snoozeAlert(id: UUID, until: Date) async throws -> RemoteAlert {
+        let stamp = ISO8601DateFormatter().string(from: until)
+        return try await send("POST", "/v1/alerts/\(id.uuidString)/snooze?until=\(stamp)", body: EmptyBody())
+    }
+
     func killProcess(nodeID: UUID, pid: Int32) async throws {
         _ = try await raw("POST", "/v1/nodes/\(nodeID.uuidString)/kill-process?pid=\(pid)")
     }
@@ -438,14 +447,38 @@ private final class OnceGate: @unchecked Sendable {
 
 // MARK: - Wire DTOs
 
+private struct EmptyBody: Encodable {}
+
 struct RemoteAlert: Decodable, Sendable {
+    let id: UUID
     let nodeId: UUID
     let metric: String
     let tint: String
+    let ackedBy: UUID?
+    let snoozedUntil: Date?
 
     enum CodingKeys: String, CodingKey {
+        case id
         case nodeId = "node_id"
         case metric, tint
+        case ackedBy = "acked_by"
+        case snoozedUntil = "snoozed_until"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        nodeId = try c.decode(UUID.self, forKey: .nodeId)
+        metric = try c.decode(String.self, forKey: .metric)
+        tint = try c.decode(String.self, forKey: .tint)
+        ackedBy = try c.decodeIfPresent(UUID.self, forKey: .ackedBy)
+        // The server sends fractional seconds, which `.iso8601` rejects.
+        snoozedUntil = try c.decodeIfPresent(String.self, forKey: .snoozedUntil).flatMap(SampleCodec.parseRFC3339UTC)
+    }
+
+    /// True while an ack or a snooze silences the alert.
+    func isSilenced(at now: Date = Date()) -> Bool {
+        ackedBy != nil || (snoozedUntil.map { $0 > now } ?? false)
     }
 }
 

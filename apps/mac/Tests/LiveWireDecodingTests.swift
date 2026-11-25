@@ -109,4 +109,30 @@ final class LiveWireDecodingTests: XCTestCase {
             return XCTFail("not a hello")
         }
     }
+
+    @MainActor
+    func testStreamEventAlertFields() {
+        let node = UUID(), alert = UUID()
+        let event = """
+        {"type":"event","event":{"id":"\(UUID().uuidString)","alertId":"\(alert.uuidString)","ts":"2026-11-25T10:00:00Z","kind":"threshold_crossed","nodeId":"\(node.uuidString)","metric":"cpu","tint":"critical","notify":true,"title":"web: CPU critical","text":"CPU at 97%."}}
+        """
+        guard case .event(let e) = StreamMessage.decode(event) else { return XCTFail("not an event") }
+        XCTAssertEqual(e.alertId, alert)
+        XCTAssertEqual(e.notify, true)
+        XCTAssertEqual(e.title, "web: CPU critical")
+        XCTAssertEqual(e.text, "CPU at 97%.")
+
+        let old = #"{"type":"event","event":{"kind":"sampler_version","nodeId":"\#(node.uuidString)"}}"#
+        guard case .event(let o) = StreamMessage.decode(old) else { return XCTFail("not an event") }
+        XCTAssertNil(o.alertId)
+        XCTAssertNil(o.notify)
+
+        let updated = """
+        {"type":"alert_updated","nodeId":"\(node.uuidString)","alert":{"id":"\(alert.uuidString)","node_id":"\(node.uuidString)","kind":"threshold_crossed","metric":"cpu","tint":"critical","ts":"2026-11-25T10:00:00.25Z","value":0.97,"acked_by":"\(UUID().uuidString)","acked_at":"2026-11-25T10:01:00.5Z"}}
+        """
+        guard case .alertUpdated(let a) = StreamMessage.decode(updated) else { return XCTFail("not an alert_updated") }
+        XCTAssertEqual(a.id, alert)
+        XCTAssertEqual(a.nodeId, node)
+        XCTAssertTrue(a.isSilenced())
+    }
 }

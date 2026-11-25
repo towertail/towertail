@@ -587,4 +587,33 @@ final class RemoteBackendTests: XCTestCase {
         XCTAssertEqual(sent["displayName"] as? String, "cloud-host")
         XCTAssertEqual(sent["ignoredProcs"] as? [String], ["postgres"])
     }
+
+    func testAckAlertCallsAPI() async throws {
+        let id = UUID(), node = UUID()
+        server.on("POST", "/v1/alerts/") { _ in
+            .json(200, Data(#"{"id":"\#(id)","node_id":"\#(node)","kind":"threshold_crossed","metric":"cpu","tint":"warn","ts":"2026-11-25T10:00:00.123456Z","value":0.9,"acked_by":"\#(UUID())"}"#.utf8))
+        }
+        let client = RemoteClient(config: .init(endpoint: server.baseURL, token: token))
+        let alert = try await client.ackAlert(id: id)
+        let req = try XCTUnwrap(server.captured.last)
+        XCTAssertEqual(req.method, "POST")
+        XCTAssertEqual(req.path, "/v1/alerts/\(id.uuidString)/ack")
+        XCTAssertEqual(alert.id, id)
+        XCTAssertTrue(alert.isSilenced())
+    }
+
+    func testSnoozeAlertSendsUntil() async throws {
+        let id = UUID(), node = UUID()
+        let until = Date(timeIntervalSince1970: 1_800_000_000)
+        server.on("POST", "/v1/alerts/") { _ in
+            .json(200, Data(#"{"id":"\#(id)","node_id":"\#(node)","kind":"threshold_crossed","metric":"cpu","tint":"warn","ts":"2026-11-25T10:00:00Z","value":0.9,"snoozed_until":"2027-01-15T08:00:00.5Z"}"#.utf8))
+        }
+        let client = RemoteClient(config: .init(endpoint: server.baseURL, token: token))
+        let alert = try await client.snoozeAlert(id: id, until: until)
+        let req = try XCTUnwrap(server.captured.last)
+        XCTAssertEqual(req.method, "POST")
+        XCTAssertEqual(req.path, "/v1/alerts/\(id.uuidString)/snooze?until=2027-01-15T08:00:00Z")
+        XCTAssertNotNil(alert.snoozedUntil)
+        XCTAssertNil(alert.ackedBy)
+    }
 }
