@@ -39,6 +39,7 @@ final class CloudInstallerTests: XCTestCase {
     private func installer(
         room: @escaping @MainActor () async -> Int? = { nil },
         connect: CloudInstaller.Connect? = nil,
+        watch: @escaping CloudInstaller.Watch = { _, _ in },
         firstSample: @escaping CloudInstaller.FirstSample
     ) -> CloudInstaller {
         let client = RemoteClient(config: .init(endpoint: server.baseURL, token: token))
@@ -50,6 +51,7 @@ final class CloudInstallerTests: XCTestCase {
             planName: { "free" },
             room: room,
             firstSample: firstSample,
+            watch: watch,
             connect: connect ?? { _ in session },
             upload: { _, _ in "/home/u/.towertail/bin/towertail-sampler" },
             binary: { _ in URL(fileURLWithPath: "/tmp/towertail-sampler") },
@@ -121,6 +123,38 @@ final class CloudInstallerTests: XCTestCase {
 
         XCTAssertEqual(installer.rows[node.id]?[.sample], .failed("No sample yet. Check the sampler log."))
         XCTAssertNotNil(nodes.node(withId: node.id)?.cloud)
+    }
+
+    func testRunWatchesHostDuringSampleStep() async {
+        serveEnroll()
+        var calls: [(UUID, Bool)] = []
+        var watchedAtSample = false
+        let installer = installer(watch: { calls.append(($0, $1)) }) { [node] _, _ in
+            watchedAtSample = calls.last.map { $0.0 == node!.id && $0.1 } ?? false
+            return "1.4.0+abc"
+        }
+        await installer.run(nodes: [node])
+
+        XCTAssertTrue(watchedAtSample)
+        XCTAssertEqual(calls.map(\.1), [true, false])
+    }
+
+    func testRunUnwatchesAfterTimeout() async {
+        serveEnroll()
+        var calls: [Bool] = []
+        let installer = installer(watch: { calls.append($1) }) { _, _ in nil }
+        await installer.run(nodes: [node])
+
+        XCTAssertEqual(calls, [true, false])
+    }
+
+    func testRunFailedBeforeSampleDoesNotWatch() async {
+        session.fail("uname -sm", RemoteCommandFailed(exitCode: 1, stderr: "not recognized"))
+        var calls: [Bool] = []
+        let installer = installer(watch: { calls.append($1) }) { _, _ in nil }
+        await installer.run(nodes: [node])
+
+        XCTAssertTrue(calls.isEmpty)
     }
 
     func testRunWindowsHostIsNotSupported() async {

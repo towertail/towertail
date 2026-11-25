@@ -280,6 +280,13 @@ final class RemoteBackendTests: XCTestCase {
         backend.stop()
     }
 
+    func testStreamOffersNoCompression() async throws {
+        let (backend, _) = try await startBackend()
+        let ext = server.lastWebSocketHeaders["sec-websocket-extensions"] ?? ""
+        XCTAssertFalse(ext.contains("permessage-deflate"), ext)
+        backend.stop()
+    }
+
     func testViewSentOnConnect() async throws {
         let (backend, node) = try await startBackend()
         backend.viewLease.setPopover(visible: true)

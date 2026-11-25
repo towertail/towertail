@@ -2,8 +2,8 @@ import AppKit
 import Foundation
 
 /// Tells Cloud which hosts the user looks at. It builds the `view` frame
-/// from what is on screen, sends it at each change, and renews it while
-/// something is visible. A hidden popover or a sleeping Mac gives an empty
+/// from what is on screen and from the hosts that a task watches, sends it
+/// at each change, and renews it while the view is not empty. A hidden popover or a sleeping Mac gives an empty
 /// view at once.
 @MainActor
 final class ViewLeaseController {
@@ -25,6 +25,8 @@ final class ViewLeaseController {
 
     private var popoverVisible = false
     private var cards: Set<UUID> = []
+    /// Hosts that a task needs live data for, for example an install that waits for the first sample.
+    private var watched: Set<UUID> = []
     /// Visible full view windows. The last one changed last.
     private var fullViews: [FullViewEntry] = []
     private var awake = true
@@ -66,6 +68,11 @@ final class ViewLeaseController {
     func setCard(_ id: UUID, visible: Bool) {
         let changed = visible ? cards.insert(id).inserted : cards.remove(id) != nil
         if changed { refresh(debounced: true) }
+    }
+
+    func setWatched(_ id: UUID, watched: Bool) {
+        let changed = watched ? self.watched.insert(id).inserted : self.watched.remove(id) != nil
+        if changed { refresh() }
     }
 
     func setFullView(window: UUID, host: UUID?, tab: DetailTab?, visible: Bool) {
@@ -132,7 +139,7 @@ final class ViewLeaseController {
 
     private func desired() -> LiveView {
         guard awake else { return .empty }
-        var hosts = popoverVisible ? cards : []
+        var hosts = (popoverVisible ? cards : []).union(watched)
         for entry in fullViews {
             if let host = entry.host { hosts.insert(host) }
         }

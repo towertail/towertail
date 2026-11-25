@@ -69,6 +69,7 @@ final class LocalTestServer: @unchecked Sendable {
     private let wsLock = NSLock()
     private var _receivedWebSocketTexts: [String] = []
     private var _lastWebSocketPath: String?
+    private var _lastWebSocketHeaders: [String: String] = [:]
 
     var port: UInt16 { listener.port?.rawValue ?? 0 }
 
@@ -278,6 +279,7 @@ final class LocalTestServer: @unchecked Sendable {
             self.wsLock.lock()
             self.wsConnections.append(connection)
             self._lastWebSocketPath = path
+            self._lastWebSocketHeaders = headers
             self.wsLock.unlock()
             self.drainWSFrames(connection: connection, buffer: Data())
         })
@@ -347,6 +349,13 @@ final class LocalTestServer: @unchecked Sendable {
         wsLock.lock()
         defer { wsLock.unlock() }
         return _lastWebSocketPath
+    }
+
+    /// Headers of the last WebSocket upgrade request, with lowercase keys.
+    var lastWebSocketHeaders: [String: String] {
+        wsLock.lock()
+        defer { wsLock.unlock() }
+        return _lastWebSocketHeaders
     }
 
     var hasWebSocketClient: Bool {

@@ -294,11 +294,14 @@ final class RemoteClient {
         let stream = RemoteStream()
         stream.start(Task.detached { [weak self] in
             guard let self else { return }
+            var errors = StreamErrorLog()
             while !Task.isCancelled {
                 do {
                     try await self.streamOnce(stream: stream, lease: lease, onConnect: onConnect, onMessage: onMessage)
                 } catch {
-                    // transient; backoff and retry.
+                    if !Task.isCancelled, errors.shouldLog(error, now: Date()) {
+                        await Logger.shared.warn("stream: connection failed: \(StreamErrorLog.text(error))", category: "cloud")
+                    }
                 }
                 onDisconnect?()
                 let jitter = UInt64.random(in: 500...1500) * 1_000_000
@@ -320,6 +323,9 @@ final class RemoteClient {
         if lease { components.queryItems = [URLQueryItem(name: "lease", value: "1")] }
         var req = URLRequest(url: components.url!)
         req.addValue("Bearer \(config.token)", forHTTPHeaderField: "Authorization")
+        // URLSession offers permessage-deflate, then fails with "Protocol error" on the
+        // frame after a deflated frame. No offer gives plain frames.
+        req.setValue("", forHTTPHeaderField: "Sec-WebSocket-Extensions")
         let task = urlSession.webSocketTask(with: req)
         task.resume()
         stream.attach(task)
@@ -384,6 +390,33 @@ final class RemoteStream: @unchecked Sendable {
         let (loop, socket) = lock.withLock { (self.loop, self.socket) }
         loop?.cancel()
         socket?.cancel(with: .normalClosure, reason: nil)
+    }
+}
+
+/// Keeps the retry loop of the stream from a flood of log lines. It logs a
+/// new kind of error at once, and the same kind again after `repeatEvery`.
+struct StreamErrorLog: Sendable {
+    static let repeatEvery: TimeInterval = 600
+
+    private var lastKey: String?
+    private var lastAt: Date?
+
+    mutating func shouldLog(_ error: Error, now: Date) -> Bool {
+        let key = Self.key(error)
+        if key == lastKey, let lastAt, now.timeIntervalSince(lastAt) < Self.repeatEvery { return false }
+        lastKey = key
+        lastAt = now
+        return true
+    }
+
+    static func text(_ error: Error) -> String {
+        "\(key(error)): \(error.localizedDescription)"
+    }
+
+    /// The domain and code only: the user info changes at each try.
+    private static func key(_ error: Error) -> String {
+        let ns = error as NSError
+        return "\(ns.domain) \(ns.code)"
     }
 }
 

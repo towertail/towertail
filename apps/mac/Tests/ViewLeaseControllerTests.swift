@@ -191,4 +191,53 @@ final class ViewLeaseControllerTests: XCTestCase {
         XCTAssertEqual(sent.count, 1)
         XCTAssertEqual(sent.first?.hosts.count, 5)
     }
+
+    // MARK: - Watched hosts
+
+    func testWatchedHostLeasedWithPopoverHidden() async {
+        let lease = makeController()
+        lease.setWatched(a, watched: true)
+        XCTAssertEqual(sent, [LiveView(hosts: [a], detail: nil)])
+    }
+
+    func testUnwatchSendsEmptyView() async {
+        let lease = makeController()
+        lease.setWatched(a, watched: true)
+        lease.setWatched(a, watched: false)
+        XCTAssertEqual(sent.count, 2)
+        XCTAssertEqual(sent.last, .empty)
+    }
+
+    func testWatchedMergesWithCards() async {
+        let lease = makeController()
+        await openPopover(lease)
+        lease.setWatched(c, watched: true)
+        XCTAssertEqual(sent.last, LiveView(hosts: sorted(a, b, c), detail: nil))
+        lease.setPopover(visible: false)
+        XCTAssertEqual(sent.last, LiveView(hosts: [c], detail: nil))
+    }
+
+    func testWatchedViewRenews() async {
+        let lease = makeController()
+        lease.setWatched(a, watched: true)
+        await clock.advance(.seconds(30))
+        XCTAssertEqual(sent.count, 2)
+        XCTAssertEqual(sent.first, sent.last)
+    }
+
+    func testSleepDropsWatchedHosts() async {
+        let lease = makeController()
+        lease.setWatched(a, watched: true)
+        lease.setSystemAwake(false)
+        XCTAssertEqual(sent.last, .empty)
+        lease.setSystemAwake(true)
+        XCTAssertEqual(sent.last, LiveView(hosts: [a], detail: nil))
+    }
+
+    func testWatchSameHostTwiceSendsOnce() async {
+        let lease = makeController()
+        lease.setWatched(a, watched: true)
+        lease.setWatched(a, watched: true)
+        XCTAssertEqual(sent.count, 1)
+    }
 }

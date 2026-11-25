@@ -294,6 +294,8 @@ The config key `stream.legacy_samples` (env `TT_STREAM__LEGACY_SAMPLES`, default
 
 The key `stream.compression` (env `TT_STREAM__COMPRESSION`, default `no_context_takeover`) sets the WebSocket compression. The server offers `permessage-deflate` without context takeover. Frames under 512 B are not compressed. A client that does not offer `permessage-deflate` gets plain frames. With `off`, the server does not offer it.
 
+The Mac app sends an empty `Sec-WebSocket-Extensions` header, so it gets plain frames. `URLSessionWebSocketTask` fails with "Protocol error" on the frame after a deflated frame. The cloud sets `off`, because older Mac releases offer `permessage-deflate`.
+
 ### Client → server
 
 ```json

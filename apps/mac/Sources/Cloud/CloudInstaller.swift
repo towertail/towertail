@@ -11,6 +11,8 @@ final class CloudInstaller {
     typealias BinaryLookup = @Sendable (String) -> URL?
     /// The sampler version of the first sample that came after a date. Nil when there is none.
     typealias FirstSample = @MainActor (UUID, Date) -> String?
+    /// Puts a host in the live view lease (true) or takes it out (false).
+    typealias Watch = @MainActor (UUID, Bool) -> Void
 
     static let stayedText = "Stays on this Mac over SSH"
     static let sampleWait = Duration.seconds(90)
@@ -49,6 +51,7 @@ final class CloudInstaller {
     @ObservationIgnored private let planName: @MainActor () -> String?
     @ObservationIgnored private let room: @MainActor () async -> Int?
     @ObservationIgnored private let firstSample: FirstSample
+    @ObservationIgnored private let watch: Watch
     @ObservationIgnored private let connect: Connect
     @ObservationIgnored private let upload: Upload
     @ObservationIgnored private let binary: BinaryLookup
@@ -61,6 +64,7 @@ final class CloudInstaller {
         planName: @escaping @MainActor () -> String? = { nil },
         room: @escaping @MainActor () async -> Int? = { nil },
         firstSample: @escaping FirstSample,
+        watch: @escaping Watch = { _, _ in },
         connect: @escaping Connect = CloudInstaller.sshConnect,
         upload: @escaping Upload = CloudInstaller.sshUpload,
         binary: @escaping BinaryLookup = { SSHBootstrap.bundledBinary(forTriple: $0) },
@@ -72,6 +76,7 @@ final class CloudInstaller {
         self.planName = planName
         self.room = room
         self.firstSample = firstSample
+        self.watch = watch
         self.connect = connect
         self.upload = upload
         self.binary = binary
@@ -92,7 +97,8 @@ final class CloudInstaller {
                 guard let vm = servers.serverVMs.first(where: { $0.id == id }),
                       let at = vm.lastIngestAt, at > since else { return nil }
                 return vm.samplerVersion
-            }
+            },
+            watch: { id, on in session.viewLease.setWatched(id, watched: on) }
         )
     }
 
@@ -293,6 +299,9 @@ final class CloudInstaller {
         }
 
         set(id, .sample, .running)
+        // Cloud sends data only for leased hosts, and the popover can be closed.
+        watch(id, true)
+        defer { watch(id, false) }
         var waited = Duration.zero
         let step = Duration.seconds(1)
         while true {
