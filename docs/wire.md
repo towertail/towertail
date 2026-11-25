@@ -466,10 +466,14 @@ The server's [`wire`](../server/wire/wire.go) package is the source of truth. No
 
 ## 7. MCP
 
-The server has a read-only [Model Context Protocol](https://modelcontextprotocol.io) server at `POST /mcp`. It is part of the Go server, so a self-hosted server has it too. The cloud shows it at `https://api.towertail.com/mcp`. `TT_MCP__ENABLED=false` (`mcp.enabled`) turns it off. Then `/mcp` gives 404.
+The server has a read-only [Model Context Protocol](https://modelcontextprotocol.io) server at `POST /mcp`. It is part of the Go server, so a self-hosted server has it too. The cloud shows it at `https://api.towertail.com/mcp`. `TT_MCP__ENABLED=false` (`mcp.enabled`) turns it off. Then `/mcp` and `/mcp/v1` give 404.
 
 - **Transport:** streamable HTTP in stateless mode with JSON replies. Send `Content-Type: application/json` and `Accept: application/json, text/event-stream`. Each reply is one JSON body. There is no session and no stream. `GET` and `DELETE` give 405.
 - **Auth:** `Authorization: Bearer tt_...` with an `api` token. `user` and `admin` tokens also pass. Other kinds give 403. The role is `viewer`. The key budget of §2 applies (429 `rate_limited`). OAuth is not available yet.
+- **Paths:** `POST /mcp` serves the newest tools. `POST /mcp/v1` serves the same tools as `/mcp` today. Its schemas are for the directory reviews (for example Google), so they freeze before the first submission and then change only on purpose. A tool change that breaks a client goes to `/mcp` only. Both paths have the same auth and replies.
+- **Tool metadata:** each tool in `tools/list` has `title` and `annotations`: `title`, `readOnlyHint`, `destructiveHint`, `idempotentHint` and `openWorldHint`. Every hint is explicit. A read tool has `readOnlyHint: true` and `idempotentHint: true`. No tool is destructive or open-world.
+- **Instructions:** the `initialize` result has `instructions`. The text (2 KB or less) gives facts: the host rule, the range syntax, the units and the plan limit. It gives no orders to the model.
+- **Result:** a good call gives `structuredContent` and one `text` block with the same JSON. Clients that read only text, such as Google, use that block.
 - **Reads:** the tools call the same query code as the fleet routes of §3, so the plan history limit is the same. A tool that reads history sets `clamped: true` when the limit moved the start later.
 - **Errors:** a bad input or a failed query is a tool error (`isError: true`) with a short text. A server with no ClickHouse gives the tool error `query: history is off`. A call with no token on the context gives `no token`.
 - **Host:** a tool takes a host by ID or by display name (no case). A name that matches two hosts gives an error with the two IDs.

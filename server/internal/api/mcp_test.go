@@ -24,11 +24,16 @@ func newMCPEnv(t *testing.T, cfg config.HTTPConfig, enabled bool) *keyEnv {
 	return newKeyEnvConfig(t, &config.Config{HTTP: cfg, MCP: config.MCPConfig{Enabled: enabled}})
 }
 
-// mcpPost sends a JSON-RPC body to /mcp. It fails the test when the reply
+// mcpPost sends a JSON-RPC body to /mcp. mcpPostTo takes the path. It fails the test when the reply
 // does not end.
 func (e *keyEnv) mcpPost(t *testing.T, method, token, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, "/mcp", strings.NewReader(body))
+	return e.mcpPostTo(t, "/mcp", method, token, body)
+}
+
+func (e *keyEnv) mcpPostTo(t *testing.T, path, method, token, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	if token != "" {
@@ -118,5 +123,28 @@ func TestMCPNoMembership(t *testing.T) {
 	}
 	if rec := e.mcpPost(t, http.MethodPost, raw, mcpToolsList); rec.Code != http.StatusForbidden {
 		t.Fatalf("key of a non-member: %d %s, want 403", rec.Code, rec.Body)
+	}
+}
+
+func TestMCPV1HTTP(t *testing.T) {
+	e := newMCPEnv(t, config.HTTPConfig{}, true)
+	user, _ := e.login(t, store.RoleViewer)
+	key := e.create(t, user, "claude").Token
+
+	rec := e.mcpPostTo(t, "/mcp/v1", http.MethodPost, key, mcpToolsList)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"list_hosts"`) || !strings.Contains(rec.Body.String(), `"destructiveHint"`) {
+		t.Errorf("tools/list = %d %s", rec.Code, rec.Body)
+	}
+	if rec := e.mcpPostTo(t, "/mcp/v1", http.MethodGet, key, mcpToolsList); rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET: %d %s, want 405", rec.Code, rec.Body)
+	}
+	if rec := e.mcpPostTo(t, "/mcp/v1", http.MethodPost, "", mcpToolsList); rec.Code != http.StatusUnauthorized {
+		t.Errorf("no token: %d %s, want 401", rec.Code, rec.Body)
+	}
+
+	off := newMCPEnv(t, config.HTTPConfig{}, false)
+	offUser, _ := off.login(t, store.RoleViewer)
+	if rec := off.mcpPostTo(t, "/mcp/v1", http.MethodPost, offUser, mcpToolsList); rec.Code != http.StatusNotFound {
+		t.Errorf("MCP off: %d %s, want 404", rec.Code, rec.Body)
 	}
 }

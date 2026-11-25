@@ -183,7 +183,7 @@ func New(d Deps) *Server {
 		apiKeyRates:   newKeyLimiters(d.Config.HTTP.APIKeyRateLimitRPS, d.Config.HTTP.APIKeyRateLimitBurst),
 	}
 	if d.Config.MCP.Enabled {
-		s.mcp = mcp.New(s.query, version.Version, d.Log)
+		s.mcp = mcp.New(s.query, mcp.Options{Version: version.Version, Log: d.Log})
 	}
 	if d.Config.Stream.Compression == "no_context_takeover" {
 		s.streamCompression = websocket.CompressionNoContextTakeover
@@ -345,11 +345,16 @@ func (s *Server) registerRoutes() {
 	samplerGroup.PUT("/disk-scans/:job/result", s.handlePutDiskScanResult)
 
 	// MCP: the stateless handler gives 405 for GET and DELETE, so only
-	// POST is routed.
+	// POST is routed. /mcp/v1 serves the frozen tool set.
 	if s.mcp != nil {
-		e.POST("/mcp", echo.WrapHandler(s.mcp.Handler()),
-			s.bearer(append([]store.TokenKind{store.TokenKindAPI}, userKinds...)...),
-			requireRole(store.RoleViewer), s.apiKeyLimiter(), tokenToRequest)
+		kinds := append([]store.TokenKind{store.TokenKindAPI}, userKinds...)
+		for _, r := range []struct {
+			path string
+			set  mcp.ToolSet
+		}{{"/mcp", mcp.ToolSetLatest}, {"/mcp/v1", mcp.ToolSetV1}} {
+			e.POST(r.path, echo.WrapHandler(s.mcp.Handler(r.set)),
+				s.bearer(kinds...), requireRole(store.RoleViewer), s.apiKeyLimiter(), tokenToRequest)
+		}
 	}
 
 	// Stream group: user tokens only, attached directly (no nested group

@@ -1,0 +1,714 @@
+[
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "title": "List hosts"
+    },
+    "description": "List the hosts of the fleet with the latest CPU (percent), memory and disk (ratio 0 to 1), load and network (bytes each second). Offline hosts have no values.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "description": "most hosts to return, 1 to 200. Default 50.",
+          "type": "integer"
+        },
+        "sort": {
+          "description": "order of the hosts, highest first: cpu, mem, disk or net. Default cpu.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "list_hosts",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "hosts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "cpu_pct": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "disk_ratio": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "last_seen": {
+                "type": "string"
+              },
+              "load1": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "mem_ratio": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "net_rx_bps": {
+                "minimum": 0,
+                "type": [
+                  "null",
+                  "integer"
+                ]
+              },
+              "net_tx_bps": {
+                "minimum": 0,
+                "type": [
+                  "null",
+                  "integer"
+                ]
+              },
+              "online": {
+                "type": "boolean"
+              },
+              "tags": {
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "online"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        }
+      },
+      "required": [
+        "hosts"
+      ],
+      "type": "object"
+    },
+    "title": "List hosts"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "title": "Host metrics"
+    },
+    "description": "Get the history of metrics of one host: min, avg, max, last, and at most 300 points for each metric. The plan can shorten the range (clamped).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "description": "start of the range in RFC 3339. Use it with to, instead of range.",
+          "type": "string"
+        },
+        "host": {
+          "description": "host ID or name",
+          "type": "string"
+        },
+        "metrics": {
+          "description": "metrics to read, at most 6: cpu (percent), mem (ratio 0 to 1), net_rx and net_tx (bytes each second), disk_read and disk_write (bytes each second). Default cpu.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "range": {
+          "description": "span up to now, 15m to 365d, for example 1h, 24h or 7d. Default 1h. Do not use with from.",
+          "type": "string"
+        },
+        "resolution": {
+          "description": "auto, raw, 1m, 5m or 1h. Default auto. The server raises the step to keep at most 300 points.",
+          "type": "string"
+        },
+        "to": {
+          "description": "end of the range in RFC 3339. Default now.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host"
+      ],
+      "type": "object"
+    },
+    "name": "host_metrics",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "clamped": {
+          "type": "boolean"
+        },
+        "from": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "metrics": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "avg": {
+                "type": "number"
+              },
+              "count": {
+                "type": "integer"
+              },
+              "last": {
+                "type": "number"
+              },
+              "max": {
+                "type": "number"
+              },
+              "metric": {
+                "type": "string"
+              },
+              "min": {
+                "type": "number"
+              },
+              "points": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "max": {
+                      "type": "number"
+                    },
+                    "ts": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "ts",
+                    "value"
+                  ],
+                  "type": "object"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              },
+              "resolution": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "metric",
+              "resolution",
+              "count",
+              "min",
+              "avg",
+              "max",
+              "last",
+              "points"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "host",
+        "host_id",
+        "from",
+        "to",
+        "metrics"
+      ],
+      "type": "object"
+    },
+    "title": "Host metrics"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "title": "Top processes"
+    },
+    "description": "Get the top processes of one host, or of the fleet, by CPU or memory over a range.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "by": {
+          "description": "order: cpu (average CPU) or mem (peak memory). Default cpu.",
+          "type": "string"
+        },
+        "host": {
+          "description": "host ID or name. Empty means the whole fleet.",
+          "type": "string"
+        },
+        "limit": {
+          "description": "most processes to return, 1 to 50. Default 20.",
+          "type": "integer"
+        },
+        "range": {
+          "description": "span up to now, 15m to 365d, for example 1h, 24h or 7d. Default 1h.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "top_processes",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "by": {
+          "type": "string"
+        },
+        "clamped": {
+          "type": "boolean"
+        },
+        "from": {
+          "type": "string"
+        },
+        "processes": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "command": {
+                "type": "string"
+              },
+              "cpu_pct_avg": {
+                "type": "number"
+              },
+              "cpu_pct_max": {
+                "type": "number"
+              },
+              "host": {
+                "type": "string"
+              },
+              "host_id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "repo": {
+                "type": "string"
+              },
+              "rss_max_bytes": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "host",
+              "host_id",
+              "name",
+              "command",
+              "cpu_pct_avg",
+              "cpu_pct_max",
+              "rss_max_bytes"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "by",
+        "processes"
+      ],
+      "type": "object"
+    },
+    "title": "Top processes"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "title": "Alerts"
+    },
+    "description": "List the open alerts, or the recent alerts, of the fleet or of one host.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "days": {
+          "description": "for recent alerts: how many days back, 1 to 90. Default 7.",
+          "type": "integer"
+        },
+        "host": {
+          "description": "host ID or name. Empty means the whole fleet.",
+          "type": "string"
+        },
+        "state": {
+          "description": "open (default) or recent. Recent alerts also include the changes back to ok.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "alerts",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "alerts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "acked_at": {
+                "type": "string"
+              },
+              "acked_by": {
+                "type": "string"
+              },
+              "host": {
+                "type": "string"
+              },
+              "host_id": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "metric": {
+                "type": "string"
+              },
+              "snoozed_until": {
+                "type": "string"
+              },
+              "start": {
+                "type": "string"
+              },
+              "tint": {
+                "type": "string"
+              },
+              "value": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "host",
+              "host_id",
+              "kind",
+              "metric",
+              "tint",
+              "value",
+              "start"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "clamped": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "alerts"
+      ],
+      "type": "object"
+    },
+    "title": "Alerts"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "title": "Disk usage"
+    },
+    "description": "Get the use of each disk mount of one host and the change over a range.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "description": "host ID or name",
+          "type": "string"
+        },
+        "range": {
+          "description": "span up to now, 15m to 365d, for example 24h or 7d. Default 24h.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host"
+      ],
+      "type": "object"
+    },
+    "name": "disks",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "clamped": {
+          "type": "boolean"
+        },
+        "from": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "mounts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "change_bytes": {
+                "type": "integer"
+              },
+              "fs": {
+                "type": "string"
+              },
+              "mount": {
+                "type": "string"
+              },
+              "ratio": {
+                "type": "number"
+              },
+              "total_bytes": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "used_bytes": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "mount",
+              "fs",
+              "used_bytes",
+              "total_bytes",
+              "ratio",
+              "change_bytes"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "host",
+        "host_id",
+        "from",
+        "to",
+        "mounts"
+      ],
+      "type": "object"
+    },
+    "title": "Disk usage"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "title": "Compare hosts"
+    },
+    "description": "Compare a metric of each host in the last window with the window before it.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "description": "host ID or name. Empty means all hosts.",
+          "type": "string"
+        },
+        "metric": {
+          "description": "metric to compare: cpu (percent), mem (ratio 0 to 1), net_rx, net_tx, disk_read or disk_write (bytes each second). Default cpu.",
+          "type": "string"
+        },
+        "window": {
+          "description": "length of each window, 15m to 30d, for example 1h, 1d or 7d. The last window ends now. Default 1h.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "compare",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "clamped": {
+          "type": "boolean"
+        },
+        "current": {
+          "additionalProperties": false,
+          "properties": {
+            "from": {
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "from",
+            "to"
+          ],
+          "type": "object"
+        },
+        "hosts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "change_avg": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "current": {
+                "additionalProperties": false,
+                "properties": {
+                  "avg": {
+                    "type": "number"
+                  },
+                  "max": {
+                    "type": "number"
+                  },
+                  "points": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "avg",
+                  "max",
+                  "points"
+                ],
+                "type": "object"
+              },
+              "host": {
+                "type": "string"
+              },
+              "host_id": {
+                "type": "string"
+              },
+              "previous": {
+                "additionalProperties": false,
+                "properties": {
+                  "avg": {
+                    "type": "number"
+                  },
+                  "max": {
+                    "type": "number"
+                  },
+                  "points": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "avg",
+                  "max",
+                  "points"
+                ],
+                "type": [
+                  "null",
+                  "object"
+                ]
+              }
+            },
+            "required": [
+              "host",
+              "host_id",
+              "current"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "metric": {
+          "type": "string"
+        },
+        "previous": {
+          "additionalProperties": false,
+          "properties": {
+            "from": {
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "from",
+            "to"
+          ],
+          "type": "object"
+        },
+        "total_hosts": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "metric",
+        "current",
+        "previous",
+        "total_hosts",
+        "hosts"
+      ],
+      "type": "object"
+    },
+    "title": "Compare hosts"
+  }
+]
