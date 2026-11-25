@@ -7,6 +7,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/towertail/towertail/server/authctx"
+	"github.com/towertail/towertail/server/internal/actions"
 	"github.com/towertail/towertail/server/store"
 )
 
@@ -25,35 +26,21 @@ func (s *Server) handlePutMute(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	if !b.Metric.Valid() {
-		return echo.NewHTTPError(http.StatusBadRequest, "unknown metric")
+		return actionError(actions.ErrBadMetric)
 	}
-	ctx := c.Request().Context()
-	if b.NodeID != nil {
-		n, err := s.store.EditNode(ctx, t.OrgID, *b.NodeID, func(n *store.Node) error {
-			n.MutedSignals = n.MutedSignals.Set(b.Metric, b.Muted)
-			return nil
-		})
-		if err != nil {
-			return err
+	if b.NodeID == nil {
+		if r, ok := authctx.RoleFrom(c); !ok || !r.Allows(store.RoleAdmin) {
+			return echo.NewHTTPError(http.StatusForbidden, "role admin needed")
 		}
-		s.audit(c, "mute", "node", n.ID, "metric", b.Metric, "muted", b.Muted)
-		s.broadcastNode(t.OrgID, n)
-		return c.JSON(http.StatusOK, n)
 	}
-	if r, ok := authctx.RoleFrom(c); !ok || !r.Allows(store.RoleAdmin) {
-		return echo.NewHTTPError(http.StatusForbidden, "role admin needed")
-	}
-	cfg, err := s.store.EditSettings(ctx, t.OrgID, func(cfg *store.ServerSettings) error {
-		cfg.Muted = cfg.Muted.Set(b.Metric, b.Muted)
-		return nil
-	})
+	res, err := s.actions.SetMute(c.Request().Context(), actions.NewActor(t, "", ""), b.Metric, b.NodeID, b.Muted)
 	if err != nil {
-		return err
+		return actionError(err)
 	}
-	if s.alerter != nil {
-		s.alerter.InvalidateSettings(t.OrgID)
+	if res.Node != nil {
+		s.audit(c, "mute", "node", res.Node.ID, "metric", b.Metric, "muted", b.Muted)
+		return c.JSON(http.StatusOK, res.Node)
 	}
 	s.audit(c, "mute", "settings", uuid.Nil, "metric", b.Metric, "muted", b.Muted)
-	s.broadcastSettings(t.OrgID, cfg)
-	return c.JSON(http.StatusOK, cfg)
+	return c.JSON(http.StatusOK, res.Settings)
 }

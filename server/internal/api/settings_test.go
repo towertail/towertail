@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/towertail/towertail/server/config"
+	"github.com/towertail/towertail/server/internal/actions"
 	"github.com/towertail/towertail/server/internal/alerter"
 	"github.com/towertail/towertail/server/notify"
 	"github.com/towertail/towertail/server/store"
@@ -85,6 +86,7 @@ func TestPutSettingsDropsAlerterCache(t *testing.T) {
 	e := newIngestEnv(t, config.Config{}, nil)
 	n := make(chanNotifier, 4)
 	e.srv.alerter = alerter.New(nil, nil, nil, &registeredStore{}, e.st, n)
+	e.srv.actions = actions.NewService(e.st, nil, nil, e.srv.alerter, nil, nil)
 	ctx := t.Context()
 	s := store.DefaultServerSettings()
 	s.Alerts.CPU = store.AlertRule{Notify: store.NotifyOff}

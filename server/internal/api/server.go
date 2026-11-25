@@ -19,6 +19,7 @@ import (
 
 	"github.com/towertail/towertail/server/authctx"
 	"github.com/towertail/towertail/server/config"
+	"github.com/towertail/towertail/server/internal/actions"
 	"github.com/towertail/towertail/server/internal/alerter"
 	"github.com/towertail/towertail/server/internal/auth"
 	"github.com/towertail/towertail/server/internal/clickhouse"
@@ -45,8 +46,8 @@ type Server struct {
 	runtime       *runtime.Runtime
 	store         store.ConfigStore
 	ch            *clickhouse.Client
-	alerts        alertReader
-	journal       notify.Journal
+	alerts        actions.AlertReader
+	actions       *actions.Service
 	issuer        *auth.TokenIssuer
 	hub           *hub.Hub
 	alerter       *alerter.Engine
@@ -164,13 +165,12 @@ func New(d Deps) *Server {
 	if d.Alerter != nil {
 		peaks = d.Alerter
 	}
-	var alerts alertReader
+	var alerts actions.AlertReader
 	if d.CH != nil {
 		alerts = d.CH
 	}
 	s := &Server{
 		alerts:        alerts,
-		journal:       d.Journal,
 		echo:          e,
 		cfg:           d.Config,
 		log:           d.Log,
@@ -191,6 +191,16 @@ func New(d Deps) *Server {
 		query:         query.NewService(reader, d.Store, d.Limits, peaks, query.WithConfig(d.Store), query.WithChannels(d.Store)),
 		apiKeyRates:   newKeyLimiters(d.Config.HTTP.APIKeyRateLimitRPS, d.Config.HTTP.APIKeyRateLimitBurst),
 	}
+	// A nil pointer in an interface would not be nil.
+	var engine actions.Engine
+	if d.Alerter != nil {
+		engine = d.Alerter
+	}
+	var events actions.Broadcaster
+	if d.Hub != nil {
+		events = d.Hub
+	}
+	s.actions = actions.NewService(d.Store, alerts, d.Journal, engine, events, d.Log)
 	if d.Config.MCP.Enabled {
 		o := mcp.Options{Version: version.Version, Log: d.Log, Settings: d.Store, OrgInfo: d.OrgInfo, AppURL: d.Config.MCP.AppURL}
 		// A nil *scan.Manager in the interface would not be nil.

@@ -9,6 +9,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/towertail/towertail/server/authctx"
+	"github.com/towertail/towertail/server/internal/actions"
 	"github.com/towertail/towertail/server/store"
 	"github.com/towertail/towertail/server/wire"
 )
@@ -67,6 +68,24 @@ func httpErrorHandler(log *slog.Logger) echo.HTTPErrorHandler {
 			Error: wire.APIError{Code: code, Message: msg, RequestID: reqID},
 		})
 	}
+}
+
+// actionError maps the errors of the actions service to HTTP errors. Other
+// errors pass through, and httpErrorHandler maps them.
+func actionError(err error) error {
+	status := 0
+	switch {
+	case errors.Is(err, actions.ErrNotFound), errors.Is(err, actions.ErrNotOpen):
+		status = http.StatusNotFound
+	case errors.Is(err, actions.ErrNotReady):
+		status = http.StatusServiceUnavailable
+	case errors.Is(err, actions.ErrBadInput), errors.Is(err, actions.ErrBadUntil),
+		errors.Is(err, actions.ErrNoProcess), errors.Is(err, actions.ErrBadMetric):
+		status = http.StatusBadRequest
+	default:
+		return err
+	}
+	return echo.NewHTTPError(status, err.Error())
 }
 
 // audit emits a structured log line for every state-changing action.

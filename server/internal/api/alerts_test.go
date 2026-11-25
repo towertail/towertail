@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/towertail/towertail/server/config"
+	"github.com/towertail/towertail/server/internal/actions"
 	"github.com/towertail/towertail/server/internal/auth"
 	"github.com/towertail/towertail/server/internal/clickhouse"
 	"github.com/towertail/towertail/server/internal/hub"
@@ -25,18 +26,6 @@ import (
 	"github.com/towertail/towertail/server/store"
 	"github.com/towertail/towertail/server/wire"
 )
-
-func TestAckedBy(t *testing.T) {
-	user := uuid.New()
-	withUser := store.Token{ID: uuid.New(), UserID: &user}
-	if got := ackedBy(withUser); got != user {
-		t.Errorf("token with a user: %s, want %s", got, user)
-	}
-	plain := store.Token{ID: uuid.New()}
-	if got := ackedBy(plain); got != plain.ID {
-		t.Errorf("token with no user: %s, want %s", got, plain.ID)
-	}
-}
 
 type fakeAlerts struct {
 	rows map[uuid.UUID]clickhouse.AlertRow
@@ -107,6 +96,7 @@ type alertEnv struct {
 	tokens  map[store.Role]string
 	srv     *Server
 	rows    map[uuid.UUID]clickhouse.AlertRow
+	hub     *hub.Hub
 }
 
 func newAlertEnv(t *testing.T) *alertEnv {
@@ -141,20 +131,29 @@ func newAlertEnv(t *testing.T) *alertEnv {
 		}
 		e.tokens[r] = raw
 	}
+	e.hub = hub.New(log, hub.Options{})
 	srv := New(Deps{
 		Config:  &config.Config{},
 		Log:     log,
 		Store:   st,
 		Issuer:  issuer,
-		Hub:     hub.New(log, hub.Options{}),
+		Hub:     e.hub,
 		Roles:   roles,
 		Journal: e.journal,
 	})
 	srv.alerts = alerts
 	e.srv, e.rows = srv, alerts.rows
+	e.rewire(st)
 	e.ts = httptest.NewServer(srv.Handler())
 	t.Cleanup(e.ts.Close)
 	return e
+}
+
+// rewire gives the actions service the store and the fake alerts of the
+// env. New built it before the test set them.
+func (e *alertEnv) rewire(st store.ConfigStore) {
+	e.srv.store = st
+	e.srv.actions = actions.NewService(st, e.srv.alerts, e.journal, nil, e.hub, nil)
 }
 
 func (e *alertEnv) do(role store.Role, method, path, body string) (int, []byte) {
@@ -519,7 +518,7 @@ func (c *countingStore) EditSettings(ctx context.Context, org uuid.UUID, fn func
 func TestBulkAlerts(t *testing.T) {
 	e := newAlertEnv(t)
 	cs := &countingStore{ConfigStore: e.srv.store}
-	e.srv.store = cs
+	e.rewire(cs)
 	long2, other := uuid.New(), uuid.New()
 	e.rows[long2] = clickhouse.AlertRow{EventID: long2, AlertID: long2, NodeID: e.node, Kind: "long_process", Metric: "long_proc/813/1", Tint: "warn", TS: time.Now(), Payload: `{"name":"node","pid":813,"cpu_pct":90}`}
 	e.rows[other] = clickhouse.AlertRow{EventID: other, AlertID: other, NodeID: e.node, Kind: "threshold_crossed", Metric: "disk", Tint: "warn", TS: time.Now(), Payload: `{"value":0.9}`}

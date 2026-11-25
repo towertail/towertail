@@ -13,6 +13,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/towertail/towertail/server/authctx"
+	"github.com/towertail/towertail/server/internal/actions"
 	"github.com/towertail/towertail/server/store"
 	"github.com/towertail/towertail/server/wire"
 )
@@ -156,7 +157,7 @@ func (s *Server) handleUpdateNode(c echo.Context) error {
 		}
 	}
 	if opt.RulesOrigin != nil && n.RulesOrigin != nil {
-		o := newRulesOrigin(t, n.RulesOrigin.Client, n.RulesOrigin.Device)
+		o := actions.NewActor(t, n.RulesOrigin.Client, n.RulesOrigin.Device).Origin(time.Now().UTC())
 		n.RulesOrigin = &o
 	}
 	n.SetRules(n.Rules())
@@ -218,14 +219,10 @@ func (s *Server) snoozeNode(c echo.Context, until *time.Time) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "bad id")
 	}
-	n, err := s.store.EditNode(c.Request().Context(), t.OrgID, id, func(n *store.Node) error {
-		n.SnoozedUntil = until
-		return nil
-	})
+	n, err := s.actions.SnoozeHost(c.Request().Context(), actions.NewActor(t, "", ""), id, until)
 	if err != nil {
-		return err
+		return actionError(err)
 	}
 	s.audit(c, "snooze", "node", id, "until", until)
-	s.broadcastNode(t.OrgID, n)
 	return c.JSON(http.StatusOK, n)
 }
