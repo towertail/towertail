@@ -222,6 +222,32 @@ func TestProcsTop1h(t *testing.T) {
 	}
 }
 
+// A short window that is old reads the rollup, not procs_topn.
+func TestTopProcessesOldShortWindow(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	org, node := uuid.New(), uuid.New()
+	minute := time.Now().UTC().Truncate(time.Minute).Add(-3 * time.Hour)
+	var rows []string
+	for n := 1; n <= 3; n++ {
+		rows = append(rows, fmt.Sprintf("('%s', '%s', '%s', %d, 'p%d', %d, '/bin/p%d', %d, %d, %d, now())",
+			minute.Format("2006-01-02 15:04:05"), org, node, 4-n, n, n, n, n, n, n))
+	}
+	if err := client.conn.Exec(ctx, "INSERT INTO "+client.table("procs_top_1m")+
+		" (ts_minute, org_id, node_id, rank, name, cmd_hash, cmd, cpu_pct_avg, cpu_pct_max, rss_max, refreshed_at) VALUES "+strings.Join(rows, ",")); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	top, err := client.TopProcesses(ctx, RangeQuery{OrgID: org, NodeID: node, From: minute, To: minute.Add(time.Minute)}, ProcByCPU, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(top) != 3 || top[0].Name != "p3" {
+		t.Fatalf("top = %+v, want 3 rows from procs_top_1m", top)
+	}
+}
+
 // The multi query gives the same points as the single query, for each
 // metric and each tier.
 func TestQueryHistoryMultiMatchesSingle(t *testing.T) {

@@ -47,25 +47,56 @@ var (
 	tier1h  = tier{"samples_1h", "ts_hour", time.Hour}
 )
 
-// historyTier chooses the table by the length of the range.
-func historyTier(span time.Duration) tier {
+// rank orders the tiers from the finest (0) to the coarsest (3).
+func (t tier) rank() int {
+	switch t {
+	case tierRaw:
+		return 0
+	case tier1m:
+		return 1
+	case tier5m:
+		return 2
+	default:
+		return 3
+	}
+}
+
+// historyTier chooses the table by the length of the range and by the age
+// of its start. It returns the coarser of the two choices.
+func historyTier(span, age time.Duration) tier {
+	const day = 24 * time.Hour
+	var bySpan, byAge tier
 	switch {
 	case span <= 6*time.Hour:
-		return tierRaw
-	case span <= 7*24*time.Hour:
-		return tier1m
-	case span <= 30*24*time.Hour:
-		return tier5m
+		bySpan = tierRaw
+	case span <= 7*day:
+		bySpan = tier1m
+	case span <= 30*day:
+		bySpan = tier5m
 	default:
-		return tier1h
+		bySpan = tier1h
 	}
+	switch {
+	case age <= 7*day:
+		byAge = tierRaw
+	case age <= 30*day:
+		byAge = tier1m
+	case age <= 90*day:
+		byAge = tier5m
+	default:
+		byAge = tier1h
+	}
+	if byAge.rank() > bySpan.rank() {
+		return byAge
+	}
+	return bySpan
 }
 
 // QueryHistory returns the points of one metric in the range, and the
 // bucket of the points (0 means one point for each sample). The tier
 // comes from the range, and the step groups the points of the tier.
 func (c *Client) QueryHistory(ctx context.Context, q HistoryQuery) ([]HistoryPoint, time.Duration, error) {
-	t := historyTier(q.To.Sub(q.From))
+	t := historyTier(q.To.Sub(q.From), time.Since(q.From))
 	sql, err := c.historySQL(t, []string{q.Metric}, q.Step, false)
 	if err != nil {
 		return nil, 0, err
@@ -105,7 +136,7 @@ var ErrNoRollup = errors.New("clickhouse: metric has no rollup for this range")
 // node with no points, has no entry. The tier rules are the same as in
 // QueryHistory.
 func (c *Client) QueryHistoryMulti(ctx context.Context, q HistoryMultiQuery) (map[uuid.UUID]map[string][]HistoryPoint, time.Duration, error) {
-	t := historyTier(q.To.Sub(q.From))
+	t := historyTier(q.To.Sub(q.From), time.Since(q.From))
 	if len(q.Metrics) == 0 || len(q.NodeIDs) == 0 {
 		return map[uuid.UUID]map[string][]HistoryPoint{}, t.resolution(q.Step), nil
 	}
@@ -291,7 +322,7 @@ type NodeStat struct {
 // tier, Avg is the mean of the bucket averages, and Max is the highest
 // bucket max (the highest bucket average for a metric with no max state).
 func (c *Client) WindowStats(ctx context.Context, q StatsQuery) ([]NodeStat, error) {
-	t := historyTier(q.To.Sub(q.From))
+	t := historyTier(q.To.Sub(q.From), time.Since(q.From))
 	v, m, err := metricExprs(t, q.Metric, true)
 	if err != nil {
 		return nil, err

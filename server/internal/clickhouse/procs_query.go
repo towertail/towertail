@@ -30,12 +30,23 @@ type TopProc struct {
 	RSSMax    uint64
 }
 
-// procsSource chooses the processes table by the length of the range.
-func procsSource(span time.Duration) (table, ts string) {
-	switch {
-	case span <= time.Hour:
+// procsSource chooses the processes table by the length of the range and
+// by the age of its start. It returns the coarser of the two choices.
+func procsSource(span, age time.Duration) (table, ts string) {
+	rank := func(d time.Duration) int {
+		switch {
+		case d <= time.Hour:
+			return 0
+		case d <= 7*24*time.Hour:
+			return 1
+		default:
+			return 2
+		}
+	}
+	switch max(rank(span), rank(age)) {
+	case 0:
 		return "procs_topn", "ts"
-	case span <= 7*24*time.Hour:
+	case 1:
 		return "procs_top_1m", "ts_minute"
 	default:
 		return "procs_top_1h", "ts_hour"
@@ -53,7 +64,7 @@ const (
 // TopProcesses gives the top processes in the range, by average CPU or by
 // the highest memory. A NodeID of uuid.Nil reads all nodes of the org.
 func (c *Client) TopProcesses(ctx context.Context, q RangeQuery, by ProcOrder, limit int) ([]TopProc, error) {
-	table, ts := procsSource(q.To.Sub(q.From))
+	table, ts := procsSource(q.To.Sub(q.From), time.Since(q.From))
 	avg, mx, rss, hash := "cpu_pct", "cpu_pct", "rss", "cityHash64(cmd)"
 	cwd, parent, final := "any(cwd)", "any(parent)", ""
 	if table != "procs_topn" {

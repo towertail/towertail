@@ -9,19 +9,23 @@ import (
 func TestHistoryTier(t *testing.T) {
 	day := 24 * time.Hour
 	for _, tc := range []struct {
-		span time.Duration
-		want tier
+		span, age time.Duration
+		want      tier
 	}{
-		{time.Hour, tierRaw},
-		{6 * time.Hour, tierRaw},
-		{7 * time.Hour, tier1m},
-		{7 * day, tier1m},
-		{8 * day, tier5m},
-		{30 * day, tier5m},
-		{90 * day, tier1h},
+		{time.Hour, 0, tierRaw},
+		{6 * time.Hour, 0, tierRaw},
+		{7 * time.Hour, 0, tier1m},
+		{7 * day, 0, tier1m},
+		{8 * day, 0, tier5m},
+		{30 * day, 0, tier5m},
+		{90 * day, 0, tier1h},
+		{time.Hour, 2 * day, tierRaw},
+		{time.Hour, 8 * day, tier1m},
+		{time.Hour, 40 * day, tier5m},
+		{time.Hour, 100 * day, tier1h},
 	} {
-		if got := historyTier(tc.span); got != tc.want {
-			t.Errorf("historyTier(%v) = %s, want %s", tc.span, got.table, tc.want.table)
+		if got := historyTier(tc.span, tc.age); got != tc.want {
+			t.Errorf("historyTier(%v, %v) = %s, want %s", tc.span, tc.age, got.table, tc.want.table)
 		}
 	}
 }
