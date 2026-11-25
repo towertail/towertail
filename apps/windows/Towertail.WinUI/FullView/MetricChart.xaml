@@ -5,8 +5,14 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:lvc="using:LiveChartsCore.SkiaSharpView.WinUI">
 
-    <Grid RowDefinitions="Auto,*" RowSpacing="6">
-        <TextBlock Grid.Row="0" x:Name="TitleText" FontSize="13" FontWeight="SemiBold" />
-        <lvc:CartesianChart Grid.Row="1" x:Name="Chart" />
+    <Grid>
+        <lvc:CartesianChart x:Name="Chart" />
+        <Border x:Name="Tip" Visibility="Collapsed" IsHitTestVisible="False"
+                HorizontalAlignment="Left" VerticalAlignment="Top"
+                Padding="8,4,8,4" CornerRadius="6" BorderThickness="1"
+                Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
+            <TextBlock x:Name="TipText" FontSize="11" FontFamily="{StaticResource MonoFont}" />
+        </Border>
     </Grid>
 </UserControl>

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Towertail.WinUI.FullView.ProcessPanel"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:fv="using:Towertail.WinUI.FullView">
+
+    <Border Width="360" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+            BorderThickness="1" CornerRadius="12">
+        <Grid RowDefinitions="Auto,*">
+            <Grid Grid.Row="0" Padding="16,12,8,8" ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Spacing="2">
+                    <TextBlock x:Name="NameText" FontSize="16" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                    <TextBlock x:Name="CmdText" FontSize="11" FontFamily="{StaticResource MonoFont}"
+                               TextWrapping="Wrap" MaxLines="3" TextTrimming="CharacterEllipsis"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </StackPanel>
+                <Button Grid.Column="1" x:Name="CloseBtn" Click="OnClose" VerticalAlignment="Top"
+                        Background="Transparent" BorderThickness="0" Padding="8,4,8,4"
+                        ToolTipService.ToolTip="Close (Esc)">
+                    <FontIcon Glyph="&#xE711;" FontSize="12" />
+                </Button>
+            </Grid>
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                <StackPanel Spacing="10" Padding="16,0,16,16">
+                    <StackPanel x:Name="Facts" Spacing="4" />
+                    <TextBlock Text="CPU" FontSize="11" CharacterSpacing="80" FontFamily="{StaticResource MonoFont}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <fv:MetricChart x:Name="CpuChart" Height="130" />
+                    <TextBlock Text="MEMORY" FontSize="11" CharacterSpacing="80" FontFamily="{StaticResource MonoFont}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <fv:MetricChart x:Name="RssChart" Height="130" />
+                    <TextBlock Text="I/O" FontSize="11" CharacterSpacing="80" FontFamily="{StaticResource MonoFont}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <fv:MetricChart x:Name="IoChart" Height="130" />
+                    <TextBlock x:Name="EmptyText" Visibility="Collapsed" TextWrapping="Wrap"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+    </Border>
+</UserControl>

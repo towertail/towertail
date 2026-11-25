@@ -2,6 +2,7 @@ using Microsoft.Windows.AppNotifications;
 using Towertail.WinUI.Bootstrap;
 using Towertail.WinUI.Cloud;
 using Towertail.WinUI.FullView;
+using Towertail.WinUI.State;
 
 namespace Towertail.WinUI.SystemServices;
 
@@ -36,7 +37,15 @@ public static class NotificationTapRouter
         TowertailApp.MainDispatcher?.TryEnqueue(() =>
         {
             var win = FullViewRegistry.Open(vm);
-            win.SelectTab(metric);
+            var (tab, rail) = metric switch
+            {
+                "disk" => (HostTab.Disks, (RailMetric?)null),
+                "health" => (HostTab.Health, null),
+                "mem" => (HostTab.Overview, RailMetric.Mem),
+                "net" => (HostTab.Overview, RailMetric.Net),
+                _ => (HostTab.Overview, RailMetric.Cpu),
+            };
+            win.SelectTab(tab, rail);
         });
     }
 }

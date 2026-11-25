@@ -68,6 +68,7 @@ public sealed class PidCell : UserControl
 
     private readonly TextBlock _pidText;
     private readonly Button _killButton;
+    private readonly Button _copyButton;
     private bool _hovering;
 
     public PidCell()
@@ -100,7 +101,25 @@ public sealed class PidCell : UserControl
             Killed?.Invoke(this, new PidKillEventArgs(Pid, Name));
         };
 
+        _copyButton = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE8C8", FontSize = 11, Opacity = 0.6 },
+            Padding = new Thickness(4, 0, 4, 0),
+            MinWidth = 0,
+            MinHeight = 0,
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderBrush = new SolidColorBrush(Colors.Transparent),
+        };
+        ToolTipService.SetToolTip(_copyButton, "Copy PID");
+        _copyButton.Click += (_, _) =>
+        {
+            var pkg = new global::Windows.ApplicationModel.DataTransfer.DataPackage();
+            pkg.SetText(Pid.ToString());
+            global::Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(pkg);
+        };
+
         stack.Children.Add(_pidText);
+        stack.Children.Add(_copyButton);
         stack.Children.Add(_killButton);
         Content = stack;
 

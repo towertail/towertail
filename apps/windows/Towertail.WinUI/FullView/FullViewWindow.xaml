@@ -3,25 +3,20 @@
     x:Class="Towertail.WinUI.FullView.FullViewWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:fv="using:Towertail.WinUI.FullView"
-    xmlns:lvc="using:LiveChartsCore.SkiaSharpView.WinUI">
+    xmlns:fv="using:Towertail.WinUI.FullView">
 
     <Window.SystemBackdrop>
         <MicaBackdrop Kind="Base" />
     </Window.SystemBackdrop>
 
-    <Grid>
+    <Grid x:Name="Root">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
         <Grid x:Name="AppTitleBar" Grid.Row="0" Height="40" Background="Transparent">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8"
+            <StackPanel Orientation="Horizontal" Spacing="8"
                         Margin="16,0,0,0" VerticalAlignment="Center">
                 <FontIcon Glyph="&#xE9D9;" FontFamily="{ThemeResource SymbolThemeFontFamily}"
                           FontSize="16" Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
@@ -34,30 +29,57 @@
                            Style="{ThemeResource CaptionTextBlockStyle}"
                            VerticalAlignment="Center" Opacity="0.7" />
             </StackPanel>
-            <Button Grid.Column="1" x:Name="PlayPauseBtn"
-                    Background="Transparent" BorderThickness="0"
-                    Margin="0,0,148,0" Padding="10,4,10,4"
-                    VerticalAlignment="Center"
-                    Click="OnPlayPauseClick"
-                    ToolTipService.ToolTip="Pause updates">
-                <FontIcon x:Name="PlayPauseIcon" Glyph="&#xE769;"
-                          FontFamily="{ThemeResource SymbolThemeFontFamily}" FontSize="14" />
-            </Button>
         </Grid>
 
-        <NavigationView Grid.Row="1" x:Name="Nav" IsBackButtonVisible="Collapsed"
-                        PaneDisplayMode="Top"
-                        IsSettingsVisible="False"
-                        SelectionChanged="OnNavSelectionChanged">
-            <NavigationView.MenuItems>
-                <NavigationViewItem Content="CPU"   Tag="cpu" />
-                <NavigationViewItem Content="MEM"   Tag="mem" />
-                <NavigationViewItem Content="DISK"  Tag="disk" />
-                <NavigationViewItem Content="NET"   Tag="net" />
-                <NavigationViewItem Content="PROCS" Tag="procs" />
-                <NavigationViewItem Content="HEALTH" Tag="health" />
-            </NavigationView.MenuItems>
-            <Grid x:Name="Host" Margin="24,12,24,24" />
-        </NavigationView>
+        <Grid Grid.Row="1" Margin="20,4,20,20" RowSpacing="12">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <StackPanel Grid.Row="0" x:Name="HeaderRow" Orientation="Horizontal" Spacing="12">
+                <Ellipse x:Name="StatusDot" Width="10" Height="10" VerticalAlignment="Center" />
+                <TextBlock x:Name="HostName" FontSize="22" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <Border x:Name="HealthFlag" BorderThickness="1.5" CornerRadius="6" Padding="8,2,8,3"
+                        VerticalAlignment="Center">
+                    <TextBlock x:Name="HealthFlagText" FontSize="12" FontWeight="SemiBold"
+                               FontFamily="{StaticResource MonoFont}" CharacterSpacing="60" />
+                </Border>
+                <TextBlock x:Name="FactsText" FontSize="12" VerticalAlignment="Center"
+                           FontFamily="{StaticResource MonoFont}"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            </StackPanel>
+
+            <Grid Grid.Row="1" ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <ContentPresenter Grid.Column="0" x:Name="TabsHost" />
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                    <Button x:Name="ResetZoomBtn" Visibility="Collapsed" Click="OnResetZoom" Padding="10,4,10,4" />
+                    <ContentPresenter x:Name="RangeHost" />
+                    <Button x:Name="LiveBadge" Click="OnLiveBadge" Padding="12,5,12,5" CornerRadius="14"
+                            BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Ellipse x:Name="LiveDot" Width="8" Height="8" VerticalAlignment="Center" />
+                            <TextBlock x:Name="LiveText" FontSize="12" FontFamily="{StaticResource MonoFont}" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Grid>
+
+            <Grid Grid.Row="2" ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Grid x:Name="Host" Grid.Column="0" />
+                <fv:ProcessPanel x:Name="Panel" Grid.Column="1" Visibility="Collapsed" />
+            </Grid>
+        </Grid>
     </Grid>
 </Window>

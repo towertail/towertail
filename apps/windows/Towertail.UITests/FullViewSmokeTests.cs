@@ -39,7 +39,7 @@ public sealed class FullViewSmokeTests
         var fullView = WaitForWindow(app, automation, "full view", TimeSpan.FromSeconds(10));
         Assert.NotNull(fullView);
 
-        foreach (var tabName in new[] { "CPU", "MEM", "DISK", "NET", "PROCS" })
+        foreach (var tabName in new[] { "OVERVIEW", "PROCESSES", "HEALTH", "DISKS", "ALERTS", "SETTINGS" })
         {
             var tab = fullView!.FindFirstDescendant(cf => cf.ByName(tabName));
             Assert.NotNull(tab);

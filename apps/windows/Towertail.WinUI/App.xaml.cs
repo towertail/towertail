@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.Windows.AppLifecycle;
 using Towertail.WinUI.Bootstrap;
+using Towertail.WinUI.FullView;
 using Towertail.WinUI.MenuBar;
 using Towertail.WinUI.Preferences;
 using Towertail.WinUI.State;
@@ -140,6 +141,32 @@ public partial class App : Application
         if (start) await Environment.RulesMove.StartAsync();
     }
 
+    /// <summary>
+    /// Opens the workbench of the first host after the first samples. <c>TOWERTAIL_DEBUG_TAB</c> is a tab name,
+    /// <c>TOWERTAIL_DEBUG_RAIL</c> a rail metric. <c>TOWERTAIL_DEBUG_CURSOR</c> is <c>hover</c>, <c>pin</c> or <c>panel</c>.
+    /// </summary>
+    private async Task OpenWorkbenchForDebugAsync()
+    {
+        var seconds = int.TryParse(System.Environment.GetEnvironmentVariable("TOWERTAIL_DEBUG_WAIT"), out var w) ? w : 20;
+        await Task.Delay(TimeSpan.FromSeconds(seconds));
+        var vm = Environment.Servers.Servers.FirstOrDefault();
+        if (vm is null) return;
+        var win = FullViewRegistry.Open(vm);
+        var tab = Enum.TryParse<HostTab>(System.Environment.GetEnvironmentVariable("TOWERTAIL_DEBUG_TAB"), true, out var t) ? t : HostTab.Overview;
+        RailMetric? rail = Enum.TryParse<RailMetric>(System.Environment.GetEnvironmentVariable("TOWERTAIL_DEBUG_RAIL"), true, out var r) ? r : null;
+        win.SelectTab(tab, rail);
+        var at = (vm.Procs.Latest?.T ?? DateTime.UtcNow).AddSeconds(-Math.Min(60, seconds / 2));
+        switch (System.Environment.GetEnvironmentVariable("TOWERTAIL_DEBUG_CURSOR"))
+        {
+            case "hover": win.Cursor.HoverAt = at; break;
+            case "pin": win.Cursor.PinnedAt = at; break;
+            case "panel":
+                win.Cursor.PinnedAt = at;
+                win.Cursor.OpenProcess = vm.Procs.Latest?.Items.OrderByDescending(p => p.CpuPct).Select(ProcessRef.Local).FirstOrDefault();
+                break;
+        }
+    }
+
     /// <summary>Opens a window at launch, for renders: <c>TOWERTAIL_DEBUG_OPEN</c> is <c>account</c>, <c>servers</c>, <c>thresholds</c>, <c>serveredit</c> or <c>popover</c>. <c>TOWERTAIL_DEBUG_EMAIL</c> asks for a sign-in code.</summary>
     private void OpenForDebug()
     {
@@ -165,6 +192,9 @@ public partial class App : Application
             case "cloudhost":
                 // A Cloud host from the nodes. Waits for the sign-in and the first rules.
                 _ = OpenCloudHostForDebugAsync();
+                break;
+            case "workbench":
+                _ = OpenWorkbenchForDebugAsync();
                 break;
             case "popover":
                 TestPinPopover = true;

@@ -139,7 +139,7 @@ public sealed partial class ServerCardView : UserControl
     {
         if (ViewModel is null) return;
         e.Handled = true;
-        FullViewRegistry.Open(ViewModel).SelectTab("health");
+        FullViewRegistry.Open(ViewModel).SelectTab(HostTab.Health);
     }
 
     // Prevent the parent Border's Tapped (which opens FullView) from firing when an action

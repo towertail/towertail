@@ -1,21 +1,33 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Towertail.WinUI.Backend;
+using Towertail.WinUI.Design;
 using Towertail.WinUI.State;
+using Windows.System;
 
 namespace Towertail.WinUI.FullView;
 
+/// <summary>
+/// The host workbench: a header, six tabs, a range control, a live badge and a process panel.
+/// The cursor of the window is shared by the charts, the rail and the tables.
+/// </summary>
 public sealed partial class FullViewWindow : Window
 {
+    private static readonly HostTab[] Tabs = Enum.GetValues<HostTab>();
+
     private ServerViewModel? _vm;
-    private FullViewModel _fvm = new();
-    private bool _paused;
-    private readonly List<MetricChart> _charts = new();
-    // Kept while the window is open, so that a scan continues when the user changes tabs.
-    private DiskUsageView? _usage;
-    private string _diskSubTab = "capacity";
-    private string _tag = "cpu";
-    private bool _netPorts;
+    private readonly WorkbenchCursor _cursor = new();
+    private WorkbenchData? _data;
+    private readonly Segmented _tabBar = new(Tabs.Select(t => t.Title()), mono: true);
+    private readonly Segmented _rangeBar = new(Enum.GetValues<HostRange>().Select(r => r.Label()), mono: true);
+    private readonly Dictionary<HostTab, UIElement> _built = new();
+    private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private HostTab _tab = HostTab.Overview;
+
+    public WorkbenchCursor Cursor => _cursor;
+    private bool _portsShown;
+    private bool _usageShown;
     private bool _leased;
 
     public FullViewWindow()
@@ -24,9 +36,18 @@ public sealed partial class FullViewWindow : Window
         Title = "Towertail — Full View";
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
+        TabsHost.Content = _tabBar;
+        RangeHost.Content = _rangeBar;
+        _tabBar.SelectionChanged += i => ShowTab(Tabs[i]);
+        _rangeBar.SelectionChanged += i => _cursor.Range = (HostRange)i;
+        _cursor.PropertyChanged += OnCursorChanged;
+        AddAccelerators();
+        _timer.Tick += (_, _) => Tick();
+        _timer.Start();
         Closed += (_, _) =>
         {
-            _usage?.Stop();
+            _timer.Stop();
+            (_built.GetValueOrDefault(HostTab.Disks) as DisksTab)?.Stop();
             ReportLease(false);
         };
         Activated += (_, e) =>
@@ -45,7 +66,7 @@ public sealed partial class FullViewWindow : Window
         var node = _vm.Node;
         if (!node.IsCloud) visible = false;
         if (!visible && !_leased) return;
-        var tab = DetailTabMap.For(_tag, _netPorts, _diskSubTab == "usage");
+        var tab = DetailTabMap.For(_tab, _portsShown, _usageShown);
         App.Current.Environment.Cloud.Lease.SetFullView(this, node.Id, tab, visible);
         _leased = visible;
     }
@@ -53,185 +74,198 @@ public sealed partial class FullViewWindow : Window
     public void Bind(ServerViewModel vm)
     {
         _vm = vm;
+        _data = new WorkbenchData(vm, App.Current.Environment.History, _cursor);
         Title = $"Towertail — {vm.Node.DisplayName}";
         SubtitleText.Text = vm.Node.DisplayName;
-        if (Nav.SelectedItem is null) Nav.SelectedItem = Nav.MenuItems[0];
-        ShowTab("cpu");
-    }
-
-    public void SelectTab(string tag)
-    {
-        foreach (var item in Nav.MenuItems.OfType<NavigationViewItem>())
+        HostName.Text = vm.Node.DisplayName;
+        vm.PropertyChanged += (_, a) =>
         {
-            if (item.Tag is string s && s == tag) { Nav.SelectedItem = item; return; }
+            if (a.PropertyName is nameof(ServerViewModel.HealthScore) or nameof(ServerViewModel.FactsLine) or nameof(ServerViewModel.Health))
+                DispatcherQueue.TryEnqueue(UpdateHeader);
+        };
+        _rangeBar.Select((int)_cursor.Range);
+        UpdateHeader();
+        Tick();
+        _tabBar.Select((int)_tab);
+        ShowTab(_tab);
+    }
+
+    public void SelectTab(HostTab tab, RailMetric? rail = null)
+    {
+        _tabBar.Select((int)tab);
+        if (rail is { } r) Overview().Rail = r;
+        ShowTab(tab);
+    }
+
+    private OverviewTab Overview() => (OverviewTab)Build(HostTab.Overview);
+
+    private UIElement Build(HostTab tab)
+    {
+        if (_built.TryGetValue(tab, out var existing)) return existing;
+        var vm = _vm!;
+        var data = _data!;
+        UIElement view;
+        switch (tab)
+        {
+            case HostTab.Overview:
+                var o = new OverviewTab();
+                o.Bind(vm, _cursor, data);
+                view = o;
+                break;
+            case HostTab.Processes:
+                var p = new ProcessesTab();
+                p.Bind(vm, _cursor);
+                p.PortsShown += shown => { _portsShown = shown; ReportLease(); };
+                view = p;
+                break;
+            case HostTab.Health:
+                var h = new HealthTab();
+                h.Bind(vm, _cursor, data);
+                view = h;
+                break;
+            case HostTab.Disks:
+                var d = new DisksTab();
+                d.Bind(vm, _cursor, data);
+                d.UsageShown += shown => { _usageShown = shown; ReportLease(); };
+                view = d;
+                break;
+            case HostTab.Alerts:
+                var a = new AlertsTab();
+                a.Bind(vm);
+                view = a;
+                break;
+            default:
+                var s = new SettingsTab();
+                s.Bind(vm);
+                view = s;
+                break;
         }
+        return _built[tab] = view;
     }
 
-    private void OnNavSelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
-    {
-        if (args.SelectedItem is NavigationViewItem item && item.Tag is string tag)
-            ShowTab(tag);
-    }
-
-    private void OnPlayPauseClick(object sender, RoutedEventArgs e)
-    {
-        _paused = !_paused;
-        PlayPauseIcon.Glyph = _paused ? "\uE768" : "\uE769"; // Play / Pause
-        ToolTipService.SetToolTip(PlayPauseBtn, _paused ? "Resume updates" : "Pause updates");
-        foreach (var c in _charts) c.SetPaused(_paused);
-    }
-
-    private void ShowTab(string tag)
+    private void ShowTab(HostTab tab)
     {
         if (_vm is null) return;
+        _tab = tab;
         Host.Children.Clear();
-        _charts.Clear();
-        _tag = tag;
-        _netPorts = false;
-        UIElement content = tag switch
+        Host.Children.Add(Build(tab));
+        if (!_panelBound)
         {
-            "cpu"   => MakeChart(_vm.CpuSeries, "CPU %"),
-            "mem"   => MakeChart(_vm.MemSeries, "MEM %"),
-            "disk"  => MakeDisk(),
-            "net"   => MakeNet(),
-            "procs" => MakeProcs(),
-            "health" => MakeHealth(),
-            _ => new TextBlock { Text = "—" },
-        };
-        Host.Children.Add(content);
+            Panel.Bind(_vm, _cursor, new LocalProcessSource(_vm));
+            _panelBound = true;
+        }
+        UpdatePanel();
         ReportLease();
     }
 
-    private UIElement MakeChart(MetricSeries series, string label)
+    private bool _panelBound;
+
+    private void UpdatePanel()
     {
-        var chart = new MetricChart();
-        chart.Bind(series, label);
-        chart.SetPaused(_paused);
-        _charts.Add(chart);
-        return chart;
+        var show = _cursor.OpenProcess is not null && _tab is not (HostTab.Alerts or HostTab.Settings);
+        Panel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private UIElement MakeDisk()
+    private void OnCursorChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (_vm is null) return new TextBlock();
-        var grid = new Grid { RowSpacing = 8 };
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-
-        var selector = new SelectorBar();
-        var capacityItem = new SelectorBarItem { Text = "Capacity & I/O", Tag = "capacity" };
-        var usageItem = new SelectorBarItem { Text = "Usage", Tag = "usage" };
-        selector.Items.Add(capacityItem);
-        selector.Items.Add(usageItem);
-        grid.Children.Add(selector);
-
-        var slot = new ContentControl
+        DispatcherQueue.TryEnqueue(() =>
         {
-            HorizontalContentAlignment = HorizontalAlignment.Stretch,
-            VerticalContentAlignment = VerticalAlignment.Stretch,
-        };
-        Grid.SetRow(slot, 1);
-        grid.Children.Add(slot);
+            switch (e.PropertyName)
+            {
+                case nameof(WorkbenchCursor.OpenProcess):
+                    UpdatePanel();
+                    break;
+                case nameof(WorkbenchCursor.Range):
+                    _rangeBar.Select((int)_cursor.Range);
+                    break;
+                case nameof(WorkbenchCursor.Zoom):
+                    UpdateZoom();
+                    break;
+                case nameof(WorkbenchCursor.PinnedAt):
+                    Tick();
+                    break;
+            }
+        });
+    }
 
-        var capacity = MakeChart(_vm.DiskSeries, "DISK %");
-        void Show(string tag)
+    private void UpdateZoom()
+    {
+        if (_cursor.Zoom is { } z)
         {
-            _diskSubTab = tag;
-            ReportLease();
-            slot.Content = tag == "usage"
-                ? _usage ??= new DiskUsageView(_vm, App.Current.Environment)
-                : capacity;
+            ResetZoomBtn.Content = WB.Text($"Reset zoom · {z.From.ToLocalTime():HH:mm} → {z.To.ToLocalTime():HH:mm}", 12, true);
+            ResetZoomBtn.Visibility = Visibility.Visible;
+            _rangeBar.Select(-1);
         }
-        selector.SelectedItem = _diskSubTab == "usage" ? usageItem : capacityItem;
-        Show(_diskSubTab);
-        selector.SelectionChanged += (_, _) => Show(selector.SelectedItem?.Tag as string ?? "capacity");
-        return grid;
-    }
-
-    private UIElement MakeNet()
-    {
-        if (_vm is null) return new TextBlock();
-        // Layout:
-        //   row 0: RX chart
-        //   row 1: TX chart
-        //   row 2: Processes/Ports segmented selector
-        //   row 3: selected sub-table (Processes by default; Ports on toggle)
-        var grid = new Grid { RowSpacing = 8 };
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-
-        var rx = new MetricChart(); rx.Bind(_vm.RxSeries, "RX MB/s", isPercent: false); rx.SetPaused(_paused);
-        var tx = new MetricChart(); tx.Bind(_vm.TxSeries, "TX MB/s", isPercent: false); tx.SetPaused(_paused);
-        _charts.Add(rx); _charts.Add(tx);
-        Grid.SetRow(rx, 0); Grid.SetRow(tx, 1);
-        grid.Children.Add(rx); grid.Children.Add(tx);
-
-        // SelectorBar with Processes/Ports — picked instead of NavigationView
-        // so the selector docks tightly under the charts and doesn't grab
-        // the whole row height like a NavigationView pane would.
-        var selector = new SelectorBar { HorizontalAlignment = HorizontalAlignment.Stretch };
-        var procsItem = new SelectorBarItem { Text = "Processes", Tag = "processes" };
-        var portsItem = new SelectorBarItem { Text = "Ports", Tag = "ports" };
-        selector.Items.Add(procsItem);
-        selector.Items.Add(portsItem);
-        selector.SelectedItem = procsItem;
-        Grid.SetRow(selector, 2);
-        grid.Children.Add(selector);
-
-        var slot = new ContentControl
+        else
         {
-            HorizontalContentAlignment = HorizontalAlignment.Stretch,
-            VerticalContentAlignment = VerticalAlignment.Stretch,
-        };
-        Grid.SetRow(slot, 3);
-        grid.Children.Add(slot);
+            ResetZoomBtn.Visibility = Visibility.Collapsed;
+            _rangeBar.Select((int)_cursor.Range);
+        }
+    }
 
-        // Pre-build both tables once so toggling between them doesn't pay
-        // a re-bind cost on every flip — the underlying VM is the same
-        // and both controls cleanly handle being shown/hidden.
-        var procs = new ProcessTable();
-        procs.Bind(_vm);
-        var ports = new PortsTable();
-        ports.Bind(_vm);
-        slot.Content = procs;
+    private void OnResetZoom(object sender, RoutedEventArgs e) => _cursor.ResetZoom();
 
-        selector.SelectionChanged += (_, _) =>
+    private void OnLiveBadge(object sender, RoutedEventArgs e)
+    {
+        if (_cursor.PinnedAt is not null) _cursor.PinnedAt = null;
+    }
+
+    private void UpdateHeader()
+    {
+        if (_vm is null) return;
+        var dark = WB.IsDark(Root);
+        var hs = _vm.HealthScore;
+        var brush = WB.Brush(WB.Level(hs.Level, dark));
+        StatusDot.Fill = brush;
+        HealthFlag.BorderBrush = brush;
+        HealthFlagText.Foreground = brush;
+        HealthFlagText.Text = $"HEALTH {hs.Score:0}" + (hs.Worst is { } w && hs.Level != HealthLevel.Nominal ? " · " + w.Label.ToUpperInvariant() : "");
+        FactsText.Text = _vm.FactsLine ?? _vm.Node.UserAtHost;
+    }
+
+    /// <summary>Every second: the live badge and the ranges that have data.</summary>
+    private void Tick()
+    {
+        if (_vm is null) return;
+        var dark = WB.IsDark(Root);
+        if (_cursor.PinnedAt is { } pin)
         {
-            _netPorts = (selector.SelectedItem?.Tag as string) == "ports";
-            slot.Content = _netPorts ? (UIElement)ports : procs;
-            ReportLease();
-        };
-
-        return grid;
+            LiveDot.Fill = WB.Brush(WB.Pin(dark));
+            LiveText.Text = $"◆ Pinned {pin.ToLocalTime():HH:mm:ss} · Esc";
+        }
+        else
+        {
+            LiveDot.Fill = WB.Brush(WB.Ok(dark));
+            LiveText.Text = "Live · updated " + WB.Ago(_vm.LastSeen);
+        }
+        var now = DateTime.UtcNow;
+        DateTime? oldest = _vm.CpuSeries.Points.Count > 0 ? _vm.CpuSeries.Points[0].T : null;
+        foreach (var r in Enum.GetValues<HostRange>())
+            _rangeBar.SetEnabled((int)r, WorkbenchCursor.IsAvailable(r, oldest, now));
     }
 
-    private UIElement MakeHealth()
+    private void AddAccelerators()
     {
-        if (_vm is null) return new TextBlock();
-        var grid = new Grid { RowSpacing = 12 };
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-
-        var chart = new MetricChart();
-        chart.Bind(_vm.ProcCountSeries, "Processes", isPercent: false);
-        chart.SetPaused(_paused);
-        _charts.Add(chart);
-        grid.Children.Add(chart);
-
-        var details = new HealthDetails();
-        details.Bind(_vm);
-        Grid.SetRow(details, 1);
-        grid.Children.Add(details);
-        return grid;
+        void Add(VirtualKey key, Func<bool> act)
+        {
+            var acc = new KeyboardAccelerator { Key = key };
+            acc.Invoked += (_, args) =>
+            {
+                if (TextInputFocused()) return;
+                args.Handled = act();
+            };
+            Root.KeyboardAccelerators.Add(acc);
+        }
+        Add(VirtualKey.Escape, () => _cursor.HandleEscape());
+        Add(VirtualKey.Left, () => _cursor.StepPin(-1, _cursor.HistoryStep(DateTime.UtcNow), DateTime.UtcNow));
+        Add(VirtualKey.Right, () => _cursor.StepPin(1, _cursor.HistoryStep(DateTime.UtcNow), DateTime.UtcNow));
+        Add(VirtualKey.Space, () =>
+        {
+            _cursor.PinLatest(_vm?.Procs.Latest?.T ?? _vm?.LastSeen);
+            return true;
+        });
     }
 
-    private UIElement MakeProcs()
-    {
-        if (_vm is null) return new TextBlock();
-        var table = new ProcessTable();
-        table.Bind(_vm);
-        return table;
-    }
+    private bool TextInputFocused()
+        => Root.XamlRoot is { } xr && FocusManager.GetFocusedElement(xr) is TextBox or PasswordBox or NumberBox or ComboBox or RichEditBox;
 }
