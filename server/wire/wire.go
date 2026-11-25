@@ -263,14 +263,16 @@ type FleetHistoryResponse struct {
 
 // TopProcess is one process of a node over a range: a name and a cmd.
 type TopProcess struct {
-	Name      string  `json:"name"`
-	Cmd       string  `json:"cmd"`
-	Repo      string  `json:"repo,omitempty"`
-	Cwd       string  `json:"cwd,omitempty"`
-	Parent    string  `json:"parent,omitempty"`
-	CPUPctAvg float64 `json:"cpu_pct_avg"`
-	CPUPctMax float64 `json:"cpu_pct_max"`
-	RSSMax    uint64  `json:"rss_max"`
+	Key       ProcessKey `json:"key"`
+	Name      string     `json:"name"`
+	Cmd       string     `json:"cmd"`
+	Repo      string     `json:"repo,omitempty"`
+	Cwd       string     `json:"cwd,omitempty"`
+	Parent    string     `json:"parent,omitempty"`
+	CPUPctAvg float64    `json:"cpu_pct_avg"`
+	CPUPctMax float64    `json:"cpu_pct_max"`
+	RSSMax    uint64     `json:"rss_max"`
+	IOBpsAvg  float64    `json:"io_bps_avg,omitempty"`
 }
 
 // NodeProcessesResponse is the top processes of a node, by average CPU.
@@ -280,6 +282,42 @@ type NodeProcessesResponse struct {
 	To        time.Time    `json:"to"`
 	Clamped   bool         `json:"clamped,omitempty"`
 	Processes []TopProcess `json:"processes"`
+}
+
+// ProcessSnapshot is the top processes of a node at one time.
+type ProcessSnapshot struct {
+	NodeID    uuid.UUID         `json:"node_id"`
+	TS        time.Time         `json:"ts"`       // the sample or bucket start
+	Tier      string            `json:"tier"`     // "raw", "1m", "1h"
+	BucketS   int               `json:"bucket_s"` // 0 for raw
+	By        string            `json:"by"`
+	Total     int               `json:"total,omitempty"` // raw only
+	Prev      *time.Time        `json:"prev,omitempty"`
+	Next      *time.Time        `json:"next,omitempty"`
+	Clamped   bool              `json:"clamped,omitempty"`
+	Processes []SnapshotProcess `json:"processes"`
+}
+
+// SnapshotProcess is one process of a ProcessSnapshot. PID, PPID, Parent,
+// User, Cwd, Threads, State and StartTS come from raw samples only. On a
+// rollup, CPUPct is the average and RSS is the maximum.
+type SnapshotProcess struct {
+	Key       ProcessKey `json:"key"`
+	PID       int32      `json:"pid,omitempty"`
+	PPID      int32      `json:"ppid,omitempty"`
+	Parent    string     `json:"parent,omitempty"`
+	User      string     `json:"user,omitempty"`
+	Name      string     `json:"name"`
+	Cmd       string     `json:"cmd"`
+	Repo      string     `json:"repo,omitempty"`
+	Cwd       string     `json:"cwd,omitempty"`
+	CPUPct    float64    `json:"cpu_pct"`
+	CPUPctMax float64    `json:"cpu_pct_max,omitempty"`
+	RSS       uint64     `json:"rss"`
+	IOBps     float64    `json:"io_bps,omitempty"`
+	Threads   int32      `json:"threads,omitempty"`
+	State     string     `json:"state,omitempty"`
+	StartTS   *time.Time `json:"start_ts,omitempty"`
 }
 
 // FleetHost is one host with its latest values. A host with no sample in
@@ -306,19 +344,20 @@ type FleetHosts struct {
 
 // FleetProcess is one process of a host over a range.
 type FleetProcess struct {
-	NodeID    uuid.UUID `json:"node_id"`
-	NodeName  string    `json:"node_name"`
-	Name      string    `json:"name"`
-	Cmd       string    `json:"cmd"`
-	Repo      string    `json:"repo,omitempty"`
-	Cwd       string    `json:"cwd,omitempty"`
-	Parent    string    `json:"parent,omitempty"`
-	CPUPctAvg float64   `json:"cpu_pct_avg"`
-	CPUPctMax float64   `json:"cpu_pct_max"`
-	RSSMax    uint64    `json:"rss_max"`
+	NodeID    uuid.UUID  `json:"node_id"`
+	NodeName  string     `json:"node_name"`
+	Key       ProcessKey `json:"key"`
+	Name      string     `json:"name"`
+	Cmd       string     `json:"cmd"`
+	Repo      string     `json:"repo,omitempty"`
+	Cwd       string     `json:"cwd,omitempty"`
+	Parent    string     `json:"parent,omitempty"`
+	CPUPctAvg float64    `json:"cpu_pct_avg"`
+	CPUPctMax float64    `json:"cpu_pct_max"`
+	RSSMax    uint64     `json:"rss_max"`
 }
 
-// FleetProcesses is the body of GET /v1/fleet/processes. By is cpu or mem.
+// FleetProcesses is the body of GET /v1/fleet/processes. By is cpu, mem or io.
 type FleetProcesses struct {
 	From      time.Time      `json:"from"`
 	To        time.Time      `json:"to"`
@@ -424,6 +463,7 @@ type Alert struct {
 // AlertProc is the process of a long_process alert, from the event
 // payload. StartTS is nil when the sampler did not send a start time.
 type AlertProc struct {
+	Key       ProcessKey `json:"key"`
 	PID       int32      `json:"pid"`
 	Name      string     `json:"name"`
 	Cmd       string     `json:"cmd"`

@@ -273,7 +273,7 @@ func TestCompare(t *testing.T) {
 
 func TestTopProcessesFleet(t *testing.T) {
 	a := uuid.New()
-	r := &fakeReader{procs: []clickhouse.TopProc{{NodeID: a, Name: "nginx", Cmd: "nginx -g", CPUPctAvg: 12, CPUPctMax: 30, RSSMax: 1 << 20}}}
+	r := &fakeReader{procs: []clickhouse.TopProc{{NodeID: a, Name: "nginx", Cmd: "nginx -g", CmdHash: 42, CPUPctAvg: 12, CPUPctMax: 30, RSSMax: 1 << 20}}}
 	s := newService(r, []store.Node{{ID: a, DisplayName: "web-1"}}, 7)
 	got, err := s.TopProcesses(context.Background(), ProcQuery{
 		OrgID: uuid.New(), From: now.Add(-30 * 24 * time.Hour), To: now, By: clickhouse.ProcByMem, Limit: 500,
@@ -283,6 +283,9 @@ func TestTopProcessesFleet(t *testing.T) {
 	}
 	if len(got.Processes) != 1 || got.Processes[0].NodeName != "web-1" || got.Processes[0].RSSMax != 1<<20 || got.By != "mem" {
 		t.Fatalf("processes = %+v", got)
+	}
+	if k := got.Processes[0].Key; k.Name != "nginx" || k.CmdHash != 42 {
+		t.Fatalf("key = %+v", k)
 	}
 	if !got.Clamped || !got.From.Equal(now.Add(-7*24*time.Hour)) {
 		t.Fatalf("from = %v clamped %v, want the plan limit", got.From, got.Clamped)
@@ -490,5 +493,14 @@ func TestAlertFromRowOldRowHasEventID(t *testing.T) {
 	event := uuid.New()
 	if a := AlertFromRow(clickhouse.AlertRow{EventID: event}, clickhouse.AlertMark{}); a.ID != event {
 		t.Fatalf("id = %s, want %s", a.ID, event)
+	}
+}
+
+func TestParseProcOrderIO(t *testing.T) {
+	if by, err := ParseProcOrder("io"); err != nil || by != clickhouse.ProcByIO {
+		t.Fatalf("io: %q, %v", by, err)
+	}
+	if _, err := ParseProcOrder("disk"); !errors.Is(err, ErrBadOrder) {
+		t.Fatalf("disk: %v", err)
 	}
 }

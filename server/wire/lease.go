@@ -82,11 +82,43 @@ type LiveSummary struct {
 	Host   *HostFacts   `json:"host,omitempty"`
 }
 
+// LiveProc is schema.ProcSample with the key of the process.
+type LiveProc struct {
+	schema.ProcSample
+	Key ProcessKey `json:"key"`
+}
+
+// LiveProcs is schema.ProcList with a key on each process.
+type LiveProcs struct {
+	Root    bool       `json:"root"`
+	TopN    int        `json:"top_n"`
+	Total   int        `json:"total"`
+	Visible int        `json:"visible"`
+	Skipped bool       `json:"skipped,omitempty"`
+	Items   []LiveProc `json:"items"`
+}
+
+// NewLiveProcs adds the key to each process of the list. It returns nil
+// for a nil list.
+func NewLiveProcs(p *Procs) *LiveProcs {
+	if p == nil {
+		return nil
+	}
+	out := &LiveProcs{
+		Root: p.Root, TopN: p.TopN, Total: p.Total, Visible: p.Visible, Skipped: p.Skipped,
+		Items: make([]LiveProc, len(p.Items)),
+	}
+	for i, it := range p.Items {
+		out.Items[i] = LiveProc{ProcSample: it, Key: NewProcessKey(it.Name, it.Cmd)}
+	}
+	return out
+}
+
 // DetailParts holds the keys of one detail tab. The names are the same
 // as in schema.Sample.
 type DetailParts struct {
 	TS     string             `json:"ts"`
-	Procs  *Procs             `json:"procs,omitempty"`
+	Procs  *LiveProcs         `json:"procs,omitempty"`
 	Ports  *schema.PortList   `json:"ports,omitempty"`
 	Disks  *[]Disk            `json:"disks,omitempty"`
 	DiskIO *DiskIO            `json:"disk_io,omitempty"`
@@ -173,15 +205,16 @@ func (s Sample) Facts() HostFacts {
 // has none of them.
 func (s Sample) Detail(tab DetailTab) (DetailParts, bool) {
 	d := DetailParts{TS: s.TS}
+	procs := NewLiveProcs(s.Procs)
 	switch tab {
 	case DetailProcesses:
-		d.Procs = s.Procs
+		d.Procs = procs
 	case DetailPorts:
 		d.Ports = s.Ports
 	case DetailDisks:
-		d.Disks, d.DiskIO, d.Procs = s.Disks, s.DiskIO, s.Procs
+		d.Disks, d.DiskIO, d.Procs = s.Disks, s.DiskIO, procs
 	case DetailHealth:
-		d.Health, d.Procs = s.Health, s.Procs
+		d.Health, d.Procs = s.Health, procs
 	default:
 		return d, false
 	}

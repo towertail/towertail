@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/towertail/towertail/server/wire"
 )
 
 // Two hours of samples each 10 s. CPU goes 20, 60, 20, 60, so each
@@ -757,4 +759,222 @@ func TestTopProcessesRollupRepo(t *testing.T) {
 	}
 	refresh("procs_top_1h_mv")
 	check("procs_top_1h", RangeQuery{OrgID: org, NodeID: node, From: hour.Add(-30 * 24 * time.Hour), To: hour.Add(30 * time.Minute)})
+}
+
+func TestProcessKeyMatchesClickHouse(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	for _, cmd := range []string{"", "/usr/bin/node server.js", "/opt/café/日本語 --flag", strings.Repeat("x", 1024), strings.Repeat("y", 70)} {
+		var got uint64
+		if err := client.conn.QueryRow(context.Background(), "SELECT cityHash64(?)", cmd).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if want := wire.NewProcessKey("x", cmd).CmdHash; got != want {
+			t.Errorf("cmd of %d bytes: ClickHouse %d, Go %d", len(cmd), got, want)
+		}
+	}
+}
+
+func TestProcsIOColumns(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	for _, table := range []string{"procs_top_1m", "procs_top_1h"} {
+		var n uint64
+		err := client.conn.QueryRow(context.Background(),
+			"SELECT count() FROM system.columns WHERE database = ? AND table = ? AND name = 'io_bps_avg'", client.db, table).Scan(&n)
+		if err != nil || n != 1 {
+			t.Errorf("%s: io_bps_avg columns = %d, %v", table, n, err)
+		}
+	}
+}
+
+// insertTop inserts n rollup rows for one bucket. Process pN has N % CPU
+// and N*100 B/s of I/O. The table is procs_top_1m or procs_top_1h.
+func insertTop(t *testing.T, client *Client, table, tsCol string, org, node uuid.UUID, bucket time.Time, n int) {
+	t.Helper()
+	var rows []string
+	for i := 1; i <= n; i++ {
+		rows = append(rows, fmt.Sprintf("('%s', '%s', '%s', %d, 'p%d', %d, '/bin/p%d', %d, %d, %d, now(), %d)",
+			bucket.Format("2006-01-02 15:04:05"), org, node, n+1-i, i, i, i, i, i*2, i<<20, i*100))
+	}
+	err := client.conn.Exec(context.Background(), "INSERT INTO "+client.table(table)+
+		" ("+tsCol+", org_id, node_id, rank, name, cmd_hash, cmd, cpu_pct_avg, cpu_pct_max, rss_max, refreshed_at, io_bps_avg) VALUES "+strings.Join(rows, ","))
+	if err != nil {
+		t.Fatalf("insert %s: %v", table, err)
+	}
+}
+
+func TestProcessesAtRaw(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	org, node := uuid.New(), uuid.New()
+	ts1 := time.Now().UTC().Add(-5 * time.Minute).Truncate(time.Second).Add(123 * time.Millisecond)
+	ts2 := ts1.Add(10 * time.Second)
+	var bundles []IngestBundle
+	for i, ts := range []time.Time{ts1, ts2} {
+		var procs []ProcRow
+		for n := 1; n <= 4; n++ {
+			bps := uint64(n * 10)
+			procs = append(procs, ProcRow{
+				TS: ts, OrgID: org, NodeID: node, PID: int32(100*(i+1) + n), PPID: 1, Name: fmt.Sprintf("p%d", n),
+				Cmd: fmt.Sprintf("/bin/p%d", n), UserName: "root", Parent: "init", Cwd: "/srv", Repo: "/srv",
+				CPUPct: float32(n * (i + 1)), RSS: uint64(n) << 20, Threads: 3, State: "S", StartTS: ts1.Add(-time.Hour),
+				ReadBps: &bps, WriteBps: &bps,
+			})
+		}
+		bundles = append(bundles, IngestBundle{
+			Sample: SampleRow{TS: ts, OrgID: org, NodeID: node, SchemaV: 1, ProcsTotal: uint32(300 + i), Errors: []string{}},
+			Procs:  procs,
+		})
+	}
+	if err := client.insert(ctx, bundles); err != nil {
+		t.Fatal(err)
+	}
+
+	snap, err := client.ProcessesAt(ctx, SnapshotQuery{OrgID: org, NodeID: node, At: ts1.Add(5 * time.Second), By: ProcByCPU, Limit: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Tier != "raw" || !snap.TS.Equal(ts1) || snap.Bucket != 0 || snap.Total != 300 {
+		t.Fatalf("snapshot = %+v", snap)
+	}
+	if snap.Next == nil || !snap.Next.Equal(ts2) || snap.Prev != nil {
+		t.Fatalf("prev %v next %v, want next %v", snap.Prev, snap.Next, ts2)
+	}
+	if len(snap.Procs) != 3 || snap.Procs[0].Name != "p4" || snap.Procs[0].PID != 104 || snap.Procs[0].CPUPct != 4 {
+		t.Fatalf("procs = %+v", snap.Procs)
+	}
+	p := snap.Procs[0]
+	if p.User != "root" || p.Parent != "init" || p.Cwd != "/srv" || p.IOBps != 80 || p.StartTS == nil ||
+		p.CmdHash != wire.NewProcessKey("p4", "/bin/p4").CmdHash {
+		t.Fatalf("proc = %+v", p)
+	}
+
+	snap, err = client.ProcessesAt(ctx, SnapshotQuery{OrgID: org, NodeID: node, At: ts2.Add(time.Second), By: ProcByIO, Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !snap.TS.Equal(ts2) || snap.Total != 301 || snap.Next != nil || snap.Prev == nil || !snap.Prev.Equal(ts1) || len(snap.Procs) != 2 {
+		t.Fatalf("second snapshot = %+v", snap)
+	}
+	// A time more than 2 minutes after the newest sample finds no sample.
+	snap, err = client.ProcessesAt(ctx, SnapshotQuery{OrgID: org, NodeID: node, At: ts2.Add(3 * time.Minute), By: ProcByCPU, Limit: 3})
+	if err != nil || len(snap.Procs) != 0 {
+		t.Fatalf("late snapshot = %+v, %v", snap, err)
+	}
+}
+
+func TestProcessesAtMinute(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	org, node := uuid.New(), uuid.New()
+	minute := time.Now().UTC().Truncate(time.Minute).Add(-3 * time.Hour)
+	insertTop(t, client, "procs_top_1m", "ts_minute", org, node, minute, 12)
+	snap, err := client.ProcessesAt(ctx, SnapshotQuery{OrgID: org, NodeID: node, At: minute.Add(30 * time.Second), By: ProcByCPU, Limit: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Tier != "1m" || !snap.TS.Equal(minute) || snap.Bucket != time.Minute || len(snap.Procs) != 10 {
+		t.Fatalf("snapshot = %+v", snap)
+	}
+	if snap.Prev == nil || !snap.Prev.Equal(minute.Add(-time.Minute)) || snap.Next == nil || !snap.Next.Equal(minute.Add(time.Minute)) {
+		t.Fatalf("prev %v next %v", snap.Prev, snap.Next)
+	}
+	if first := snap.Procs[0]; first.Name != "p12" || first.CPUPct != 12 || first.CPUPctMax != 24 || first.RSS != 12<<20 || first.IOBps != 1200 {
+		t.Fatalf("first = %+v", first)
+	}
+	for _, p := range snap.Procs {
+		k := wire.ProcessKey{Name: p.Name, CmdHash: p.CmdHash}
+		if got, err := wire.ParseProcessKey(k.String()); err != nil || got != k {
+			t.Errorf("key of %s: %v", p.Name, err)
+		}
+	}
+	snap, err = client.ProcessesAt(ctx, SnapshotQuery{OrgID: org, NodeID: node, At: minute, By: ProcByIO, Limit: 2})
+	if err != nil || len(snap.Procs) != 2 || snap.Procs[0].Name != "p12" {
+		t.Fatalf("by io = %+v, %v", snap.Procs, err)
+	}
+}
+
+func TestProcessesAtHour(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+
+	org, node := uuid.New(), uuid.New()
+	hour := time.Now().UTC().Truncate(time.Hour).Add(-10 * 24 * time.Hour)
+	insertTop(t, client, "procs_top_1h", "ts_hour", org, node, hour, 7)
+	snap, err := client.ProcessesAt(context.Background(), SnapshotQuery{OrgID: org, NodeID: node, At: hour.Add(25 * time.Minute), By: ProcByMem, Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Tier != "1h" || !snap.TS.Equal(hour) || snap.Bucket != time.Hour || len(snap.Procs) != 5 || snap.Procs[0].Name != "p7" {
+		t.Fatalf("snapshot = %+v", snap)
+	}
+}
+
+func TestProcessesAtEmpty(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+
+	now := time.Now().UTC()
+	for _, at := range []time.Time{now.Add(-time.Minute), now.Add(-3 * time.Hour), now.Add(-10 * 24 * time.Hour)} {
+		snap, err := client.ProcessesAt(context.Background(), SnapshotQuery{OrgID: uuid.New(), NodeID: uuid.New(), At: at, By: ProcByCPU, Limit: 20})
+		if err != nil || len(snap.Procs) != 0 {
+			t.Errorf("at %v: %+v, %v", at, snap, err)
+		}
+	}
+}
+
+// 3 processes. busy has the most CPU, disk has the most I/O.
+func TestTopProcessesByIO(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	org, node := uuid.New(), uuid.New()
+	start := time.Now().UTC().Truncate(time.Minute).Add(-3 * time.Minute)
+	var procs []ProcRow
+	for ts := start; ts.Before(start.Add(3 * time.Minute)); ts = ts.Add(10 * time.Second) {
+		for i, p := range []struct {
+			name   string
+			cpu    float32
+			rd, wr uint64
+		}{{"busy", 90, 0, 0}, {"disk", 10, 4000, 6000}, {"idle", 1, 100, 0}} {
+			rd, wr := p.rd, p.wr
+			procs = append(procs, ProcRow{
+				TS: ts, OrgID: org, NodeID: node, PID: int32(i + 1), Name: p.name, Cmd: "/bin/" + p.name,
+				CPUPct: p.cpu, RSS: 1 << 20, StartTS: start, ReadBps: &rd, WriteBps: &wr,
+			})
+		}
+	}
+	if err := client.insert(ctx, []IngestBundle{{Sample: SampleRow{TS: start, OrgID: org, NodeID: node, SchemaV: 1, Errors: []string{}}, Procs: procs}}); err != nil {
+		t.Fatal(err)
+	}
+	mv := client.table("procs_top_1m_mv")
+	if err := client.conn.Exec(ctx, "SYSTEM REFRESH VIEW "+mv); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.conn.Exec(ctx, "SYSTEM WAIT VIEW "+mv); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		from time.Time
+	}{{"procs_topn", start}, {"procs_top_1m", start.Add(-24 * time.Hour)}} {
+		t.Run(tc.name, func(t *testing.T) {
+			top, err := client.TopProcesses(ctx, RangeQuery{OrgID: org, NodeID: node, From: tc.from, To: start.Add(3 * time.Minute)}, ProcByIO, 3)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(top) != 3 || top[0].Name != "disk" || top[0].IOBpsAvg != 10000 || top[1].Name != "idle" || top[2].Name != "busy" {
+				t.Fatalf("by io = %+v", top)
+			}
+			if top[0].CmdHash != wire.NewProcessKey("disk", "/bin/disk").CmdHash {
+				t.Fatalf("cmd hash = %d", top[0].CmdHash)
+			}
+		})
+	}
 }

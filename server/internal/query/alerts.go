@@ -88,6 +88,7 @@ func (p alertPayload) proc() *wire.AlertProc {
 		return nil
 	}
 	return &wire.AlertProc{
+		Key:       wire.NewProcessKey(p.Name, p.Cmd),
 		PID:       p.PID,
 		Name:      p.Name,
 		Cmd:       p.Cmd,

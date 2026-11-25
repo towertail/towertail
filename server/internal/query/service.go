@@ -137,7 +137,7 @@ func ParseProcOrder(v string) (clickhouse.ProcOrder, error) {
 	switch by := clickhouse.ProcOrder(v); by {
 	case "":
 		return clickhouse.ProcByCPU, nil
-	case clickhouse.ProcByCPU, clickhouse.ProcByMem:
+	case clickhouse.ProcByCPU, clickhouse.ProcByMem, clickhouse.ProcByIO:
 		return by, nil
 	}
 	return "", ErrBadOrder
@@ -274,7 +274,7 @@ func (s *Service) TopProcesses(ctx context.Context, q ProcQuery) (wire.FleetProc
 	out := wire.FleetProcesses{From: from, To: to, Clamped: clamped, By: string(by), Processes: make([]wire.FleetProcess, 0, len(procs))}
 	for _, p := range procs {
 		out.Processes = append(out.Processes, wire.FleetProcess{
-			NodeID: p.NodeID, NodeName: names[p.NodeID], Name: p.Name, Cmd: p.Cmd,
+			NodeID: p.NodeID, NodeName: names[p.NodeID], Key: wire.ProcessKey{Name: p.Name, CmdHash: p.CmdHash}, Name: p.Name, Cmd: p.Cmd,
 			Repo: p.Repo, Cwd: p.Cwd, Parent: p.Parent,
 			CPUPctAvg: p.CPUPctAvg, CPUPctMax: p.CPUPctMax, RSSMax: p.RSSMax,
 		})

@@ -1,0 +1,76 @@
+package api
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/labstack/echo/v4"
+
+	"github.com/towertail/towertail/server/authctx"
+	"github.com/towertail/towertail/server/config"
+	"github.com/towertail/towertail/server/internal/clickhouse"
+	"github.com/towertail/towertail/server/internal/query"
+	"github.com/towertail/towertail/server/runtime"
+	"github.com/towertail/towertail/server/store"
+)
+
+func TestHandleProcessesAt(t *testing.T) {
+	e := newKeyEnv(t, config.HTTPConfig{})
+	user, _ := e.login(t, store.RoleViewer)
+	base := "/v1/nodes/" + uuid.NewString() + "/processes/at"
+	for _, tc := range []struct {
+		query string
+		want  int
+	}{
+		{"?ts=yesterday", http.StatusBadRequest},
+		{"?limit=0", http.StatusBadRequest},
+		{"?limit=51", http.StatusBadRequest},
+		{"?limit=x", http.StatusBadRequest},
+		{"?by=disk", http.StatusBadRequest},
+		// Valid values reach requireCH. The server has no ClickHouse.
+		{"", http.StatusServiceUnavailable},
+		{"?ts=2026-01-02T03:04:05Z&by=io&limit=50", http.StatusServiceUnavailable},
+		{"?ts=now-1h", http.StatusServiceUnavailable},
+	} {
+		if rec := e.do(http.MethodGet, base+tc.query, user, ""); rec.Code != tc.want {
+			t.Errorf("GET %s: %d %s, want %d", tc.query, rec.Code, rec.Body, tc.want)
+		}
+	}
+	if rec := e.do(http.MethodGet, "/v1/nodes/x/processes/at", user, ""); rec.Code != http.StatusBadRequest {
+		t.Errorf("bad id: %d", rec.Code)
+	}
+}
+
+type readyComponent struct{}
+
+func (readyComponent) Name() string                { return "clickhouse" }
+func (readyComponent) Start(context.Context) error { return nil }
+func (readyComponent) Stop(context.Context) error  { return nil }
+func (readyComponent) Ready() bool                 { return true }
+
+func TestHandleProcessesAtClamped(t *testing.T) {
+	rt := runtime.New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	rt.Register(readyComponent{})
+	// The empty client has no connection: a query would panic.
+	s := &Server{ch: &clickhouse.Client{}, runtime: rt, query: query.NewService(nil, nil, fixedLimits(7))}
+	req := httptest.NewRequest(http.MethodGet, "/v1/nodes/x/processes/at?ts=now-720h", nil)
+	rec := httptest.NewRecorder()
+	c := echo.New().NewContext(req, rec)
+	c.SetParamNames("id")
+	c.SetParamValues(uuid.NewString())
+	authctx.Set(c, store.Token{OrgID: uuid.New(), Kind: store.TokenKindUser})
+	if err := s.handleProcessesAt(c); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK || !jsonHas(rec.Body.Bytes(), `"clamped":true`) || !jsonHas(rec.Body.Bytes(), `"processes":[]`) {
+		t.Fatalf("response: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func jsonHas(b []byte, s string) bool { return strings.Contains(string(b), s) }

@@ -244,3 +244,32 @@ func TestDetailKeepsProcFolders(t *testing.T) {
 		}
 	}
 }
+
+func TestDetailProcessesHaveKey(t *testing.T) {
+	s := loadSample(t, []byte(`{"v":1,"ts":"t","host":{},"cpu":{},"mem":{},"swap":{},
+"procs":{"root":true,"top_n":1,"total":1,"visible":1,"items":[{"pid":10,"name":"node","cmd":"node app.js","cpu_pct":5,"rss":2}]},
+"errors":[]}`))
+	d, ok := s.Detail(DetailProcesses)
+	if !ok {
+		t.Fatal("no parts")
+	}
+	b, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Procs struct {
+			Total int
+			Items []struct {
+				Key ProcessKey
+				PID int
+			}
+		}
+	}
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if want := NewProcessKey("node", "node app.js"); got.Procs.Total != 1 || len(got.Procs.Items) != 1 || got.Procs.Items[0].Key != want || got.Procs.Items[0].PID != 10 {
+		t.Fatalf("frame: %s", b)
+	}
+}

@@ -2,6 +2,8 @@ package clickhouse
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -25,9 +27,11 @@ type TopProc struct {
 	Repo      string
 	Cwd       string
 	Parent    string
+	CmdHash   uint64
 	CPUPctAvg float64
 	CPUPctMax float64
 	RSSMax    uint64
+	IOBpsAvg  float64
 }
 
 // procsSource chooses the processes table by the length of the range and
@@ -59,17 +63,20 @@ type ProcOrder string
 const (
 	ProcByCPU ProcOrder = "cpu"
 	ProcByMem ProcOrder = "mem"
+	ProcByIO  ProcOrder = "io"
 )
 
-// TopProcesses gives the top processes in the range, by average CPU or by
-// the highest memory. A NodeID of uuid.Nil reads all nodes of the org.
+// TopProcesses gives the top processes in the range, by average CPU, by
+// the highest memory or by the average disk I/O. A NodeID of uuid.Nil
+// reads all nodes of the org. On a rollup, the order sorts only the rows
+// that the rollup kept.
 func (c *Client) TopProcesses(ctx context.Context, q RangeQuery, by ProcOrder, limit int) ([]TopProc, error) {
 	table, ts := procsSource(q.To.Sub(q.From), time.Since(q.From))
 	avg, mx, rss, hash := "cpu_pct", "cpu_pct", "rss", "cityHash64(cmd)"
-	cwd, parent, final := "any(cwd)", "any(parent)", ""
+	io, cwd, parent, final := "avg(coalesce(read_bps, 0) + coalesce(write_bps, 0))", "any(cwd)", "any(parent)", ""
 	if table != "procs_topn" {
 		avg, mx, rss, hash, final = "cpu_pct_avg", "cpu_pct_max", "rss_max", "cmd_hash", " FINAL"
-		cwd, parent = "''", "''"
+		io, cwd, parent = "avg(io_bps_avg)", "''", "''"
 	}
 	where, args := "org_id = ?", []any{q.OrgID}
 	if q.NodeID != uuid.Nil {
@@ -77,14 +84,17 @@ func (c *Client) TopProcesses(ctx context.Context, q RangeQuery, by ProcOrder, l
 		args = append(args, q.NodeID)
 	}
 	order := "p_avg DESC, p_rss DESC"
-	if by == ProcByMem {
+	switch by {
+	case ProcByMem:
 		order = "p_rss DESC, p_avg DESC"
+	case ProcByIO:
+		order = "p_io DESC, p_avg DESC, p_rss DESC"
 	}
-	sql := fmt.Sprintf("SELECT node_id, name, any(cmd), repo, %s, %s, avg(%s) AS p_avg, toFloat64(max(%s)), max(%s) AS p_rss FROM %s%s "+
-		"WHERE %s AND %s BETWEEN ? AND ? GROUP BY node_id, name, %s, repo ORDER BY %s LIMIT ?",
-		cwd, parent, avg, mx, rss, c.table(table), final, where, ts, hash, order)
+	stmt := fmt.Sprintf("SELECT node_id, name, any(cmd), repo, %s, %s, %s AS p_hash, avg(%s) AS p_avg, toFloat64(max(%s)), max(%s) AS p_rss, toFloat64(%s) AS p_io FROM %s%s "+
+		"WHERE %s AND %s BETWEEN ? AND ? GROUP BY node_id, name, p_hash, repo ORDER BY %s LIMIT ?",
+		cwd, parent, hash, avg, mx, rss, io, c.table(table), final, where, ts, order)
 	args = append(args, q.From, q.To, limit)
-	rows, err := c.conn.Query(ctx, sql, args...)
+	rows, err := c.conn.Query(ctx, stmt, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -92,10 +102,181 @@ func (c *Client) TopProcesses(ctx context.Context, q RangeQuery, by ProcOrder, l
 	var out []TopProc
 	for rows.Next() {
 		var p TopProc
-		if err := rows.Scan(&p.NodeID, &p.Name, &p.Cmd, &p.Repo, &p.Cwd, &p.Parent, &p.CPUPctAvg, &p.CPUPctMax, &p.RSSMax); err != nil {
+		if err := rows.Scan(&p.NodeID, &p.Name, &p.Cmd, &p.Repo, &p.Cwd, &p.Parent, &p.CmdHash, &p.CPUPctAvg, &p.CPUPctMax, &p.RSSMax, &p.IOBpsAvg); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// SnapshotQuery asks for the top processes of a node at one time.
+type SnapshotQuery struct {
+	OrgID, NodeID uuid.UUID
+	At            time.Time
+	By            ProcOrder
+	Limit         int
+}
+
+// SnapshotProc is one process of a snapshot. PID, PPID, User, Parent,
+// Cwd, State, Threads and StartTS come from raw samples only. CPUPct is
+// the average on a rollup, and RSS is the maximum.
+type SnapshotProc struct {
+	CmdHash      uint64
+	PID, PPID    int32
+	Name, Cmd    string
+	User, Parent string
+	Cwd, Repo    string
+	State        string
+	CPUPct       float64
+	CPUPctMax    float64
+	RSS          uint64
+	IOBps        float64
+	Threads      int32
+	StartTS      *time.Time
+}
+
+// Snapshot is the answer of ProcessesAt. Tier is "raw", "1m" or "1h".
+// Bucket is 0 for raw. Total is the process count of a raw sample. Prev
+// and Next are the times of the neighbor snapshots.
+type Snapshot struct {
+	TS         time.Time
+	Tier       string
+	Bucket     time.Duration
+	Total      int
+	Prev, Next *time.Time
+	Procs      []SnapshotProc
+}
+
+// msArg binds a time with millisecond precision. A time.Time argument
+// has a precision of 1 second.
+const msArg = "fromUnixTimestamp64Milli(?, 'UTC')"
+
+const (
+	rawSnapshotWindow = 2 * time.Minute
+	maxRollup1m       = 10
+	maxRollup1h       = 5
+)
+
+// ProcessesAt gives the top processes of a node at one time. The age of
+// the time selects the table. An empty bucket gives no processes and no
+// error.
+func (c *Client) ProcessesAt(ctx context.Context, q SnapshotQuery) (Snapshot, error) {
+	table, _ := procsSource(0, time.Since(q.At))
+	switch table {
+	case "procs_topn":
+		return c.rawSnapshot(ctx, q)
+	case "procs_top_1m":
+		return c.rollupSnapshot(ctx, q, "1m", table, "ts_minute", time.Minute, maxRollup1m)
+	}
+	return c.rollupSnapshot(ctx, q, "1h", "procs_top_1h", "ts_hour", time.Hour, maxRollup1h)
+}
+
+func (c *Client) rawSnapshot(ctx context.Context, q SnapshotQuery) (Snapshot, error) {
+	out := Snapshot{Tier: "raw", Procs: []SnapshotProc{}}
+	procs := c.table("procs_topn")
+	var ts time.Time
+	err := c.conn.QueryRow(ctx, "SELECT ts FROM "+procs+" WHERE org_id = ? AND node_id = ? AND ts <= "+msArg+" AND ts > "+msArg+" ORDER BY ts DESC LIMIT 1",
+		q.OrgID, q.NodeID, q.At.UnixMilli(), q.At.Add(-rawSnapshotWindow).UnixMilli()).Scan(&ts)
+	if errors.Is(err, sql.ErrNoRows) {
+		return out, nil
+	}
+	if err != nil {
+		return out, err
+	}
+	out.TS = ts
+
+	order := "cpu_pct DESC, rss DESC"
+	switch q.By {
+	case ProcByMem:
+		order = "rss DESC, cpu_pct DESC"
+	case ProcByIO:
+		order = "io DESC, cpu_pct DESC"
+	}
+	rows, err := c.conn.Query(ctx, "SELECT cityHash64(cmd), pid, ppid, name, cmd, user_name, parent, cwd, repo, state, "+
+		"toFloat64(cpu_pct), rss, toFloat64(coalesce(read_bps, 0) + coalesce(write_bps, 0)) AS io, threads, start_ts FROM "+procs+
+		" WHERE org_id = ? AND node_id = ? AND ts = "+msArg+" ORDER BY "+order+", pid LIMIT ?",
+		q.OrgID, q.NodeID, ts.UnixMilli(), q.Limit)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			p     SnapshotProc
+			start time.Time
+		)
+		if err := rows.Scan(&p.CmdHash, &p.PID, &p.PPID, &p.Name, &p.Cmd, &p.User, &p.Parent, &p.Cwd, &p.Repo, &p.State,
+			&p.CPUPct, &p.RSS, &p.IOBps, &p.Threads, &start); err != nil {
+			return out, err
+		}
+		if start.Unix() > 0 {
+			p.StartTS = &start
+		}
+		out.Procs = append(out.Procs, p)
+	}
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+
+	var total uint32
+	err = c.conn.QueryRow(ctx, "SELECT procs_total FROM "+c.table("samples_raw")+" WHERE org_id = ? AND node_id = ? AND ts = "+msArg+" LIMIT 1",
+		q.OrgID, q.NodeID, ts.UnixMilli()).Scan(&total)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return out, err
+	}
+	out.Total = int(total)
+
+	if out.Prev, err = c.neighbor(ctx, procs, q, "ts < "+msArg+" AND ts >= "+msArg, "DESC", ts, ts.Add(-time.Hour)); err != nil {
+		return out, err
+	}
+	out.Next, err = c.neighbor(ctx, procs, q, "ts > "+msArg+" AND ts <= "+msArg, "ASC", ts, ts.Add(time.Hour))
+	return out, err
+}
+
+// neighbor gives the nearest sample time that the condition selects. The
+// condition takes the arguments a and b.
+func (c *Client) neighbor(ctx context.Context, table string, q SnapshotQuery, cond, dir string, a, b time.Time) (*time.Time, error) {
+	var t time.Time
+	err := c.conn.QueryRow(ctx, "SELECT ts FROM "+table+" WHERE org_id = ? AND node_id = ? AND "+cond+" ORDER BY ts "+dir+" LIMIT 1",
+		q.OrgID, q.NodeID, a.UnixMilli(), b.UnixMilli()).Scan(&t)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func (c *Client) rollupSnapshot(ctx context.Context, q SnapshotQuery, tier, table, tsCol string, bucket time.Duration, maxRows int) (Snapshot, error) {
+	at := q.At.UTC().Truncate(bucket)
+	out := Snapshot{TS: at, Tier: tier, Bucket: bucket, Procs: []SnapshotProc{}}
+	prev, next := at.Add(-bucket), at.Add(bucket)
+	out.Prev = &prev
+	if !next.After(time.Now()) {
+		out.Next = &next
+	}
+	order := "cpu_pct_avg DESC, rss_max DESC"
+	switch q.By {
+	case ProcByMem:
+		order = "rss_max DESC, cpu_pct_avg DESC"
+	case ProcByIO:
+		order = "io_bps_avg DESC, cpu_pct_avg DESC"
+	}
+	rows, err := c.conn.Query(ctx, "SELECT cmd_hash, name, cmd, repo, toFloat64(cpu_pct_avg), toFloat64(cpu_pct_max), rss_max, io_bps_avg FROM "+
+		c.table(table)+" FINAL WHERE org_id = ? AND node_id = ? AND "+tsCol+" = ? ORDER BY "+order+" LIMIT ?",
+		q.OrgID, q.NodeID, at, min(q.Limit, maxRows))
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var p SnapshotProc
+		if err := rows.Scan(&p.CmdHash, &p.Name, &p.Cmd, &p.Repo, &p.CPUPct, &p.CPUPctMax, &p.RSS, &p.IOBps); err != nil {
+			return out, err
+		}
+		out.Procs = append(out.Procs, p)
 	}
 	return out, rows.Err()
 }

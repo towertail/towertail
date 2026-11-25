@@ -276,6 +276,7 @@ func (s *Server) registerRoutes() {
 	read.GET("/nodes/:id", s.handleGetNode)
 	read.GET("/nodes/:id/history", s.handleHistory)
 	read.GET("/nodes/:id/processes", s.handleProcesses)
+	read.GET("/nodes/:id/processes/at", s.handleProcessesAt)
 	read.GET("/nodes/:id/disks", s.handleDisks)
 	read.GET("/history", s.handleFleetHistory)
 	read.GET("/fleet/hosts", s.handleFleetHosts)
