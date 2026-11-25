@@ -499,20 +499,15 @@ func TestGetAlertRoute(t *testing.T) {
 	}
 }
 
-// countingStore counts the node edits.
+// countingStore counts the rules edits.
 type countingStore struct {
 	store.ConfigStore
-	nodeEdits, settingEdits int
+	ruleEdits int
 }
 
-func (c *countingStore) EditNode(ctx context.Context, org, id uuid.UUID, fn func(*store.Node) error) (store.Node, error) {
-	c.nodeEdits++
-	return c.ConfigStore.EditNode(ctx, org, id, fn)
-}
-
-func (c *countingStore) EditSettings(ctx context.Context, org uuid.UUID, fn func(*store.ServerSettings) error) (store.ServerSettings, error) {
-	c.settingEdits++
-	return c.ConfigStore.EditSettings(ctx, org, fn)
+func (c *countingStore) EditRules(ctx context.Context, org uuid.UUID, ed store.RulesEdit) (store.RulesBackup, error) {
+	c.ruleEdits++
+	return c.ConfigStore.EditRules(ctx, org, ed)
 }
 
 func TestBulkAlerts(t *testing.T) {
@@ -589,7 +584,7 @@ func TestBulkAlerts(t *testing.T) {
 		t.Errorf("ack as viewer: %d", code)
 	}
 
-	// Ignore is for an admin, and edits each node one time.
+	// Ignore is for an admin, and edits the rules one time.
 	body := `{"action":"ignore","scope":"host","ids":` + ids(e.long, long2, e.cpu) + `}`
 	if code, _ := post(store.RoleMember, body); code != 403 {
 		t.Fatalf("ignore as member: %d, want 403", code)
@@ -597,13 +592,13 @@ func TestBulkAlerts(t *testing.T) {
 	if code, _ := post(store.RoleAdmin, `{"action":"ignore","scope":"x","ids":`+ids(e.long)+`}`); code != 400 {
 		t.Errorf("ignore with a bad scope: %d", code)
 	}
-	before, writes := cs.nodeEdits, e.journal.writes
+	before, writes := cs.ruleEdits, e.journal.writes
 	code, res = post(store.RoleAdmin, body)
 	if code != 200 || len(res) != 3 || res[0].Alert == nil || res[1].Alert == nil || res[2].Alert != nil || res[2].Error == "" {
 		t.Fatalf("ignore: %d %+v", code, res)
 	}
-	if cs.nodeEdits-before != 1 || e.journal.writes-writes != 1 {
-		t.Fatalf("node edits = %d, journal writes = %d, want 1 and 1", cs.nodeEdits-before, e.journal.writes-writes)
+	if cs.ruleEdits-before != 1 || e.journal.writes-writes != 1 {
+		t.Fatalf("rules edits = %d, journal writes = %d, want 1 and 1", cs.ruleEdits-before, e.journal.writes-writes)
 	}
 	if n := e.nodeNow(); !slices.Contains(n.IgnoredProcs, "python3") || !slices.Contains(n.IgnoredProcs, "node") || len(n.IgnoredProcs) != 2 {
 		t.Fatalf("ignored = %v", n.IgnoredProcs)
@@ -612,9 +607,10 @@ func TestBulkAlerts(t *testing.T) {
 		t.Fatalf("last line = %+v", l)
 	}
 
+	before = cs.ruleEdits
 	code, res = post(store.RoleAdmin, `{"action":"ignore","scope":"all","ids":`+ids(e.long, long2)+`}`)
-	if code != 200 || res[0].Alert == nil || cs.settingEdits != 1 {
-		t.Fatalf("ignore all: %d %+v, %d settings edits", code, res, cs.settingEdits)
+	if code != 200 || res[0].Alert == nil || cs.ruleEdits-before != 1 {
+		t.Fatalf("ignore all: %d %+v, %d rules edits", code, res, cs.ruleEdits-before)
 	}
 	code, res = post(store.RoleAdmin, `{"action":"unignore","scope":"host","ids":`+ids(e.long, long2)+`}`)
 	if code != 200 || res[0].Alert == nil || len(e.nodeNow().IgnoredProcs) != 0 {

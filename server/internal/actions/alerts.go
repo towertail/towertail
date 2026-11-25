@@ -156,7 +156,7 @@ func (s *Service) MarkAlerts(ctx context.Context, a Actor, ids []uuid.UUID, act 
 		lines = append(lines, line)
 	}
 	if len(items) > 0 {
-		text, errs, _ := s.writeIgnores(ctx, a.OrgID, scope, act.Undo, items)
+		text, errs, _ := s.writeIgnores(ctx, a, scope, act.Undo, items)
 		for n, i := range itemAt {
 			if errs[n] != nil {
 				results[i].Alert, results[i].Err = nil, errs[n]
@@ -192,7 +192,7 @@ func (s *Service) IgnoreAlert(ctx context.Context, a Actor, alertID uuid.UUID, s
 	if err != nil {
 		return wire.Alert{}, RulesResult{}, err
 	}
-	text, errs, res := s.writeIgnores(ctx, a.OrgID, scope, undo, []IgnoreItem{{NodeID: al.NodeID, Name: al.Proc.Name}})
+	text, errs, res := s.writeIgnores(ctx, a, scope, undo, []IgnoreItem{{NodeID: al.NodeID, Name: al.Proc.Name}})
 	if errs[0] != nil {
 		return wire.Alert{}, RulesResult{}, errs[0]
 	}

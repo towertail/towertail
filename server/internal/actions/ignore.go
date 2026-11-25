@@ -37,15 +37,16 @@ func (s *Service) IgnoreProcesses(ctx context.Context, a Actor, items []IgnoreIt
 	if !scope.Valid() {
 		return RulesResult{}, nil, badInput(errScope)
 	}
-	_, errs, res := s.writeIgnores(ctx, a.OrgID, scope, undo, items)
+	_, errs, res := s.writeIgnores(ctx, a, scope, undo, items)
 	return res, errs, nil
 }
 
 // writeIgnores adds the names to the ignore lists, or removes them, with
-// one write for each node (host) or one write for the org (all). It gives
-// the log text and the error of each item. A failed write gives the error
-// to each item of its node.
-func (s *Service) writeIgnores(ctx context.Context, org uuid.UUID, scope IgnoreScope, undo bool, items []IgnoreItem) (text []string, errs []error, res RulesResult) {
+// one rules edit for all items: one write, and one backup. It gives the log
+// text and the error of each item. An item with an unknown host gets
+// ErrNotFound and the others go on. A failed edit gives its error to each
+// item that it holds.
+func (s *Service) writeIgnores(ctx context.Context, a Actor, scope IgnoreScope, undo bool, items []IgnoreItem) (text []string, errs []error, res RulesResult) {
 	edit := func(l []string, names []string) []string {
 		l = slices.DeleteFunc(slices.Clone(l), func(x string) bool {
 			return slices.ContainsFunc(names, func(n string) bool { return strings.EqualFold(x, n) })
@@ -67,44 +68,58 @@ func (s *Service) writeIgnores(ctx context.Context, org uuid.UUID, scope IgnoreS
 			names[i] = it.Name
 			text[i] = it.Name + " ignored on all hosts"
 		}
-		cfg, err := s.st.EditSettings(ctx, org, func(cfg *store.ServerSettings) error {
-			cfg.LongProc.Ignore = edit(cfg.LongProc.Ignore, names)
-			return nil
+		res, err := s.EditRules(ctx, a, RulesEdit{
+			Org: true,
+			Apply: func(cfg *store.ServerSettings, _ map[uuid.UUID]*store.Node) error {
+				cfg.LongProc.Ignore = edit(cfg.LongProc.Ignore, names)
+				return nil
+			},
 		})
 		if err != nil {
-			return nil, slices.Repeat([]error{err}, len(items)), res
+			return nil, slices.Repeat([]error{err}, len(items)), RulesResult{}
 		}
-		s.invalidateSettings(org)
-		s.broadcastSettings(org, cfg)
-		res.Settings = &cfg
 		return text, errs, res
 	}
-	var nodes []uuid.UUID
+	var hosts []uuid.UUID
 	names := map[uuid.UUID][]string{}
-	for _, it := range items {
+	for i, it := range items {
 		if _, ok := names[it.NodeID]; !ok {
-			nodes = append(nodes, it.NodeID)
+			if _, err := s.st.GetNode(ctx, a.OrgID, it.NodeID); err != nil {
+				errs[i] = err
+				continue
+			}
+			hosts = append(hosts, it.NodeID)
 		}
 		names[it.NodeID] = append(names[it.NodeID], it.Name)
 	}
-	for _, id := range nodes {
-		n, err := s.st.EditNode(ctx, org, id, func(n *store.Node) error {
-			n.IgnoredProcs = edit(n.IgnoredProcs, names[id])
+	if len(hosts) == 0 {
+		return text, errs, res
+	}
+	res, err := s.EditRules(ctx, a, RulesEdit{
+		Hosts: hosts,
+		Apply: func(_ *store.ServerSettings, nodes map[uuid.UUID]*store.Node) error {
+			for id, n := range nodes {
+				n.IgnoredProcs = edit(n.IgnoredProcs, names[id])
+			}
 			return nil
-		})
-		for i, it := range items {
-			switch {
-			case it.NodeID != id:
-			case err != nil:
-				errs[i] = err
-			default:
+		},
+	})
+	for i, it := range items {
+		if errs[i] != nil {
+			continue
+		}
+		if err != nil {
+			errs[i] = err
+			continue
+		}
+		for _, n := range res.Nodes {
+			if n.ID == it.NodeID {
 				text[i] = it.Name + " ignored on " + n.DisplayName
 			}
 		}
-		if err == nil {
-			s.broadcastNode(org, n)
-			res.Nodes = append(res.Nodes, n)
-		}
+	}
+	if err != nil {
+		return text, errs, RulesResult{}
 	}
 	return text, errs, res
 }

@@ -148,3 +148,39 @@ func TestPutSettingsRejectsBadMCP(t *testing.T) {
 		t.Errorf("mcp = %+v", got)
 	}
 }
+
+func TestPutSettingsBackupOnlyOnRuleChange(t *testing.T) {
+	e := newAlertEnv(t)
+	put := func(body string, want int) {
+		t.Helper()
+		if code, b := e.do(store.RoleAdmin, "PUT", "/v1/settings", body); code != want {
+			t.Fatalf("%s: %d %s, want %d", body, code, b, want)
+		}
+	}
+	put(`{"sshPollingIntervalSeconds":45}`, http.StatusOK)
+	put(`{"mcp":{"signInDays":90,"aiChanges":"alerts_and_rules"}}`, http.StatusOK)
+	put(`{"thresholds":{"cpuWarn":0.75}}`, http.StatusOK) // the same value
+	if n := len(e.backups(t)); n != 0 {
+		t.Fatalf("%d backups after a change of no rule, want 0", n)
+	}
+	if e.settings().RulesOrigin != nil {
+		t.Errorf("origin = %+v, want none", e.settings().RulesOrigin)
+	}
+	put(`{"thresholds":{"cpuWarn":0.8}}`, http.StatusOK)
+	list := e.backups(t)
+	if len(list) != 1 || list[0].Org == nil || list[0].Org.Thresholds.CPUWarn != 0.75 || len(list[0].Hosts) != 0 {
+		t.Fatalf("backups = %+v", list)
+	}
+	if o := e.settings().RulesOrigin; o == nil || !o.At.Equal(list[0].At) {
+		t.Errorf("origin = %+v, backup time %v", o, list[0].At)
+	}
+	put(`{"notifyCooldownSeconds":1800}`, http.StatusOK)
+	if list = e.backups(t); len(list) != 2 || list[0].Org.NotifyCooldownSeconds != 600 {
+		t.Fatalf("backups after a cooldown change = %+v", list)
+	}
+	put(`{"notifyCooldownSeconds":90000}`, http.StatusBadRequest)
+	put(`{"mcp":{"aiChanges":"bogus"}}`, http.StatusBadRequest)
+	if n := len(e.backups(t)); n != 2 {
+		t.Errorf("%d backups, want 2", n)
+	}
+}

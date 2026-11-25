@@ -45,6 +45,7 @@ type Store interface {
 	GetSettings(ctx context.Context, orgID uuid.UUID) (store.ServerSettings, error)
 	EditNode(ctx context.Context, orgID, id uuid.UUID, f func(*store.Node) error) (store.Node, error)
 	EditSettings(ctx context.Context, orgID uuid.UUID, f func(*store.ServerSettings) error) (store.ServerSettings, error)
+	EditRules(ctx context.Context, orgID uuid.UUID, ed store.RulesEdit) (store.RulesBackup, error)
 	ReplaceRules(ctx context.Context, orgID uuid.UUID, ch store.RulesChange) (store.RulesBackup, error)
 	GetRulesBackup(ctx context.Context, orgID, id uuid.UUID) (store.RulesBackup, error)
 }
@@ -119,9 +120,12 @@ func (a Actor) Origin(at time.Time) store.RulesOrigin {
 }
 
 // RulesResult is the outcome of a write of rules. Backup is zero when no
-// backup was made.
+// backup was made. Diff lists the fields that changed, with the target of
+// each (see store.FieldChange). Settings and Nodes are the new values of the
+// targets.
 type RulesResult struct {
 	Backup   store.RulesBackup
+	Diff     []store.FieldChange
 	Settings *store.ServerSettings
 	Nodes    []store.Node
 }

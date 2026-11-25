@@ -298,3 +298,38 @@ func TestRestoreRulesBackup(t *testing.T) {
 		t.Fatalf("restore after delete: %d %s", code, b)
 	}
 }
+
+func (e *alertEnv) backups(t *testing.T) []store.RulesBackup {
+	t.Helper()
+	list, err := e.store.ListRulesBackups(context.Background(), store.ZeroOrg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return list
+}
+
+func TestPutNodeRulesMakesBackup(t *testing.T) {
+	e := newAlertEnv(t)
+	if code, b := e.do(store.RoleAdmin, "PUT", e.rulesOf(e.node), `{"thresholds":{"cpu":{"warn":0.5,"critical":0.6}}}`); code != http.StatusOK {
+		t.Fatalf("put: %d %s", code, b)
+	}
+	list := e.backups(t)
+	if len(list) != 1 || list[0].Org != nil || list[0].Hosts[e.node].Thresholds != nil {
+		t.Fatalf("first backup = %+v", list)
+	}
+	if code, b := e.do(store.RoleAdmin, "PUT", e.rulesOf(e.node), `{"thresholds":{"cpu":{"warn":0.55,"critical":0.6}}}`); code != http.StatusOK {
+		t.Fatalf("put: %d %s", code, b)
+	}
+	list = e.backups(t)
+	if len(list) != 2 || list[0].Hosts[e.node].Thresholds.CPU.Warn != 0.5 {
+		t.Fatalf("second backup = %+v", list)
+	}
+	// A bad body or an unknown host makes no backup.
+	e.do(store.RoleAdmin, "PUT", e.rulesOf(e.node), `{"thresholds":{"cpu":{"warn":0.9,"critical":0.6}}}`)
+	if code, _ := e.do(store.RoleAdmin, "PUT", e.rulesOf(uuid.New()), `{}`); code != http.StatusNotFound {
+		t.Errorf("unknown host: %d", code)
+	}
+	if n := len(e.backups(t)); n != 2 {
+		t.Errorf("%d backups, want 2", n)
+	}
+}

@@ -74,7 +74,10 @@ func httpErrorHandler(log *slog.Logger) echo.HTTPErrorHandler {
 // errors pass through, and httpErrorHandler maps them.
 func actionError(err error) error {
 	status := 0
+	var conflict *actions.ConflictError
 	switch {
+	case errors.As(err, &conflict):
+		status = http.StatusConflict
 	case errors.Is(err, actions.ErrNotFound), errors.Is(err, actions.ErrNotOpen):
 		status = http.StatusNotFound
 	case errors.Is(err, actions.ErrNotReady):
