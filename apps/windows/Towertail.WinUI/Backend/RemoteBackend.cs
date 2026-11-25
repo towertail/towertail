@@ -16,7 +16,7 @@ public sealed class RemoteBackend : IBackend, IDiskScanUpdates
 
     private readonly RemoteClient _client;
     private readonly Dictionary<Guid, bool> _allowDiskScan = new();
-    private CancellationTokenSource? _streamCts;
+    private RemoteStream? _stream;
 
     public RemoteClient Client => _client;
 
@@ -28,7 +28,6 @@ public sealed class RemoteBackend : IBackend, IDiskScanUpdates
     {
         lock (_allowDiskScan) return _allowDiskScan.GetValueOrDefault(nodeId);
     }
-    private Task? _streamTask;
 
     public RemoteBackend(
         RemoteClient client,
@@ -54,14 +53,16 @@ public sealed class RemoteBackend : IBackend, IDiskScanUpdates
         var settings = await _client.GetSettingsAsync(ct).ConfigureAwait(false);
         ApplyServerSettings(settings);
 
-        _streamCts = new CancellationTokenSource();
-        _streamTask = Task.Run(() => StreamLoopAsync(_streamCts.Token));
+        _stream = _client.OpenStream(lease: false);
+        _stream.MessageReceived += OnStreamMessage;
+        _stream.Start();
     }
 
     public async Task StopAsync(CancellationToken ct = default)
     {
-        _streamCts?.Cancel();
-        if (_streamTask is not null) { try { await _streamTask.ConfigureAwait(false); } catch { } }
+        var stream = _stream;
+        _stream = null;
+        if (stream is not null) await stream.DisposeAsync().ConfigureAwait(false);
     }
 
     public async Task AddNodeAsync(Node node, CancellationToken ct = default)
@@ -122,24 +123,16 @@ public sealed class RemoteBackend : IBackend, IDiskScanUpdates
         ApplyServerSettings(applied);
     }
 
-    private async Task StreamLoopAsync(CancellationToken ct)
+    private void OnStreamMessage(StreamMessage message)
     {
-        while (!ct.IsCancellationRequested)
+        switch (message)
         {
-            try
-            {
-                await foreach (var frame in _client.StreamAsync(ct).ConfigureAwait(false))
-                {
-                    if (frame.Type == "sample" && frame.NodeId is Guid nid && frame.Sample is Sample s)
-                        Servers.Ingest(nid, s);
-                    else if (frame.Type == "disk_scan_updated" && frame.Job is DiskScanJob job)
-                        DiskScanUpdated?.Invoke(frame.NodeId ?? job.NodeId, job);
-                }
-            }
-            catch (OperationCanceledException) { return; }
-            catch { /* reconnect after short backoff */ }
-            try { await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false); }
-            catch (OperationCanceledException) { return; }
+            case StreamMessage.SampleFrame f:
+                Servers.Ingest(f.NodeId, f.Sample);
+                break;
+            case StreamMessage.DiskScanUpdatedFrame f:
+                DiskScanUpdated?.Invoke(f.NodeId, f.Job);
+                break;
         }
     }
 
@@ -173,7 +166,12 @@ public sealed class RemoteBackend : IBackend, IDiskScanUpdates
     {
         Id = rn.Id,
         DisplayName = rn.DisplayName,
-        Kind = rn.Kind == "ssh" ? NodeKind.Ssh : NodeKind.Local,
+        Kind = rn.Kind switch
+        {
+            "ssh" => NodeKind.Ssh,
+            "cloud" => NodeKind.Cloud,
+            _ => NodeKind.Local,
+        },
         SshUser = rn.SshUser,
         SshHost = rn.SshHost,
         Tags = rn.Tags?.ToList() ?? new List<string>(),
@@ -186,7 +184,12 @@ public sealed class RemoteBackend : IBackend, IDiskScanUpdates
     private RemoteNode ToRemote(Node n) => new(
         Id: n.Id,
         DisplayName: n.DisplayName,
-        Kind: n.Kind == NodeKind.Ssh ? "ssh" : "local",
+        Kind: n.Kind switch
+        {
+            NodeKind.Ssh => "ssh",
+            NodeKind.Cloud => "cloud",
+            _ => "local",
+        },
         SshUser: n.SshUser,
         SshHost: n.SshHost,
         Tags: n.Tags,

@@ -192,9 +192,10 @@ public sealed class RemoteDiskScannerTests : IAsyncLifetime
     public void StreamFrameCarriesTheJob()
     {
         var json = $$$"""{"type":"disk_scan_updated","nodeId":"{{{_node.Id}}}","job":{"id":"{{{_jobId}}}","node_id":"{{{_node.Id}}}","state":"running","cancel_requested":false}}""";
-        var frame = JsonSerializer.Deserialize<RemoteStreamFrame>(json)!;
-        frame.Type.Should().Be("disk_scan_updated");
-        frame.Job!.Id.Should().Be(_jobId);
+        var frame = StreamMessage.Decode(Encoding.UTF8.GetBytes(json))
+            .Should().BeOfType<StreamMessage.DiskScanUpdatedFrame>().Subject;
+        frame.NodeId.Should().Be(_node.Id);
+        frame.Job.Id.Should().Be(_jobId);
         frame.Job.State.Should().Be(DiskScanJob.Running);
     }
 

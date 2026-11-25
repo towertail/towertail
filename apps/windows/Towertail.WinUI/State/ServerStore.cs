@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
+using Towertail.WinUI.Backend;
 using Towertail.WinUI.SystemServices;
 
 namespace Towertail.WinUI.State;
@@ -81,10 +82,7 @@ public sealed partial class ServerStore : ObservableObject
         var vm = Find(nodeId);
         if (vm == null) return;
 
-        vm.Thresholds = MetricThresholds.Effective(_settings.Thresholds, vm.Node.CustomThresholds);
-        vm.AlertRules = vm.Node.EffectiveAlerts(_settings.Alerts);
-        vm.ApplyLongProc(vm.Node, _settings.LongProc);
-        vm.Muted = MutedSignals.Effective(_settings.MutedSignals, vm.Node.MutedSignals);
+        ApplyEffectiveSettings(vm);
         var priorHealth = vm.Health.Level;
         vm.Ingest(sample);
         if (vm.Health.Level != priorHealth)
@@ -118,9 +116,47 @@ public sealed partial class ServerStore : ObservableObject
         if (sample.Procs is { Skipped: not true } p)
             _history.AppendProcs(nodeId, sample.Ts, p.Root, p.Items);
 
-        _notifier?.Evaluate(vm);
-        _notifier?.EvaluateLongProcs(vm);
+        // Cloud hosts alert by the server event `notify`, not by local rules.
+        if (!vm.Node.IsCloud)
+        {
+            _notifier?.Evaluate(vm);
+            _notifier?.EvaluateLongProcs(vm);
+        }
         UpdateAggregateLevel();
+    }
+
+    /// <summary>Takes a summary of a leased cloud host. It writes no history and calls no notifier.</summary>
+    public void IngestSummary(Guid nodeId, LiveSummary s)
+    {
+        if (Find(nodeId) is not { Node.IsCloud: true } vm) return;
+        ApplyEffectiveSettings(vm);
+        vm.IngestSummary(s, DateTime.UtcNow);
+        UpdateAggregateLevel();
+    }
+
+    public void ApplyDetail(Guid nodeId, DetailTab tab, LiveDetail d)
+    {
+        if (Find(nodeId) is not { Node.IsCloud: true } vm) return;
+        ApplyEffectiveSettings(vm);
+        vm.ApplyDetail(tab, d);
+        UpdateAggregateLevel();
+    }
+
+    /// <summary>Follows a reachability event of the cloud. Other event kinds do nothing.</summary>
+    public void ApplyReachability(StreamEvent e)
+    {
+        if (e.Kind != "reachability_changed") return;
+        if (Find(e.NodeId) is not { Node.IsCloud: true } vm) return;
+        vm.MarkReachable(e.Tint == "ok");
+        UpdateAggregateLevel();
+    }
+
+    private void ApplyEffectiveSettings(ServerViewModel vm)
+    {
+        vm.Thresholds = MetricThresholds.Effective(_settings.Thresholds, vm.Node.CustomThresholds);
+        vm.AlertRules = vm.Node.EffectiveAlerts(_settings.Alerts);
+        vm.ApplyLongProc(vm.Node, _settings.LongProc);
+        vm.Muted = MutedSignals.Effective(_settings.MutedSignals, vm.Node.MutedSignals);
     }
 
     /// <summary>A failed poll breaks the sample stream, so sustain must start again.</summary>
@@ -151,7 +187,7 @@ public sealed partial class ServerStore : ObservableObject
             var limit = StaleLimit(_settings.PollingInterval(vm.Node.Kind));
             if (vm.CheckStale(now, limit))
                 _logger?.Warning($"state host={vm.Node.DisplayName} -> offline reason=\"no data\" age_s={(int)(now - (vm.LastIngestAt ?? vm.StaleBaseline)).TotalSeconds}");
-            _notifier?.EvaluateNoData(vm, now);
+            if (!vm.Node.IsCloud) _notifier?.EvaluateNoData(vm, now);
         }
         UpdateAggregateLevel();
     }

@@ -43,6 +43,7 @@ public sealed class RealCollector : ICollector, IAsyncDisposable
 
         _nodes.NodeAdded += (_, id) => EnsureWorker(id);
         _nodes.NodeRemoved += (_, id) => StopWorker(id);
+        _nodes.NodeUpdated += (_, id) => OnNodeUpdated(id);
     }
 
     public void Start()
@@ -73,9 +74,21 @@ public sealed class RealCollector : ICollector, IAsyncDisposable
         return Task.CompletedTask;
     }
 
-    private void EnsureWorker(Guid id)
+    // A cloud node reports through the feed. It has no worker, and gets one again when the link goes away.
+    private void OnNodeUpdated(Guid id)
     {
         var node = _nodes.ById(id); if (node == null) return;
+        if (node.IsCloud) StopWorker(id);
+        else
+        {
+            lock (_lock) if (!_started) return;
+            EnsureWorker(id);
+        }
+    }
+
+    private void EnsureWorker(Guid id)
+    {
+        var node = _nodes.ById(id); if (node == null || node.IsCloud) return;
         lock (_lock)
         {
             if (_workers.ContainsKey(id)) return;

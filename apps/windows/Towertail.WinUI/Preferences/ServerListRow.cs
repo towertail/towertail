@@ -53,6 +53,7 @@ public sealed class ServerListRow : INotifyPropertyChanged
     {
         NodeKind.Local => "Local",
         NodeKind.Ssh => "SSH",
+        NodeKind.Cloud => "Cloud",
         _ => Node.Kind.ToString(),
     };
     public string UserAtHost => Node.UserAtHost;

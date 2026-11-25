@@ -20,6 +20,12 @@ public sealed class LocalTestHttpServer : IAsyncDisposable
     public List<CapturedRequest> Requests { get; } = new();
     public string ExpectedToken { get; set; } = "test-token";
 
+    /// <summary>The text frames that the clients sent over WebSocket.</summary>
+    public List<string> ClientFrames { get; } = new();
+
+    /// <summary>Paths that need no token (prefix match).</summary>
+    public List<string> AnonymousPrefixes { get; } = ["/healthz"];
+
     public Dictionary<string, Func<HttpListenerContext, Task>> Handlers { get; } = new();
 
     public LocalTestHttpServer()
@@ -55,15 +61,16 @@ public sealed class LocalTestHttpServer : IAsyncDisposable
                 try
                 {
                     var path = ctx.Request.Url!.AbsolutePath;
+                    var query = ctx.Request.Url.Query.TrimStart('?');
                     var method = ctx.Request.HttpMethod;
                     var key = $"{method} {path}";
                     var auth = ctx.Request.Headers["Authorization"] ?? "";
                     var tokenOk = auth == $"Bearer {ExpectedToken}";
 
                     var body = await new StreamReader(ctx.Request.InputStream).ReadToEndAsync().ConfigureAwait(false);
-                    Requests.Add(new CapturedRequest(method, path, auth, body));
+                    Requests.Add(new CapturedRequest(method, path, query, auth, body));
 
-                    if (!tokenOk && !path.StartsWith("/healthz"))
+                    if (!tokenOk && !AnonymousPrefixes.Any(p => path.StartsWith(p)))
                     {
                         ctx.Response.StatusCode = 401;
                         ctx.Response.Close();
@@ -98,10 +105,15 @@ public sealed class LocalTestHttpServer : IAsyncDisposable
         }
     }
 
+    private WebSocket[] SnapshotSockets()
+    {
+        lock (_sockets) return _sockets.ToArray();
+    }
+
     public async Task SendToAllWebSocketsAsync(string json)
     {
         var bytes = Encoding.UTF8.GetBytes(json);
-        foreach (var ws in _sockets.ToList())
+        foreach (var ws in SnapshotSockets())
         {
             if (ws.State != WebSocketState.Open) continue;
             try { await ws.SendAsync(bytes, WebSocketMessageType.Text, true, CancellationToken.None).ConfigureAwait(false); }
@@ -112,14 +124,55 @@ public sealed class LocalTestHttpServer : IAsyncDisposable
     public async Task AcceptWebSocketAsync(HttpListenerContext ctx)
     {
         var wsCtx = await ctx.AcceptWebSocketAsync(null).ConfigureAwait(false);
-        _sockets.Add(wsCtx.WebSocket);
+        var ws = wsCtx.WebSocket;
+        lock (_sockets) _sockets.Add(ws);
+        _ = Task.Run(() => ReceiveLoopAsync(ws));
+    }
+
+    private async Task ReceiveLoopAsync(WebSocket ws)
+    {
+        var buffer = new byte[16 * 1024];
+        try
+        {
+            while (ws.State == WebSocketState.Open)
+            {
+                using var ms = new MemoryStream();
+                WebSocketReceiveResult r;
+                do
+                {
+                    r = await ws.ReceiveAsync(buffer, CancellationToken.None).ConfigureAwait(false);
+                    if (r.MessageType == WebSocketMessageType.Close)
+                    {
+                        try { await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None).ConfigureAwait(false); }
+                        catch { }
+                        return;
+                    }
+                    ms.Write(buffer, 0, r.Count);
+                } while (!r.EndOfMessage);
+                var text = Encoding.UTF8.GetString(ms.ToArray());
+                lock (ClientFrames) ClientFrames.Add(text);
+            }
+        }
+        catch { }
+    }
+
+    /// <summary>Closes each open socket from the server side. The clients can connect again.</summary>
+    public async Task CloseAllWebSocketsAsync()
+    {
+        WebSocket[] sockets;
+        lock (_sockets) { sockets = _sockets.ToArray(); _sockets.Clear(); }
+        foreach (var ws in sockets)
+        {
+            try { await ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None).ConfigureAwait(false); }
+            catch { }
+        }
     }
 
     public async ValueTask DisposeAsync()
     {
         _cts.Cancel();
         try { _listener.Stop(); } catch { }
-        foreach (var ws in _sockets)
+        foreach (var ws in SnapshotSockets())
         {
             try { await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None).ConfigureAwait(false); }
             catch { }
@@ -127,5 +180,5 @@ public sealed class LocalTestHttpServer : IAsyncDisposable
         try { await _loop.ConfigureAwait(false); } catch { }
     }
 
-    public sealed record CapturedRequest(string Method, string Path, string Authorization, string Body);
+    public sealed record CapturedRequest(string Method, string Path, string Query, string Authorization, string Body);
 }

@@ -8,6 +8,7 @@ public enum NodeKind
 {
     [JsonStringEnumMemberName("local")] Local,
     [JsonStringEnumMemberName("ssh")] Ssh,
+    [JsonStringEnumMemberName("cloud")] Cloud,
 }
 
 /// <summary>
@@ -21,6 +22,16 @@ public enum AuthMethod
     [JsonStringEnumMemberName("key")] Key,
     [JsonStringEnumMemberName("password")] Password,
 }
+
+/// <summary>
+/// The link of a host to the cloud. Same JSON keys as the Mac <c>CloudLink</c>:
+/// <c>reboot</c> is the boot mode, <c>lastStatus</c> the sampler status object.
+/// </summary>
+public sealed record CloudLink(
+    [property: JsonPropertyName("enrolledAt")] DateTime EnrolledAt,
+    [property: JsonPropertyName("reboot")] string? Reboot = null,
+    [property: JsonPropertyName("samplerVersion")] string? SamplerVersion = null,
+    [property: JsonPropertyName("lastStatus")] JsonElement? LastStatus = null);
 
 /// <summary>
 /// A monitored server. Identity is a UUID so node IDs round-trip cleanly between Mac and Windows.
@@ -61,7 +72,14 @@ public sealed record Node
     /// <summary>Signals muted on this host, added to the global mutes.</summary>
     public MutedSignals MutedSignals { get; init; } = MutedSignals.None;
 
+    /// <summary>Set when the host reports to the cloud: a cloud-only host or an SSH host with a sampler in the cloud.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public CloudLink? Cloud { get; init; }
+
     public AlertRules EffectiveAlerts(AlertRules global) => CustomAlerts ?? global;
+
+    [JsonIgnore]
+    public bool IsCloud => Cloud != null || Kind == NodeKind.Cloud;
 
     [JsonIgnore]
     public bool IsSnoozed => SnoozedUntil is { } u && u > DateTime.UtcNow;
@@ -75,11 +93,15 @@ public sealed record Node
     {
         NodeKind.Local => "local",
         NodeKind.Ssh => $"{(string.IsNullOrEmpty(SshUser) ? "?" : SshUser)}@{(string.IsNullOrEmpty(SshHost) ? "?" : SshHost)}",
+        NodeKind.Cloud => DisplayName,
         _ => "?",
     };
 
     public static Node LocalWindows(string displayName = "This PC")
         => new() { DisplayName = displayName, Kind = NodeKind.Local };
+
+    public static Node CloudOnly(Guid id, string displayName)
+        => new() { Id = id, DisplayName = displayName, Kind = NodeKind.Cloud };
 }
 
 public sealed record MetricThresholds(

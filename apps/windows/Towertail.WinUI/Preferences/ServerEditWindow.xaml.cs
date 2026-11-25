@@ -219,7 +219,9 @@ public sealed partial class ServerEditWindow : Window
 
     private void OnOk(object sender, RoutedEventArgs e)
     {
-        var kind = KindBox.SelectedIndex == 1 ? NodeKind.Ssh : NodeKind.Local;
+        // KindBox has no Cloud entry: a cloud-only host keeps its kind.
+        var kind = _existing?.Kind == NodeKind.Cloud ? NodeKind.Cloud
+            : KindBox.SelectedIndex == 1 ? NodeKind.Ssh : NodeKind.Local;
         var tags = TagsBox.Text
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .ToList();
@@ -258,6 +260,7 @@ public sealed partial class ServerEditWindow : Window
             Id = nodeId,
             DisplayName = DisplayNameBox.Text.Trim(),
             Kind = kind,
+            Cloud = _existing?.Cloud,
             SshUser = kind == NodeKind.Ssh ? UserBox.Text.Trim() : null,
             SshHost = kind == NodeKind.Ssh ? HostBox.Text.Trim() : null,
             SshPort = port,

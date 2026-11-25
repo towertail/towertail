@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Towertail.WinUI.Backend;
 using Towertail.WinUI.State;
 using Towertail.WinUI.SystemServices;
 using Xunit;
@@ -71,6 +72,76 @@ public sealed class ServerStoreTests : IAsyncLifetime
 
         _nodes.SetSnooze(n.Id, null);
         _servers.AggregateLevel.Should().Be(HealthLevel.Critical);
+    }
+
+    private static LiveSummary Summary(double cpu) => new(DateTime.UtcNow, cpu, 0.1, 0.1, 0, 0, 0);
+
+    [Fact]
+    public void SummaryForLocalNodeIsIgnored()
+    {
+        var n = _nodes.Nodes[0];
+        _servers.IngestSummary(n.Id, Summary(80));
+        _servers.Find(n.Id)!.CpuPct.Should().BeNull();
+
+        var cloud = Node.CloudOnly(Guid.NewGuid(), "cloud");
+        _nodes.Add(cloud);
+        _servers.IngestSummary(cloud.Id, Summary(80));
+        _servers.Find(cloud.Id)!.CpuPct.Should().BeApproximately(80, 0.0001);
+    }
+
+    [Fact]
+    public void DetailForLocalNodeIsIgnored()
+    {
+        var n = _nodes.Nodes[0];
+        _servers.ApplyDetail(n.Id, DetailTab.Health, new LiveDetail(DateTime.UtcNow, Health: new HealthInfo(30_000)));
+        _servers.Find(n.Id)!.Health.Level.Should().Be(HealthLevel.Nominal);
+    }
+
+    [Fact]
+    public void ReachabilityEventMarksOffline()
+    {
+        var cloud = Node.CloudOnly(Guid.NewGuid(), "cloud");
+        _nodes.Add(cloud);
+        _servers.IngestSummary(cloud.Id, Summary(10));
+        var vm = _servers.Find(cloud.Id)!;
+
+        _servers.ApplyReachability(new StreamEvent(cloud.Id, "reachability", "critical", "reachability_changed"));
+        vm.OfflineReason.Should().NotBeNull();
+
+        _servers.ApplyReachability(new StreamEvent(cloud.Id, "reachability", "ok", "reachability_changed"));
+        vm.OfflineReason.Should().BeNull();
+    }
+
+    [Fact]
+    public void ReachabilityEventOfOtherKindOrLocalNodeIsIgnored()
+    {
+        var local = _nodes.Nodes[0];
+        _servers.ApplyReachability(new StreamEvent(local.Id, "reachability", "critical", "reachability_changed"));
+        _servers.Find(local.Id)!.OfflineReason.Should().BeNull();
+
+        var cloud = Node.CloudOnly(Guid.NewGuid(), "cloud");
+        _nodes.Add(cloud);
+        _servers.ApplyReachability(new StreamEvent(cloud.Id, "cpu", "critical", "alert_opened"));
+        _servers.Find(cloud.Id)!.OfflineReason.Should().BeNull();
+    }
+
+    [Fact]
+    public void CloudNodeSampleDoesNotNotify()
+    {
+        var settings = new ServerSettings(_settings) { NotificationsEnabled = true, NotifyCritical = true, NotifyDebounceSeconds = 0 };
+        var notifier = new ThresholdNotifier(settings, _nodes);
+        var raised = 0;
+        notifier.Raised += (_, _) => raised++;
+        _servers.AttachNotifier(notifier);
+
+        var cloud = Node.CloudOnly(Guid.NewGuid(), "cloud");
+        _nodes.Add(cloud);
+        _servers.Ingest(cloud.Id, Make(cloud, diskPct: 99));
+        raised.Should().Be(0);
+
+        var local = _nodes.Nodes[0];
+        _servers.Ingest(local.Id, Make(local, diskPct: 99));
+        raised.Should().BeGreaterThan(0);
     }
 
     private static Sample Make(Node n, double diskPct)

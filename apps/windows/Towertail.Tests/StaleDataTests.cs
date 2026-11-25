@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Towertail.WinUI.Backend;
 using Towertail.WinUI.Collectors;
 using Towertail.WinUI.State;
 using Towertail.WinUI.SystemServices;
@@ -204,6 +205,39 @@ public sealed class StaleDataTests : IAsyncLifetime
         off.CheckStale(T0.AddMinutes(3), Limit);
         notifier.EvaluateNoData(off, T0.AddMinutes(3));
         count.Should().Be(0);
+    }
+
+    [Fact]
+    public void CloudLiveSourceIsNeverStale()
+    {
+        var vm = new ServerViewModel(Node.CloudOnly(Guid.NewGuid(), "cloud"));
+        vm.IngestSummary(new LiveSummary(T0, 1, 0.1, 0.1, 0, 0, 0), T0);
+        vm.CheckStale(T0.AddHours(1), Limit).Should().BeFalse();
+        vm.NoDataSince.Should().BeNull();
+
+        vm.LiveSource = LiveSource.Poll;
+        vm.CheckStale(T0.AddHours(1), Limit).Should().BeTrue();
+    }
+
+    [Fact]
+    public void CloudNodeGetsNoNoDataNotification()
+    {
+        var notifier = new ThresholdNotifier(_settings, _nodes);
+        var raised = new List<ThresholdNotifier.NotifyPayload>();
+        notifier.Raised += (_, p) => raised.Add(p);
+        _servers.AttachNotifier(notifier);
+
+        // A cloud node whose feed ended (poll source) still gets no local no-data alert.
+        var cloud = Node.CloudOnly(Guid.NewGuid(), "cloud");
+        _nodes.Add(cloud);
+        _servers.Ingest(cloud.Id, Make(DateTime.UtcNow));
+        var vm = _servers.Find(cloud.Id)!;
+        var last = vm.LastIngestAt!.Value;
+        for (var t = last.AddSeconds(5); t <= last.AddMinutes(5); t = t.AddSeconds(5))
+            _servers.CheckStale(t);
+
+        vm.NoDataSince.Should().NotBeNull();
+        raised.Should().BeEmpty();
     }
 
     [Fact]

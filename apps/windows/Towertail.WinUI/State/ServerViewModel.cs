@@ -1,6 +1,11 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 
+using Towertail.WinUI.Backend;
+
 namespace Towertail.WinUI.State;
+
+/// <summary>Where the live data of a host comes from.</summary>
+public enum LiveSource { Poll, Cloud }
 
 /// <summary>
 /// View model for a single card in the popover — wraps a <see cref="Node"/> + derived metrics
@@ -46,6 +51,9 @@ public sealed partial class ServerViewModel : ObservableObject
     public string? LastError { get; private set; }
     /// <summary>True after one good sample (or stored history). The watchdog skips other hosts.</summary>
     public bool EverConnected { get; set; }
+
+    /// <summary>Cloud sends data while a view lease is open, so the stale check does not apply.</summary>
+    public LiveSource LiveSource { get; set; } = LiveSource.Poll;
 
     /// <summary>Effective thresholds for this host. Set by <see cref="ServerStore"/> before each ingest.</summary>
     public MetricThresholds Thresholds { get; set; } = MetricThresholds.Defaults;
@@ -97,6 +105,7 @@ public sealed partial class ServerViewModel : ObservableObject
     [ObservableProperty] private PortList? _ports;
     [ObservableProperty] private bool _portsAvailable;
 
+    private HealthInfo? _healthInfo;
     private long? _lastRxCum;
     private long? _lastTxCum;
     private DateTime? _lastSampleTs;
@@ -188,6 +197,104 @@ public sealed partial class ServerViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Takes a summary of a leased cloud host. It has no history rows: cloud hosts read their
+    /// history from the server. The summary has no load; the card shows none.
+    /// </summary>
+    public void IngestSummary(LiveSummary s, DateTime receivedAt)
+    {
+        LastIngestAt = receivedAt;
+        NoDataSince = null;
+        LastError = null;
+        OfflineReason = null;
+        EverConnected = true;
+        LiveSource = LiveSource.Cloud;
+        var now = s.Ts;
+        LastSeen = now;
+        if (s.Host is { } facts) ApplyFacts(facts);
+
+        CpuPct = Math.Clamp(s.Cpu, 0, 100);
+        CpuSeries.Append(now, CpuPct.Value);
+        MemPct = Math.Clamp(s.Mem, 0, 1) * 100.0;
+        MemSeries.Append(now, MemPct.Value);
+        DiskMaxPct = Math.Clamp(s.Disk, 0, 1) * 100.0;
+        DiskSeries.Append(now, DiskMaxPct.Value);
+
+        RxMBps = Math.Max(0, s.Rx) / 1_048_576.0;
+        TxMBps = Math.Max(0, s.Tx) / 1_048_576.0;
+        RxSeries.Append(now, RxMBps.Value);
+        TxSeries.Append(now, TxMBps.Value);
+        NetSeries.Append(now, RxMBps.Value + TxMBps.Value);
+
+        if (s.Procs is int procs) ProcCountSeries.Append(now, procs);
+        if (s.Health is { } brief)
+        {
+            _healthInfo = brief.Info;
+            MemPressured = HealthPressure(brief.Info);
+        }
+        RebuildHealth(now);
+        RecordWindows(now);
+    }
+
+    public void ApplyFacts(HostFacts f)
+    {
+        if (f.Os is not null) HostOs = f.Os;
+        if (f.Sampler is not null) SamplerVersion = f.Sampler;
+    }
+
+    /// <summary>Takes the parts of one tab from a <c>detail</c> frame. The other parts are ignored.</summary>
+    public void ApplyDetail(DetailTab tab, LiveDetail d)
+    {
+        var now = d.Ts;
+        var rebuild = false;
+        if ((tab is DetailTab.Processes or DetailTab.Disks or DetailTab.Health) && d.Procs is { } p)
+        {
+            LongProcs = _longProcTracker.Observe(p.Items, p.Skipped == true, now, LongProcRule, IgnoredProcs);
+            ProcsSkippedTotal = p.Skipped == true ? p.Total : null;
+            if (p.Skipped != true) Procs.Append(now, p.Root, p.Items);
+            rebuild = true;
+        }
+        switch (tab)
+        {
+            case DetailTab.Ports when d.Ports is { } pl:
+                Ports = pl;
+                PortsAvailable = true;
+                break;
+            case DetailTab.Disks:
+                if (d.Disks is { Count: > 0 } disks) Disk.AppendCapacity(now, disks);
+                if (d.DiskIo is { } dio) Disk.AppendIo(now, dio.Devices);
+                break;
+            case DetailTab.Health when d.Health is { } h:
+                _healthInfo = h;
+                MemPressured = HealthPressure(h);
+                rebuild = true;
+                break;
+        }
+        if (rebuild) RebuildHealth(now);
+    }
+
+    /// <summary>Follows a reachability event of the cloud.</summary>
+    public void MarkReachable(bool reachable)
+    {
+        if (!reachable) { MarkOffline("Cloud lost the host"); return; }
+        NoDataSince = null;
+        LastError = null;
+        OfflineReason = null;
+        StaleBaseline = DateTime.UtcNow;
+    }
+
+    private void RebuildHealth(DateTime now)
+    {
+        Health = HealthStatus.Evaluate(_healthInfo, null, Thresholds, LongProcs, now);
+        _windows[AlertMetric.Health].Record(now, Health.AlertWindowLevel(Muted), AlertRules.For(AlertMetric.Health).SustainSeconds);
+    }
+
+    private void RecordWindows(DateTime now)
+    {
+        foreach (var (m, w) in _windows)
+            if (m != AlertMetric.Health) w.Record(now, RawLevel(m), AlertRules.For(m).SustainSeconds);
+    }
+
     /// <summary>Unsustained level of the latest sample. Drives the card colors.</summary>
     public HealthLevel RawLevel(AlertMetric m) => m switch
     {
@@ -271,6 +378,7 @@ public sealed partial class ServerViewModel : ObservableObject
     /// </summary>
     public bool CheckStale(DateTime now, TimeSpan limit)
     {
+        if (LiveSource == LiveSource.Cloud) return false;
         if (!EverConnected) return false;
         var reference = LastIngestAt is DateTime l && l > StaleBaseline ? l : StaleBaseline;
         var age = now - reference;
@@ -302,11 +410,17 @@ public sealed partial class ServerViewModel : ObservableObject
 
     private static bool? MemPressureOf(Sample s, long? prevSwapUsed, double? elapsed)
     {
-        if (s.Health?.Psi is { } psi) return psi.MemFull >= PsiMemFullPressured || psi.MemSome >= PsiMemSomePressured;
-        if (s.Health?.MemPressurePct is int pct) return pct >= HealthStatus.MacMemPressureCritical;
-        if (s.Health?.MemPressure is int mp) return mp == 4;
+        if (HealthPressure(s.Health) is bool p) return p;
         if (s.Swap.Total > 0 && prevSwapUsed is long prev && elapsed is double dt && dt > 0)
             return (s.Swap.Used - prev) / dt >= SwapGrowthPressuredBps;
+        return null;
+    }
+
+    private static bool? HealthPressure(HealthInfo? h)
+    {
+        if (h?.Psi is { } psi) return psi.MemFull >= PsiMemFullPressured || psi.MemSome >= PsiMemSomePressured;
+        if (h?.MemPressurePct is int pct) return pct >= HealthStatus.MacMemPressureCritical;
+        if (h?.MemPressure is int mp) return mp == 4;
         return null;
     }
 }

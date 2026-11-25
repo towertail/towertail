@@ -54,15 +54,14 @@ public sealed record RemoteThresholds(
 public sealed record RemoteClientSettings(
     [property: JsonPropertyName("cardDensity")] string CardDensity);
 
-// Stream frames: envelope uses camelCase (`nodeId`) per
-// server/internal/wire/wire.go WSMessage. The inner sample payload is
-// the raw sampler NDJSON which stays snake_case per https://github.com/towertail/sampler/blob/main/docs/wire-format.md §4.
-public sealed record RemoteStreamFrame(
-    [property: JsonPropertyName("type")] string Type,
-    [property: JsonPropertyName("nodeId")] Guid? NodeId,
-    [property: JsonPropertyName("sample")] Towertail.WinUI.State.Sample? Sample,
-    // Set on disk_scan_updated frames. The job keys are snake_case (docs/wire.md §3.1).
-    [property: JsonPropertyName("job")] Towertail.WinUI.State.DiskScanJob? Job = null);
+/// <summary>One open alert of <c>GET /v1/alerts</c>. Other fields come with the alert tickets.</summary>
+public sealed record RemoteAlert(
+    [property: JsonPropertyName("node_id")] Guid NodeId,
+    [property: JsonPropertyName("metric")] string Metric,
+    [property: JsonPropertyName("tint")] string Tint);
+
+public sealed record RemoteAlertList(
+    [property: JsonPropertyName("alerts")] IReadOnlyList<RemoteAlert>? Alerts);
 
 /// <summary>Body of <c>GET /v1/nodes/{id}/disk-scans</c>.</summary>
 public sealed record DiskScanJobList(

@@ -1,17 +1,17 @@
 using System.IO.Compression;
 using System.Net.Http.Headers;
-using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Towertail.WinUI.State;
+using Towertail.WinUI.SystemServices;
 
 namespace Towertail.WinUI.Backend;
 
 /// <summary>
 /// REST + WebSocket client for the Towertail server. Mirrors RemoteClient.swift — bearer token
-/// on every request, a matching <see cref="RemoteException"/> for 4xx/5xx, and a thin WS
-/// wrapper that yields decoded stream frames.
+/// on every request, a matching <see cref="RemoteException"/> for 4xx/5xx, and a factory for
+/// the self-reconnecting <see cref="RemoteStream"/>.
 /// </summary>
 public sealed class RemoteClient : IAsyncDisposable
 {
@@ -111,44 +111,25 @@ public sealed class RemoteClient : IAsyncDisposable
         return DiskScanCodec.DecodeResult(Encoding.UTF8.GetString(bytes));
     }
 
-    public async IAsyncEnumerable<RemoteStreamFrame> StreamAsync(
-        [global::System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    /// <summary>
+    /// Makes a stream for <c>/v1/stream</c> (<c>?lease=1</c> in lease mode, docs/wire.md §4).
+    /// Attach the handlers, then call <see cref="RemoteStream.Start"/>.
+    /// </summary>
+    public RemoteStream OpenStream(bool lease, Logger? log = null)
     {
         var wsUri = new UriBuilder(_baseUri)
         {
             Scheme = _baseUri.Scheme == "https" ? "wss" : "ws",
             Path = "/v1/stream",
+            Query = lease ? "lease=1" : "",
         }.Uri;
-
-        using var ws = new ClientWebSocket();
-        ws.Options.SetRequestHeader("Authorization", $"Bearer {_token}");
-        await ws.ConnectAsync(wsUri, ct).ConfigureAwait(false);
-
-        var buffer = new byte[64 * 1024];
-        while (ws.State == WebSocketState.Open && !ct.IsCancellationRequested)
-        {
-            using var ms = new MemoryStream();
-            WebSocketReceiveResult result;
-            do
-            {
-                result = await ws.ReceiveAsync(buffer, ct).ConfigureAwait(false);
-                if (result.MessageType == WebSocketMessageType.Close)
-                {
-                    await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, null, ct).ConfigureAwait(false);
-                    yield break;
-                }
-                ms.Write(buffer, 0, result.Count);
-            } while (!result.EndOfMessage);
-
-            RemoteStreamFrame? frame = null;
-            try
-            {
-                frame = JsonSerializer.Deserialize<RemoteStreamFrame>(ms.ToArray(), _json);
-            }
-            catch { }
-            if (frame != null) yield return frame;
-        }
+        return new RemoteStream(wsUri, _token, log: log);
     }
+
+    /// <summary>The open alerts of the org. The cloud feed reads the reachability ones.</summary>
+    public async Task<IReadOnlyList<RemoteAlert>> OpenAlertsAsync(CancellationToken ct = default)
+        => (await GetJsonAsync<RemoteAlertList>("/v1/alerts", ct).ConfigureAwait(false))?.Alerts
+           ?? Array.Empty<RemoteAlert>();
 
     private async Task<T?> GetJsonAsync<T>(string path, CancellationToken ct)
     {

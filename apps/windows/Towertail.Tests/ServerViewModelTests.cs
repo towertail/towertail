@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Towertail.WinUI.Backend;
 using Towertail.WinUI.State;
 using Xunit;
 
@@ -41,6 +42,79 @@ public sealed class ServerViewModelTests
         vm.Ingest(Make(t.AddSeconds(1), rxCum: 1_048_576 * 5));
         vm.RxMBps.Should().NotBeNull();
         vm.RxMBps!.Value.Should().BeApproximately(5, 0.0001);
+    }
+
+    [Fact]
+    public void IngestSummarySetsCardValues()
+    {
+        var vm = new ServerViewModel(Node.CloudOnly(Guid.NewGuid(), "cloud"));
+        var t = DateTime.UtcNow;
+        var facts = new HostFacts(Os: "linux", Sampler: "0.2.0+abc");
+        vm.IngestSummary(new LiveSummary(t, 42.0, 0.5, 0.7, 2_097_152, 1_048_576, 1.5, 300, new HealthBrief(new HealthInfo(300)), facts), t);
+
+        vm.CpuPct.Should().BeApproximately(42, 0.0001);
+        vm.MemPct.Should().BeApproximately(50, 0.0001);
+        vm.DiskMaxPct.Should().BeApproximately(70, 0.0001);
+        vm.RxMBps.Should().BeApproximately(2, 0.0001);
+        vm.TxMBps.Should().BeApproximately(1, 0.0001);
+        vm.LastSeen.Should().Be(t);
+        vm.HostOs.Should().Be("linux");
+        vm.SamplerVersion.Should().Be("0.2.0+abc");
+        vm.LastIngestAt.Should().Be(t);
+        vm.EverConnected.Should().BeTrue();
+        vm.LiveSource.Should().Be(LiveSource.Cloud);
+        vm.CpuSeries.Points.Should().ContainSingle();
+        vm.NetSeries.Points.Should().ContainSingle();
+        vm.ProcCountSeries.Points.Should().ContainSingle();
+    }
+
+    [Fact]
+    public void IngestSummaryClearsTheOfflineState()
+    {
+        var vm = new ServerViewModel(Node.CloudOnly(Guid.NewGuid(), "cloud"));
+        vm.MarkOffline("Cloud lost the host");
+        var t = DateTime.UtcNow;
+        vm.IngestSummary(new LiveSummary(t, 1, 0.1, 0.1, 0, 0, 0), t);
+        vm.OfflineReason.Should().BeNull();
+        vm.LastError.Should().BeNull();
+    }
+
+    [Fact]
+    public void ApplyDetailSetsOnlyThatTab()
+    {
+        var vm = new ServerViewModel(Node.CloudOnly(Guid.NewGuid(), "cloud"));
+        var t = DateTime.UtcNow;
+        var procs = new ProcList(false, 10, 1, 1, new[] { new ProcSample(1, null, "p", null, null, 5, 100, null, null, null, null, null) });
+        var ports = new PortList(false, t, 100, false, 0, Array.Empty<PortItem>());
+        var detail = new LiveDetail(t, procs, ports, null, null, null);
+
+        vm.ApplyDetail(DetailTab.Ports, detail);
+        vm.Ports.Should().Be(ports);
+        vm.PortsAvailable.Should().BeTrue();
+        vm.Procs.Count.Should().Be(0);
+
+        vm.ApplyDetail(DetailTab.Processes, detail with { Ports = null });
+        vm.Procs.Count.Should().Be(1);
+    }
+
+    [Fact]
+    public void ApplyDetailHealthTabEvaluatesHealth()
+    {
+        var vm = new ServerViewModel(Node.CloudOnly(Guid.NewGuid(), "cloud"));
+        var t = DateTime.UtcNow;
+        vm.ApplyDetail(DetailTab.Health, new LiveDetail(t, Health: new HealthInfo(Procs: 30_000)));
+        vm.Health.Level.Should().Be(HealthLevel.Critical);
+    }
+
+    [Fact]
+    public void MarkReachableFollowsTheEvent()
+    {
+        var vm = new ServerViewModel(Node.CloudOnly(Guid.NewGuid(), "cloud"));
+        vm.MarkReachable(false);
+        vm.OfflineReason.Should().NotBeNull();
+        vm.MarkReachable(true);
+        vm.OfflineReason.Should().BeNull();
+        vm.LastError.Should().BeNull();
     }
 
     private static Sample Make(DateTime t, long rxCum)
