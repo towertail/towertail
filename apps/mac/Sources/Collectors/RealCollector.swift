@@ -1,5 +1,11 @@
 import Foundation
 
+/// The rules that the cloud holds for its hosts.
+@MainActor
+protocol CloudRulesSource: AnyObject {
+    func effective(for nodeID: UUID) -> RemoteEffectiveRules?
+}
+
 final class RealCollector: Collector {
     let nodeStore: NodeStore
     let settings: ServerSettings
@@ -15,6 +21,8 @@ final class RealCollector: Collector {
     /// Test) and drained inside the supervisor loop. Wrapped in a lock
     /// because the supervisor runs on a detached utility task — without
     /// this, Swift concurrency rejects the cross-isolation read.
+    /// Gives the rules of cloud hosts. Nil while the user is signed out.
+    @MainActor weak var cloudRules: CloudRulesSource?
     private let respawnLock = NSLock()
     private var pendingRespawns: Set<UUID> = []
 
@@ -69,7 +77,7 @@ final class RealCollector: Collector {
         while !Task.isCancelled {
             let snapshot = await MainActor.run { nodeStore.nodes }
             await MainActor.run {
-                Self.syncViewModels(for: snapshot, store: sink, settings: settings)
+                Self.syncViewModels(for: snapshot, store: sink, settings: settings, cloud: self.cloudRules)
             }
             let enabledIDs = Set(snapshot.filter { $0.enabled && !$0.isCloud }.map(\.id))
             let byID: [UUID: Node] = Dictionary(uniqueKeysWithValues: snapshot.map { ($0.id, $0) })
@@ -309,7 +317,7 @@ final class RealCollector: Collector {
     }
 
     @MainActor
-    private static func syncViewModels(for nodes: [Node], store: ServerStore, settings: ServerSettings) {
+    static func syncViewModels(for nodes: [Node], store: ServerStore, settings: ServerSettings, cloud: CloudRulesSource? = nil) {
         let existing = Set(store.serverVMs.map(\.id))
         let byID: [UUID: Node] = Dictionary(uniqueKeysWithValues: nodes.map { ($0.id, $0) })
         for node in nodes where !existing.contains(node.id) {
@@ -331,11 +339,18 @@ final class RealCollector: Collector {
             vm.applyMuted(.effective(global: settings.mutedSignals, node: node.mutedSignals))
             store.register(vm)
         }
+        let cloudHosts = Set(nodes.filter(\.isCloud).map(\.id))
         // On every sync, push the currently-effective thresholds per VM —
         // node override takes precedence, otherwise the global. This also
         // picks up edits to either the global sliders or a node's custom
         // set without waiting for the next collector tick.
         for vm in store.serverVMs {
+            // A cloud host uses the rules of the cloud, once it has them.
+            if cloudHosts.contains(vm.id), let rules = cloud?.effective(for: vm.id) {
+                vm.applyCloudRules(rules)
+                if let node = byID[vm.id], node.lastSuccessfulConnect != nil { vm.everConnected = true }
+                continue
+            }
             let override = byID[vm.id]?.thresholdOverrides
             vm.thresholds = MetricThresholds.effective(global: settings.thresholds, override: override)
             vm.alertRules = byID[vm.id]?.customAlerts ?? settings.alertRules

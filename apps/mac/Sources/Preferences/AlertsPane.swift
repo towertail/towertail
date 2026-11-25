@@ -20,6 +20,12 @@ struct AlertsPane: View {
 
     var body: some View {
         Form {
+            Section {
+                Text("These rules apply to local and SSH hosts. A Cloud host uses the rules of the cloud.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            CloudOrgRulesSummary()
+
             Section("Notifications") {
                 Picker("Notify on", selection: globalNotify) {
                     Text("Off").tag(AlertNotify.off)
@@ -264,6 +270,7 @@ struct AlertsPane: View {
     }
 
     private func overrideSummary(_ node: Node) -> String {
+        if node.isCloud { return "rules from the cloud" }
         var parts = (node.thresholdOverrides?.overridden ?? []).map { m in
             let p = node.thresholdOverrides![m]!
             return "\(m.title) \(m.format(p.warn)) / \(m.format(p.critical))"

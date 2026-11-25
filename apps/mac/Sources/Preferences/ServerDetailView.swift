@@ -280,72 +280,10 @@ struct ServerDetailView: View {
 
     private var alertsForm: some View {
         Form {
-            Section {
-                ForEach(ThresholdMetric.usage) { m in
-                    overrideRow(m)
-                }
-            } header: {
-                HStack {
-                    Text("Thresholds")
-                    Spacer()
-                    if let onEditDefaults {
-                        Button("Edit defaults", action: onEditDefaults)
-                            .buttonStyle(.link)
-                            .font(.caption)
-                    }
-                }
-            }
-
-            Section {
-                ForEach(ThresholdMetric.health) { m in
-                    overrideRow(m)
-                }
-            } header: {
-                Text("Host health")
-            } footer: {
-                Text("A muted signal sends no notification and does not tint the menu-bar icon. The card still shows its value.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section {
-                Toggle("Custom alert timing", isOn: Binding(get: { draft.customAlerts != nil }, set: {
-                    draft.customAlerts = $0 ? settings.alertRules : nil
-                    commit()
-                }))
-                .help("When off, this server uses the alert timing from the Alerts tab.")
-                if draft.customAlerts != nil {
-                    timingRow("CPU", .cpu)
-                    timingRow("Memory", .mem)
-                    timingRow("Disk", .disk)
-                    timingRow("Host health", .health)
-                    AlertToleranceControl(tolerance: Binding(get: { draft.customAlerts?.tolerance ?? 1 }, set: {
-                        draft.customAlerts?.tolerance = $0
-                        commit()
-                    }))
-                }
-            }
-
-            Section("Long-running processes") {
-                Toggle("Use custom long-running rule", isOn: Binding(get: { draft.customLongProc != nil }, set: {
-                    var rule = settings.longProc
-                    rule.ignore = []
-                    draft.customLongProc = $0 ? rule : nil
-                    commit()
-                }))
-                .help("When off, this server uses the rule from the Alerts tab.")
-                if let rule = draft.customLongProc {
-                    LongProcRuleControls(rule: Binding(get: { rule }, set: {
-                        draft.customLongProc = $0
-                        commit()
-                    }))
-                }
-                LabeledContent("Ignore on this host") {
-                    TagEditor(tags: Binding(get: { draft.ignoredProcs }, set: {
-                        draft.ignoredProcs = $0
-                        commit()
-                    }), prompt: "Add…")
-                }
+            if draft.isCloud {
+                CloudHostRulesView(nodeID: draft.id)
+            } else {
+                localRulesSections
             }
 
             Section {
@@ -376,6 +314,78 @@ struct ServerDetailView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// The rules of a local or SSH host stay on this Mac.
+    @ViewBuilder
+    private var localRulesSections: some View {
+        Section {
+            ForEach(ThresholdMetric.usage) { m in
+                overrideRow(m)
+            }
+        } header: {
+            HStack {
+                Text("Thresholds")
+                Spacer()
+                if let onEditDefaults {
+                    Button("Edit defaults", action: onEditDefaults)
+                        .buttonStyle(.link)
+                        .font(.caption)
+                }
+            }
+        }
+
+        Section {
+            ForEach(ThresholdMetric.health) { m in
+                overrideRow(m)
+            }
+        } header: {
+            Text("Host health")
+        } footer: {
+            Text("A muted signal sends no notification and does not tint the menu-bar icon. The card still shows its value.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+
+        Section {
+            Toggle("Custom alert timing", isOn: Binding(get: { draft.customAlerts != nil }, set: {
+                draft.customAlerts = $0 ? settings.alertRules : nil
+                commit()
+            }))
+            .help("When off, this server uses the alert timing from the Alerts tab.")
+            if draft.customAlerts != nil {
+                timingRow("CPU", .cpu)
+                timingRow("Memory", .mem)
+                timingRow("Disk", .disk)
+                timingRow("Host health", .health)
+                AlertToleranceControl(tolerance: Binding(get: { draft.customAlerts?.tolerance ?? 1 }, set: {
+                    draft.customAlerts?.tolerance = $0
+                    commit()
+                }))
+            }
+        }
+
+        Section("Long-running processes") {
+            Toggle("Use custom long-running rule", isOn: Binding(get: { draft.customLongProc != nil }, set: {
+                var rule = settings.longProc
+                rule.ignore = []
+                draft.customLongProc = $0 ? rule : nil
+                commit()
+            }))
+            .help("When off, this server uses the rule from the Alerts tab.")
+            if let rule = draft.customLongProc {
+                LongProcRuleControls(rule: Binding(get: { rule }, set: {
+                    draft.customLongProc = $0
+                    commit()
+                }))
+            }
+            LabeledContent("Ignore on this host") {
+                TagEditor(tags: Binding(get: { draft.ignoredProcs }, set: {
+                    draft.ignoredProcs = $0
+                    commit()
+                }), prompt: "Add…")
+            }
+        }
     }
 
     private func overrideRow(_ m: ThresholdMetric) -> some View {

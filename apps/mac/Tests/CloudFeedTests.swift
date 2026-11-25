@@ -349,4 +349,76 @@ final class CloudFeedTests: XCTestCase {
         try await waitFor { !poster.withdrawn.isEmpty }
         XCTAssertEqual(poster.withdrawn, [alert])
     }
+
+    // MARK: - Cloud rules
+
+    private func attachRules(gap: TimeInterval = 0.05) -> CloudRules {
+        let cache = CloudRulesCache(url: FileManager.default.temporaryDirectory
+            .appendingPathComponent("tt-feed-rules-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("cloud-rules.json"))
+        let rules = CloudRules(client: RemoteClient(config: .init(endpoint: server.baseURL, token: token)),
+                               device: "test-mac", cache: cache, gap: gap)
+        feed.rules = rules
+        let empty = Data(#"{"org":{},"hosts":[]}"#.utf8)
+        server.on("GET", "/v1/rules") { _ in .json(200, empty) }
+        return rules
+    }
+
+    private func rulesFetches() -> Int {
+        server.captured.filter { $0.method == "GET" && $0.path == "/v1/rules" }.count
+    }
+
+    func testSettingsUpdatedRefreshesRules() async throws {
+        let rules = attachRules()
+        defer { rules.stop() }
+        let node = Node(displayName: "web", kind: .ssh, sshUser: "u", sshHost: "h", cloud: CloudLink(enrolledAt: Date()))
+        serveNodes([node])
+        try await connect()
+        let enc = JSONEncoder()
+        enc.dateEncodingStrategy = .iso8601
+        let settings = try enc.encode(RemoteServerSettings(
+            thresholds: .defaults, localPollingIntervalSeconds: 2, sshPollingIntervalSeconds: 10,
+            notificationsEnabled: true, notifyWarn: true, notifyCritical: true, notifyDebounceSeconds: 90,
+            autoUpdateSamplersEnabled: true, postWakeGraceSeconds: 15))
+        let frame = #"{"type":"settings_updated","settings":"# + String(decoding: settings, as: UTF8.self) + "}"
+        let before = rulesFetches()
+        server.sendToAllWebSockets(text: frame)
+        try await waitFor { self.rulesFetches() > before }
+    }
+
+    func testNodeUpdatedRefreshesRulesOnce() async throws {
+        let rules = attachRules(gap: 0.6)
+        defer { rules.stop() }
+        let node = Node(displayName: "web", kind: .ssh, sshUser: "u", sshHost: "h", cloud: CloudLink(enrolledAt: Date()))
+        serveNodes([node])
+        addHost(node)
+        try await connect()
+        await rules.refresh()
+        let enc = JSONEncoder()
+        enc.dateEncodingStrategy = .iso8601
+        let remote = try enc.encode(node.toRemote(global: .defaults))
+        let frame = #"{"type":"node_updated","node":"# + String(decoding: remote, as: UTF8.self) + "}"
+        let before = rulesFetches()
+        for _ in 0..<4 { server.sendToAllWebSockets(text: frame) }
+        try await waitFor { self.rulesFetches() > before }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(rulesFetches() - before, 1, "four frames in a row share one fetch")
+    }
+
+    func testNodeUpdatedOfPlainHostSkipsRules() async throws {
+        let rules = attachRules()
+        defer { rules.stop() }
+        let plain = Node(displayName: "db", kind: .ssh, sshUser: "u", sshHost: "d")
+        serveNodes([])
+        addHost(plain)
+        try await connect()
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let enc = JSONEncoder()
+        enc.dateEncodingStrategy = .iso8601
+        let remote = try enc.encode(plain.toRemote(global: .defaults))
+        let before = rulesFetches()
+        server.sendToAllWebSockets(text: #"{"type":"node_updated","node":"# + String(decoding: remote, as: UTF8.self) + "}")
+        try await Task.sleep(nanoseconds: 400_000_000)
+        XCTAssertEqual(rulesFetches(), before)
+    }
 }

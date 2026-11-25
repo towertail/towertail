@@ -183,6 +183,8 @@ struct MuteToggle: View {
     var inheritedMute: Bool = false
     /// The backend cannot store mutes (Remote mode).
     var unsupported: Bool = false
+    /// The role of the user cannot mute.
+    var denied: Bool = false
 
     static let width: CGFloat = 26
 
@@ -197,13 +199,14 @@ struct MuteToggle: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
-        .disabled(inheritedMute || unsupported)
+        .disabled(inheritedMute || unsupported || denied)
         .help(helpText)
         .accessibilityLabel(shown ? "Unmute notifications" : "Mute notifications")
     }
 
     private var helpText: String {
         if unsupported { return "Not supported by this server" }
+        if denied { return "Your role in the org cannot mute alerts" }
         if inheritedMute { return "Muted in the Alerts defaults" }
         return "Mute notifications and the menu-bar tint for this signal. The card still shows the value."
     }

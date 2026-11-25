@@ -732,7 +732,10 @@ final class ServerViewModel: Identifiable {
     /// also under a custom rule. Ignored names leave the list at once.
     func applyLongProc(node: Node, global: LongProcRule) {
         let rule = node.customLongProc ?? global
-        let ignored = rule.ignoreSet(adding: global.ignore, node.ignoredProcs)
+        applyLongProc(rule: rule, ignored: rule.ignoreSet(adding: global.ignore, node.ignoredProcs))
+    }
+
+    func applyLongProc(rule: LongProcRule, ignored: Set<String>) {
         guard rule != longProcRule || ignored != ignoredProcs else { return }
         longProcRule = rule
         ignoredProcs = ignored
@@ -740,6 +743,18 @@ final class ServerViewModel: Identifiable {
         longProcs = rule.enabled ? longProcs.filter { !ignored.contains($0.name.lowercased()) } : []
         refreshScore(at: Date(), append: false)
         updateAlertLevel()
+    }
+
+    /// Takes all rules from the cloud: thresholds, timing, mutes and the
+    /// long-running rule. A muted long-running alert stops the tint only.
+    func applyCloudRules(_ r: RemoteEffectiveRules) {
+        thresholds = r.thresholds
+        alertRules = r.alerts
+        memPressureOverridden = r.sources.thresholds[ThresholdMetric.memPressure.rawValue] == "host"
+        applyMuted(r.muted)
+        var rule = r.longProc
+        if r.muted.long { rule.notify = .off }
+        applyLongProc(rule: rule, ignored: rule.ignoreSet(adding: r.ignore))
     }
 
     /// The health window holds levels of the old set, so it starts again.

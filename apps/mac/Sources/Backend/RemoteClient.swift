@@ -16,9 +16,12 @@ final class RemoteClient {
         case http(Int, String)
         case decode(String)
         case transport(Error)
+        /// The role of the user is too low. The text is for the user.
+        case forbidden(String)
 
         var errorDescription: String? {
             switch self {
+            case .forbidden(let msg): return msg
             case .http(let code, let body): return "HTTP \(code): \(body)"
             case .decode(let msg): return "decode: \(msg)"
             case .transport(let err): return "transport: \(err.localizedDescription)"
@@ -67,7 +70,40 @@ final class RemoteClient {
     func setHideProcFolders(nodeID: UUID, hide: Bool) async throws {
         var node = try await getNode(id: nodeID)
         node.hideProcFolders = hide
+        node.rulesOrigin = nil
         _ = try await updateNode(node)
+    }
+
+    // MARK: - Rules (docs/wire.md §3, `HostRules`, `RulesView`)
+
+    func rules() async throws -> RemoteRulesView {
+        try await get("/v1/rules", decoder: SampleCodec.decoder())
+    }
+
+    /// Replaces all rule fields of the host. The reply is the node, which
+    /// the caller does not need: `rules()` gives the effective rules.
+    func putHostRules(nodeID: UUID, _ rules: RemoteHostRules) async throws {
+        _ = try await rulesCall("PUT", "/v1/nodes/\(nodeID.uuidString)/rules", body: try encoder.encode(rules))
+    }
+
+    func setMute(_ metric: String, nodeID: UUID?, muted: Bool) async throws {
+        struct Body: Encodable { let metric: String; let nodeId: UUID?; let muted: Bool }
+        _ = try await rulesCall("PUT", "/v1/mutes", body: try encoder.encode(Body(metric: metric, nodeId: nodeID, muted: muted)))
+    }
+
+    func importRules(_ body: RemoteRulesImport) async throws -> RemoteRulesImportResult {
+        let data = try await rulesCall("POST", "/v1/rules/import", body: try encoder.encode(body))
+        return try decode(RemoteRulesImportResult.self, data)
+    }
+
+    /// A 403 gives a plain message: the role of the user is too low.
+    private func rulesCall(_ method: String, _ path: String, body: Data) async throws -> Data {
+        let (data, http) = try await response(method, path, body: body)
+        if http.statusCode == 403 { throw RemoteError.forbidden("Only an org admin can change this.") }
+        if http.statusCode >= 400 {
+            throw RemoteError.http(http.statusCode, Self.errorMessage(data) ?? String(decoding: data, as: UTF8.self))
+        }
+        return data
     }
 
     func deleteNode(id: UUID) async throws {
@@ -527,6 +563,7 @@ struct RemoteNode: Codable, Sendable, Identifiable {
     var iconOnCritical: Bool
     var notifyOnWarn: Bool
     var notifyOnCritical: Bool
+    /// Read from an old server. A request never sends it.
     var customThresholds: MetricThresholds?
     var snoozedUntil: Date?
     var favorite: Bool
@@ -538,6 +575,51 @@ struct RemoteNode: Codable, Sendable, Identifiable {
     /// Nil when the server is older than long-running process alerts.
     var customLongProc: LongProcRule?
     var ignoredProcs: [String]?
+    /// The rules of the host (docs/wire.md). Nil when the server is older.
+    var thresholdOverrides: ThresholdOverrides?
+    var alertOverrides: RemoteAlertOverrides?
+    var mutedSignals: MutedSignals?
+    var rulesOrigin: RemoteRulesOrigin?
+
+    enum CodingKeys: String, CodingKey {
+        case id, displayName, kind, sshUser, sshHost, tags, enabled
+        case iconOnWarn, iconOnCritical, notifyOnWarn, notifyOnCritical
+        case customThresholds, snoozedUntil, favorite, allowDiskScan, hideProcFolders
+        case customLongProc, ignoredProcs
+        case thresholdOverrides, alertOverrides, mutedSignals, rulesOrigin
+    }
+
+    /// An unset `thresholdOverrides` goes out as `null`: the server keeps
+    /// the stored value when the key is missing, and clears it on `null`.
+    /// The other rule keys are sent only when set.
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(displayName, forKey: .displayName)
+        try c.encode(kind, forKey: .kind)
+        try c.encodeIfPresent(sshUser, forKey: .sshUser)
+        try c.encodeIfPresent(sshHost, forKey: .sshHost)
+        try c.encode(tags, forKey: .tags)
+        try c.encode(enabled, forKey: .enabled)
+        try c.encode(iconOnWarn, forKey: .iconOnWarn)
+        try c.encode(iconOnCritical, forKey: .iconOnCritical)
+        try c.encode(notifyOnWarn, forKey: .notifyOnWarn)
+        try c.encode(notifyOnCritical, forKey: .notifyOnCritical)
+        try c.encodeIfPresent(snoozedUntil, forKey: .snoozedUntil)
+        try c.encode(favorite, forKey: .favorite)
+        try c.encodeIfPresent(allowDiskScan, forKey: .allowDiskScan)
+        try c.encodeIfPresent(hideProcFolders, forKey: .hideProcFolders)
+        try c.encodeIfPresent(customLongProc, forKey: .customLongProc)
+        try c.encodeIfPresent(ignoredProcs, forKey: .ignoredProcs)
+        if let thresholdOverrides {
+            try c.encode(thresholdOverrides, forKey: .thresholdOverrides)
+        } else {
+            try c.encodeNil(forKey: .thresholdOverrides)
+        }
+        try c.encodeIfPresent(alertOverrides, forKey: .alertOverrides)
+        try c.encodeIfPresent(mutedSignals, forKey: .mutedSignals)
+        try c.encodeIfPresent(rulesOrigin, forKey: .rulesOrigin)
+    }
 }
 
 struct RemoteServerSettings: Codable, Sendable {
@@ -568,9 +650,10 @@ extension Node {
             iconOnCritical: r.iconOnCritical,
             notifyOnWarn: r.notifyOnWarn,
             notifyOnCritical: r.notifyOnCritical,
-            thresholdOverrides: r.customThresholds.map(ThresholdOverrides.init(legacy:)),
+            thresholdOverrides: r.thresholdOverrides ?? r.customThresholds.map(ThresholdOverrides.init(legacy:)),
             customLongProc: r.customLongProc,
             ignoredProcs: r.ignoredProcs ?? [],
+            mutedSignals: r.mutedSignals ?? .empty,
             snoozedUntil: r.snoozedUntil,
             favorite: r.favorite,
             allowDiskScan: r.allowDiskScan ?? false,
@@ -578,8 +661,8 @@ extension Node {
         )
     }
 
-    /// The server takes a full threshold set, so unset metrics are filled
-    /// from `global`. `hideProcFolders` is sent only when it is not nil.
+    /// Sends the host overrides and mutes as they are, so `global` has no
+    /// use now. `hideProcFolders` is sent only when it is not nil.
     func toRemote(global: MetricThresholds, hideProcFolders: Bool? = nil) -> RemoteNode {
         RemoteNode(
             id: id,
@@ -593,13 +676,15 @@ extension Node {
             iconOnCritical: iconOnCritical,
             notifyOnWarn: notifyOnWarn,
             notifyOnCritical: notifyOnCritical,
-            customThresholds: thresholdOverrides?.applied(to: global),
+            customThresholds: nil,
             snoozedUntil: snoozedUntil,
             favorite: favorite,
             allowDiskScan: allowDiskScan,
             hideProcFolders: hideProcFolders,
             customLongProc: customLongProc,
-            ignoredProcs: ignoredProcs
+            ignoredProcs: ignoredProcs,
+            thresholdOverrides: thresholdOverrides,
+            mutedSignals: mutedSignals
         )
     }
 }

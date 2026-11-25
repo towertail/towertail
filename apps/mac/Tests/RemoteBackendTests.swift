@@ -545,6 +545,35 @@ final class RemoteBackendTests: XCTestCase {
         XCTAssertEqual(back.ignoredProcs, ["postgres"])
     }
 
+    // MARK: - Rule overrides on the wire
+
+    func testNodeRoundTripUsesThresholdOverrides() throws {
+        var node = Node(displayName: "db", kind: .ssh, sshUser: "u", sshHost: "h")
+        node.thresholdOverrides = ThresholdOverrides(mem: ThresholdPair(warn: 0.6, critical: 0.7))
+        node.mutedSignals = MutedSignals([.cpu], long: true)
+        let data = try jsonEncoder().encode(node.toRemote(global: .defaults))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertNil(json["customThresholds"])
+        XCTAssertNotNil(json["thresholdOverrides"] as? [String: Any])
+        let back = Node(remote: try jsonDecoder().decode(RemoteNode.self, from: data))
+        XCTAssertEqual(back.thresholdOverrides?.mem, ThresholdPair(warn: 0.6, critical: 0.7))
+        XCTAssertEqual(back.mutedSignals, MutedSignals([.cpu], long: true))
+    }
+
+    func testNilOverridesAreSentAsNull() throws {
+        let node = Node(displayName: "db", kind: .ssh, sshUser: "u", sshHost: "h")
+        let data = try jsonEncoder().encode(node.toRemote(global: .defaults))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertTrue(json["thresholdOverrides"] is NSNull, "null clears the override on the server")
+    }
+
+    func testOldCustomThresholdsStillRead() throws {
+        var remote = sampleRemoteNode(name: "old")
+        remote.customThresholds = MetricThresholds.defaults
+        let node = Node(remote: remote)
+        XCTAssertNotNil(node.thresholdOverrides?.cpu)
+    }
+
     func testOldServerWithoutLongProcFieldsDecodesDefaults() throws {
         let node = Node(remote: try jsonDecoder().decode(RemoteNode.self, from: jsonEncoder().encode(sampleRemoteNode(name: "x"))))
         XCTAssertNil(node.customLongProc)

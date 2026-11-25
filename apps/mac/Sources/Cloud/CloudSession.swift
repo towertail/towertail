@@ -11,6 +11,8 @@ final class CloudSession {
     private(set) var feed: CloudFeed?
     /// Loads the history of Cloud hosts over REST while signed in.
     @ObservationIgnored private(set) var history: RemoteHistoryLoader?
+    /// The rules of the cloud, for the hosts of the org.
+    private(set) var rules: CloudRules?
 
     /// Reports what the user looks at. It outlives the feed, so a
     /// sign-in while the popover is open sends the view.
@@ -22,6 +24,10 @@ final class CloudSession {
     @ObservationIgnored private let nodes: NodeStore
     @ObservationIgnored private let released: ReleasedHosts
     @ObservationIgnored private let notifier: ThresholdNotifier?
+    @ObservationIgnored private let rulesCache: CloudRulesCache?
+
+    /// The name of this Mac, for the origin of the rules that it sets.
+    static var deviceName: String { Host.current().localizedName ?? ProcessInfo.processInfo.hostName }
 
     var isSignedIn: Bool {
         if case .signedIn = account.status { return true }
@@ -29,11 +35,13 @@ final class CloudSession {
     }
 
     convenience init(account: CloudAccount, backend: LocalBackend) {
-        self.init(account: account, servers: backend.servers, nodes: backend.nodes, notifier: backend.notifier)
+        self.init(account: account, servers: backend.servers, nodes: backend.nodes, notifier: backend.notifier,
+                  rulesCache: .standard())
     }
 
-    init(account: CloudAccount, servers: ServerStore, nodes: NodeStore, released: ReleasedHosts = ReleasedHosts(), notifier: ThresholdNotifier? = nil) {
+    init(account: CloudAccount, servers: ServerStore, nodes: NodeStore, released: ReleasedHosts = ReleasedHosts(), notifier: ThresholdNotifier? = nil, rulesCache: CloudRulesCache? = nil) {
         self.notifier = notifier
+        self.rulesCache = rulesCache
         self.account = account
         self.servers = servers
         self.nodes = nodes
@@ -79,10 +87,14 @@ final class CloudSession {
         self.client = client
         self.feed = feed
         history = RemoteHistoryLoader(cache: CloudHistoryCache(client: client), store: servers)
+        let rules = CloudRules(client: client, device: Self.deviceName, cache: rulesCache)
+        self.rules = rules
+        feed.rules = rules
         NotificationTapRouter.shared.setActionHandler { [weak self] alertId, action in
             await self?.perform(action, alertId: alertId)
         }
         feed.start()
+        Task { await rules.refresh() }
     }
 
     /// Runs an action button of a cloud notification.
@@ -106,7 +118,14 @@ final class CloudSession {
     private func stopFeed() {
         feed?.stop()
         feed = nil
+        rules?.stop()
+        if rules != nil { rulesCache?.clear() }
+        rules = nil
         history = nil
         client = nil
     }
+}
+
+extension CloudSession: CloudRulesSource {
+    func effective(for nodeID: UUID) -> RemoteEffectiveRules? { rules?.effective(for: nodeID) }
 }

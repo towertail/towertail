@@ -42,6 +42,10 @@ final class CloudAccount {
     static let defaultEndpoint = URL(string: "https://api.towertail.com")!
 
     private(set) var status: Status = .signedOut
+    var me: CloudMe? {
+        if case .signedIn(let me) = status { return me }
+        return nil
+    }
     private(set) var billing: CloudBilling?
     /// The email that got the last code. The code field is for this email.
     private(set) var pendingEmail: String?

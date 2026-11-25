@@ -234,14 +234,18 @@ struct LongProcRule: Codable, Sendable, Equatable {
 /// and per node as `mutedSignals`.
 struct MutedSignals: Codable, Sendable, Equatable {
     private(set) var metrics: Set<ThresholdMetric>
+    /// The long-running process alert. Only a Cloud rule set holds it.
+    private(set) var long: Bool
 
     static let empty = MutedSignals()
+    static let longName = "long"
 
-    init(_ metrics: Set<ThresholdMetric> = []) {
+    init(_ metrics: Set<ThresholdMetric> = [], long: Bool = false) {
         self.metrics = metrics
+        self.long = long
     }
 
-    var isEmpty: Bool { metrics.isEmpty }
+    var isEmpty: Bool { metrics.isEmpty && !long }
 
     func contains(_ metric: ThresholdMetric) -> Bool { metrics.contains(metric) }
 
@@ -260,21 +264,25 @@ struct MutedSignals: Codable, Sendable, Equatable {
         if muted { metrics.insert(metric) } else { metrics.remove(metric) }
     }
 
+    mutating func setLong(_ muted: Bool) { long = muted }
+
     static func effective(global: MutedSignals, node: MutedSignals) -> MutedSignals {
-        MutedSignals(global.metrics.union(node.metrics))
+        MutedSignals(global.metrics.union(node.metrics), long: global.long || node.long)
     }
 
     /// Titles in the order of `ThresholdMetric.allCases`.
-    var titles: [String] { ThresholdMetric.allCases.filter(metrics.contains).map(\.title) }
+    var titles: [String] {
+        ThresholdMetric.allCases.filter(metrics.contains).map(\.title) + (long ? ["Long-running"] : [])
+    }
 
     /// Unknown names are skipped, so a newer client can add signals.
     init(from decoder: Decoder) throws {
         let names = try decoder.singleValueContainer().decode([String].self)
-        self.init(Set(names.compactMap(ThresholdMetric.init(rawValue:))))
+        self.init(Set(names.compactMap(ThresholdMetric.init(rawValue:))), long: names.contains(Self.longName))
     }
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.singleValueContainer()
-        try c.encode(metrics.map(\.rawValue).sorted())
+        try c.encode((metrics.map(\.rawValue) + (long ? [Self.longName] : [])).sorted())
     }
 }

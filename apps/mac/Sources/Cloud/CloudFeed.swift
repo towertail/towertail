@@ -17,6 +17,8 @@ final class CloudFeed {
     @ObservationIgnored private let released: ReleasedHosts
     @ObservationIgnored private let notifier: CloudAlertPoster?
     @ObservationIgnored private var stream: RemoteStream?
+    /// The rules of the cloud. A change on the server fetches them again.
+    @ObservationIgnored weak var rules: CloudRules?
     /// Reachability events since the last connect. They win over the
     /// open alerts, which can be older than the events.
     @ObservationIgnored private var eventAlerts: [UUID: Bool] = [:]
@@ -121,11 +123,13 @@ final class CloudFeed {
             eventAlerts[event.nodeId] = open
             if open { alerted.insert(event.nodeId) } else { alerted.remove(event.nodeId) }
         case .nodeUpdated(let remote):
-            guard var node = nodes.node(withId: remote.id), node.isCloud,
-                  node.displayName != remote.displayName else { return }
+            guard var node = nodes.node(withId: remote.id), node.isCloud else { return }
+            rules?.refreshSoon()
+            guard node.displayName != remote.displayName else { return }
             node.displayName = remote.displayName
             nodes.update(node)
         case .hello:
+            rules?.refreshSoon()
             // The server runs in lease mode: no data comes while no view is open.
             for vm in servers.serverVMs where nodes.node(withId: vm.id)?.isCloud == true {
                 vm.liveSource = .cloud
@@ -134,7 +138,9 @@ final class CloudFeed {
             if notice.isLimit { viewLease?.didReceiveLimit() }
         case .alertUpdated(let alert):
             if alert.isSilenced() { notifier?.withdrawCloud(alertId: alert.id) }
-        case .settingsUpdated, .diskScan, .other:
+        case .settingsUpdated:
+            rules?.refreshSoon()
+        case .diskScan, .other:
             break
         }
     }

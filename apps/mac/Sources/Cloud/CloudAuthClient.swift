@@ -23,6 +23,11 @@ struct CloudMe: Decodable, Equatable {
     struct Org: Decodable, Equatable { let name: String; let plan: String }
     let user: User
     let org: Org
+    /// Nil when the server is older than the role field.
+    var role: String? = nil
+
+    var isAdmin: Bool { role == "admin" || role == "owner" }
+    var canMute: Bool { isAdmin || role == "member" }
 }
 
 struct CloudPlan: Decodable, Equatable {
