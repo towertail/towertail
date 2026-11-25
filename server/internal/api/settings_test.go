@@ -130,3 +130,19 @@ func (n chanNotifier) Notify(_ context.Context, a notify.Alert) error {
 	n <- a
 	return nil
 }
+
+func TestPutSettingsRejectsBadMCP(t *testing.T) {
+	e := newAlertEnv(t)
+	for _, body := range []string{`{"mcp":{"signInDays":3}}`, `{"mcp":{"aiChanges":"all"}}`} {
+		if code, b := e.do(store.RoleAdmin, "PUT", "/v1/settings", body); code != http.StatusBadRequest {
+			t.Errorf("%s: %d %s, want 400", body, code, b)
+		}
+	}
+	if code, b := e.do(store.RoleAdmin, "PUT", "/v1/settings", `{"mcp":{"signInDays":90,"aiChanges":"alerts_and_rules"}}`); code != http.StatusOK {
+		t.Fatalf("good body: %d %s", code, b)
+	}
+	got := e.settings().MCP
+	if got.SignInDays != 90 || got.AIChanges != store.AIChangesAlertsAndRules || !got.APIKeys || !got.AnyClient {
+		t.Errorf("mcp = %+v", got)
+	}
+}

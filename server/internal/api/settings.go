@@ -53,6 +53,9 @@ func (s *Server) handlePutSettings(c echo.Context) error {
 		if err := cfg.Rules().Validate(); err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		}
+		if err := cfg.MCP.Validate(); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
 		cfg.RulesOrigin = oldOrigin
 		if ruleKey(*cfg) != before {
 			var client, device string

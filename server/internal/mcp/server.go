@@ -48,10 +48,16 @@ const (
 
 var toolSets = []ToolSet{ToolSetLatest, ToolSetV1}
 
+// SettingsReader gives the settings of an org.
+type SettingsReader interface {
+	GetSettings(ctx context.Context, orgID uuid.UUID) (store.ServerSettings, error)
+}
+
 // Options holds the dependencies of the server.
 type Options struct {
-	Version string
-	Log     *slog.Logger
+	Version  string
+	Log      *slog.Logger
+	Settings SettingsReader
 }
 
 // setServer is the MCP server of one tool set.

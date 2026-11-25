@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -38,6 +39,40 @@ type Config struct {
 type MCPConfig struct {
 	// Enabled turns on the read-only MCP server. The default is true.
 	Enabled bool `koanf:"enabled"`
+	// ResourceURL is the public URL of /mcp, for example
+	// https://api.towertail.com/mcp. /mcp/v1 is ResourceURL + "/v1".
+	ResourceURL string `koanf:"resource_url"`
+	// AuthorizationServer is the issuer URL of the OAuth server. OAuth is
+	// on when this and ResourceURL are both set.
+	AuthorizationServer string `koanf:"authorization_server"`
+	// DocsURL is the documentation page that the resource metadata names.
+	DocsURL string `koanf:"docs_url"`
+}
+
+// OAuth tells if the MCP server accepts OAuth tokens.
+func (c MCPConfig) OAuth() bool {
+	return c.ResourceURL != "" && c.AuthorizationServer != ""
+}
+
+// Resources gives the audiences that an OAuth token can have: the URL of
+// each MCP path.
+func (c MCPConfig) Resources() []string {
+	return []string{c.ResourceURL, c.ResourceURL + "/v1"}
+}
+
+func (c MCPConfig) validate() error {
+	if (c.ResourceURL == "") != (c.AuthorizationServer == "") {
+		return errors.New("mcp.resource_url and mcp.authorization_server must be set together")
+	}
+	for name, v := range map[string]string{"mcp.resource_url": c.ResourceURL, "mcp.authorization_server": c.AuthorizationServer} {
+		if v == "" {
+			continue
+		}
+		if u, err := url.Parse(v); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return fmt.Errorf("%s %q must be an http or https URL", name, v)
+		}
+	}
+	return nil
 }
 
 // StreamConfig is for the /v1/stream websocket.
@@ -233,6 +268,10 @@ func Load(path string) (*Config, error) {
 	case "off", "no_context_takeover":
 	default:
 		return nil, fmt.Errorf("stream.compression %q must be off or no_context_takeover", cfg.Stream.Compression)
+	}
+	cfg.MCP.ResourceURL = strings.TrimRight(cfg.MCP.ResourceURL, "/")
+	if err := cfg.MCP.validate(); err != nil {
+		return nil, err
 	}
 	if cfg.ClickHouse.SpillDir == "" {
 		cfg.ClickHouse.SpillDir = filepath.Join(cfg.Storage.Path, "spill")

@@ -352,3 +352,97 @@ func TestHealthChecks(t *testing.T) {
 		t.Errorf("mac override: %+v", got)
 	}
 }
+
+func TestParseScopes(t *testing.T) {
+	for in, want := range map[string][]Scope{
+		"":                                     {ScopeFleetRead},
+		"rules:write foo offline_access":       {ScopeFleetRead, ScopeRulesWrite},
+		"rules:write rules:write alerts:write": {ScopeAlertsWrite, ScopeFleetRead, ScopeRulesWrite},
+	} {
+		if got := ParseScopes(in); !reflect.DeepEqual(got, want) {
+			t.Errorf("ParseScopes(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+func TestTokenHasScope(t *testing.T) {
+	oauth := Token{Kind: TokenKindOAuth, Scopes: []Scope{ScopeFleetRead, ScopeAlertsWrite}}
+	for _, tc := range []struct {
+		tok   Token
+		scope Scope
+		want  bool
+	}{
+		{Token{Kind: TokenKindAPI}, ScopeFleetRead, true},
+		{Token{Kind: TokenKindAPI}, ScopeAlertsWrite, false},
+		{oauth, ScopeAlertsWrite, true},
+		{oauth, ScopeRulesWrite, false},
+		{Token{Kind: TokenKindUser}, ScopeRulesWrite, true},
+		{Token{Kind: TokenKindAdmin}, ScopeAlertsWrite, true},
+		{Token{Kind: TokenKindUser}, Scope("other"), false},
+		{Token{Kind: TokenKindSampler}, ScopeFleetRead, false},
+	} {
+		if got := tc.tok.HasScope(tc.scope); got != tc.want {
+			t.Errorf("%s HasScope(%s) = %v, want %v", tc.tok.Kind, tc.scope, got, tc.want)
+		}
+	}
+}
+
+func TestServerSettingsWithoutMCPGetsDefaults(t *testing.T) {
+	var s ServerSettings
+	if err := json.Unmarshal([]byte(`{"notifyWarn":true}`), &s); err != nil {
+		t.Fatal(err)
+	}
+	if s.MCP != DefaultMCPSettings() {
+		t.Fatalf("mcp = %+v", s.MCP)
+	}
+	if DefaultServerSettings().MCP.AIChanges != AIChangesAlerts {
+		t.Fatalf("default aiChanges = %q", DefaultServerSettings().MCP.AIChanges)
+	}
+	// A partial mcp key keeps the stored keys.
+	s.MCP = MCPSettings{SignInDays: 90, AIChanges: AIChangesOff, APIKeys: true}
+	if err := json.Unmarshal([]byte(`{"mcp":{"anyClient":true}}`), &s); err != nil {
+		t.Fatal(err)
+	}
+	want := MCPSettings{AnyClient: true, APIKeys: true, SignInDays: 90, AIChanges: AIChangesOff}
+	if s.MCP != want {
+		t.Fatalf("mcp = %+v, want %+v", s.MCP, want)
+	}
+}
+
+func TestMCPSettingsValidate(t *testing.T) {
+	good := DefaultMCPSettings()
+	if err := good.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	bad := good
+	bad.SignInDays = 14
+	if bad.Validate() == nil {
+		t.Error("signInDays 14: want error")
+	}
+	bad = good
+	bad.AIChanges = "all"
+	if bad.Validate() == nil {
+		t.Error("aiChanges all: want error")
+	}
+}
+
+func TestMCPSettingsAllows(t *testing.T) {
+	for _, tc := range []struct {
+		changes AIChanges
+		scope   Scope
+		want    bool
+	}{
+		{AIChangesOff, ScopeFleetRead, true},
+		{AIChangesOff, ScopeAlertsWrite, false},
+		{AIChangesOff, ScopeRulesWrite, false},
+		{AIChangesAlerts, ScopeFleetRead, true},
+		{AIChangesAlerts, ScopeAlertsWrite, true},
+		{AIChangesAlerts, ScopeRulesWrite, false},
+		{AIChangesAlertsAndRules, ScopeAlertsWrite, true},
+		{AIChangesAlertsAndRules, ScopeRulesWrite, true},
+	} {
+		if got := (MCPSettings{AIChanges: tc.changes}).Allows(tc.scope); got != tc.want {
+			t.Errorf("%s Allows(%s) = %v, want %v", tc.changes, tc.scope, got, tc.want)
+		}
+	}
+}

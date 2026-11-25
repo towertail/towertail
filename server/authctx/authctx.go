@@ -46,3 +46,17 @@ func FromContext(ctx context.Context) (store.Token, bool) {
 	t, ok := ctx.Value(ctxKey{}).(store.Token)
 	return t, ok
 }
+
+type roleCtxKey struct{}
+
+// WithRole puts the role of the token user on a context. A plain
+// http.Handler reads it with RoleFromContext.
+func WithRole(ctx context.Context, r store.Role) context.Context {
+	return context.WithValue(ctx, roleCtxKey{}, r)
+}
+
+// RoleFromContext returns the role that WithRole stored.
+func RoleFromContext(ctx context.Context) (store.Role, bool) {
+	r, ok := ctx.Value(roleCtxKey{}).(store.Role)
+	return r, ok
+}

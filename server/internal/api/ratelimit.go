@@ -70,12 +70,22 @@ func (k *keyLimiters) allow(id uuid.UUID) bool {
 	return l.l.AllowN(now, 1)
 }
 
-// apiKeyLimiter limits the requests of each API key. It does not limit
-// other token kinds, and it runs after the bearer middleware.
+// limiterKey gives the budget key of a token. The access tokens of one
+// OAuth grant share one budget, because an access token changes each hour.
+func limiterKey(t store.Token) uuid.UUID {
+	if t.GrantID != nil {
+		return *t.GrantID
+	}
+	return t.ID
+}
+
+// apiKeyLimiter limits the requests of each API key and each OAuth grant.
+// It does not limit other token kinds, and it runs after the bearer
+// middleware.
 func (s *Server) apiKeyLimiter() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			if t, ok := authctx.TokenFrom(c); ok && t.Kind == store.TokenKindAPI && s.apiKeyRates != nil && !s.apiKeyRates.allow(t.ID) {
+			if t, ok := authctx.TokenFrom(c); ok && (t.Kind == store.TokenKindAPI || t.Kind == store.TokenKindOAuth) && s.apiKeyRates != nil && !s.apiKeyRates.allow(limiterKey(t)) {
 				c.Response().Header().Set(echo.HeaderRetryAfter, "1")
 				return echo.NewHTTPError(http.StatusTooManyRequests, "API key rate limit exceeded")
 			}

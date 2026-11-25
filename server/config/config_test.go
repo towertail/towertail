@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -134,5 +135,31 @@ func TestMCPEnabled(t *testing.T) {
 	t.Setenv("TT_MCP__ENABLED", "false")
 	if cfg, err = Load(""); err != nil || cfg.MCP.Enabled {
 		t.Errorf("TT_MCP__ENABLED=false: enabled = %v, err = %v", cfg.MCP.Enabled, err)
+	}
+}
+
+func TestMCPOAuthConfig(t *testing.T) {
+	t.Setenv("TT_MCP__RESOURCE_URL", "https://api.example.com/mcp")
+	if _, err := Load(""); err == nil {
+		t.Error("only resource_url: want error")
+	}
+	t.Setenv("TT_MCP__AUTHORIZATION_SERVER", "ftp://api.example.com")
+	if _, err := Load(""); err == nil {
+		t.Error("bad scheme: want error")
+	}
+	t.Setenv("TT_MCP__AUTHORIZATION_SERVER", "https://api.example.com")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.MCP.OAuth() {
+		t.Error("OAuth() = false, want true")
+	}
+	want := []string{"https://api.example.com/mcp", "https://api.example.com/mcp/v1"}
+	if got := cfg.MCP.Resources(); !slices.Equal(got, want) {
+		t.Errorf("Resources() = %v, want %v", got, want)
+	}
+	if cfg, err = Load(""); err != nil || (MCPConfig{}).OAuth() {
+		t.Errorf("empty config: err = %v", err)
 	}
 }

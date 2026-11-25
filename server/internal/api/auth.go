@@ -27,9 +27,9 @@ type Roles interface {
 // kinds may contain multiple kinds (e.g. user + admin); empty means any.
 // A token that an earlier middleware set with authctx.Set (for example a
 // cloud session cookie) counts as verified. After the check, bearer sets
-// the role of user, admin and api tokens, unless an earlier middleware
-// did. A user or admin token with no user, or a server with no Roles,
-// gives owner. An api token always gives viewer, and it needs a membership
+// the role of user, admin, oauth and api tokens, unless an earlier
+// middleware did. A user or admin token with no user, or a server with no
+// Roles, gives owner. An oauth token with no user gives 401. An api token always gives viewer, and it needs a membership
 // when it has a user.
 func (s *Server) bearer(kinds ...store.TokenKind) echo.MiddlewareFunc {
 	allowed := map[store.TokenKind]struct{}{}
@@ -65,6 +65,11 @@ func (s *Server) bearer(kinds ...store.TokenKind) echo.MiddlewareFunc {
 				role = store.RoleOwner
 			case store.TokenKindAPI:
 				role = store.RoleViewer
+			case store.TokenKindOAuth:
+				if t.UserID == nil {
+					return echo.NewHTTPError(http.StatusUnauthorized, "invalid token")
+				}
+				role = store.RoleOwner
 			default:
 				return next(c)
 			}

@@ -207,7 +207,7 @@ func (s *PostgresStore) EditSettings(ctx context.Context, orgID uuid.UUID, f fun
 	return out, err
 }
 
-const tokenCols = `id, org_id, kind, label, token_hash, node_id, user_id, created_at, last_used_at, revoked_at, expires_at`
+const tokenCols = `id, org_id, kind, label, token_hash, node_id, user_id, created_at, last_used_at, revoked_at, expires_at, scopes, audience, grant_id`
 
 func (s *PostgresStore) PutToken(ctx context.Context, t Token) error {
 	if len(t.Hash) == 0 {
@@ -216,11 +216,22 @@ func (s *PostgresStore) PutToken(ctx context.Context, t Token) error {
 	if t.CreatedAt.IsZero() {
 		t.CreatedAt = time.Now().UTC()
 	}
+	scopes := make([]string, len(t.Scopes))
+	for i, sc := range t.Scopes {
+		scopes[i] = string(sc)
+	}
+	if len(scopes) == 0 {
+		scopes = nil
+	}
+	var audience *string
+	if t.Audience != "" {
+		audience = &t.Audience
+	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO api_tokens (`+tokenCols+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		INSERT INTO api_tokens (`+tokenCols+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		ON CONFLICT (id) DO UPDATE SET
 			label = EXCLUDED.label, last_used_at = EXCLUDED.last_used_at, revoked_at = EXCLUDED.revoked_at`,
-		t.ID, t.OrgID, string(t.Kind), t.Label, t.Hash, t.NodeID, t.UserID, t.CreatedAt, t.LastUsedAt, t.RevokedAt, t.ExpiresAt)
+		t.ID, t.OrgID, string(t.Kind), t.Label, t.Hash, t.NodeID, t.UserID, t.CreatedAt, t.LastUsedAt, t.RevokedAt, t.ExpiresAt, scopes, audience, t.GrantID)
 	return err
 }
 
@@ -265,14 +276,22 @@ func (s *PostgresStore) TouchToken(ctx context.Context, hash []byte, at time.Tim
 
 func scanToken(row pgx.Row) (Token, error) {
 	var (
-		t     Token
-		kind  string
-		label *string
+		t        Token
+		kind     string
+		label    *string
+		scopes   []string
+		audience *string
 	)
-	err := row.Scan(&t.ID, &t.OrgID, &kind, &label, &t.Hash, &t.NodeID, &t.UserID, &t.CreatedAt, &t.LastUsedAt, &t.RevokedAt, &t.ExpiresAt)
+	err := row.Scan(&t.ID, &t.OrgID, &kind, &label, &t.Hash, &t.NodeID, &t.UserID, &t.CreatedAt, &t.LastUsedAt, &t.RevokedAt, &t.ExpiresAt, &scopes, &audience, &t.GrantID)
 	t.Kind = TokenKind(kind)
 	if label != nil {
 		t.Label = *label
+	}
+	for _, sc := range scopes {
+		t.Scopes = append(t.Scopes, Scope(sc))
+	}
+	if audience != nil {
+		t.Audience = *audience
 	}
 	return t, err
 }

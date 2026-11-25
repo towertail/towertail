@@ -126,6 +126,12 @@ func New(d Deps) *Server {
 		origins = []string{"*"}
 	}
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		// Browser clients of other sites call these paths. They use
+		// publicCORS on their routes.
+		Skipper: func(c echo.Context) bool {
+			p := c.Request().URL.Path
+			return p == "/mcp" || strings.HasPrefix(p, "/mcp/") || strings.HasPrefix(p, "/.well-known/") || strings.HasPrefix(p, "/oauth/")
+		},
 		AllowOrigins:     origins,
 		AllowMethods:     []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions},
 		AllowHeaders:     []string{echo.HeaderAuthorization, echo.HeaderContentType, echo.HeaderContentEncoding, echo.HeaderXRequestedWith},
@@ -183,7 +189,7 @@ func New(d Deps) *Server {
 		apiKeyRates:   newKeyLimiters(d.Config.HTTP.APIKeyRateLimitRPS, d.Config.HTTP.APIKeyRateLimitBurst),
 	}
 	if d.Config.MCP.Enabled {
-		s.mcp = mcp.New(s.query, mcp.Options{Version: version.Version, Log: d.Log})
+		s.mcp = mcp.New(s.query, mcp.Options{Version: version.Version, Log: d.Log, Settings: d.Store})
 	}
 	if d.Config.Stream.Compression == "no_context_takeover" {
 		s.streamCompression = websocket.CompressionNoContextTakeover
@@ -345,15 +351,25 @@ func (s *Server) registerRoutes() {
 	samplerGroup.PUT("/disk-scans/:job/result", s.handlePutDiskScanResult)
 
 	// MCP: the stateless handler gives 405 for GET and DELETE, so only
-	// POST is routed. /mcp/v1 serves the frozen tool set.
+	// POST is routed. /mcp/v1 serves the frozen tool set. The OPTIONS
+	// routes answer the CORS preflight.
 	if s.mcp != nil {
-		kinds := append([]store.TokenKind{store.TokenKindAPI}, userKinds...)
+		kinds := append([]store.TokenKind{store.TokenKindAPI, store.TokenKindOAuth}, userKinds...)
+		preflight := func(c echo.Context) error { return c.NoContent(http.StatusNoContent) }
 		for _, r := range []struct {
 			path string
 			set  mcp.ToolSet
 		}{{"/mcp", mcp.ToolSetLatest}, {"/mcp/v1", mcp.ToolSetV1}} {
 			e.POST(r.path, echo.WrapHandler(s.mcp.Handler(r.set)),
-				s.bearer(kinds...), requireRole(store.RoleViewer), s.apiKeyLimiter(), tokenToRequest)
+				publicCORS(), s.mcpChallenge(), s.bearer(kinds...), requireRole(store.RoleViewer),
+				s.mcpAudience(), s.mcpAPIKeyGate(), s.apiKeyLimiter(), tokenToRequest)
+			e.OPTIONS(r.path, preflight, publicCORS())
+		}
+		if s.cfg.MCP.OAuth() {
+			for _, p := range []string{"", "/mcp", "/mcp/v1"} {
+				e.GET(protectedResourcePath+p, s.handleProtectedResource, publicCORS())
+				e.OPTIONS(protectedResourcePath+p, preflight, publicCORS())
+			}
 		}
 	}
 
@@ -362,14 +378,19 @@ func (s *Server) registerRoutes() {
 	v1.GET("/stream", s.handleStream, s.bearer(userKinds...), requireRole(store.RoleViewer))
 }
 
-// tokenToRequest puts the verified token on the request context, where
-// the plain http handler of the MCP server reads it.
+// tokenToRequest puts the verified token and its role on the request
+// context, where the plain http handler of the MCP server reads them.
 func tokenToRequest(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
+		req := c.Request()
+		ctx := req.Context()
 		if t, ok := authctx.TokenFrom(c); ok {
-			req := c.Request()
-			c.SetRequest(req.WithContext(authctx.WithToken(req.Context(), t)))
+			ctx = authctx.WithToken(ctx, t)
 		}
+		if r, ok := authctx.RoleFrom(c); ok {
+			ctx = authctx.WithRole(ctx, r)
+		}
+		c.SetRequest(req.WithContext(ctx))
 		return next(c)
 	}
 }

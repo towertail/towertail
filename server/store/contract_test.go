@@ -26,6 +26,7 @@ func testContract(t *testing.T, h storeHarness) {
 	t.Run("EditSettings", func(t *testing.T) { contractEditSettings(t, h) })
 	t.Run("Rules", func(t *testing.T) { contractRules(t, h) })
 	t.Run("Tokens", func(t *testing.T) { contractTokens(t, h) })
+	t.Run("OAuthTokens", func(t *testing.T) { contractOAuthTokens(t, h) })
 	t.Run("Users", func(t *testing.T) { contractUsers(t, h) })
 	t.Run("Control", func(t *testing.T) { contractControl(t, h) })
 	t.Run("Channels", func(t *testing.T) { contractChannels(t, h) })
@@ -511,5 +512,42 @@ func contractRules(t *testing.T, h storeHarness) {
 	}
 	if list[0].At.Before(list[1].At) {
 		t.Error("list is not newest first")
+	}
+}
+
+func contractOAuthTokens(t *testing.T, h storeHarness) {
+	ctx := context.Background()
+	org, grant := h.newOrg(t), uuid.New()
+	exp := time.Now().UTC().Add(time.Hour).Truncate(time.Millisecond)
+	tok := Token{
+		ID: uuid.New(), OrgID: org, Kind: TokenKindOAuth, Label: "Claude",
+		Hash: []byte(uuid.NewString()), ExpiresAt: &exp,
+		Scopes: []Scope{ScopeAlertsWrite, ScopeFleetRead}, Audience: "https://api.example.com/mcp", GrantID: &grant,
+	}
+	plain := Token{ID: uuid.New(), OrgID: org, Kind: TokenKindAPI, Hash: []byte(uuid.NewString())}
+	for _, tk := range []Token{tok, plain} {
+		if err := h.s.PutToken(ctx, tk); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := h.s.GetTokenByHash(ctx, tok.Hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Scopes, tok.Scopes) || got.Audience != tok.Audience || got.GrantID == nil || *got.GrantID != grant {
+		t.Errorf("get: %+v", got)
+	}
+	list, err := h.s.ListTokens(ctx, org)
+	if err != nil || len(list) != 2 {
+		t.Fatalf("list: %v %v", list, err)
+	}
+	for _, tk := range list {
+		if tk.ID == tok.ID && (len(tk.Scopes) != 2 || tk.Audience == "" || tk.GrantID == nil) {
+			t.Errorf("list: %+v", tk)
+		}
+	}
+	got, err = h.s.GetTokenByHash(ctx, plain.Hash)
+	if err != nil || len(got.Scopes) != 0 || got.Audience != "" || got.GrantID != nil {
+		t.Errorf("plain token: %+v %v", got, err)
 	}
 }

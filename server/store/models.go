@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -163,6 +164,8 @@ type ServerSettings struct {
 	Alerts AlertRules `json:"alerts"`
 	// RulesOrigin tells which client set the org rules last.
 	RulesOrigin *RulesOrigin `json:"rulesOrigin,omitempty"`
+	// MCP holds the org rules for AI clients that use the MCP server.
+	MCP MCPSettings `json:"mcp"`
 }
 
 // MutedSet gives the metrics that are muted on the node: the union of the
@@ -185,6 +188,9 @@ func (s *ServerSettings) UnmarshalJSON(b []byte) error {
 	}
 	if a.Alerts == (AlertRules{}) {
 		a.Alerts = DefaultAlertRules()
+	}
+	if a.MCP.SignInDays == 0 {
+		a.MCP = DefaultMCPSettings()
 	}
 	if err := json.Unmarshal(b, &a); err != nil {
 		return err
@@ -288,6 +294,7 @@ func DefaultServerSettings() ServerSettings {
 		PostWakeGraceSeconds:        30,
 		LongProc:                    DefaultLongProcRule(),
 		Alerts:                      DefaultAlertRules(),
+		MCP:                         DefaultMCPSettings(),
 	}
 }
 
@@ -305,8 +312,105 @@ type Token struct {
 	CreatedAt  time.Time  `json:"createdAt"`
 	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
 	RevokedAt  *time.Time `json:"revokedAt,omitempty"`
-	// ExpiresAt is set on join tokens. Verify rejects the token after it.
+	// ExpiresAt is set on join and oauth tokens. Verify rejects the token
+	// after it.
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+	// Scopes, Audience and GrantID are set on oauth tokens. Audience is the
+	// RFC 8707 resource of the token.
+	Scopes   []Scope    `json:"scopes,omitempty"`
+	Audience string     `json:"audience,omitempty"`
+	GrantID  *uuid.UUID `json:"grantId,omitempty"`
+}
+
+// Scope is a right that an OAuth access token can hold.
+type Scope string
+
+const (
+	ScopeFleetRead   Scope = "fleet:read"
+	ScopeAlertsWrite Scope = "alerts:write"
+	ScopeRulesWrite  Scope = "rules:write"
+)
+
+var allScopes = []Scope{ScopeAlertsWrite, ScopeFleetRead, ScopeRulesWrite}
+
+// ParseScopes reads a space-separated scope string. It drops unknown
+// values and duplicates, always adds fleet:read, and sorts the result.
+func ParseScopes(s string) []Scope {
+	out := []Scope{ScopeFleetRead}
+	for _, f := range strings.Fields(s) {
+		if sc := Scope(f); slices.Contains(allScopes, sc) && !slices.Contains(out, sc) {
+			out = append(out, sc)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// HasScope tells if the token holds the scope. The kinds user and admin
+// hold all scopes, and the kind api holds fleet:read only. The caller
+// checks the kind before it uses a scope as a right.
+func (t Token) HasScope(s Scope) bool {
+	switch t.Kind {
+	case TokenKindUser, TokenKindAdmin:
+		return slices.Contains(allScopes, s)
+	case TokenKindAPI:
+		return s == ScopeFleetRead
+	case TokenKindOAuth:
+		return slices.Contains(t.Scopes, s)
+	}
+	return false
+}
+
+// AIChanges is the org rule for the changes that AI clients can make.
+type AIChanges string
+
+const (
+	AIChangesOff            AIChanges = "off"
+	AIChangesAlerts         AIChanges = "alerts"
+	AIChangesAlertsAndRules AIChanges = "alerts_and_rules"
+)
+
+// MCPSettings holds the org rules for AI clients.
+type MCPSettings struct {
+	// MembersConnect lets members, not only admins, connect an AI client.
+	MembersConnect bool `json:"membersConnect"`
+	// AnyClient lets any OAuth client connect, not only known clients.
+	AnyClient bool `json:"anyClient"`
+	// APIKeys lets API keys use the MCP server.
+	APIKeys bool `json:"apiKeys"`
+	// SignInDays is how long an AI client stays signed in: 7, 30 or 90.
+	SignInDays int       `json:"signInDays"`
+	AIChanges  AIChanges `json:"aiChanges"`
+}
+
+// DefaultMCPSettings returns the defaults of a new org.
+func DefaultMCPSettings() MCPSettings {
+	return MCPSettings{MembersConnect: true, AnyClient: true, APIKeys: true, SignInDays: 30, AIChanges: AIChangesAlerts}
+}
+
+// Validate checks the sign-in time and the AI changes rule.
+func (m MCPSettings) Validate() error {
+	if !slices.Contains([]int{7, 30, 90}, m.SignInDays) {
+		return fmt.Errorf("mcp.signInDays %d must be 7, 30 or 90", m.SignInDays)
+	}
+	switch m.AIChanges {
+	case AIChangesOff, AIChangesAlerts, AIChangesAlertsAndRules:
+		return nil
+	}
+	return fmt.Errorf("mcp.aiChanges %q must be off, alerts or alerts_and_rules", m.AIChanges)
+}
+
+// Allows tells if the org rule lets AI clients use the scope.
+func (m MCPSettings) Allows(s Scope) bool {
+	switch s {
+	case ScopeFleetRead:
+		return true
+	case ScopeAlertsWrite:
+		return m.AIChanges == AIChangesAlerts || m.AIChanges == AIChangesAlertsAndRules
+	case ScopeRulesWrite:
+		return m.AIChanges == AIChangesAlertsAndRules
+	}
+	return false
 }
 
 type TokenKind string
@@ -318,6 +422,9 @@ const (
 	// TokenKindAPI is a read-only key of a user. It reads the read routes.
 	TokenKindAPI  TokenKind = "api"
 	TokenKindJoin TokenKind = "join"
+	// TokenKindOAuth is the access token of an OAuth grant. Only /mcp and
+	// /mcp/v1 accept it.
+	TokenKindOAuth TokenKind = "oauth"
 )
 
 // User logs in with email and password. In the cloud, PasswordHash is

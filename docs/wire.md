@@ -30,13 +30,14 @@ Codes: `unauthorized`, `forbidden`, `not_found`, `bad_request`, `conflict`, `pla
 
 ## 2. Authentication
 
-Five token kinds, all opaque strings with a `tt_` prefix. Raw tokens are only ever returned at issue time; the server stores SHA-256 hashes.
+Six token kinds, all opaque strings with a `tt_` prefix. Raw tokens are only ever returned at issue time; the server stores SHA-256 hashes.
 
 | Kind | Issued by | Allowed groups |
 |---|---|---|
 | `user` | `POST /v1/auth/login` | `/v1/*` except ingest + control |
 | `admin` | `towertail-server token issue --kind=admin` (CLI) | everything in `user` + token management |
 | `api` | `POST /v1/api-keys`, or `towertail-server token issue --kind=api` | The read endpoints of §3 and `/mcp`. The key reads as a `viewer`. It gets 403 on the stream, on the write routes and on `/v1/api-keys`. Each key has a budget of 5 requests each second with a burst of 20 (`http.api_key_rate_limit_rps` and `http.api_key_rate_limit_burst`). A call above the budget gets 429 `rate_limited`. The per-IP limit also applies |
+| `oauth` | The authorization server of the cloud, after a user allows an AI client | `/mcp` and `/mcp/v1` only. Each other bearer route gives 403 "token kind not allowed". The token lasts 1 hour. It has `scopes`, an `audience` and a `grantId` (see "Scopes" below). It needs a user, else 401 `invalid token`. The role is the role of the user in the org. The key budget applies to each grant |
 | `sampler` | `POST /v1/sampler/enroll`, `POST /v1/sampler/join` | `/v1/ingest/*`, `/v1/control/next`, `/v1/disk-scans/{job}/progress`, `/v1/disk-scans/{job}/result` |
 | `join` | `POST /v1/sampler/join-tokens` | `POST /v1/sampler/join` only (in the body). The token starts with `tt_join_`, works for 1 hour and for one call. Any bearer route gives 403 for it |
 
@@ -54,6 +55,22 @@ A user has a role in an org. The roles from the highest to the lowest rank are `
 | `owner` | Everything of `admin`. An extension (the cloud) uses it for billing and the org. |
 
 Self-hosted mode has no role source. There, each `user` and `admin` token has the `owner` role. A token with no user also has the `owner` role, for example the bootstrap admin token. A server with a role source (the cloud, through `app.WithRoles`) finds the role of the token user in the org of the token. A user with no role in the org gets 403 `no access to this org`. A role that is too low gives 403 "role <role> needed". `sampler` and `join` tokens have no role. An `api` token always has the `viewer` role. When it has a user and the server has a role source, the user must still have a role in the org, else 403.
+
+### Scopes
+
+An `oauth` token holds scopes: `fleet:read` (always held), `alerts:write` and `rules:write`. The effective right of a call is the scopes of the token, the role of the user and the org setting `mcp.aiChanges`, all three together. A scope is not enough alone. A `user` or `admin` token holds all scopes, and an `api` token holds `fleet:read` only. The MCP server checks the token kind before it uses a scope, so a `user` token stays read-only at `/mcp`.
+
+The key `mcp` of `ServerSettings` holds the org rules for AI clients:
+
+| Key | Meaning | Default |
+|---|---|---|
+| `membersConnect` | Members, not only admins, can connect an AI client. | `true` |
+| `anyClient` | Any OAuth client can connect, not only known clients. | `true` |
+| `apiKeys` | API keys can use `/mcp`. When `false`, an API key gets 403 "API keys are off for MCP in this org". | `true` |
+| `signInDays` | Days that an AI client stays signed in: 7, 30 or 90. | `30` |
+| `aiChanges` | `off` (read only), `alerts` (also `alerts:write`) or `alerts_and_rules` (also `rules:write`). | `alerts` |
+
+A `PUT /v1/settings` body with another `signInDays` or `aiChanges` gives 400. A body with no `mcp` keeps the stored value. The `settings_updated` message carries the key.
 
 ---
 
@@ -469,8 +486,15 @@ The server's [`wire`](../server/wire/wire.go) package is the source of truth. No
 The server has a read-only [Model Context Protocol](https://modelcontextprotocol.io) server at `POST /mcp`. It is part of the Go server, so a self-hosted server has it too. The cloud shows it at `https://api.towertail.com/mcp`. `TT_MCP__ENABLED=false` (`mcp.enabled`) turns it off. Then `/mcp` and `/mcp/v1` give 404.
 
 - **Transport:** streamable HTTP in stateless mode with JSON replies. Send `Content-Type: application/json` and `Accept: application/json, text/event-stream`. Each reply is one JSON body. There is no session and no stream. `GET` and `DELETE` give 405.
-- **Auth:** `Authorization: Bearer tt_...` with an `api` token. `user` and `admin` tokens also pass. Other kinds give 403. The role is `viewer`. The key budget of §2 applies (429 `rate_limited`). OAuth is not available yet.
+- **Auth:** `Authorization: Bearer tt_...` with an `api` token. `user` and `admin` tokens also pass. Other kinds give 403. The role is `viewer`. The key budget of §2 applies (429 `rate_limited`). `oauth` tokens also pass (see OAuth below).
 - **Paths:** `POST /mcp` serves the newest tools. `POST /mcp/v1` serves the same tools as `/mcp` today. Its schemas are for the directory reviews (for example Google), so they freeze before the first submission and then change only on purpose. A tool change that breaks a client goes to `/mcp` only. Both paths have the same auth and replies.
+- **OAuth:** OAuth is off until both `TT_MCP__RESOURCE_URL` (`mcp.resource_url`, for example `https://api.towertail.com/mcp`, with no trailing slash) and `TT_MCP__AUTHORIZATION_SERVER` (`mcp.authorization_server`, the issuer URL) are set. Load refuses only one of them and any URL that is not http or https. `TT_MCP__DOCS_URL` (`mcp.docs_url`) is the documentation page of the metadata.
+  - **Metadata:** `GET /.well-known/oauth-protected-resource/mcp` (also `/.well-known/oauth-protected-resource`) and `GET /.well-known/oauth-protected-resource/mcp/v1` give the RFC 9728 document: `resource` (exactly `mcp.resource_url`, plus `/v1` on the v1 path), `authorization_servers`, `scopes_supported`, `bearer_methods_supported` (`["header"]`), `resource_name` and `resource_documentation`. With OAuth off, they give 404.
+  - **Challenge:** each 401 of `/mcp` and `/mcp/v1` has `WWW-Authenticate: Bearer resource_metadata="<origin>/.well-known/oauth-protected-resource<path>", scope="fleet:read"`. When the request had a token, the value also has `error="invalid_token"`. With OAuth off, the value is `Bearer realm="towertail"`.
+  - **Audience:** the `audience` of an `oauth` token must be `mcp.resource_url` or `mcp.resource_url` + `/v1`. Both paths accept either one. Else 401 "token audience does not match".
+  - **API keys:** when the org setting `mcp.apiKeys` is `false`, an `api` token gets 403 on both paths. `oauth`, `user` and `admin` tokens still pass.
+  - **Rate limit:** the key budget of §2 also applies to `oauth` tokens. The access tokens of one grant share one budget.
+  - **CORS:** `/mcp`, `/mcp/v1`, `/.well-known/` and `/oauth/` allow any origin with no credentials, so browser clients on other sites can call them. They allow the headers `Authorization`, `Content-Type`, `Mcp-Protocol-Version` and `Mcp-Session-Id`, and expose `WWW-Authenticate`. All other routes keep `http.cors_allow_origins`.
 - **Tool metadata:** each tool in `tools/list` has `title` and `annotations`: `title`, `readOnlyHint`, `destructiveHint`, `idempotentHint` and `openWorldHint`. Every hint is explicit. A read tool has `readOnlyHint: true` and `idempotentHint: true`. No tool is destructive or open-world.
 - **Instructions:** the `initialize` result has `instructions`. The text (2 KB or less) gives facts: the host rule, the range syntax, the units and the plan limit. It gives no orders to the model.
 - **Result:** a good call gives `structuredContent` and one `text` block with the same JSON. Clients that read only text, such as Google, use that block.
