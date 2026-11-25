@@ -1,19 +1,26 @@
 import SwiftUI
 
-/// Composite key that lets `.task(id:)` restart on either host swap or
-/// active-state change.
+/// Restarts the frame loop on a host swap or an active-state change.
 private struct TaskKey: Hashable {
     let host: UUID
     let active: Bool
 }
 
-/// Restarts the Cloud history load on a host, metric or source change.
+/// Restarts the Cloud history load on a host, tab or source change.
 private struct HistoryKey: Hashable {
     let host: UUID
-    let metric: Metric
+    let disks: Bool
     let cloud: Bool
 }
 
+/// The data of a window that the live series do not hold.
+private struct OlderKey: Hashable {
+    let host: UUID
+    let from: Date
+    let to: Date
+}
+
+/// The host workbench: header, tabs, range control and the body of the tab.
 struct FullViewWindow: View {
     let context: FullViewContext
     @Environment(ServerStore.self) private var store
@@ -21,70 +28,49 @@ struct FullViewWindow: View {
     @Environment(NodeStore.self) private var nodeStore
     @Environment(\.backend) private var backend
     @Environment(\.viewLease) private var viewLease
-    /// SwiftUI's WindowGroup retains scene state after the user closes the
-    /// window (ordered-out, not destroyed) so a re-open is fast. AppKit
-    /// still includes the offscreen NSWindow in its layout cycle, which
-    /// means our Charts keep diffing against fresh snapshots and burning
-    /// CPU even when nothing is visible.
-    ///
-    /// `scenePhase` flips to `.background` when the window is ordered out
-    /// (closed but retained). That is the most reliable signal — focus-only
-    /// indicators like `controlActiveState` stay `.inactive` for an open
-    /// window in the background too, which would over-pause us.
+    /// `.background` means that the window is closed but retained. The body
+    /// then reads no observable state, so the hidden window costs no CPU.
     @Environment(\.scenePhase) private var scenePhase
     @State private var model: FullViewModel
-    /// Active host id. Seeded from `context` but mutable so the header's
-    /// host picker can swap the view between servers without re-opening
-    /// the window.
     @State private var activeHostId: UUID
-    /// Names this window in the view lease.
     @State private var leaseWindowID = UUID()
-    /// Throttle rate for chart + process-table rebuilds. Ingests can
-    /// arrive at 0.5s (local) or faster; rebuilding SwiftUI Charts +
-    /// Table on every ingest is wasted work. 5Hz is smooth visually and
-    /// matches the table's own throttle so both panels update in lockstep.
-    private static let renderInterval: TimeInterval = 0.2
 
-    /// Cached snapshots for the active chart. Refreshed on a 5Hz timer so
-    /// SwiftUI Charts only diffs when we say so, not on every ingest. The
-    /// body reads these arrays; hover/pin changes rebuild the body without
-    /// touching the underlying `MetricSeries`.
-    @State private var cachedMainSamples: [MetricPoint] = []
-    @State private var cachedDiskCapacity: [MetricPoint] = []
-    @State private var cachedDiskIO: [MetricPoint] = []
+    /// Charts read this frame. A loop rebuilds it about once per second.
+    @State private var frame = WorkbenchFrame.empty
+    @State private var older: [HistoryPoint] = []
+    @State private var olderKey: OlderKey?
+    @State private var olderAt = Date.distantPast
+    /// Oldest time of the local store, for the range control.
+    @State private var storeOldest: Date?
     @State private var historyLoading = false
     @State private var historyError: String?
 
-    init(context: FullViewContext) {
+    private static let frameInterval: Duration = .seconds(1)
+    private static let olderPoints = 300
+    private static let olderRefresh: TimeInterval = 30
+
+    init(context: FullViewContext, initialTab: HostTab? = nil) {
         self.context = context
-        _model = State(initialValue: FullViewModel(metric: context.metric))
+        let model = FullViewModel(context: context, source: .poll)
+        if let initialTab { model.tab = initialTab }
+        _model = State(initialValue: model)
         _activeHostId = State(initialValue: context.hostId)
     }
 
     var body: some View {
-        // Short-circuit before reading anything off `store` when the window
-        // is closed-but-retained. Reading `store.serverVMs` (and downstream
-        // `vm.cpu.latest` etc.) registers @Observable tracking, which means
-        // every poll re-invokes this body, re-evaluates the chart content
-        // closure, and keeps SwiftUI's display cycle running — burning CPU
-        // even though the window is offscreen. The placeholder reads no
-        // observable state, so no invalidations are scheduled until the
-        // user reopens the window and scenePhase flips back to .active.
-        // A ZStack, not a Group: a Group applies the modifiers to each branch.
         ZStack {
             if scenePhase == .background {
-                Color.clear.frame(minWidth: 860, minHeight: 520)
+                Color.clear.frame(minWidth: 980, minHeight: 600)
             } else {
                 activeBody
             }
         }
-        // Outside the `if`: the active body is gone while the window is hidden.
         .onAppear { reportLease() }
         .onDisappear { reportLease(visible: false) }
         .onChange(of: scenePhase) { _, _ in reportLease() }
         .onChange(of: activeHostId) { _, _ in reportLease() }
-        .onChange(of: model.metric) { _, _ in reportLease() }
-        .onChange(of: model.netSubTab) { _, _ in reportLease() }
+        .onChange(of: model.tab) { _, _ in reportLease() }
+        .onChange(of: model.processesView) { _, _ in reportLease() }
         .onChange(of: model.diskSubTab) { _, _ in reportLease() }
     }
 
@@ -95,119 +81,126 @@ struct FullViewWindow: View {
         )
     }
 
+    private var vm: ServerViewModel? {
+        store.serverVMs.first(where: { $0.id == activeHostId })
+    }
+
     @ViewBuilder
     private var activeBody: some View {
-        let vm = store.serverVMs.first(where: { $0.id == activeHostId })
+        let vm = vm
         VStack(spacing: 0) {
-            header(vm: vm)
-            Divider()
-            content(vm: vm)
+            if let vm {
+                WorkbenchHeader(vm: vm, score: vm.healthScore, hostId: $activeHostId)
+                Divider().overlay(WB.border)
+                WorkbenchTabBar(
+                    model: model, lastSample: frame.latest ?? vm.cpu.latest?.t,
+                    oldest: [frame.oldest, storeOldest].compactMap { $0 }.min()
+                )
+                tabBody(vm: vm)
+                    .overlay(alignment: .top) { historyOverlay }
+            } else {
+                ContentUnavailableView("No data", systemImage: "questionmark.circle")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
-        // Baseline layout with the DISK tab as the tallest worst case:
-        // header+transport (~40) + picker (~36) + capacity chart (min 90) +
-        // i/o chart (min 90) + process table (min 160) + paddings/dividers
-        // ≈ 500. Keep a little breathing room above that minimum so the
-        // window doesn't feel squished on first open.
-        .frame(minWidth: 860, minHeight: 520)
+        .background(WB.bg)
+        .frame(minWidth: 980, minHeight: 600)
         .focusable()
         .focusEffectDisabled()
         .onKeyPress(.space) {
-            guard let vm else { return .ignored }
-            let latest = currentSeries(vm: vm).latest?.t
-            model.togglePlayPause(latest: latest)
+            model.pinLatest(frame.latest)
             return .handled
         }
+        .onKeyPress(.escape) { model.handleEscape() ? .handled : .ignored }
+        .onKeyPress(.leftArrow) { model.stepPin(by: -1, span: stepSpan, now: Date()) ? .handled : .ignored }
+        .onKeyPress(.rightArrow) { model.stepPin(by: 1, span: stepSpan, now: Date()) ? .handled : .ignored }
         .onAppear {
             ActivationPolicyCoordinator.shared.acquire()
-            // Only the full view reads proc history, so we defer the
-            // SQLite hydration until someone actually opens this window.
-            // Launch stays cheap even with tens of MB of proc snapshots
-            // on disk; we pay the decode once, here, per session.
+            // Only this window reads proc history, so the SQLite load waits for it.
             store.ensureProcsHydrated(for: activeHostId)
-            refreshCaches(vm: vm)
+            rebuild(force: true)
         }
         .onDisappear { ActivationPolicyCoordinator.shared.release() }
-        // Drives the 5Hz cache refresh while the window is on-screen.
-        // `.task` is bound to the view's lifetime, so closing the window
-        // cancels the loop. The previous Timer.publish().autoconnect()
-        // path leaked: the publisher was held by a let-property created
-        // every time SwiftUI re-instantiated the View struct, so abandoned
-        // copies kept firing forever and burning CPU long after close.
-        //
-        // Gated on `scenePhase` so a window the user has closed (which
-        // WindowGroup keeps alive offscreen) doesn't keep churning SwiftUI
-        // Charts every 200ms — that was the post-close energy spike. When
-        // the window is reactivated the task restarts via `.task(id:)`.
+        // `.task` ends with the view. A hidden window (scene phase) builds no frames.
         .task(id: TaskKey(host: activeHostId, active: scenePhase == .active)) {
             guard scenePhase == .active else { return }
-            let nanos = UInt64(Self.renderInterval * 1_000_000_000)
             while !Task.isCancelled {
-                let current = store.serverVMs.first(where: { $0.id == activeHostId })
-                refreshCaches(vm: current)
-                try? await Task.sleep(nanoseconds: nanos)
+                rebuild()
+                try? await Task.sleep(for: Self.frameInterval)
             }
         }
-        .task(id: HistoryKey(host: activeHostId, metric: model.metric, cloud: vm?.liveSource == .cloud)) {
+        .task(id: HistoryKey(host: activeHostId, disks: model.tab == .disks, cloud: vm?.liveSource == .cloud)) {
             await loadCloudHistory()
         }
-        .onChange(of: model.metric) { _, _ in refreshCaches(vm: vm) }
-        .onChange(of: model.zoomRange) { _, _ in refreshCaches(vm: vm) }
-        .onChange(of: model.diskMount) { _, _ in refreshCaches(vm: vm) }
-        .onChange(of: model.diskDevice) { _, _ in refreshCaches(vm: vm) }
+        .onChange(of: model.range) { _, _ in rebuild(force: true) }
+        .onChange(of: model.zoomRange) { _, _ in rebuild(force: true) }
+        .onChange(of: model.diskMount) { _, _ in rebuild(force: true) }
+        .onChange(of: model.diskDevice) { _, _ in rebuild(force: true) }
         .onChange(of: activeHostId) { _, newId in
-            // Switching hosts: drop stale caches and hydrate the new one's
-            // proc history (same lazy path as onAppear). The cached chart
-            // arrays belong to the old host so clearing them avoids a
-            // 1-frame flash of the previous server's data.
-            cachedMainSamples = []
-            cachedDiskCapacity = []
-            cachedDiskIO = []
-            // Per-mount / per-device selections rarely transfer between
-            // hosts (different mountpoints, different device names), so
-            // reset them to the sensible default.
+            // The caches belong to the old host.
+            frame = .empty
+            older = []
+            olderKey = nil
+            storeOldest = nil
             model.diskMount = .max
             model.diskDevice = .total
+            model.offenderSelected = nil
+            model.openProcess = nil
             store.ensureProcsHydrated(for: newId)
-            refreshCaches(vm: store.serverVMs.first(where: { $0.id == newId }))
+            rebuild(force: true)
         }
     }
 
-    /// Pull snapshots from the live series and publish them to the cached
-    /// @State arrays. Everything below the body reads from the caches —
-    /// this is the only place we call `series.snapshot()`.
-    private func refreshCaches(vm: ServerViewModel?) {
+    /// The time of one sample, for the arrow keys.
+    private var stepSpan: TimeInterval {
+        let pts = frame.points(.cpu)
+        guard pts.count >= 2 else { return 5 }
+        let dt = pts[pts.count - 1].t.timeIntervalSince(pts[pts.count - 2].t)
+        return min(max(dt, 1), 60)
+    }
+
+    // MARK: Frame
+
+    private func rebuild(force: Bool = false) {
         guard let vm else { return }
-        switch model.metric {
-        case .cpu:  updateMain(clipToZoom(vm.cpu.snapshot()))
-        case .mem:  updateMain(clipToZoom(vm.mem.snapshot()))
-        case .net:  updateMain(clipToZoom(vm.net.snapshot()))
-        case .health: updateMain(clipToZoom(vm.procCount.snapshot()))
-        case .disk:
-            let capacity: [MetricPoint] = {
-                switch model.diskMount {
-                case .max: return vm.disksPerMount.max.snapshot()
-                case .mount(let m): return (vm.disksPerMount.series(forMount: m) ?? vm.disksPerMount.max).snapshot()
-                }
-            }()
-            let deviceSeries: DiskIOSeries.DeviceSeries = {
-                switch model.diskDevice {
-                case .total: return vm.diskIO.total
-                case .device(let name): return vm.diskIO.series(forDevice: name) ?? vm.diskIO.total
-                }
-            }()
-            let combined = combinedIOSeries(read: deviceSeries.read, write: deviceSeries.write)
-            let clippedCapacity = clipToZoom(capacity)
-            let clippedIO = clipToZoom(combined)
-            if cachedDiskCapacity != clippedCapacity { cachedDiskCapacity = clippedCapacity }
-            if cachedDiskIO != clippedIO { cachedDiskIO = clippedIO }
+        let now = Date()
+        let w = model.window(now: now)
+        if vm.liveSource != .cloud { loadOlder(vm: vm, window: w, now: now, force: force) }
+        let next = WorkbenchFrame(vm: vm, window: w, older: older)
+        if next != frame { frame = next }
+    }
+
+    /// Local rows from SQLite for the part of the window that the live series lack.
+    private func loadOlder(vm: ServerViewModel, window w: ClosedRange<Date>, now: Date, force: Bool) {
+        let liveFirst = vm.cpu.snapshot().first?.t ?? now
+        if storeOldest == nil || force || now.timeIntervalSince(olderAt) > Self.olderRefresh {
+            let wide = store.loadRange(
+                for: vm.id, from: now.addingTimeInterval(-HostRange.d30.seconds), to: now, maxPoints: 60
+            )
+            storeOldest = wide.first?.t
         }
+        guard w.lowerBound < liveFirst else {
+            if !older.isEmpty { older = [] }
+            olderKey = nil
+            return
+        }
+        // The key holds the window to the minute, so a moving window reloads rarely.
+        let to = min(w.upperBound, liveFirst)
+        let key = OlderKey(
+            host: vm.id,
+            from: Date(timeIntervalSince1970: (w.lowerBound.timeIntervalSince1970 / 60).rounded(.down) * 60),
+            to: Date(timeIntervalSince1970: (to.timeIntervalSince1970 / 60).rounded(.down) * 60)
+        )
+        guard force || key != olderKey || now.timeIntervalSince(olderAt) > Self.olderRefresh else { return }
+        older = store.loadRange(for: vm.id, from: w.lowerBound, to: to, maxPoints: Self.olderPoints)
+        olderKey = key
+        olderAt = now
     }
 
     /// Loads the 2 h series of a Cloud host over REST. Local and SSH hosts
     /// read SQLite instead.
     private func loadCloudHistory() async {
-        guard let loader = backend?.cloudHistory,
-              store.serverVMs.first(where: { $0.id == activeHostId })?.liveSource == .cloud else {
+        guard let loader = backend?.cloudHistory, vm?.liveSource == .cloud else {
             historyLoading = false
             historyError = nil
             return
@@ -215,152 +208,14 @@ struct FullViewWindow: View {
         historyLoading = true
         historyError = nil
         do {
-            try await loader.loadFullView(host: activeHostId, metric: model.metric)
+            try await loader.loadFullView(host: activeHostId, metric: model.tab == .disks ? .disk : .cpu)
         } catch {
             guard !Task.isCancelled else { return }
             historyError = CloudHistoryError.message(error)
         }
         guard !Task.isCancelled else { return }
         historyLoading = false
-        refreshCaches(vm: store.serverVMs.first(where: { $0.id == activeHostId }))
-    }
-
-    private func updateMain(_ samples: [MetricPoint]) {
-        if cachedMainSamples != samples { cachedMainSamples = samples }
-    }
-
-    @ViewBuilder
-    private func header(vm: ServerViewModel?) -> some View {
-        HStack(spacing: 10) {
-            hostPicker(current: vm)
-            Text(vm?.dnsName ?? "")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            Spacer()
-            transportControls(vm: vm)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-    }
-
-    /// Dropdown that swaps the window's active host in place. The label
-    /// mimics the previous bold hostname so the window still reads as
-    /// "I am looking at {host}" at a glance — the chevron hint signals
-    /// that it's clickable.
-    @ViewBuilder
-    private func hostPicker(current: ServerViewModel?) -> some View {
-        Menu {
-            ForEach(store.serverVMs) { other in
-                Button {
-                    if other.id != activeHostId {
-                        activeHostId = other.id
-                    }
-                } label: {
-                    Label(
-                        other.hostname,
-                        systemImage: other.id == activeHostId ? "checkmark" : ""
-                    )
-                }
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Text(current?.hostname ?? "Unknown host")
-                    .font(.title3).bold()
-                Image(systemName: "chevron.down")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help("Switch server")
-    }
-
-    @ViewBuilder
-    private func transportControls(vm: ServerViewModel?) -> some View {
-        HStack(spacing: 6) {
-            if case .pinned = model.mode {
-                Button("Unpin") { model.unpin() }
-            }
-            if model.canZoomIn {
-                Button {
-                    model.zoomInToSelection()
-                } label: {
-                    Label("Zoom in", systemImage: "plus.magnifyingglass")
-                }
-                .help("Zoom the chart to the highlighted range")
-            }
-            if model.canResetZoom {
-                Button {
-                    model.resetZoom()
-                } label: {
-                    Label("Reset zoom", systemImage: "arrow.up.left.and.arrow.down.right")
-                }
-                .help("Return to the full two-hour window")
-            }
-            Button {
-                let latest = vm.map { currentSeries(vm: $0).latest?.t } ?? nil
-                model.togglePlayPause(latest: latest)
-            } label: {
-                Image(systemName: model.isLive ? "pause.fill" : "play.fill")
-            }
-            .keyboardShortcut(" ", modifiers: [])
-
-            Button {
-                // v1.1 step-back
-            } label: {
-                Image(systemName: "backward.frame")
-            }
-            .disabled(model.isLive)
-
-            Button {
-                // v1.1 step-forward
-            } label: {
-                Image(systemName: "forward.frame")
-            }
-            .disabled(model.isLive)
-        }
-    }
-
-    @ViewBuilder
-    private func content(vm: ServerViewModel?) -> some View {
-        VStack(spacing: 12) {
-            Picker("Metric", selection: $model.metric) {
-                ForEach(Metric.allCases, id: \.self) { m in
-                    Text(m.displayName).tag(m)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 16)
-
-            if let vm {
-                Group {
-                    if model.metric == .disk {
-                        diskArea(vm: vm)
-                    } else {
-                        chartArea(vm: vm)
-                    }
-                }
-                .overlay { historyOverlay }
-                if model.metric == .health {
-                    HealthDetails(
-                        health: vm.health, thresholds: vm.thresholds,
-                        longProcs: vm.longProcs,
-                        onShow: { model.selectedPids = [$0.pid] },
-                        onIgnore: ignoreProc,
-                        hostId: vm.id
-                    )
-                    .padding(.horizontal, 16)
-                }
-                if !(model.metric == .disk && model.diskSubTab == .usage) {
-                    bottomTable(vm: vm)
-                }
-            } else {
-                ContentUnavailableView("No data", systemImage: "questionmark.circle")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .padding(.vertical, 10)
+        rebuild(force: true)
     }
 
     @ViewBuilder
@@ -371,483 +226,36 @@ struct FullViewWindow: View {
                 .foregroundStyle(.secondary)
                 .padding(10)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                .padding(.top, 40)
         } else if historyLoading {
-            ProgressView()
-                .controlSize(.large)
+            ProgressView().controlSize(.large).padding(.top, 60)
         }
     }
 
-    /// DISK tab: two stacked charts (capacity + I/O) with per-mount /
-    /// per-device pickers. The capacity chart preserves the existing
-    /// "worst mount" default so opening DISK looks the same as before.
-    @ViewBuilder
-    private func diskArea(vm: ServerViewModel) -> some View {
-        if model.diskSubTab == .usage, let backend, let node = nodeStore.node(withId: activeHostId) {
-            let m = model.usageModel(for: node, backend: backend, defaultScope: vm.hostOS == "linux" ? "/" : "~")
-            DiskUsageView(
-                model: m, vm: vm, via: scanVia(node: node, backend: backend),
-                scopeChoices: ["~"] + vm.disksPerMount.mounts.sorted(),
-                allowScan: !(backend is RemoteBackend) || node.allowDiskScan,
-                onAllowScans: backend is RemoteBackend ? {
-                    guard var n = nodeStore.node(withId: node.id) else { return }
-                    n.allowDiskScan = true
-                    try await backend.updateNode(n)
-                } : nil
-            ) {
-                diskSubTabPicker
-            }
-        } else {
-            VStack(spacing: 12) {
-                HStack {
-                    diskSubTabPicker
-                    Spacer()
-                }
-                .padding(.horizontal, 16)
-                capacityChart(vm: vm)
-                Divider().padding(.horizontal, 16)
-                ioChart(vm: vm)
-            }
-        }
-    }
-
-    private var diskSubTabPicker: some View {
-        Picker("Disk view", selection: $model.diskSubTab) {
-            ForEach(DiskSubTab.allCases) { t in
-                Text(t.displayName).tag(t)
-            }
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .fixedSize()
-    }
-
-    private func scanVia(node: Node, backend: any Backend) -> ScanVia {
-        if backend is RemoteBackend { return .server }
-        switch node.kind {
-        case .local: return .local
-        case .ssh: return .ssh(user: node.sshUser ?? "")
-        case .cloud: return .server
-        }
-    }
+    // MARK: Tabs
 
     @ViewBuilder
-    private func capacityChart(vm: ServerViewModel) -> some View {
-        let series: MetricSeries = {
-            switch model.diskMount {
-            case .max: return vm.disksPerMount.max
-            case .mount(let m): return vm.disksPerMount.series(forMount: m) ?? vm.disksPerMount.max
-            }
-        }()
-        let (warn, critical) = thresholds(for: .disk, vm: vm)
-        let latest = series.latest?.t
-        let pinned: Date? = {
-            if case .pinned(let t) = model.mode { return t }
-            return nil
-        }()
-        let effective = model.effectiveTimestamp(latest: latest)
-        let point = effective.flatMap { series.nearest(to: $0) } ?? series.latest
-        let v = point?.v ?? 0
-
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 12) {
-                Text("Capacity").font(.headline)
-                Text("\(Int(round(v * 100)))%")
-                    .font(.system(.title3, design: .rounded).monospacedDigit())
-                mountPicker(vm: vm)
-                if case .pinned = model.mode {
-                    Label("Pinned", systemImage: "pin.fill")
-                        .font(.caption)
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(Color.orange.opacity(0.2), in: Capsule())
-                        .foregroundStyle(Color.orange)
-                }
-                Spacer()
-                Text(snapshotAgeText(latest: latest))
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 16)
-
-            MetricChart(
-                samples: cachedDiskCapacity,
-                tint: {
-                    if let w = warn, let c = critical {
-                        return series.tint(warn: w, critical: c).color
-                    }
-                    return ThresholdTint.nominal.color
-                }(),
-                warn: warn,
-                critical: critical,
-                hoverAt: model.hoverAt,
-                pinnedAt: pinned,
-                yDomain: 0...1,
-                yAxisLabel: { v in "\(Int(v * 100))%" },
-                selectionRange: model.pendingSelection,
-                onHover: { model.hoverAt = $0 },
-                onPinTap: { model.pin(at: $0) },
-                onDragBegin: { model.beginSelection(at: $0) },
-                onDragUpdate: { model.updateSelection(to: $0) },
-                onDragEnd: { }
-            )
-            // Shorter minHeight so a cramped window can still fit both
-            // disk charts + the process table + toolbar. Flex up to infinity
-            // when there's room; the two disk charts share equally since
-            // both have layoutPriority(1).
-            .frame(minHeight: 90, maxHeight: .infinity)
-            .layoutPriority(1)
-            .padding(.horizontal, 16)
+    private func tabBody(vm: ServerViewModel) -> some View {
+        let node = nodeStore.node(withId: activeHostId)
+        switch model.tab {
+        case .overview:
+            OverviewTab(vm: vm, model: model, frame: frame, score: vm.healthScore, node: node, onIgnore: ignoreProc)
+        case .processes:
+            ProcessesTab(vm: vm, model: model, frame: frame, node: node, onIgnore: ignoreProc)
+        case .health:
+            HealthTab(vm: vm, model: model, frame: frame, score: vm.healthScore, node: node, onIgnore: ignoreProc)
+        case .disks:
+            DisksTab(vm: vm, model: model, frame: frame, node: node)
+        case .alerts:
+            AlertsTab(vm: vm)
+        case .settings:
+            SettingsTab(vm: vm, node: node)
         }
-    }
-
-    @ViewBuilder
-    private func ioChart(vm: ServerViewModel) -> some View {
-        let deviceSeries: DiskIOSeries.DeviceSeries = {
-            switch model.diskDevice {
-            case .total: return vm.diskIO.total
-            case .device(let name): return vm.diskIO.series(forDevice: name) ?? vm.diskIO.total
-            }
-        }()
-        let latest = deviceSeries.read.latest?.t ?? deviceSeries.write.latest?.t
-        let pinned: Date? = {
-            if case .pinned(let t) = model.mode { return t }
-            return nil
-        }()
-        let effective = model.effectiveTimestamp(latest: latest)
-        let rMBps: Double = {
-            if let t = effective, let p = deviceSeries.read.nearest(to: t) { return p.v }
-            return deviceSeries.read.latest?.v ?? 0
-        }()
-        let wMBps: Double = {
-            if let t = effective, let p = deviceSeries.write.nearest(to: t) { return p.v }
-            return deviceSeries.write.latest?.v ?? 0
-        }()
-
-        // The chart currently supports one series, so we plot read+write
-        // as a single combined throughput line. The header shows them
-        // individually so no information is lost.
-
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 12) {
-                Text("I/O").font(.headline)
-                let rTxt = Self.formatByteRate(bytesPerSec: rMBps * 1_048_576.0)
-                let wTxt = Self.formatByteRate(bytesPerSec: wMBps * 1_048_576.0)
-                Text("↓\(rTxt) · ↑\(wTxt)")
-                    .font(.system(.title3, design: .rounded).monospacedDigit())
-                // Cloud has no per-device history.
-                if vm.liveSource != .cloud { devicePicker(vm: vm) }
-                Spacer()
-            }
-            .padding(.horizontal, 16)
-
-            MetricChart(
-                samples: cachedDiskIO,
-                tint: ThresholdTint.nominal.color,
-                warn: nil,
-                critical: nil,
-                hoverAt: model.hoverAt,
-                pinnedAt: pinned,
-                yDomain: nil,
-                yAxisLabel: { v in Self.formatByteRate(bytesPerSec: v * 1_048_576.0) },
-                selectionRange: model.pendingSelection,
-                onHover: { model.hoverAt = $0 },
-                onPinTap: { model.pin(at: $0) },
-                onDragBegin: { model.beginSelection(at: $0) },
-                onDragUpdate: { model.updateSelection(to: $0) },
-                onDragEnd: { }
-            )
-            .frame(minHeight: 90, maxHeight: .infinity)
-            .layoutPriority(1)
-            .padding(.horizontal, 16)
-        }
-    }
-
-    private func clipToZoom(_ samples: [MetricPoint]) -> [MetricPoint] {
-        guard let z = model.zoomRange else { return samples }
-        return samples.filter { $0.t >= z.lowerBound && $0.t <= z.upperBound }
-    }
-
-    /// Merge read & write series into one "total throughput MB/s" series
-    /// by summing values at matching timestamps. Both series are appended
-    /// in lock-step by DiskIOSeries, so identical-indexed zipping is
-    /// safe; fall back to zero-fill if one side is sparse.
-    private func combinedIOSeries(read: MetricSeries, write: MetricSeries) -> [MetricPoint] {
-        let r = read.snapshot()
-        let w = write.snapshot()
-        if r.count == w.count {
-            return zip(r, w).map { MetricPoint(t: $0.0.t, v: $0.0.v + $0.1.v) }
-        }
-        // Unequal (shouldn't happen in practice): zip to the shorter,
-        // trailing points appear zero-fill.
-        let n = Swift.min(r.count, w.count)
-        guard n > 0 else { return [] }
-        var out: [MetricPoint] = []
-        out.reserveCapacity(n)
-        for i in 0..<n {
-            out.append(MetricPoint(t: r[i].t, v: r[i].v + w[i].v))
-        }
-        return out
-    }
-
-    @ViewBuilder
-    private func mountPicker(vm: ServerViewModel) -> some View {
-        let mounts = vm.disksPerMount.mounts
-        Menu {
-            Button {
-                model.diskMount = .max
-            } label: {
-                Label("Max (worst mount)", systemImage: model.diskMount == .max ? "checkmark" : "")
-            }
-            if !mounts.isEmpty { Divider() }
-            ForEach(mounts, id: \.self) { m in
-                Button {
-                    model.diskMount = .mount(m)
-                } label: {
-                    Label(m, systemImage: model.diskMount == .mount(m) ? "checkmark" : "")
-                }
-            }
-        } label: {
-            switch model.diskMount {
-            case .max: Text("Max").font(.caption)
-            case .mount(let m): Text(m).font(.caption)
-            }
-        }
-        .menuStyle(.borderlessButton)
-        .frame(maxWidth: 200, alignment: .leading)
-        .fixedSize()
-    }
-
-    @ViewBuilder
-    private func devicePicker(vm: ServerViewModel) -> some View {
-        let devices = vm.diskIO.devices
-        Menu {
-            Button {
-                model.diskDevice = .total
-            } label: {
-                Label("Total (all devices)", systemImage: model.diskDevice == .total ? "checkmark" : "")
-            }
-            if !devices.isEmpty { Divider() }
-            ForEach(devices, id: \.self) { d in
-                Button {
-                    model.diskDevice = .device(d)
-                } label: {
-                    Label(d, systemImage: model.diskDevice == .device(d) ? "checkmark" : "")
-                }
-            }
-        } label: {
-            switch model.diskDevice {
-            case .total: Text("Total").font(.caption)
-            case .device(let d): Text(d).font(.caption)
-            }
-        }
-        .menuStyle(.borderlessButton)
-        .frame(maxWidth: 200, alignment: .leading)
-        .fixedSize()
-    }
-
-    @ViewBuilder
-    private func chartArea(vm: ServerViewModel) -> some View {
-        let series = currentSeries(vm: vm)
-        let (warn, critical) = thresholds(for: model.metric, vm: vm)
-        let latest = series.latest?.t
-        let pinned: Date? = {
-            if case .pinned(let t) = model.mode { return t }
-            return nil
-        }()
-
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 12) {
-                Text(model.metric.displayName)
-                    .font(.headline)
-                valueText(vm: vm)
-                if case .pinned = model.mode {
-                    Label("Pinned", systemImage: "pin.fill")
-                        .font(.caption)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.orange.opacity(0.2), in: Capsule())
-                        .foregroundStyle(Color.orange)
-                }
-                Spacer()
-                Text(snapshotAgeText(latest: latest))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 16)
-
-            MetricChart(
-                samples: cachedMainSamples,
-                tint: tint(vm: vm, series: series, metric: model.metric),
-                warn: warn,
-                critical: critical,
-                hoverAt: model.hoverAt,
-                pinnedAt: pinned,
-                yDomain: model.metric == .net || model.metric == .health ? nil : 0...1,
-                yAxisLabel: {
-                    switch model.metric {
-                    case .net: return { v in Self.formatByteRate(bytesPerSec: v * 100.0 * 1_048_576.0) }
-                    case .health: return { v in HealthStatus.count(Int(v.rounded())) }
-                    default: return { v in "\(Int(v * 100))%" }
-                    }
-                }(),
-                selectionRange: model.pendingSelection,
-                onHover: { t in
-                    model.hoverAt = t
-                },
-                onPinTap: { t in
-                    model.pin(at: t)
-                },
-                onDragBegin: { model.beginSelection(at: $0) },
-                onDragUpdate: { model.updateSelection(to: $0) },
-                onDragEnd: { }
-            )
-            // Flex vertically: the chart grows into whatever height is
-            // left over after the fixed-height table, so resizing the
-            // window expands the chart rather than the process list.
-            .frame(minHeight: 240, maxHeight: .infinity)
-            .layoutPriority(1)
-            .padding(.horizontal, 16)
-        }
-    }
-
-    @ViewBuilder
-    private func processTable(vm: ServerViewModel) -> some View {
-        if let range = pastRange(vm: vm), let loader = backend?.cloudHistory {
-            PastProcessTable(host: vm.id, range: range, loader: loader)
-        } else {
-            liveProcessTable(vm: vm)
-        }
-    }
-
-    /// The range of a Cloud host when the hover time or the zoom is older
-    /// than the newest process snapshot by more than 1 min.
-    private func pastRange(vm: ServerViewModel) -> ClosedRange<Date>? {
-        guard vm.liveSource == .cloud, backend?.cloudHistory != nil else { return nil }
-        let limit = (vm.procs.latest?.t ?? Date()).addingTimeInterval(-60)
-        if let z = model.zoomRange, z.upperBound < limit { return z }
-        if let t = model.effectiveTimestamp(latest: nil), t < limit {
-            let start = (t.timeIntervalSince1970 / 60).rounded(.down) * 60
-            return Date(timeIntervalSince1970: start)...Date(timeIntervalSince1970: start + 60)
-        }
-        return nil
-    }
-
-    @ViewBuilder
-    private func liveProcessTable(vm: ServerViewModel) -> some View {
-        let effective = model.effectiveTimestamp(latest: vm.procs.latest?.t)
-        ProcessTable(
-            series: vm.procs,
-            effectiveAt: effective,
-            available: vm.procsAvailable,
-            isRootSampler: vm.procsRoot,
-            metric: model.metric,
-            node: nodeStore.node(withId: activeHostId),
-            skippedTotal: vm.procsSkippedTotal,
-            longProcs: vm.longProcs,
-            onIgnore: ignoreProc,
-            selection: $model.selectedPids
-        )
     }
 
     private func ignoreProc(_ name: String, scope: LongProcIgnore.Scope) {
         let action = LongProcIgnore(settings: settings, nodes: nodeStore, servers: store, backend: backend)
         Task { await action.ignore(name, on: scope) }
-    }
-
-    /// Picks the table beneath the chart. Outside NET this is always the
-    /// process table — same shape as v1. On NET we expose a small
-    /// segmented picker so the user can flip to the per-process port
-    /// footprint, which answers "is this binary opening a lot of
-    /// outbound connections?" directly.
-    @ViewBuilder
-    private func bottomTable(vm: ServerViewModel) -> some View {
-        if model.metric == .net {
-            VStack(alignment: .leading, spacing: 6) {
-                Picker("Sub-tab", selection: $model.netSubTab) {
-                    ForEach(NetSubTab.allCases) { t in
-                        Text(t.displayName).tag(t)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .padding(.horizontal, 16)
-
-                switch model.netSubTab {
-                case .processes:
-                    processTable(vm: vm)
-                case .ports:
-                    PortsTable(
-                        ports: vm.ports,
-                        available: vm.portsAvailable,
-                        isRootSampler: vm.ports?.root ?? vm.procsRoot,
-                        node: nodeStore.node(withId: activeHostId)
-                    )
-                }
-            }
-        } else {
-            processTable(vm: vm)
-        }
-    }
-
-private func valueText(vm: ServerViewModel) -> some View {
-        let series = currentSeries(vm: vm)
-        let effective = model.effectiveTimestamp(latest: series.latest?.t)
-        let point = effective.flatMap { series.nearest(to: $0) } ?? series.latest
-        let v = point?.v ?? 0
-        let text: String
-        switch model.metric {
-        case .net:
-            let rxMBps: Double = {
-                if let t = effective, let p = vm.netRx.nearest(to: t) { return p.v }
-                return vm.netRx.latest?.v ?? vm.netRxMBps
-            }()
-            let txMBps: Double = {
-                if let t = effective, let p = vm.netTx.nearest(to: t) { return p.v }
-                return vm.netTx.latest?.v ?? vm.netTxMBps
-            }()
-            let rx = Self.formatByteRate(bytesPerSec: rxMBps * 1_048_576.0)
-            let tx = Self.formatByteRate(bytesPerSec: txMBps * 1_048_576.0)
-            text = "↓\(rx) · ↑\(tx)"
-        case .health:
-            text = "\(HealthStatus.count(Int(v.rounded()))) processes"
-        default:
-            text = "\(Int(round(v * 100)))%"
-        }
-        return Text(text)
-            .font(.system(.title3, design: .rounded).monospacedDigit())
-    }
-
-    private func currentSeries(vm: ServerViewModel) -> MetricSeries {
-        switch model.metric {
-        case .cpu: return vm.cpu
-        case .mem: return vm.mem
-        case .disk: return vm.disk
-        case .net: return vm.net
-        case .health: return vm.procCount
-        }
-    }
-
-    private func thresholds(for metric: Metric, vm: ServerViewModel) -> (Double?, Double?) {
-        switch metric {
-        case .cpu: return (vm.thresholds.cpuWarn, vm.thresholds.cpuCritical)
-        case .mem: return (vm.thresholds.memWarn, vm.thresholds.memCritical)
-        case .disk: return (vm.thresholds.diskWarn, vm.thresholds.diskCritical)
-        case .net, .health: return (nil, nil)
-        }
-    }
-
-    private func tint(vm: ServerViewModel, series: MetricSeries, metric: Metric) -> Color {
-        if metric == .health { return vm.health.tint.color }
-        let (warn, critical) = thresholds(for: metric, vm: vm)
-        if let w = warn, let c = critical {
-            return series.tint(warn: w, critical: c).color
-        }
-        return ThresholdTint.nominal.color
-    }
-
-    private func snapshotAgeText(latest: Date?) -> String {
-        guard let latest else { return "—" }
-        let age = Int(max(0, Date().timeIntervalSince(latest)))
-        if age < 60 { return "\(age)s ago" }
-        return "\(age / 60)m ago"
     }
 
     /// Formats a byte-rate with an adaptive unit so small values stay readable.

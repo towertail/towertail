@@ -133,6 +133,15 @@ final class ServerViewModel: Identifiable {
     /// changed, so the app keeps the last value.
     @ObservationIgnored private var healthInfo: HealthInfo?
     @ObservationIgnored private var healthInodes: Double?
+    /// Worst-check score of the latest data, re-evaluated on every ingest.
+    private(set) var healthScore = HealthScore(parts: [])
+    var healthScoreSeries: MetricSeries
+    /// Load average over 1 min, per sample.
+    var load: MetricSeries
+    /// Kernel and uptime of the host, from the last sample or the facts.
+    private(set) var kernel: String?
+    private(set) var uptimeS: Int64?
+    @ObservationIgnored private var scoreInput = ScoreInput()
     /// Process count per sample, raw (not a fraction).
     var procCount: MetricSeries
     /// Process count when the latest sample skipped the per-process scan
@@ -142,7 +151,7 @@ final class ServerViewModel: Identifiable {
     private(set) var cpuCores: Int?
     /// Used memory in bytes, from the latest sample or summary.
     private(set) var memUsedBytes: Int64?
-    @ObservationIgnored private var memTotalBytes: Int64?
+    private(set) var memTotalBytes: Int64?
 
     var thresholds: MetricThresholds
     var alertRules: AlertRules
@@ -204,6 +213,18 @@ final class ServerViewModel: Identifiable {
         self.diskIO = DiskIOSeries()
         self.procs = ProcSeries()
         self.procCount = MetricSeries()
+        self.healthScoreSeries = MetricSeries()
+        self.load = MetricSeries()
+    }
+
+    /// The last data that the health score uses.
+    private struct ScoreInput {
+        var info: HealthInfo?
+        var disks: [DiskSample]?
+        var inodeRatio: Double?
+        var cpu: Double?
+        var mem: Double?
+        var disk: Double?
     }
 
     @discardableResult
@@ -217,9 +238,12 @@ final class ServerViewModel: Identifiable {
         // hosts stay stuck on their placeholder "—" because osArch is
         // only set at VM creation time.
         applyFacts(os: s.host.os, arch: s.host.arch, sampler: s.host.sampler)
+        kernel = s.host.kernel.isEmpty ? nil : s.host.kernel
+        uptimeS = s.host.uptimeS
         let cpuFrac = computeCPUFraction(from: s.cpu)
         let cpuV = min(max(cpuFrac, 0), 1)
         cpu.append(MetricPoint(t: s.ts, v: cpuV))
+        load.append(MetricPoint(t: s.ts, v: s.cpu.load1))
         cpuCores = s.cpu.cores > 0 ? s.cpu.cores : nil
         memUsedBytes = s.mem.used
         if s.mem.total > 0 { memTotalBytes = s.mem.total }
@@ -280,6 +304,11 @@ final class ServerViewModel: Identifiable {
             info: s.health, disks: s.disks, thresholds: thresholds, longProcs: longProcs, now: s.ts,
             kernelCriticalOnly: memPressureOverridden
         )
+        scoreInput = ScoreInput(
+            info: s.health, disks: s.disks, inodeRatio: nil,
+            cpu: cpuV, mem: memV, disk: min(max(diskV, 0), 1)
+        )
+        let score = refreshScore(at: s.ts)
         let procsV = (s.health?.procs ?? s.procs?.total).map(Double.init)
         if let procsV {
             procCount.append(MetricPoint(t: s.ts, v: procsV))
@@ -297,7 +326,9 @@ final class ServerViewModel: Identifiable {
             cpu: cpuV, mem: memV, disk: diskV, net: netV,
             rxMBps: rxV,
             txMBps: txV,
-            procs: procsV
+            procs: procsV,
+            score: score,
+            load: s.cpu.load1
         )
     }
 
@@ -316,6 +347,10 @@ final class ServerViewModel: Identifiable {
         cpu.append(MetricPoint(t: s.ts, v: cpuV))
         mem.append(MetricPoint(t: s.ts, v: memV))
         disk.append(MetricPoint(t: s.ts, v: diskV))
+        load.append(MetricPoint(t: s.ts, v: s.load))
+        scoreInput.cpu = cpuV
+        scoreInput.mem = memV
+        scoreInput.disk = diskV
         memUsedBytes = memTotalBytes.map { Int64((Double($0) * memV).rounded()) }
 
         netRxMBps = Double(max(s.rx, 0)) / 1_048_576.0
@@ -332,6 +367,7 @@ final class ServerViewModel: Identifiable {
             healthInodes = h.inodes
         }
         rebuildHealth(now: s.ts)
+        refreshScore(at: s.ts)
         memPressured = healthPressure(healthInfo)
         liveSource = .cloud
         refreshState(at: s.ts, cpu: cpuV, mem: memV, disk: diskV)
@@ -341,6 +377,8 @@ final class ServerViewModel: Identifiable {
         applyFacts(os: f.os, arch: f.arch, sampler: f.sampler)
         cpuCores = f.cores > 0 ? f.cores : nil
         if f.memTotal > 0 { memTotalBytes = f.memTotal }
+        if let k = f.kernel, !k.isEmpty { kernel = k }
+        uptimeS = f.uptimeS
     }
 
     /// Takes the parts of one tab from a `detail` frame.
@@ -363,6 +401,7 @@ final class ServerViewModel: Identifiable {
         }
         if d.procs != nil || d.health != nil {
             rebuildHealth(now: d.ts)
+            refreshScore(at: d.ts, append: false)
             updateAlertLevel()
         }
     }
@@ -412,6 +451,23 @@ final class ServerViewModel: Identifiable {
             info: healthInfo, disks: nil, thresholds: thresholds, longProcs: longProcs, now: now,
             kernelCriticalOnly: memPressureOverridden, inodeRatio: healthInodes
         )
+        scoreInput.info = healthInfo
+        scoreInput.disks = nil
+        scoreInput.inodeRatio = healthInodes
+    }
+
+    /// Sets `healthScore` from the last data. `append` adds a point to the
+    /// score series. The new score is the return value.
+    @discardableResult
+    private func refreshScore(at t: Date, append: Bool = true) -> Double {
+        let i = scoreInput
+        healthScore = HealthScore(
+            info: i.info, disks: i.disks, cpu: i.cpu, mem: i.mem, disk: i.disk,
+            longProcs: longProcs, thresholds: thresholds, muted: mutedSignals,
+            inodeRatio: i.inodeRatio, kernelCriticalOnly: memPressureOverridden
+        )
+        if append { healthScoreSeries.append(MetricPoint(t: t, v: healthScore.score)) }
+        return healthScore.score
     }
 
     /// Records the tints and sets the connection state after an ingest.
@@ -486,6 +542,8 @@ final class ServerViewModel: Identifiable {
             if let v = p.rxMBps { netRx.append(MetricPoint(t: p.t, v: v)) }
             if let v = p.txMBps { netTx.append(MetricPoint(t: p.t, v: v)) }
             if let v = p.procs { procCount.append(MetricPoint(t: p.t, v: v)) }
+            if let v = p.score { healthScoreSeries.append(MetricPoint(t: p.t, v: v)) }
+            if let v = p.load { load.append(MetricPoint(t: p.t, v: v)) }
         }
         if let last = points.last {
             lastSeen = last.t
@@ -506,6 +564,8 @@ final class ServerViewModel: Identifiable {
         netRx.merge(history: series(\.rxMBps))
         netTx.merge(history: series(\.txMBps))
         procCount.merge(history: series(\.procs))
+        healthScoreSeries.merge(history: series(\.score))
+        load.merge(history: series(\.load))
     }
 
     func mergeDisk(capacity: [HistoryStore.DiskCapacityRow], io: [HistoryStore.DiskIORow]) {
@@ -678,6 +738,7 @@ final class ServerViewModel: Identifiable {
         ignoredProcs = ignored
         if !rule.enabled { longProcTracker.reset() }
         longProcs = rule.enabled ? longProcs.filter { !ignored.contains($0.name.lowercased()) } : []
+        refreshScore(at: Date(), append: false)
         updateAlertLevel()
     }
 
@@ -686,6 +747,7 @@ final class ServerViewModel: Identifiable {
         guard muted != mutedSignals else { return }
         mutedSignals = muted
         windows[.health] = nil
+        refreshScore(at: Date(), append: false)
         updateAlertLevel()
     }
 

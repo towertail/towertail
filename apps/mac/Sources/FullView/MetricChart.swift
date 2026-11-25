@@ -1,9 +1,18 @@
 import SwiftUI
 import Charts
 
+/// One line of a chart. The first series of a chart is also filled.
+struct ChartSeries: Identifiable, Equatable {
+    let name: String
+    let color: Color
+    let points: [MetricPoint]
+    var id: String { name }
+}
+
 struct MetricChart: View {
-    let samples: [MetricPoint]
-    let tint: Color
+    let series: [ChartSeries]
+    /// The whole window of the x axis, also where the data is shorter.
+    let xDomain: ClosedRange<Date>
     let warn: Double?
     let critical: Double?
     let hoverAt: Date?
@@ -11,11 +20,12 @@ struct MetricChart: View {
     /// When nil the Y axis auto-scales to the data's peak (+15%) so
     /// low-magnitude metrics like NET remain legible.
     var yDomain: ClosedRange<Double>? = 0...1
-    /// Formats the Y axis tick labels. Defaults to a 0–100% formatter.
+    /// Formats the Y axis tick labels. Defaults to a 0-100% formatter.
     var yAxisLabel: (Double) -> String = { v in "\(Int(v * 100))%" }
+    /// Formats the values of the tooltip.
+    var valueFormat: (Double) -> String = { v in "\(Int((v * 100).rounded()))%" }
     /// Live drag selection (start, end dates) — not necessarily ordered.
-    /// When non-nil, rendered as a translucent orange rectangle so the
-    /// user can see what the "Zoom in" button will act on.
+    /// Drawn as a translucent rectangle for the span that a drag zooms to.
     var selectionRange: ClosedRange<Date>? = nil
     var onHover: ((Date?) -> Void)? = nil
     var onPinTap: ((Date) -> Void)? = nil
@@ -36,16 +46,22 @@ struct MetricChart: View {
     private static let dragActivationThreshold: CGFloat = 3
 
     var body: some View {
-        Chart(samples) { p in
-            AreaMark(x: .value("t", p.t), y: .value("v", p.v))
-                .foregroundStyle(LinearGradient(
-                    colors: [tint.opacity(0.35), tint.opacity(0.02)],
-                    startPoint: .top, endPoint: .bottom))
-                .interpolationMethod(.monotone)
-            LineMark(x: .value("t", p.t), y: .value("v", p.v))
-                .foregroundStyle(tint)
-                .lineStyle(.init(lineWidth: 1.4))
-                .interpolationMethod(.monotone)
+        Chart {
+            ForEach(Array(visible.enumerated()), id: \.element.id) { index, s in
+                ForEach(s.points) { p in
+                    if index == 0 {
+                        AreaMark(x: .value("t", p.t), y: .value("v", p.v), series: .value("s", s.name))
+                            .foregroundStyle(LinearGradient(
+                                colors: [s.color.opacity(0.28), s.color.opacity(0.02)],
+                                startPoint: .top, endPoint: .bottom))
+                            .interpolationMethod(.monotone)
+                    }
+                    LineMark(x: .value("t", p.t), y: .value("v", p.v), series: .value("s", s.name))
+                        .foregroundStyle(s.color)
+                        .lineStyle(.init(lineWidth: 1.4))
+                        .interpolationMethod(.monotone)
+                }
+            }
             if let warn {
                 RuleMark(y: .value("warn", warn))
                     .foregroundStyle(Color.orange.opacity(0.35))
@@ -56,14 +72,10 @@ struct MetricChart: View {
                     .foregroundStyle(Color.red.opacity(0.35))
                     .lineStyle(.init(lineWidth: 0.8, dash: [3, 3]))
             }
-            // NOTE: hover + pinned indicators are intentionally NOT plotted
-            // as RuleMarks here. Any change to their date would rebuild the
-            // whole Chart (diffing every sample), which caps their refresh
-            // at the chart's throttle rate and produces a visibly laggy
-            // cursor. They're drawn in `chartOverlay` below instead, where
-            // the overlay redraws independently of the Chart body at full
-            // SwiftUI refresh rate.
+            // The hover and pin lines are in `chartOverlay`. A change of
+            // their date would rebuild the chart and slow the cursor.
         }
+        .chartXScale(domain: xDomain)
         .chartYScale(domain: effectiveYDomain)
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: 5))
@@ -91,6 +103,9 @@ struct MetricChart: View {
                     // so the cursor line moves at full refresh rate even
                     // while the underlying Chart is throttled.
                     cursorOverlay(proxy: proxy, geo: geo)
+                        .allowsHitTesting(false)
+
+                    tooltipOverlay(proxy: proxy, geo: geo)
                         .allowsHitTesting(false)
 
                     Rectangle().fill(.clear).contentShape(.rect)
@@ -205,20 +220,63 @@ struct MetricChart: View {
         return proxy.value(atX: x)
     }
 
-    /// Swift Charts auto-pads the X-axis domain to fill the plot width, so
-    /// `proxy.value(atX:)` at the right edge returns a timestamp past the
-    /// last ingested sample. Clamp to the actual sample range so the
-    /// hover/pin time never drifts into the future (or before the buffer).
+    /// The time of the cursor stays in the window and not after now.
     private func clampToSamples(_ t: Date) -> Date {
-        guard let first = samples.first?.t, let last = samples.last?.t else { return t }
-        if t < first { return first }
-        if t > last { return last }
-        return t
+        let upper = min(xDomain.upperBound, Date())
+        return min(max(t, xDomain.lowerBound), max(upper, xDomain.lowerBound))
+    }
+
+    /// The points inside the window.
+    private var visible: [ChartSeries] {
+        series.map { s in
+            ChartSeries(name: s.name, color: s.color, points: s.points.filter { xDomain.contains($0.t) })
+        }
+    }
+
+    @ViewBuilder
+    private func tooltipOverlay(proxy: ChartProxy, geo: GeometryProxy) -> some View {
+        if let hoverAt, let plot = proxy.plotFrame.map({ geo[$0] }), let x = proxy.position(forX: hoverAt) {
+            let rows = series.compactMap { s in Self.nearest(in: s.points, to: hoverAt).map { (s, $0) } }
+            if !rows.isEmpty {
+                let flip = x > plot.width * 0.6
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(hoverAt.formatted(date: .abbreviated, time: .standard))
+                        .foregroundStyle(.secondary)
+                    ForEach(rows, id: \.0.id) { s, p in
+                        HStack(spacing: 5) {
+                            Circle().fill(s.color).frame(width: 6, height: 6)
+                            if rows.count > 1 { Text(s.name).foregroundStyle(.secondary) }
+                            Text(valueFormat(p.v)).fontWeight(.semibold)
+                        }
+                    }
+                }
+                .font(.system(size: 11, design: .monospaced))
+                .padding(.horizontal, 8).padding(.vertical, 5)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.primary.opacity(0.12), lineWidth: 0.5))
+                .fixedSize()
+                .alignmentGuide(.leading) { d in flip ? d.width + 8 : -8 }
+                .offset(x: plot.origin.x + x, y: plot.origin.y + 4)
+            }
+        }
+    }
+
+    /// The point of a sorted series that is nearest to `t`.
+    static func nearest(in points: [MetricPoint], to t: Date) -> MetricPoint? {
+        guard !points.isEmpty else { return nil }
+        var lo = 0
+        var hi = points.count - 1
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if points[mid].t < t { lo = mid + 1 } else { hi = mid }
+        }
+        if lo > 0, t.timeIntervalSince(points[lo - 1].t) < points[lo].t.timeIntervalSince(t) { lo -= 1 }
+        return points[lo]
     }
 
     private var effectiveYDomain: ClosedRange<Double> {
         if let fixed = yDomain { return fixed }
-        let peak = samples.map(\.v).max() ?? 0
+        let peak = series.flatMap(\.points).map(\.v).max() ?? 0
         let ceiling = max(peak * 1.15, 0.0001)
         return 0...ceiling
     }

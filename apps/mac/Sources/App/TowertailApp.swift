@@ -93,6 +93,8 @@ struct TowertailApp: App {
                         .environment(\.backend, env.backend)
                         .environment(\.viewLease, env.viewLease)
                         .environment(env.cloud)
+                        .environment(env.installer)
+                        .environment(env.samplerUpdater)
                 } else {
                     ContentUnavailableView("No host", systemImage: "server.rack")
                 }

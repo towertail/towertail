@@ -23,6 +23,8 @@ struct CanvasSparkline: View {
     var height: CGFloat = 28
     /// False draws the line only, for charts that overlay two series.
     var showsArea = true
+    /// Fixed x range. Nil shows the last `windowSeconds` before the newest point.
+    var xDomain: ClosedRange<Date>? = nil
 
     var body: some View {
         Canvas(opaque: false, rendersAsynchronously: false) { ctx, size in
@@ -176,6 +178,7 @@ struct CanvasSparkline: View {
     }
 
     private var computedXDomain: ClosedRange<Date> {
+        if let xDomain { return xDomain }
         let latest = samples.last?.t ?? Date()
         let earliest = latest.addingTimeInterval(-max(1, windowSeconds))
         return earliest...latest

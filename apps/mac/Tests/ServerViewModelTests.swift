@@ -440,4 +440,25 @@ final class ServerViewModelTests: XCTestCase {
         XCTAssertEqual(vm.memUsedBytes, 500)
         XCTAssertEqual(vm.cpuCores, 2)
     }
+
+    func testIngestSetsHealthScoreAndAppendsSeries() {
+        let vm = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x")
+        vm.ingest(makeSample(cpuPct: 20, memFrac: 0.3, diskFrac: 0.3))
+        XCTAssertEqual(vm.healthScoreSeries.snapshot().count, 1)
+        XCTAssertEqual(vm.healthScore.tint, .nominal)
+        XCTAssertGreaterThan(vm.healthScore.score, 80)
+
+        let point = vm.ingest(makeSample(cpuPct: 95, memFrac: 0.3, diskFrac: 0.3))
+        XCTAssertEqual(vm.healthScoreSeries.snapshot().count, 2)
+        XCTAssertEqual(vm.healthScore.tint, .critical)
+        XCTAssertEqual(vm.healthScore.worst?.check, .cpu)
+        XCTAssertEqual(vm.healthScoreSeries.latest?.v, vm.healthScore.score)
+        XCTAssertEqual(point.score, vm.healthScore.score)
+    }
+
+    func testIngestAppendsLoad() {
+        let vm = ServerViewModel(hostname: "h", dnsName: "h", osArch: "x")
+        vm.ingest(summary: LiveSummary(ts: Date(), cpu: 10, mem: 0.5, disk: 0.1, rx: 0, tx: 0, load: 1.5))
+        XCTAssertEqual(vm.load.latest?.v, 1.5)
+    }
 }

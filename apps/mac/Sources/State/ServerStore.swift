@@ -104,6 +104,11 @@ final class ServerStore {
         logAggregateIfChanged()
     }
 
+    /// Local rows of a window, averaged to `maxPoints`. Empty without a store.
+    func loadRange(for id: UUID, from: Date, to: Date, maxPoints: Int) -> [HistoryPoint] {
+        history?.loadRange(nodeID: id, from: from, to: to, maxPoints: maxPoints) ?? []
+    }
+
     func merge(history points: [HistoryPoint], for id: UUID) {
         serverVMs.first(where: { $0.id == id })?.merge(history: points)
     }

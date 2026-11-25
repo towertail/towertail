@@ -3,7 +3,7 @@ import Foundation
 /// Host health evaluated from one sample's `health` block and disk inodes.
 /// All limits come from `MetricThresholds`.
 struct HealthStatus: Sendable, Equatable {
-    enum Signal: Sendable, Equatable {
+    enum Signal: Sendable, Hashable {
         case procs, zombies, pids, files, memPressure, ioPressure, inodes, longProc
     }
 

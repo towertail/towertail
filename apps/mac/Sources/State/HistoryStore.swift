@@ -116,10 +116,12 @@ final class HistoryStore: @unchecked Sendable {
         // Added after v1 shipped; fails harmlessly with "duplicate column"
         // on databases that already have it.
         sqlite3_exec(db, "ALTER TABLE samples ADD COLUMN procs REAL;", nil, nil, nil)
+        sqlite3_exec(db, "ALTER TABLE samples ADD COLUMN health_score REAL;", nil, nil, nil)
+        sqlite3_exec(db, "ALTER TABLE samples ADD COLUMN load_1 REAL;", nil, nil, nil)
 
         let insertSQL = """
-        INSERT INTO samples (node_id, ts, cpu, mem, disk, net, rx_mbps, tx_mbps, procs)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+        INSERT INTO samples (node_id, ts, cpu, mem, disk, net, rx_mbps, tx_mbps, procs, health_score, load_1)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """
         sqlite3_prepare_v2(db, insertSQL, -1, &insertStmt, nil)
 
@@ -172,6 +174,8 @@ final class HistoryStore: @unchecked Sendable {
             Self.bindOptional(stmt, 7, point.rxMBps)
             Self.bindOptional(stmt, 8, point.txMBps)
             Self.bindOptional(stmt, 9, point.procs)
+            Self.bindOptional(stmt, 10, point.score)
+            Self.bindOptional(stmt, 11, point.load)
             sqlite3_step(stmt)
         }
     }
@@ -181,7 +185,7 @@ final class HistoryStore: @unchecked Sendable {
         queue.sync {
             guard let db else { return [] }
             let sql = """
-            SELECT ts, cpu, mem, disk, net, rx_mbps, tx_mbps, procs
+            SELECT ts, cpu, mem, disk, net, rx_mbps, tx_mbps, procs, health_score, load_1
             FROM samples WHERE node_id = ?
             ORDER BY ts DESC LIMIT ?;
             """
@@ -204,11 +208,57 @@ final class HistoryStore: @unchecked Sendable {
                     net: Self.readOptional(stmt, 4),
                     rxMBps: Self.readOptional(stmt, 5),
                     txMBps: Self.readOptional(stmt, 6),
-                    procs: Self.readOptional(stmt, 7)
+                    procs: Self.readOptional(stmt, 7),
+                    score: Self.readOptional(stmt, 8),
+                    load: Self.readOptional(stmt, 9)
                 )
                 out.append(point)
             }
             return out.reversed()
+        }
+    }
+
+    /// Rows of a time range, averaged in `maxPoints` equal steps, oldest first.
+    /// A step with no rows gives no point.
+    func loadRange(nodeID: UUID, from: Date, to: Date, maxPoints: Int) -> [HistoryPoint] {
+        let span = to.timeIntervalSince(from)
+        guard maxPoints > 0, span > 0 else { return [] }
+        let step = span / Double(maxPoints)
+        return queue.sync {
+            guard let db else { return [] }
+            let sql = """
+            SELECT MIN(CAST((ts - ?1) / ?2 AS INTEGER), ?3) AS b, AVG(ts),
+                   AVG(cpu), AVG(mem), AVG(disk), AVG(net), AVG(rx_mbps), AVG(tx_mbps),
+                   AVG(procs), AVG(health_score), AVG(load_1)
+            FROM samples WHERE node_id = ?4 AND ts >= ?1 AND ts <= ?5
+            GROUP BY b ORDER BY b;
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_double(stmt, 1, from.timeIntervalSince1970)
+            sqlite3_bind_double(stmt, 2, step)
+            sqlite3_bind_int(stmt, 3, Int32(maxPoints - 1))
+            _ = nodeID.uuidString.withCString { cstr in
+                sqlite3_bind_text(stmt, 4, cstr, -1, Self.sqliteTransient)
+            }
+            sqlite3_bind_double(stmt, 5, to.timeIntervalSince1970)
+            var out: [HistoryPoint] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                out.append(HistoryPoint(
+                    t: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 1)),
+                    cpu: Self.readOptional(stmt, 2),
+                    mem: Self.readOptional(stmt, 3),
+                    disk: Self.readOptional(stmt, 4),
+                    net: Self.readOptional(stmt, 5),
+                    rxMBps: Self.readOptional(stmt, 6),
+                    txMBps: Self.readOptional(stmt, 7),
+                    procs: Self.readOptional(stmt, 8),
+                    score: Self.readOptional(stmt, 9),
+                    load: Self.readOptional(stmt, 10)
+                ))
+            }
+            return out
         }
     }
 
@@ -547,4 +597,8 @@ struct HistoryPoint: Sendable, Equatable {
     let txMBps: Double?
     /// Raw process count; nil for rows written before it existed.
     var procs: Double? = nil
+    /// Health score (0 to 100); nil for rows written before it existed.
+    var score: Double? = nil
+    /// Load average over 1 min.
+    var load: Double? = nil
 }

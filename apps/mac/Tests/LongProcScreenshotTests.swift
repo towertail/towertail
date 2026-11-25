@@ -94,11 +94,15 @@ final class LongProcScreenshotTests: XCTestCase {
 
         let selection = Binding<Set<Int32>>(get: { [812] }, set: { _ in })
         let full = VStack(alignment: .leading, spacing: 16) {
-            HealthDetails(health: vm.health, thresholds: vm.thresholds, longProcs: vm.longProcs, hostId: node.id)
-                .padding(.horizontal, 16)
+            HealthTab(
+                vm: vm, model: FullViewModel(context: FullViewContext(hostId: node.id, metric: .health), source: .poll),
+                frame: WorkbenchFrame(vm: vm, window: Date().addingTimeInterval(-3_600)...Date(), older: []),
+                score: vm.healthScore, node: node, onIgnore: { _, _ in }
+            )
+            .frame(height: 300)
             ProcessTable(
                 series: vm.procs, effectiveAt: nil, available: true, isRootSampler: false,
-                metric: .health, node: node, longProcs: vm.longProcs, onIgnore: { _, _ in },
+                sort: .cpu, node: node, longProcs: vm.longProcs, onIgnore: { _, _ in },
                 selection: selection
             )
             Spacer()

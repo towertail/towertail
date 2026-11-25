@@ -11,10 +11,8 @@ struct ProcessTable: View {
     let effectiveAt: Date?
     let available: Bool
     let isRootSampler: Bool
-    /// The metric the full view is currently focused on. Drives the table's
-    /// default sort column so "MEM" surfaces the RAM hogs without the user
-    /// having to click the RSS header.
-    let metric: Metric
+    /// Drives the default sort column. Clicking a header still wins.
+    let sort: ProcSort
     /// Node the table is bound to. Needed by the kill flow so the dialog
     /// can show the exact command and dispatch it via SSH (or locally).
     /// Optional: older call sites / previews don't wire it up and simply
@@ -26,31 +24,24 @@ struct ProcessTable: View {
     var longProcs: [LongProc] = []
     /// Nil hides the Ignore actions.
     var onIgnore: ((String, LongProcIgnore.Scope) -> Void)? = nil
-    /// Health details "Show" sets it.
+    /// A single selection opens the process.
+    var onOpen: ((ProcessRef) -> Void)? = nil
     @Binding var selection: Set<ProcRow.ID>
 
-    @State private var sort: [KeyPathComparator<ProcRow>] = [
+    @State private var sortOrder: [KeyPathComparator<ProcRow>] = [
         KeyPathComparator(\ProcRow.cpuPct, order: .reverse),
     ]
-    /// Remembers the last metric we auto-seeded from so we don't clobber a
+    /// Remembers the last sort that we seeded so we don't clobber a
     /// user-initiated sort on every re-render.
-    @State private var lastAutoSortedMetric: Metric?
+    @State private var lastAutoSort: ProcSort?
 
     @State private var displayed: [ProcRow] = []
     @State private var lastUpdateAt: Date = .distantPast
     @State private var lastRequestedT: Date?
     @State private var pendingTask: Task<Void, Never>?
 
-    /// Row the user has chosen to kill; non-nil presents the confirmation
-    /// dialog. Kept as the whole row so the dialog can show the name
-    /// alongside the PID.
-    @State private var killCandidate: ProcRow?
-    /// Post-kill status for the inline toast. `.success` auto-dismisses;
-    /// `.failure` requires the user to acknowledge so the stderr is seen.
-    @State private var killResult: KillResult?
-    /// In-flight flag so the confirmation dialog disables its own Kill
-    /// button while the SSH/local process hasn't returned yet.
-    @State private var killInFlight: Bool = false
+    /// Row the user has chosen to kill. The kill flow shows the dialog.
+    @State private var killCandidate: KillTarget?
 
     /// Target ≈ 5fps to match the chart's render throttle. Ingests can
     /// arrive every 0.5s (local) and each one walks the proc snapshot +
@@ -68,13 +59,13 @@ struct ProcessTable: View {
             } else if displayed.isEmpty {
                 unavailable("Waiting for first process sample…")
             } else {
-                Table(displayed, selection: $selection, sortOrder: $sort) {
+                Table(displayed, selection: $selection, sortOrder: $sortOrder) {
                     TableColumn("PID", value: \.pid) { r in
                         PIDCell(
                             pid: r.pid,
                             name: r.name,
                             canKill: node != nil,
-                            onKill: { killCandidate = r }
+                            onKill: { killCandidate = KillTarget(pid: r.pid, name: r.name) }
                         )
                     }
                     .width(min: 72, ideal: 88)
@@ -133,8 +124,12 @@ struct ProcessTable: View {
                         rowMenu(row)
                     }
                 }
-                .onChange(of: sort) { _, newSort in
+                .onChange(of: sortOrder) { _, newSort in
                     displayed.sort(using: newSort)
+                }
+                .onChange(of: selection) { _, ids in
+                    guard ids.count == 1, let id = ids.first, let sample = sample(pid: id) else { return }
+                    onOpen?(.local(sample))
                 }
                 // Enough rows to usefully scan top processes without
                 // crowding the chart. Min kept small enough that a short
@@ -146,51 +141,21 @@ struct ProcessTable: View {
         }
         .padding(.horizontal, 16)
         .onAppear {
-            applyDefaultSort(for: metric)
+            applyDefaultSort(for: sort)
             refresh(force: true)
         }
-        .onChange(of: metric) { _, newMetric in
-            applyDefaultSort(for: newMetric)
+        .onChange(of: sort) { _, newSort in
+            applyDefaultSort(for: newSort)
             refresh(force: true)
         }
         .onChange(of: effectiveAt) { _, _ in refresh(force: false) }
         .onDisappear { pendingTask?.cancel() }
-        .confirmationDialog(
-            killDialogTitle,
-            isPresented: Binding(
-                get: { killCandidate != nil },
-                set: { if !$0 { killCandidate = nil } }
-            ),
-            titleVisibility: .visible,
-            presenting: killCandidate
-        ) { row in
-            Button(role: .destructive) {
-                runKill(row: row)
-            } label: {
-                Text(verbatim: "Kill \(row.pid)")
-            }
-            .disabled(killInFlight || node == nil)
-            Button("Cancel", role: .cancel) { }
-        } message: { row in
-            Text(killDialogMessage(for: row))
-        }
-        .alert(
-            killAlertTitle,
-            isPresented: Binding(
-                get: { killResult != nil },
-                set: { if !$0 { killResult = nil } }
-            ),
-            presenting: killResult
-        ) { _ in
-            Button("OK", role: .cancel) { killResult = nil }
-        } message: { result in
-            switch result {
-            case .success(let pid, let name):
-                Text(verbatim: "Sent SIGKILL to \(name) (PID \(pid)).")
-            case .failure(let message):
-                Text(message)
-            }
-        }
+        .processKillFlow(node: node, target: $killCandidate)
+    }
+
+    private func sample(pid: Int32) -> ProcSample? {
+        let snap = effectiveAt.flatMap { series.nearest(to: $0) } ?? series.latest
+        return snap?.items.first { $0.pid == pid }
     }
 
     private var longProcByPid: [Int32: LongProc] {
@@ -199,6 +164,12 @@ struct ProcessTable: View {
 
     @ViewBuilder
     private func rowMenu(_ row: ProcRow) -> some View {
+        Button("Copy PID") { Pasteboard.copy(String(row.pid)) }
+        if let sample = sample(pid: row.pid) {
+            if let cmd = sample.cmd { Button("Copy command") { Pasteboard.copy(cmd) } }
+            if let onOpen { Button("Open process") { onOpen(.local(sample)) } }
+        }
+        Divider()
         if let onIgnore {
             Button("Ignore \"\(row.name)\" on all hosts") { onIgnore(row.name, .allHosts) }
             if let node {
@@ -207,85 +178,26 @@ struct ProcessTable: View {
         }
         if node != nil {
             Divider()
-            Button("Kill process…") { killCandidate = row }
+            Button("Kill process…") { killCandidate = KillTarget(pid: row.pid, name: row.name) }
         }
     }
 
-    // MARK: - Kill dialog + execution
-
-    private var killDialogTitle: String {
-        guard let row = killCandidate else { return "Kill process" }
-        return "Kill \(row.name)?"
-    }
-
-    private var killAlertTitle: String {
-        guard let r = killResult else { return "" }
-        switch r {
-        case .success: return "Process killed"
-        case .failure: return "Kill failed"
-        }
-    }
-
-    private func killDialogMessage(for row: ProcRow) -> String {
-        let cmd = killCommandPreview(pid: row.pid)
-        return "This will run:\n\n\(cmd)\n\nThe process will be terminated immediately with SIGKILL."
-    }
-
-    /// Shell preview for the confirmation dialog. Mirrors what the app
-    /// will actually dispatch — including the remote invocation prefix —
-    /// so the user sees the exact command that's about to run.
-    private func killCommandPreview(pid: Int32) -> String {
-        guard let node else { return "kill -9 \(pid)" }
-        switch node.kind {
-        case .local:
-            return "kill -9 \(pid)"
-        case .ssh:
-            let user = node.sshUser ?? "?"
-            let host = node.sshHost ?? "?"
-            return "ssh \(user)@\(host) 'kill -9 \(pid)'"
-        case .cloud:
-            return "Not available for a host that reports to Cloud."
-        }
-    }
-
-    private func runKill(row: ProcRow) {
-        guard let node else { return }
-        killInFlight = true
-        Task {
-            let outcome = await ProcessKiller.kill(pid: row.pid, node: node)
-            await MainActor.run {
-                killInFlight = false
-                killCandidate = nil
-                switch outcome {
-                case .success:
-                    killResult = .success(pid: row.pid, name: row.name)
-                case .failure(let message):
-                    killResult = .failure(message: message)
-                }
-            }
-        }
-    }
-
-    /// Seeds the sort column based on the active metric. Only fires once per
-    /// distinct metric so clicking a header still sticks while the user
-    /// stays on the same tab.
-    private func applyDefaultSort(for metric: Metric) {
-        guard lastAutoSortedMetric != metric else { return }
-        lastAutoSortedMetric = metric
-        switch metric {
-        case .mem:
-            sort = [KeyPathComparator(\ProcRow.rss, order: .reverse)]
-        case .disk:
-            // Surface biggest disk-I/O contributors right now. ioTotalBps
-            // is the hidden read+write rate; falls back to cpuPct for rows
-            // where the sampler couldn't read per-proc counters (macOS, or
-            // Linux without CAP_SYS_PTRACE).
-            sort = [
+    /// Seeds the sort column from the process sort. Fires once per distinct
+    /// sort so a click on a header sticks.
+    private func applyDefaultSort(for sort: ProcSort) {
+        guard lastAutoSort != sort else { return }
+        lastAutoSort = sort
+        switch sort {
+        case .rss:
+            sortOrder = [KeyPathComparator(\ProcRow.rss, order: .reverse)]
+        case .io:
+            // The total I/O rate falls back to CPU for rows without counters.
+            sortOrder = [
                 KeyPathComparator(\ProcRow.ioTotalBps, order: .reverse),
                 KeyPathComparator(\ProcRow.cpuPct, order: .reverse),
             ]
-        case .cpu, .net, .health:
-            sort = [KeyPathComparator(\ProcRow.cpuPct, order: .reverse)]
+        case .cpu:
+            sortOrder = [KeyPathComparator(\ProcRow.cpuPct, order: .reverse)]
         }
     }
 
@@ -369,8 +281,8 @@ struct ProcessTable: View {
             ProcRow(from: p, previous: prevByPid[p.pid], dt: dt)
         }
         let sortedRows: [ProcRow]
-        if let cmp = sort.first {
-            sortedRows = rows.sorted(using: [cmp] + sort.dropFirst())
+        if let cmp = sortOrder.first {
+            sortedRows = rows.sorted(using: [cmp] + sortOrder.dropFirst())
         } else {
             sortedRows = rows
         }
@@ -482,6 +394,7 @@ struct PIDCell: View {
             Text(verbatim: String(pid))
                 .monospacedDigit()
                 .textSelection(.enabled)
+            CopyButton(text: String(pid), help: "Copy PID")
             if canKill {
                 Button(action: onKill) {
                     Image(systemName: "xmark.circle.fill")
@@ -569,5 +482,130 @@ enum ProcessKiller {
         } catch {
             return .failure(message: SamplerInvokeError.shortDescription(for: error))
         }
+    }
+}
+
+/// The process that the kill flow asks about.
+struct KillTarget: Equatable, Sendable {
+    let pid: Int32
+    let name: String
+}
+
+/// Dialog and result alert of a kill. One flow for each table.
+private struct ProcessKillFlow: ViewModifier {
+    let node: Node?
+    @Binding var target: KillTarget?
+    /// The alert needs an OK, so the user sees stderr.
+    @State private var result: KillResult?
+    @State private var inFlight = false
+
+    func body(content: Content) -> some View {
+        content
+            .confirmationDialog(
+                target.map { "Kill \($0.name)?" } ?? "Kill process",
+                isPresented: Binding(get: { target != nil }, set: { if !$0 { target = nil } }),
+                titleVisibility: .visible,
+                presenting: target
+            ) { t in
+                Button(role: .destructive) {
+                    run(t)
+                } label: {
+                    Text(verbatim: "Kill \(t.pid)")
+                }
+                .disabled(inFlight || node == nil)
+                Button("Cancel", role: .cancel) { }
+            } message: { t in
+                Text("This will run:\n\n\(preview(pid: t.pid))\n\nThe process will be terminated immediately with SIGKILL.")
+            }
+            .alert(
+                alertTitle,
+                isPresented: Binding(get: { result != nil }, set: { if !$0 { result = nil } }),
+                presenting: result
+            ) { _ in
+                Button("OK", role: .cancel) { result = nil }
+            } message: { r in
+                switch r {
+                case .success(let pid, let name):
+                    Text(verbatim: "Sent SIGKILL to \(name) (PID \(pid)).")
+                case .failure(let message):
+                    Text(message)
+                }
+            }
+    }
+
+    private var alertTitle: String {
+        switch result {
+        case .success: return "Process killed"
+        case .failure: return "Kill failed"
+        case nil: return ""
+        }
+    }
+
+    /// Shell preview. It shows the exact command, with the remote prefix.
+    private func preview(pid: Int32) -> String {
+        guard let node else { return "kill -9 \(pid)" }
+        switch node.kind {
+        case .local:
+            return "kill -9 \(pid)"
+        case .ssh:
+            return "ssh \(node.sshUser ?? "?")@\(node.sshHost ?? "?") 'kill -9 \(pid)'"
+        case .cloud:
+            return "Not available for a host that reports to Cloud."
+        }
+    }
+
+    private func run(_ t: KillTarget) {
+        guard let node else { return }
+        inFlight = true
+        Task {
+            let outcome = await ProcessKiller.kill(pid: t.pid, node: node)
+            await MainActor.run {
+                inFlight = false
+                target = nil
+                switch outcome {
+                case .success: result = .success(pid: t.pid, name: t.name)
+                case .failure(let message): result = .failure(message: message)
+                }
+            }
+        }
+    }
+}
+
+extension View {
+    func processKillFlow(node: Node?, target: Binding<KillTarget?>) -> some View {
+        modifier(ProcessKillFlow(node: node, target: target))
+    }
+}
+
+enum Pasteboard {
+    static func copy(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+}
+
+/// Copies `text` and shows a checkmark for 1.5 s.
+struct CopyButton: View {
+    let text: String
+    let help: String
+    @State private var copied = false
+
+    var body: some View {
+        Button {
+            Pasteboard.copy(text)
+            copied = true
+            Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                copied = false
+            }
+        } label: {
+            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                .font(.system(size: 10))
+                .foregroundStyle(copied ? Color.green : Color.secondary)
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
+        .pointingHandOnHover()
     }
 }

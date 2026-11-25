@@ -95,8 +95,11 @@ final class MuteScreenshotTests: XCTestCase {
             .environment(server)
         try render(pane, size: CGSize(width: 900, height: 1100), name: "mute-global-alerts")
 
-        let full = HealthDetails(health: vm.health, thresholds: vm.thresholds, hostId: node.id)
-            .padding(16)
-        try render(full, size: CGSize(width: 620, height: 220), name: "mute-health-details")
+        let full = HealthTab(
+            vm: vm, model: FullViewModel(context: FullViewContext(hostId: node.id, metric: .health), source: .poll),
+            frame: WorkbenchFrame(vm: vm, window: Date().addingTimeInterval(-3_600)...Date(), older: []),
+            score: vm.healthScore, node: node
+        )
+        try render(full, size: CGSize(width: 980, height: 520), name: "mute-health-details")
     }
 }

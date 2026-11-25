@@ -59,6 +59,11 @@ struct ProcSeries: Sendable {
         buffer.nearest(to: date)
     }
 
+    /// The snapshots inside `range`, oldest first.
+    func snapshots(in range: ClosedRange<Date>) -> [Snapshot] {
+        buffer.snapshot().filter { range.contains($0.t) }
+    }
+
     /// Returns the snapshot immediately preceding `snap` in the buffer,
     /// or nil if `snap` is the first entry. Used for per-process I/O rate
     /// computation (cumulative counter delta divided by dt).
