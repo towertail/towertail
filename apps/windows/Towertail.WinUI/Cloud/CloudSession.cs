@@ -36,6 +36,7 @@ public sealed class CloudSession : IDiskScanUpdates
     }
 
     public CloudAccount Account { get; }
+    public NodeStore Nodes => _nodes;
     public ServerStore Servers { get; }
     public ViewLeaseController Lease { get; }
     public ReleasedHosts Released { get; }
@@ -57,6 +58,13 @@ public sealed class CloudSession : IDiskScanUpdates
     {
         var feed = Feed;
         return HostTags.For(node, Account.IsSignedIn, feed?.IsConnected ?? false, feed?.Alerted.Contains(node.Id) ?? false);
+    }
+
+    /// <summary>The state of a host for the Servers list. See <see cref="HostStatus.For"/>.</summary>
+    public HostStatus StatusFor(Node node)
+    {
+        var feed = Feed;
+        return HostStatus.For(node, Servers.Find(node.Id), feed?.IsConnected ?? false, feed?.Alerted.Contains(node.Id) ?? false);
     }
 
     /// <summary>Restores the sign-in. When the user is signed in, the feed starts.</summary>

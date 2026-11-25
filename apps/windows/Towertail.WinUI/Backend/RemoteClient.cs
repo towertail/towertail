@@ -8,12 +8,18 @@ using Towertail.WinUI.SystemServices;
 
 namespace Towertail.WinUI.Backend;
 
+/// <summary>Makes the cloud node and the sampler token. <see cref="RemoteClient"/> is the real one.</summary>
+public interface IEnroller
+{
+    Task<EnrollResponse> EnrollSamplerAsync(EnrollRequest req, CancellationToken ct = default);
+}
+
 /// <summary>
 /// REST + WebSocket client for the Towertail server. Mirrors RemoteClient.swift — bearer token
 /// on every request, a matching <see cref="RemoteException"/> for 4xx/5xx, and a factory for
 /// the self-reconnecting <see cref="RemoteStream"/>.
 /// </summary>
-public sealed class RemoteClient : IAsyncDisposable
+public sealed class RemoteClient : IEnroller, IAsyncDisposable
 {
     private readonly HttpClient _http;
     private readonly Uri _baseUri;

@@ -55,7 +55,23 @@ public sealed partial class AccountPane : UserControl
     {
         if (Account.Me is { } me) ShowSignedIn(me);
         else ShowSignedOut();
+#if DEBUG
+        OpenDialogForDebug();
+#endif
     }
+
+#if DEBUG
+    /// <summary>Renders: <c>TOWERTAIL_DEBUG_DIALOG</c> is <c>signout</c> or <c>delete</c>. The dialog opens once after the sign-in.</summary>
+    private static string? s_debugDialog = System.Environment.GetEnvironmentVariable("TOWERTAIL_DEBUG_DIALOG");
+
+    private void OpenDialogForDebug()
+    {
+        if (s_debugDialog is not { Length: > 0 } which || Account.Me is null || XamlRoot is null) return;
+        s_debugDialog = null;
+        if (which == "signout") OnSignOutClick(this, new RoutedEventArgs());
+        else OnDeleteClick(this, new RoutedEventArgs());
+    }
+#endif
 
     private void ShowSignedOut()
     {
@@ -103,6 +119,7 @@ public sealed partial class AccountPane : UserControl
         var showHosts = Account.Billing is not null;
         HostsKey.Visibility = HostsRow.Visibility = showHosts ? Visibility.Visible : Visibility.Collapsed;
         if (Account.Billing is { } billing) HostsValue.Text = AccountText.HostsText(billing);
+        MoveBtn.Visibility = _env.Move.CanMove ? Visibility.Visible : Visibility.Collapsed;
         SshValue.Text = AccountText.SshHostsText(_env.Nodes.Nodes.Count(n => n.Kind == NodeKind.Ssh && n.Cloud is null));
         SignOutBtn.IsEnabled = DeleteBtn.IsEnabled = !_leaving;
         LeavingRing.IsActive = _leaving;
@@ -141,7 +158,10 @@ public sealed partial class AccountPane : UserControl
         _busy = false;
         Refresh();
         if (Account.Status is CloudStatus.Failed) Code.Clear();
+        else await _env.Move.OfferOnceAsync();
     }
+
+    private async void OnMoveClick(object sender, RoutedEventArgs e) => await _env.Move.OpenAsync();
 
     private async void OnDashboardClick(object sender, RoutedEventArgs e)
     {
@@ -152,13 +172,13 @@ public sealed partial class AccountPane : UserControl
 
     private async void OnSignOutClick(object sender, RoutedEventArgs e)
     {
-        var linked = _env.Nodes.Nodes.Count(n => n.Kind == NodeKind.Ssh && n.Cloud is not null);
-        var cloudOnly = _env.Nodes.Nodes.Count(n => n.Kind == NodeKind.Cloud);
+        var exit = _env.Exit;
+        var linked = exit.LinkedHosts.Count;
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
             Title = "Sign out of Towertail Cloud?",
-            Content = new TextBlock { Text = AccountText.SignOutMessage(linked, cloudOnly), TextWrapping = TextWrapping.Wrap },
+            Content = new TextBlock { Text = AccountText.SignOutMessage(linked, exit.CloudOnlyHosts.Count), TextWrapping = TextWrapping.Wrap },
             PrimaryButtonText = "Move hosts back and sign out",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
@@ -167,7 +187,29 @@ public sealed partial class AccountPane : UserControl
         _leaving = true;
         SignOutNote.Text = linked > 0 ? AccountText.LeavingText(linked) : "The app signs out.";
         Refresh();
-        try { await Cloud.SignOutAsync(); }
+        try
+        {
+            while (true)
+            {
+                await exit.LeaveAsync();
+                if (exit.Phase != ExitPhase.Failed) break;
+                var failure = new ContentDialog
+                {
+                    XamlRoot = XamlRoot,
+                    Title = "Some hosts did not move back",
+                    Content = new TextBlock { Text = AccountText.LeaveFailureText(exit.Error), TextWrapping = TextWrapping.Wrap },
+                    PrimaryButtonText = "Try again",
+                    SecondaryButtonText = "Sign out anyway",
+                    CloseButtonText = "Cancel",
+                    DefaultButton = ContentDialogButton.Primary,
+                };
+                var choice = await failure.ShowAsync();
+                if (choice == ContentDialogResult.Primary) { exit.Reset(); continue; }
+                if (choice == ContentDialogResult.Secondary) await exit.SignOutAnywayAsync();
+                else exit.Reset();
+                break;
+            }
+        }
         finally
         {
             _leaving = false;
@@ -177,5 +219,5 @@ public sealed partial class AccountPane : UserControl
     }
 
     private async void OnDeleteClick(object sender, RoutedEventArgs e)
-        => await DeleteCloudAccountDialog.ShowAsync(XamlRoot, Account);
+        => await DeleteCloudAccountDialog.ShowAsync(XamlRoot, _env.Exit);
 }

@@ -9,7 +9,7 @@ namespace Towertail.WinUI.Preferences;
 /// <summary>Shows what an account delete does to each org, then asks for the email. Mirrors the Mac sheet.</summary>
 public static class DeleteCloudAccountDialog
 {
-    public static async Task ShowAsync(XamlRoot root, CloudAccount account)
+    public static async Task ShowAsync(XamlRoot root, CloudExit exit)
     {
         CloudDeletion? deletion = null;
         var busy = false;
@@ -20,6 +20,7 @@ public static class DeleteCloudAccountDialog
             Foreground = Brush("SystemFillColorCriticalBrush"),
             Visibility = Visibility.Collapsed,
         };
+        var progress = new TextBlock { TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed, Foreground = Brush("TextFillColorSecondaryBrush") };
         var typed = new TextBox();
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(typed, "Email");
         var dialog = new ContentDialog
@@ -46,9 +47,16 @@ public static class DeleteCloudAccountDialog
         dialog.Opened += async (_, _) =>
         {
             body.Children.Add(new ProgressRing { IsActive = true, Width = 20, Height = 20, HorizontalAlignment = HorizontalAlignment.Left });
-            try { deletion = await account.DeletionAsync(); }
-            catch (CloudAuthException ex) { body.Children.Clear(); ShowError(ex.Message); body.Children.Add(error); return; }
+            await exit.LoadDeletionAsync();
+            deletion = exit.Deletion;
             body.Children.Clear();
+            if (exit.Phase == ExitPhase.Failed && deletion is null)
+            {
+                ShowError(exit.Error);
+                body.Children.Add(error);
+                exit.Reset();
+                return;
+            }
             if (deletion is null)
             {
                 body.Children.Add(Muted("This Cloud cannot delete accounts."));
@@ -61,9 +69,23 @@ public static class DeleteCloudAccountDialog
             confirm.Children.Add(new TextBlock { Text = $"Type {deletion.Email} to confirm" });
             confirm.Children.Add(typed);
             body.Children.Add(confirm);
+            body.Children.Add(progress);
             body.Children.Add(error);
             Update();
         };
+
+        exit.Changed += OnExitChanged;
+        dialog.Closed += (_, _) => exit.Changed -= OnExitChanged;
+        void OnExitChanged() => dialog.DispatcherQueue.TryEnqueue(() =>
+        {
+            progress.Text = exit.Phase switch
+            {
+                ExitPhase.Moving when busy => "The app moves your hosts back to SSH.",
+                ExitPhase.Deleting => "The app deletes the Cloud account.",
+                _ => "",
+            };
+            progress.Visibility = progress.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        });
 
         dialog.PrimaryButtonClick += async (_, args) =>
         {
@@ -73,12 +95,13 @@ public static class DeleteCloudAccountDialog
             dialog.CloseButtonText = "";
             try
             {
-                await account.DeleteAccountAsync(typed.Text.Trim());
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                args.Cancel = true;
-                ShowError(ex.Message);
+                await exit.DeleteAccountAsync(typed.Text.Trim());
+                if (exit.Phase == ExitPhase.Failed)
+                {
+                    args.Cancel = true;
+                    ShowError(exit.Error);
+                    exit.Reset();
+                }
             }
             finally
             {

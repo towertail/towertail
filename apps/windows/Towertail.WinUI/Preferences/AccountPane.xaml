@@ -83,7 +83,7 @@
                             <TextBlock Grid.Row="3" x:Name="HostsKey" Text="Cloud hosts" Style="{StaticResource KeyText}" />
                             <StackPanel Grid.Row="3" Grid.Column="1" x:Name="HostsRow" Orientation="Horizontal" Spacing="10">
                                 <TextBlock x:Name="HostsValue" VerticalAlignment="Center" />
-                                <Button x:Name="MoveBtn" Content="Move hosts to Cloud…" Visibility="Collapsed" />
+                                <Button x:Name="MoveBtn" Content="Move hosts to Cloud…" Visibility="Collapsed" Click="OnMoveClick" />
                             </StackPanel>
                             <TextBlock Grid.Row="4" Text="SSH hosts" Style="{StaticResource KeyText}" />
                             <TextBlock Grid.Row="4" Grid.Column="1" x:Name="SshValue" />

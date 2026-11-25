@@ -79,4 +79,13 @@ public sealed class RemoteClientTests : IAsyncLifetime
         await _client.DeleteNodeAsync(id);
         _server.Requests.Single().Path.Should().Be($"/v1/nodes/{id}");
     }
+
+    [Fact]
+    public void EnrollRequestLeavesOutEmptyIds()
+    {
+        System.Text.Json.JsonSerializer.Serialize(new EnrollRequest("web")).Should().Be("""{"display_name":"web"}""");
+        var id = Guid.Parse("00000000-0000-0000-0000-00000000000a");
+        System.Text.Json.JsonSerializer.Serialize(new EnrollRequest("web", id, "m-1"))
+            .Should().Be($$"""{"display_name":"web","node_id":"{{id}}","machine_id":"m-1"}""");
+    }
 }

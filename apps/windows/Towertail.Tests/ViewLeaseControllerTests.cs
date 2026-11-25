@@ -145,4 +145,36 @@ public sealed class ViewLeaseControllerTests
         _lease.Stop();
         _delay.Pending.Should().BeEmpty();
     }
+
+    [Fact]
+    public void ListedHostsJoinTheView()
+    {
+        _lease.SetListed([B, A]);
+        _sent.Should().ContainSingle().Which.Should().Be(new LiveView([A, B]));
+        _delay.Pending.Should().Contain(ViewLeaseController.RenewEvery);
+    }
+
+    [Fact]
+    public void ListedHostsAddToCards()
+    {
+        _lease.SetPopover(true, [A]);
+        _lease.SetListed([C]);
+        _sent[^1].Should().Be(new LiveView([A, C]));
+    }
+
+    [Fact]
+    public void AnEmptyListEndsTheLease()
+    {
+        _lease.SetListed([A]);
+        _lease.SetListed([]);
+        _sent[^1].Should().Be(LiveView.Empty);
+    }
+
+    [Fact]
+    public void TheSameListSendsNothingNew()
+    {
+        _lease.SetListed([A]);
+        _lease.SetListed([A]);
+        _sent.Should().HaveCount(1);
+    }
 }

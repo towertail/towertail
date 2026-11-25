@@ -53,6 +53,9 @@ public static class AccountText
         return string.Join(' ', lines);
     }
 
+    public static string LeaveFailureText(string message)
+        => $"{message} If you sign out anyway, these hosts stay in Cloud. Sign in again to link them.";
+
     public static string LeavingText(int hosts)
         => hosts == 1 ? "The app moves 1 host back to SSH." : $"The app moves {hosts} hosts back to SSH.";
 
@@ -73,6 +76,30 @@ public static class AccountText
     public static bool CanDelete(CloudDeletion? deletion, string typed, bool busy)
         => deletion is { Blocked: false } && !busy
             && string.Equals(typed.Trim(), deletion.Email, StringComparison.OrdinalIgnoreCase);
+
+    public const string MovePickFoot =
+        "The app copies the sampler over SSH and starts it as a service. Then it stops SSH polling for that host. "
+        + "SSH hosts keep the live view, 7 days of history and alerts while this PC is awake.";
+
+    public const string MoveInstallNote = "Towertail copies the sampler to each host and starts it. You can close this window. The install goes on.";
+
+    public static string MovePickText(CloudBilling? billing, int? room, string planLabel)
+    {
+        const string intro = "Pick the SSH hosts that Cloud watches.";
+        if (room == 0) return CloudPicks.Note(0, planLabel, used: true);
+        if (billing is null || room is not { } r) return $"{intro} SSH hosts have no limit.";
+        return $"{intro} {billing.Nodes} of {billing.MaxNodes ?? billing.Plan.MaxNodes} Cloud hosts are in use, so you can move {r}.";
+    }
+
+    public static string MoveButton(int picked)
+        => picked == 0 ? "Move to Cloud" : $"Move {picked} {(picked == 1 ? "host" : "hosts")} to Cloud";
+
+    public static string MoveStayText(int notPicked) => notPicked switch
+    {
+        0 => "",
+        1 => "The other host stays on this PC over SSH.",
+        _ => $"The other {notPicked} hosts stay on this PC over SSH.",
+    };
 
     private static string Count(int hosts) => hosts == 1 ? "1 host" : $"{hosts} hosts";
 

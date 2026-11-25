@@ -60,6 +60,7 @@ public partial class App : Application
         }
 
         Environment = AppEnvironment.Bootstrap();
+        Environment.Move.Changed += OpenMoveWindow;
 
         _tray = new TrayIconHost(Environment);
         _tray.Show();
@@ -71,14 +72,43 @@ public partial class App : Application
         // on demand via TrayPopoverWindow when the user clicks the tray icon.
     }
 
+    private bool _moveWindowQueued;
+
+    /// <summary>Opens the move window when the move says so. A change while the window is open gives no new window.</summary>
+    private void OpenMoveWindow()
+    {
+        if (_moveWindowQueued || !Environment.Move.IsPresented) return;
+        _moveWindowQueued = true;
+        TowertailApp.MainDispatcher?.TryEnqueue(() =>
+        {
+            _moveWindowQueued = false;
+            MoveToCloudWindow.OpenWhenPresented(Environment);
+        });
+    }
+
 #if DEBUG
     private PreferencesWindow? _debugPrefs;
+
+    /// <summary>Asks for a code. <c>TOWERTAIL_DEBUG_CODE</c> then signs in with it.</summary>
+    private async Task SignInForDebugAsync(string email)
+    {
+        await Environment.Cloud.Account.SendCodeAsync(email);
+        if (System.Environment.GetEnvironmentVariable("TOWERTAIL_DEBUG_CODE") is { Length: > 0 } code)
+            await Environment.Cloud.Account.VerifyAsync(code);
+    }
+
+    private async Task OpenMoveForDebugAsync(bool start)
+    {
+        for (var i = 0; i < 100 && !Environment.Cloud.Account.IsSignedIn; i++) await Task.Delay(100);
+        await Environment.Move.OpenAsync();
+        if (start) await Environment.Move.StartAsync();
+    }
 
     /// <summary>Opens a window at launch, for renders: <c>TOWERTAIL_DEBUG_OPEN</c> is <c>account</c>, <c>servers</c> or <c>popover</c>. <c>TOWERTAIL_DEBUG_EMAIL</c> asks for a sign-in code.</summary>
     private void OpenForDebug()
     {
         if (System.Environment.GetEnvironmentVariable("TOWERTAIL_DEBUG_EMAIL") is { Length: > 0 } email)
-            _ = Environment.Cloud.Account.SendCodeAsync(email);
+            _ = SignInForDebugAsync(email);
         switch (System.Environment.GetEnvironmentVariable("TOWERTAIL_DEBUG_OPEN"))
         {
             case "account":
@@ -90,6 +120,10 @@ public partial class App : Application
             case "popover":
                 TestPinPopover = true;
                 _tray?.ShowPopover();
+                break;
+            case "move":
+                // Waits for the sign-in, then opens the move window. "install" also starts the move.
+                _ = OpenMoveForDebugAsync(System.Environment.GetEnvironmentVariable("TOWERTAIL_DEBUG_MOVE") == "install");
                 break;
         }
     }

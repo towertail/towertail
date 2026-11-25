@@ -18,6 +18,7 @@ public sealed class ViewLeaseController(Func<LiveView, Task> send, Func<TimeSpan
     private readonly object _gate = new();
     private HashSet<Guid> _cards = [];
     private readonly HashSet<Guid> _watched = [];
+    private HashSet<Guid> _listed = [];
     private readonly List<FullViewEntry> _fullViews = [];
     private bool _popoverVisible;
     private bool _awake = true;
@@ -59,6 +60,18 @@ public sealed class ViewLeaseController(Func<LiveView, Task> send, Func<TimeSpan
         {
             var changed = watched ? _watched.Add(host) : _watched.Remove(host);
             if (changed) Refresh(debounced: false);
+        }
+    }
+
+    /// <summary>The hosts of a list that is on screen, for example the Servers list. An empty list ends the lease for them.</summary>
+    public void SetListed(IEnumerable<Guid> hosts)
+    {
+        lock (_gate)
+        {
+            var next = hosts.ToHashSet();
+            if (_listed.SetEquals(next)) return;
+            _listed = next;
+            Refresh(debounced: false);
         }
     }
 
@@ -121,6 +134,7 @@ public sealed class ViewLeaseController(Func<LiveView, Task> send, Func<TimeSpan
     {
         if (!_awake) return LiveView.Empty;
         var hosts = new HashSet<Guid>(_watched);
+        hosts.UnionWith(_listed);
         if (_popoverVisible) hosts.UnionWith(_cards);
         foreach (var e in _fullViews) hosts.Add(e.Host);
         if (hosts.Count == 0) return LiveView.Empty;

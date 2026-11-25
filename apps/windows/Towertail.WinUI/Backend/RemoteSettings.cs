@@ -74,7 +74,10 @@ public sealed record DiskScanConflict(
 // Enroll request/response. Server uses snake_case for the sampler-enroll
 // path (wire.go) so this stays snake.
 public sealed record EnrollRequest(
-    [property: JsonPropertyName("display_name")] string DisplayName);
+    [property: JsonPropertyName("display_name")] string DisplayName,
+    // The cloud node keeps the id of the SSH node. Left out when null.
+    [property: JsonPropertyName("node_id"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? NodeId = null,
+    [property: JsonPropertyName("machine_id"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? MachineId = null);
 
 public sealed record EnrollResponse(
     [property: JsonPropertyName("node_id")] Guid NodeId,

@@ -25,6 +25,10 @@ public sealed class AppEnvironment
     public required DiskScannerFactory DiskScanners { get; init; }
     public required DiskScanStore DiskScans { get; init; }
     public required CloudSession Cloud { get; init; }
+    public required CloudInstaller Installer { get; init; }
+    public required CloudMove Move { get; init; }
+    public required CloudExit Exit { get; init; }
+    public required SamplerKeeper Keeper { get; init; }
 
     /// <summary>Watches sleep and wake for the cloud lease. Held here so that it lives as long as the app.</summary>
     public SystemReachabilityMonitor? Reachability { get; init; }
@@ -112,6 +116,27 @@ public sealed class AppEnvironment
             cloudPrefs, log: logger);
         var cloud = new CloudSession(account, nodes, servers, cloudPrefs, collector.UiMarshaller, logger);
 
+        Func<Node, ISamplerSession> connect = node => new SshSamplerSession(node, hostKeyPrompt, onTrust);
+        Func<string, string?> samplerBinary = CloudInstaller.BundledBinary;
+#if DEBUG
+        // Renders: a fake SSH host answers the install commands.
+        if (System.Environment.GetEnvironmentVariable("TOWERTAIL_DEBUG_FAKE_SSH") is { Length: > 0 })
+        {
+            connect = _ => new DemoSamplerSession();
+            samplerBinary = DemoSamplerSession.Binary;
+        }
+#endif
+        var installer = new CloudInstaller(
+            () => cloud.Client, connect, nodes, cloud.Lease,
+            firstSample: (id, since) => servers.Find(id) is { LastIngestAt: { } at } vm && at > since ? vm.SamplerVersion ?? "" : null,
+            binary: samplerBinary,
+            billing: () => account.RefreshAsync(),
+            planName: () => account.Me?.Org.Plan);
+        var move = new CloudMove(cloud, installer, cloudPrefs);
+        var exit = new CloudExit(cloud, installer, nodes);
+        var keeper = new SamplerKeeper(nodes, SamplerManifest.LoadFromBundle(), connect, samplerBinary, marshal: collector.UiMarshaller, log: logger);
+        cloud.StateChanged += () => _ = keeper.HandleAsync(cloud.Feed?.Alerted ?? new HashSet<Guid>());
+
         // The lease stops at sleep and comes back at wake.
         var reachability = new SystemReachabilityMonitor();
         reachability.AwakeChanged += cloud.Lease.SetSystemAwake;
@@ -151,6 +176,10 @@ public sealed class AppEnvironment
             DiskScanners = diskScanners,
             DiskScans = diskScans,
             Cloud = cloud,
+            Installer = installer,
+            Move = move,
+            Exit = exit,
+            Keeper = keeper,
             Reachability = reachability,
             HostKeyPrompt = hostKeyPrompt,
             OnHostKeyTrust = onTrust,

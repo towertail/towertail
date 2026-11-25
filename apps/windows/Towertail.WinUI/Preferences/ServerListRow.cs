@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
+using Towertail.WinUI.Cloud;
 using Towertail.WinUI.Design;
 using Towertail.WinUI.State;
 
@@ -22,12 +23,14 @@ public sealed class ServerListRow : INotifyPropertyChanged
     private readonly ServerViewModel? _vm;
 
     private readonly Func<Node, HostTag?>? _tagFor;
+    private readonly Func<Node, HostStatus>? _statusFor;
 
-    public ServerListRow(Node node, ServerViewModel? vm, Func<Node, HostTag?>? tagFor = null)
+    public ServerListRow(Node node, ServerViewModel? vm, Func<Node, HostTag?>? tagFor = null, Func<Node, HostStatus>? statusFor = null)
     {
         Node = node;
         _vm = vm;
         _tagFor = tagFor;
+        _statusFor = statusFor;
         if (_vm is not null)
         {
             _vm.PropertyChanged += OnVmChanged;
@@ -71,29 +74,23 @@ public sealed class ServerListRow : INotifyPropertyChanged
     /// <summary>The sign-in or the feed changed. The tag can differ.</summary>
     public void RefreshTag()
     {
+        Notify(nameof(StatusText));
+        Notify(nameof(StatusBrush));
         Notify(nameof(TagText));
         Notify(nameof(TagVisibility));
         Notify(nameof(TagBrush));
     }
     public string EnabledText => Node.Enabled ? "True" : "False";
 
-    public string StatusText
-    {
-        get
-        {
-            if (!Node.Enabled) return "disabled";
-            if (_vm is null) return "—";
-            if (_vm.OfflineReason is { Length: > 0 }) return "offline";
-            if (_vm.LastSeen is null) return "…";
-            return "online";
-        }
-    }
+    private HostStatus Status => _statusFor?.Invoke(Node) ?? HostStatus.For(Node, _vm, feedConnected: false, alerted: false);
 
-    public Brush StatusBrush => StatusText switch
+    public string StatusText => Status.Text;
+
+    public Brush StatusBrush => Status.Level switch
     {
-        "online" => new SolidColorBrush(Colors.SeaGreen),
-        "offline" => new SolidColorBrush(Colors.IndianRed),
-        "disabled" => new SolidColorBrush(Colors.Gray),
+        HostStatusLevel.Online => new SolidColorBrush(Colors.SeaGreen),
+        HostStatusLevel.Offline => new SolidColorBrush(Colors.IndianRed),
+        HostStatusLevel.Disabled => new SolidColorBrush(Colors.Gray),
         _ => new SolidColorBrush(Colors.Orange),
     };
 

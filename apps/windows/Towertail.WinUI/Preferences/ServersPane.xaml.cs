@@ -22,9 +22,20 @@ public sealed partial class ServersPane : UserControl
         SyncRows();
         env.Nodes.Nodes.CollectionChanged += OnNodesChanged;
         env.Nodes.NodeUpdated += (_, id) => UpdateRow(id);
-        Loaded += (_, _) => env.Cloud.StateChanged += OnCloudChanged;
-        Unloaded += (_, _) => env.Cloud.StateChanged -= OnCloudChanged;
+        Loaded += (_, _) =>
+        {
+            env.Cloud.StateChanged += OnCloudChanged;
+            LeaseCloudHosts();
+        };
+        Unloaded += (_, _) =>
+        {
+            env.Cloud.StateChanged -= OnCloudChanged;
+            env.Cloud.Lease.SetListed([]);
+        };
     }
+
+    /// <summary>The cloud sends the data of a host only while a view holds a lease for it.</summary>
+    private void LeaseCloudHosts() => _env.Cloud.Lease.SetListed(_env.Nodes.Nodes.Where(n => n.IsCloud).Select(n => n.Id));
 
     private void OnCloudChanged() => DispatcherQueue.TryEnqueue(() =>
     {
@@ -36,8 +47,9 @@ public sealed partial class ServersPane : UserControl
         _rows.Clear();
         foreach (var n in _env.Nodes.Nodes)
         {
-            _rows.Add(new ServerListRow(n, _env.Servers.Find(n.Id), _env.Cloud.TagFor));
+            _rows.Add(new ServerListRow(n, _env.Servers.Find(n.Id), _env.Cloud.TagFor, _env.Cloud.StatusFor));
         }
+        if (IsLoaded) LeaseCloudHosts();
     }
 
     private void OnNodesChanged(object? sender, NotifyCollectionChangedEventArgs e)
