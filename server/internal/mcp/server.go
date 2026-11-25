@@ -182,6 +182,8 @@ func New(q Queries, o Options) *Server {
 	addTool(s, readTool("explain_change", "Explain a metric change", "Find the level shifts of one metric of one host over a range, such as a jump of CPU use. For the largest shift, get the processes that rose or fell (CPU, memory or disk I/O, by metric) and the alerts of the host that started around it. Use it to find why a metric changed."), s.explainChange)
 	addTool(s, readTool("suggest_thresholds", "Test alert limits", "Replay the stored cpu, mem or disk values of one host, or of the hosts on the organization limits, under the current limits and other pairs of limits. Each pair gives the number of alerts, critical alerts and notifications that it would have made, with the time spent over each limit. Compare with the alerts that really happened. The data is the 1 minute rollup, so the counts are approximate."), s.suggestThresholds)
 	addTool(s, readTool("reference", "Reference facts", "Get the facts behind a metric, a rule or a plan limit. Topics: metrics, thresholds, alerts, long_process, history and plan."), s.reference)
+	addTool(s, readTool("search", "Search", "Search the organization by text: host names and tags, the alerts of the last 7 days and the reference topics. Each result has an id for fetch."), s.search)
+	addTool(s, readTool("fetch", "Fetch", "Get the full document of a search result: a host (as get_host), an alert (as get_alert) or a reference topic (as reference). The text is JSON."), s.fetch)
 	addTool(s, readTool("whoami", "Who am I", "Get the organization, the plan, the history limit and the sign-in (token kind and role) of this connection."), s.whoami)
 	return s
 }

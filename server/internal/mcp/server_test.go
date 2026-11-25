@@ -58,6 +58,7 @@ type fakeQueries struct {
 	gotAlertQ   query.AlertQuery
 	alertDetail wire.AlertDetail
 	alertErr    error
+	listErr     error
 	gotAlertID  uuid.UUID
 	rules       *query.RulesResult
 	rulesErr    error
@@ -184,6 +185,9 @@ func (f *fakeQueries) ProcessHistory(_ context.Context, r query.ProcessHistoryRe
 func (f *fakeQueries) ListAlerts(_ context.Context, q query.AlertQuery) (wire.AlertPage, error) {
 	f.seen(q.OrgID)
 	f.gotAlertQ = q
+	if f.listErr != nil {
+		return wire.AlertPage{}, f.listErr
+	}
 	page := f.alertPage
 	if page.Alerts == nil {
 		start := now.Add(-time.Hour)
@@ -404,7 +408,7 @@ func TestTools(t *testing.T) {
 		}
 	}
 	slices.Sort(names)
-	want := []string{"alert_stats", "alerts", "disk_scans", "disks", "explain_change", "fleet_summary", "get_alert", "get_host", "host_metrics", "host_rules", "list_hosts", "process_history", "reference", "suggest_thresholds", "top_processes", "whoami"}
+	want := []string{"alert_stats", "alerts", "disk_scans", "disks", "explain_change", "fetch", "fleet_summary", "get_alert", "get_host", "host_metrics", "host_rules", "list_hosts", "process_history", "reference", "search", "suggest_thresholds", "top_processes", "whoami"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("tools = %v, want %v", names, want)
 	}
@@ -497,6 +501,10 @@ func TestToolInputErrors(t *testing.T) {
 		{"change metric", "explain_change", map[string]any{"host": "web-1", "metric": "bogus"}, "metric must be one of"},
 		{"change range", "explain_change", map[string]any{"host": "web-1", "metric": "cpu", "range": "5m"}, "range must be"},
 		{"change unknown host", "explain_change", map[string]any{"host": "ghost", "metric": "cpu"}, "host not found"},
+		{"search empty", "search", map[string]any{"query": "  "}, "query is required"},
+		{"fetch prefix", "fetch", map[string]any{"id": "disk:1"}, "id must start with"},
+		{"fetch uuid", "fetch", map[string]any{"id": "host:web-1"}, "id must be host:<uuid>"},
+		{"fetch topic", "fetch", map[string]any{"id": "reference:bogus"}, "topic must be one of"},
 		{"suggest metric", "suggest_thresholds", map[string]any{"metric": "procs"}, "metric must be one of cpu, mem, disk"},
 		{"suggest range", "suggest_thresholds", map[string]any{"metric": "cpu", "range": "31d"}, "range must be 15m to 30d"},
 		{"suggest candidate", "suggest_thresholds", map[string]any{"metric": "cpu", "candidates": []map[string]any{{"warn": 0.9, "critical": 0.8}}}, "each candidate needs"},
@@ -582,6 +590,8 @@ func TestMCPOrgScope(t *testing.T) {
 			{"alert_stats", map[string]any{"host": "web-1"}},
 			{"explain_change", map[string]any{"host": "web-1", "metric": "cpu"}},
 			{"suggest_thresholds", map[string]any{"metric": "cpu", "host": "web-1"}},
+			{"search", map[string]any{"query": "web"}},
+			{"fetch", map[string]any{"id": "reference:plan"}},
 		} {
 			f.orgs = nil
 			if res := call(t, cs, tc.tool, tc.args); res.IsError {
@@ -663,7 +673,7 @@ func TestToolsRegistrationOrder(t *testing.T) {
 	for _, tl := range newServer(newFake()).Tools(ToolSetV1) {
 		names = append(names, tl.Name)
 	}
-	want := []string{"fleet_summary", "list_hosts", "get_host", "host_metrics", "top_processes", "process_history", "alerts", "get_alert", "host_rules", "disks", "disk_scans", "alert_stats", "explain_change", "suggest_thresholds", "reference", "whoami"}
+	want := []string{"fleet_summary", "list_hosts", "get_host", "host_metrics", "top_processes", "process_history", "alerts", "get_alert", "host_rules", "disks", "disk_scans", "alert_stats", "explain_change", "suggest_thresholds", "reference", "search", "fetch", "whoami"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("names = %v, want %v", names, want)
 	}
@@ -712,6 +722,8 @@ func TestToolResultHasJSONText(t *testing.T) {
 		{"fleet_summary", nil},
 		{"get_host", map[string]any{"host": "web-1"}},
 		{"reference", map[string]any{"topic": "metrics"}},
+		{"search", map[string]any{"query": "web"}},
+		{"fetch", map[string]any{"id": "reference:metrics"}},
 		{"whoami", nil},
 	} {
 		t.Run(tc.tool, func(t *testing.T) {
