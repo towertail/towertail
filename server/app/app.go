@@ -112,7 +112,13 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 	gate, _ := b.limits.(ChannelLimits)
 	router := channels.NewRouter(a.store, cfg.Notify, b.mailer, gate, a.log)
 	notifiers := append([]notify.Notifier{router}, b.notifiers...)
-	a.alerter = alerter.New(a.log, nil, a.hub, chEvents{ch: a.ch}, a.store, notifiers...)
+	journal := chEvents{ch: a.ch}
+	for _, n := range notifiers {
+		if u, ok := n.(notify.JournalUser); ok {
+			u.UseJournal(journal)
+		}
+	}
+	a.alerter = alerter.New(a.log, nil, a.hub, journal, a.store, notifiers...)
 	ctrl := control.New(a.store)
 	scanDB, err := a.scanDB()
 	if err != nil {
@@ -134,6 +140,7 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 		Runtime:       a.rt,
 		Store:         a.store,
 		CH:            a.ch,
+		Journal:       journal,
 		Issuer:        issuer,
 		Hub:           a.hub,
 		Alerter:       a.alerter,
@@ -268,6 +275,29 @@ func (s chEvents) LastSeen(ctx context.Context, since time.Time) ([]clickhouse.N
 		return nil, errCHNotReady
 	}
 	return s.ch.LastSeen(ctx, since)
+}
+
+func (s chEvents) OpenMarks(ctx context.Context, since time.Time) ([]clickhouse.AlertMark, error) {
+	if s.ch == nil {
+		return nil, nil
+	}
+	if !s.ch.Ready() {
+		return nil, errCHNotReady
+	}
+	return s.ch.OpenMarks(ctx, since)
+}
+
+// Write stores lines of the alert log. It drops them when ClickHouse is
+// off or not ready.
+func (s chEvents) Write(ctx context.Context, lines ...notify.Line) error {
+	if s.ch == nil || !s.ch.Ready() || len(lines) == 0 {
+		return nil
+	}
+	out := make([]clickhouse.AlertLine, len(lines))
+	for i, l := range lines {
+		out[i] = clickhouse.AlertLine{TS: l.At, OrgID: l.OrgID, NodeID: l.NodeID, AlertID: l.AlertID, Kind: string(l.Kind), User: l.User, Until: l.Until, Text: l.Text}
+	}
+	return s.ch.WriteAlertLines(ctx, out)
 }
 
 func (s chEvents) Registrations(ctx context.Context, since time.Time) ([]clickhouse.NodeSeen, error) {

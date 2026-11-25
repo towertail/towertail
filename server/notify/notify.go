@@ -22,7 +22,10 @@ const (
 
 // Alert is one change of tint for one metric of one node.
 type Alert struct {
-	EventID  uuid.UUID
+	EventID uuid.UUID
+	// AlertID is the id of the incident: the same for each change from the
+	// change out of ok to the change back to ok.
+	AlertID  uuid.UUID
 	OrgID    uuid.UUID
 	NodeID   uuid.UUID
 	NodeName string
@@ -51,6 +54,8 @@ type Alert struct {
 	At     time.Time
 	// Test is true for a test send from the API.
 	Test bool
+	// Repeat is true for the one reminder after a snooze ends.
+	Repeat bool
 }
 
 // Mailer sends the mail of the email alert channel. The server uses SMTP
@@ -108,6 +113,16 @@ func (a Alert) Title() string {
 // Text gives the value and the previous tint, for example
 // "CPU 93% (was warn)".
 func (a Alert) Text() string {
+	switch {
+	case a.Repeat && a.Detail == "" && a.Metric != "reachability":
+		return fmt.Sprintf("%s still %.0f%%", a.MetricLabel(), a.Value*100)
+	case a.Repeat:
+		return "Still open. " + a.baseText()
+	}
+	return a.baseText()
+}
+
+func (a Alert) baseText() string {
 	if a.Detail != "" {
 		return a.Detail
 	}
@@ -167,6 +182,8 @@ func (a Alert) DedupKey() string {
 type Ack struct {
 	OrgID   uuid.UUID
 	EventID uuid.UUID
+	// AlertID is the id of the incident that the ack or snooze applies to.
+	AlertID uuid.UUID
 	NodeID  uuid.UUID
 	// Metric is the stored metric of the alert, with the instance after a
 	// "/" (the metric of wire.Alert).
@@ -175,6 +192,10 @@ type Ack struct {
 	By     uuid.UUID
 	At     time.Time
 	Snooze bool
+	// Until is the end of the snooze. It is nil for an ack.
+	Until *time.Time
+	// Undo takes an ack or a snooze back.
+	Undo bool
 }
 
 // DedupKey gives the same key as Alert.DedupKey for the same alert.
@@ -186,4 +207,38 @@ func (a Ack) DedupKey() string {
 // AckObserver is a notifier that hears each ack and snooze.
 type AckObserver interface {
 	AlertAcked(ctx context.Context, a Ack) error
+}
+
+// LineKind is the kind of a line of the alert log.
+type LineKind string
+
+const (
+	LineNotified  LineKind = "notified"
+	LineEscalated LineKind = "escalated"
+	LineAcked     LineKind = "acked"
+	LineUnacked   LineKind = "unacked"
+	LineSnoozed   LineKind = "snoozed"
+	LineUnsnoozed LineKind = "unsnoozed"
+	LineClosed    LineKind = "closed"
+)
+
+// Line is one entry of the alert log: what happened to an alert.
+type Line struct {
+	OrgID, NodeID, AlertID uuid.UUID
+	At                     time.Time
+	Kind                   LineKind
+	User                   *uuid.UUID
+	Until                  *time.Time
+	Text                   string
+}
+
+// Journal stores the lines of the alert log.
+type Journal interface {
+	Write(ctx context.Context, lines ...Line) error
+}
+
+// JournalUser is a notifier that writes lines. app.New gives it the
+// journal.
+type JournalUser interface {
+	UseJournal(j Journal)
 }

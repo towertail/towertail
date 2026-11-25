@@ -60,6 +60,9 @@ func (nopStore) LastSeen(context.Context, time.Time) ([]clickhouse.NodeSeen, err
 func (nopStore) Registrations(context.Context, time.Time) ([]clickhouse.NodeSeen, error) {
 	return nil, nil
 }
+func (nopStore) OpenMarks(context.Context, time.Time) ([]clickhouse.AlertMark, error) {
+	return nil, nil
+}
 
 // fakeConfig gives the settings of each org (def otherwise) and the
 // nodes.

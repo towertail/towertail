@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/towertail/towertail/server/internal/clickhouse"
 )
 
 const (
@@ -107,6 +109,10 @@ func (e *Engine) Load(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	marks, err := e.store.OpenMarks(ctx, since)
+	if err != nil {
+		return err
+	}
 	e.stateMu.Lock()
 	defer e.stateMu.Unlock()
 	for _, r := range tints {
@@ -118,7 +124,11 @@ func (e *Engine) Load(ctx context.Context) error {
 		if _, ok := e.states[k]; !ok {
 			e.states[k] = &metricState{tint: Tint(r.Tint), changed: r.TS}
 		}
+		if _, ok := e.open[k]; !ok && Tint(r.Tint) != TintOK {
+			e.open[k] = &openAlert{id: r.AlertID, tint: Tint(r.Tint), last: restoredChange(k, Tint(r.Tint), r.TS)}
+		}
 	}
+	e.restoreMarks(marks)
 	for _, r := range seen {
 		nk := nodeKey{org: r.OrgID, node: r.NodeID}
 		if _, ok := e.seen[nk]; !ok {
@@ -138,3 +148,35 @@ func (e *Engine) Load(ctx context.Context) error {
 	e.log.Info("alerter: state loaded", "tints", len(tints), "nodes", len(seen), "registrations", len(regs))
 	return nil
 }
+
+// restoredChange is the change of an alert that Load restored. The value
+// is not known, so the text only says when the alert opened.
+func restoredChange(k stateKey, tint Tint, at time.Time) change {
+	return change{
+		key: k, from: TintWarn, to: tint, at: at,
+		detail: "Open since " + at.UTC().Format("15:04") + " UTC.",
+	}
+}
+
+// restoreMarks sets the ack and the snooze of the restored alerts. It runs
+// under stateMu. A snooze that ended before the restart sends no reminder.
+func (e *Engine) restoreMarks(marks []clickhouse.AlertMark) {
+	now := e.clock.Now()
+	byID := make(map[markKey]*openAlert, len(e.open))
+	for k, o := range e.open {
+		byID[markKey{org: k.org, alert: o.id}] = o
+	}
+	for _, m := range marks {
+		o := byID[markKey{org: m.OrgID, alert: m.AlertID}]
+		if o == nil {
+			continue
+		}
+		o.ackedBy = m.AckedBy
+		if m.SnoozedUntil != nil {
+			o.snoozedUntil = *m.SnoozedUntil
+			o.snoozeDone = !m.SnoozedUntil.After(now)
+		}
+	}
+}
+
+type markKey struct{ org, alert uuid.UUID }

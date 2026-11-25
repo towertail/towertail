@@ -53,12 +53,19 @@ const (
 
 // Event is a BackendEvent equivalent.
 type Event struct {
-	ID     uuid.UUID `json:"id"`
-	TS     time.Time `json:"ts"`
-	Kind   string    `json:"kind"`
-	NodeID uuid.UUID `json:"nodeId"`
-	Metric string    `json:"metric,omitempty"`
-	Tint   string    `json:"tint,omitempty"`
+	ID uuid.UUID `json:"id"`
+	// AlertID is the id of the incident. It is the same for each event from
+	// the change out of ok to the change back to ok.
+	AlertID uuid.UUID `json:"alertId"`
+	TS      time.Time `json:"ts"`
+	Kind    string    `json:"kind"`
+	NodeID  uuid.UUID `json:"nodeId"`
+	Metric  string    `json:"metric,omitempty"`
+	Tint    string    `json:"tint,omitempty"`
+	// Notify is true when the server sends a notification for the event.
+	Notify bool   `json:"notify,omitempty"`
+	Title  string `json:"title,omitempty"`
+	Text   string `json:"text,omitempty"`
 }
 
 // WSMessage is a tagged envelope for WebSocket frames. The frame types
@@ -77,6 +84,7 @@ type WSMessage struct {
 	Tab     DetailTab       `json:"tab,omitempty"`
 	Detail  json.RawMessage `json:"detail,omitempty"`
 	Lease   *LeaseNotice    `json:"lease,omitempty"`
+	Alert   *Alert          `json:"alert,omitempty"`
 }
 
 // ClientMessage is sent client → server: subscribe (legacy mode), view
@@ -398,7 +406,7 @@ type NodeDisksResponse struct {
 }
 
 // Alert is an open alert: the last event of a (node, metric) when its
-// tint is not ok. ID is the event id.
+// tint is not ok. ID is the alert id: the event id of the change out of ok.
 type Alert struct {
 	ID           uuid.UUID  `json:"id"`
 	NodeID       uuid.UUID  `json:"node_id"`

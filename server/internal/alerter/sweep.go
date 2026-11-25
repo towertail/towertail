@@ -41,9 +41,11 @@ func (e *Engine) Run(ctx context.Context, every time.Duration) {
 }
 
 // Sweep sets nodes with no sample for 3 intervals to unreachable. It
-// also alerts on nodes that sent no sample since their registration.
+// also alerts on nodes that sent no sample since their registration, and
+// reminds of the alerts whose snooze ended.
 func (e *Engine) Sweep(ctx context.Context) {
 	now := e.clock.Now()
+	e.wakeSnoozed(ctx, now)
 	var stale []nodeKey
 	e.stateMu.Lock()
 	for nk, s := range e.seen {

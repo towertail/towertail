@@ -42,6 +42,7 @@ type fakeReader struct {
 	open, rows  []clickhouse.AlertRow
 	gotSince    time.Time
 	gotRowLimit int
+	marks       map[uuid.UUID]clickhouse.AlertMark
 }
 
 func (f *fakeReader) LatestByNode(_ context.Context, _ uuid.UUID, since time.Time) ([]clickhouse.NodeLatest, error) {
@@ -83,6 +84,10 @@ func (f *fakeReader) OpenAlerts(context.Context, uuid.UUID) ([]clickhouse.AlertR
 func (f *fakeReader) RecentAlerts(_ context.Context, _ uuid.UUID, since time.Time, limit int) ([]clickhouse.AlertRow, error) {
 	f.gotSince, f.gotRowLimit = since, limit
 	return f.rows, nil
+}
+
+func (f *fakeReader) AlertMarks(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]clickhouse.AlertMark, error) {
+	return f.marks, nil
 }
 
 var now = time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
@@ -423,7 +428,7 @@ func TestAlertFromRowLongProc(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := AlertFromRow(clickhouse.AlertRow{Kind: "long_process", Metric: "long_proc/812/1799000000", Tint: "warn", Payload: string(payload)})
+	a := AlertFromRow(clickhouse.AlertRow{Kind: "long_process", Metric: "long_proc/812/1799000000", Tint: "warn", Payload: string(payload)}, clickhouse.AlertMark{})
 	p := a.Proc
 	if a.Value != 95 || a.Metric != "long_proc/812/1799000000" || p == nil {
 		t.Fatalf("alert = %+v", a)
@@ -438,14 +443,14 @@ func TestAlertFromRowLongProc(t *testing.T) {
 
 func TestAlertFromRowLongProcNoStart(t *testing.T) {
 	payload := `{"value":95,"pid":812,"name":"python3","cmd":"python3","cpu_pct":95,"start_ts":null}`
-	a := AlertFromRow(clickhouse.AlertRow{Kind: "long_process", Payload: payload})
+	a := AlertFromRow(clickhouse.AlertRow{Kind: "long_process", Payload: payload}, clickhouse.AlertMark{})
 	if a.Proc == nil || a.Proc.StartTS != nil {
 		t.Fatalf("proc = %+v", a.Proc)
 	}
 }
 
 func TestAlertFromRowThreshold(t *testing.T) {
-	a := AlertFromRow(clickhouse.AlertRow{Kind: "threshold_crossed", Metric: "cpu", Payload: `{"metric":"cpu","value":0.92}`})
+	a := AlertFromRow(clickhouse.AlertRow{Kind: "threshold_crossed", Metric: "cpu", Payload: `{"metric":"cpu","value":0.92}`}, clickhouse.AlertMark{})
 	if a.Value != 0.92 || a.Proc != nil {
 		t.Fatalf("alert = %+v", a)
 	}
@@ -459,8 +464,31 @@ func TestAlertFromRowThreshold(t *testing.T) {
 }
 
 func TestAlertFromRowBadPayload(t *testing.T) {
-	a := AlertFromRow(clickhouse.AlertRow{Kind: "long_process", Payload: ""})
+	a := AlertFromRow(clickhouse.AlertRow{Kind: "long_process", Payload: ""}, clickhouse.AlertMark{})
 	if a.Value != 0 || a.Proc != nil {
 		t.Fatalf("alert = %+v", a)
+	}
+}
+
+func TestAlertsUseMarks(t *testing.T) {
+	org, node, alert, event := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	by := uuid.New()
+	r := &fakeReader{
+		open:  []clickhouse.AlertRow{{EventID: event, AlertID: alert, NodeID: node, Kind: "threshold_crossed", Metric: "cpu", Tint: "warn", Payload: `{"value":0.9}`}},
+		marks: map[uuid.UUID]clickhouse.AlertMark{alert: {AckedBy: &by}},
+	}
+	got, err := newService(r, nil, 1).Alerts(context.Background(), AlertsRequest{OrgID: org, Open: true})
+	if err != nil || len(got.Alerts) != 1 {
+		t.Fatalf("alerts = %+v, %v", got, err)
+	}
+	if a := got.Alerts[0]; a.ID != alert || a.AckedBy == nil || *a.AckedBy != by {
+		t.Fatalf("alert = %+v, want id %s acked by %s", a, alert, by)
+	}
+}
+
+func TestAlertFromRowOldRowHasEventID(t *testing.T) {
+	event := uuid.New()
+	if a := AlertFromRow(clickhouse.AlertRow{EventID: event}, clickhouse.AlertMark{}); a.ID != event {
+		t.Fatalf("id = %s, want %s", a.ID, event)
 	}
 }

@@ -28,6 +28,7 @@ import (
 	"github.com/towertail/towertail/server/internal/query"
 	"github.com/towertail/towertail/server/internal/scan"
 	"github.com/towertail/towertail/server/internal/version"
+	"github.com/towertail/towertail/server/notify"
 	"github.com/towertail/towertail/server/runtime"
 	"github.com/towertail/towertail/server/store"
 )
@@ -50,6 +51,8 @@ type Server struct {
 	runtime       *runtime.Runtime
 	store         store.ConfigStore
 	ch            *clickhouse.Client
+	alerts        alertReader
+	journal       notify.Journal
 	issuer        *auth.TokenIssuer
 	hub           *hub.Hub
 	alerter       *alerter.Engine
@@ -77,6 +80,8 @@ type Deps struct {
 	Runtime *runtime.Runtime
 	Store   store.ConfigStore
 	CH      *clickhouse.Client
+	// Journal stores the lines of the alert log. Nil keeps no log.
+	Journal notify.Journal
 	Issuer  *auth.TokenIssuer
 	Hub     *hub.Hub
 	Alerter *alerter.Engine
@@ -157,7 +162,13 @@ func New(d Deps) *Server {
 	if d.CH != nil {
 		reader = d.CH
 	}
+	var alerts alertReader
+	if d.CH != nil {
+		alerts = d.CH
+	}
 	s := &Server{
+		alerts:        alerts,
+		journal:       d.Journal,
 		echo:          e,
 		cfg:           d.Config,
 		log:           d.Log,
@@ -286,12 +297,19 @@ func (s *Server) registerRoutes() {
 
 	write.POST("/alerts/:id/ack", s.handleAckAlert, member)
 	write.POST("/alerts/:id/snooze", s.handleSnoozeAlert, member)
+	write.DELETE("/alerts/:id/ack", s.handleUnackAlert, member)
+	write.DELETE("/alerts/:id/snooze", s.handleUnsnoozeAlert, member)
+	write.POST("/nodes/:id/snooze", s.handleSnoozeNode, member)
+	write.DELETE("/nodes/:id/snooze", s.handleUnsnoozeNode, member)
+	write.PUT("/mutes", s.handlePutMute, member)
 	write.POST("/nodes/:id/disk-scans", s.handleRequestDiskScan, member)
 	write.POST("/disk-scans/:job/cancel", s.handleCancelDiskScan, member)
 
 	write.POST("/nodes", s.handleCreateNode, admin)
 	write.PUT("/nodes/:id", s.handleUpdateNode, admin)
 	write.DELETE("/nodes/:id", s.handleDeleteNode, admin)
+	write.POST("/alerts/:id/ignore", s.handleIgnoreAlert, admin)
+	write.DELETE("/alerts/:id/ignore", s.handleUnignoreAlert, admin)
 	write.POST("/nodes/:id/kill-process", s.handleKillProcess, admin)
 	write.PUT("/settings", s.handlePutSettings, admin)
 	if s.channels != nil {

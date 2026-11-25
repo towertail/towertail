@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	ch "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/google/uuid"
 )
 
@@ -341,18 +340,19 @@ const alertKinds = "kind IN ('threshold_crossed', 'reachability_changed', 'long_
 
 // TintRow is the last tint of one (org, node, metric).
 type TintRow struct {
-	OrgID  uuid.UUID
-	NodeID uuid.UUID
-	Metric string
-	Tint   string
-	TS     time.Time
+	OrgID   uuid.UUID
+	NodeID  uuid.UUID
+	Metric  string
+	Tint    string
+	TS      time.Time
+	AlertID uuid.UUID
 }
 
 // LastTints gives the last tint of each (org, node, metric) with an
 // event since the time.
 func (c *Client) LastTints(ctx context.Context, since time.Time) ([]TintRow, error) {
 	rows, err := c.conn.Query(ctx,
-		"SELECT org_id, node_id, metric, toString(argMax(tint, ts)), max(ts) FROM "+c.table("events")+" "+
+		"SELECT org_id, node_id, metric, toString(argMax(tint, ts)), max(ts), argMax(alert_id, ts) FROM "+c.table("events")+" "+
 			"WHERE ts >= ? AND "+alertKinds+" GROUP BY org_id, node_id, metric", since)
 	if err != nil {
 		return nil, err
@@ -361,7 +361,7 @@ func (c *Client) LastTints(ctx context.Context, since time.Time) ([]TintRow, err
 	var out []TintRow
 	for rows.Next() {
 		var r TintRow
-		if err := rows.Scan(&r.OrgID, &r.NodeID, &r.Metric, &r.Tint, &r.TS); err != nil {
+		if err := rows.Scan(&r.OrgID, &r.NodeID, &r.Metric, &r.Tint, &r.TS, &r.AlertID); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -419,7 +419,9 @@ func (c *Client) Registrations(ctx context.Context, since time.Time) ([]NodeSeen
 // AlertRow is an open alert: the last event of a (node, metric) when its
 // tint is not ok.
 type AlertRow struct {
-	EventID      uuid.UUID
+	EventID uuid.UUID
+	// AlertID is the id of the incident, the same for each event of it.
+	AlertID      uuid.UUID
 	NodeID       uuid.UUID
 	Kind         string
 	Metric       string
@@ -435,7 +437,7 @@ type AlertRow struct {
 const alertWindow = 90 * 24 * time.Hour
 
 // alertColumns is the column order that queryAlerts scans.
-const alertColumns = "event_id, node_id, toString(kind) AS kind_s, metric, toString(tint) AS tint_s, ts, payload, acked_by, acked_at, snoozed_until"
+const alertColumns = "event_id, alert_id, node_id, toString(kind) AS kind_s, metric, toString(tint) AS tint_s, ts, payload, acked_by, acked_at, snoozed_until"
 
 // alertSelect gives the last event of each (node, metric) of the org.
 func (c *Client) alertSelect() string {
@@ -459,12 +461,14 @@ func (c *Client) RecentAlerts(ctx context.Context, orgID uuid.UUID, since time.T
 		orgID, since, limit)
 }
 
-// Alert gives the open alert with the event id. It returns ErrNoAlert
-// when the event is not the open alert of its (node, metric).
-func (c *Client) Alert(ctx context.Context, orgID, eventID uuid.UUID) (AlertRow, error) {
+// Alert gives the last event of the alert with the id. The id is an alert
+// id, or an event id of an old client. The last event can have the tint
+// ok, so the caller checks if the alert is open. It returns ErrNoAlert
+// when a later alert of the same (node, metric) replaced it.
+func (c *Client) Alert(ctx context.Context, orgID, id uuid.UUID) (AlertRow, error) {
 	rows, err := c.queryAlerts(ctx,
-		"SELECT * FROM ("+c.alertSelect()+") WHERE tint_s != 'ok' AND event_id = ?",
-		orgID, time.Now().Add(-alertWindow), eventID)
+		"SELECT * FROM ("+c.alertSelect()+") WHERE alert_id = ? OR event_id = ?",
+		orgID, time.Now().Add(-alertWindow), id, id)
 	if err != nil {
 		return AlertRow{}, err
 	}
@@ -483,7 +487,7 @@ func (c *Client) queryAlerts(ctx context.Context, sql string, args ...any) ([]Al
 	var out []AlertRow
 	for rows.Next() {
 		var r AlertRow
-		if err := rows.Scan(&r.EventID, &r.NodeID, &r.Kind, &r.Metric, &r.Tint, &r.TS, &r.Payload,
+		if err := rows.Scan(&r.EventID, &r.AlertID, &r.NodeID, &r.Kind, &r.Metric, &r.Tint, &r.TS, &r.Payload,
 			&r.AckedBy, &r.AckedAt, &r.SnoozedUntil); err != nil {
 			return nil, err
 		}
@@ -492,20 +496,135 @@ func (c *Client) queryAlerts(ctx context.Context, sql string, args ...any) ([]Al
 	return out, rows.Err()
 }
 
-// AckAlert records who acked the alert and when.
-func (c *Client) AckAlert(ctx context.Context, orgID, eventID, by uuid.UUID, at time.Time) error {
-	return c.updateEvent(ctx, "acked_by = ?, acked_at = fromUnixTimestamp64Milli(?)", orgID, eventID, by, at.UnixMilli())
+// WriteAlertLines appends lines to the alert log.
+func (c *Client) WriteAlertLines(ctx context.Context, lines []AlertLine) error {
+	if len(lines) == 0 {
+		return nil
+	}
+	batch, err := c.conn.PrepareBatch(ctx, "INSERT INTO "+c.table("alert_log"))
+	if err != nil {
+		return err
+	}
+	for _, l := range lines {
+		if err := batch.Append(l.TS, l.OrgID, l.NodeID, l.AlertID, l.Kind, l.User, l.Until, l.Text); err != nil {
+			return err
+		}
+	}
+	return batch.Send()
 }
 
-// SnoozeAlert records the end of the snooze of the alert.
-func (c *Client) SnoozeAlert(ctx context.Context, orgID, eventID uuid.UUID, until time.Time) error {
-	return c.updateEvent(ctx, "snoozed_until = fromUnixTimestamp64Milli(?)", orgID, eventID, until.UnixMilli())
+// markSelect reads the last ack line and the last snooze line of each
+// alert. An alert with no line of a pair has a count of 0 for it.
+const markSelect = "SELECT org_id, alert_id, " +
+	"countIf(kind IN ('acked', 'unacked')), toString(argMaxIf(kind, ts, kind IN ('acked', 'unacked'))), " +
+	"argMaxIf(user, ts, kind IN ('acked', 'unacked')), maxIf(ts, kind IN ('acked', 'unacked')), " +
+	"countIf(kind IN ('snoozed', 'unsnoozed')), toString(argMaxIf(kind, ts, kind IN ('snoozed', 'unsnoozed'))), " +
+	"argMaxIf(user, ts, kind IN ('snoozed', 'unsnoozed')), argMaxIf(until, ts, kind IN ('snoozed', 'unsnoozed')) "
+
+type markKey struct{ org, alert uuid.UUID }
+
+// markState is a mark and the facts if the alert log has lines for it.
+type markState struct {
+	AlertMark
+	ackLine, snoozeLine bool
 }
 
-// updateEvent runs a mutation and waits for it. Acks are rare, so a
-// mutation on the small events table is cheap enough.
-func (c *Client) updateEvent(ctx context.Context, set string, orgID, eventID uuid.UUID, args ...any) error {
-	ctx = ch.Context(ctx, ch.WithSettings(ch.Settings{"mutations_sync": 1}))
-	args = append(args, orgID, eventID)
-	return c.conn.Exec(ctx, "ALTER TABLE "+c.table("events")+" UPDATE "+set+" WHERE org_id = ? AND event_id = ?", args...)
+// marks reads the marks of the alert log and of the old columns of
+// events. Both tables have the columns org_id, alert_id and ts, so cond
+// filters both. An alert with log lines of one pair (ack or snooze)
+// ignores the old column of that pair.
+func (c *Client) marks(ctx context.Context, cond string, args ...any) ([]AlertMark, error) {
+	states := map[markKey]*markState{}
+	rows, err := c.conn.Query(ctx, markSelect+"FROM "+c.table("alert_log")+" WHERE "+cond+
+		" AND kind IN ('acked', 'unacked', 'snoozed', 'unsnoozed') GROUP BY org_id, alert_id", args...)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var (
+			m                markState
+			nAck, nSnooze    uint64
+			ackKind, snzKind string
+			ackUser, snzUser *uuid.UUID
+			ackTS            time.Time
+			until            *time.Time
+		)
+		if err := rows.Scan(&m.OrgID, &m.AlertID, &nAck, &ackKind, &ackUser, &ackTS, &nSnooze, &snzKind, &snzUser, &until); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		m.ackLine, m.snoozeLine = nAck > 0, nSnooze > 0
+		if m.ackLine && ackKind == "acked" {
+			m.AckedBy, m.AckedAt = ackUser, &ackTS
+		}
+		if m.snoozeLine && snzKind == "snoozed" {
+			m.SnoozedUntil, m.SnoozedBy = until, snzUser
+		}
+		states[markKey{m.OrgID, m.AlertID}] = &m
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return nil, err
+	}
+
+	old, err := c.conn.Query(ctx, "SELECT org_id, alert_id, acked_by, acked_at, snoozed_until FROM "+c.table("events")+
+		" WHERE "+cond+" AND (acked_by IS NOT NULL OR snoozed_until IS NOT NULL) ORDER BY ts", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer old.Close()
+	for old.Next() {
+		var (
+			org, alert uuid.UUID
+			by         *uuid.UUID
+			at, until  *time.Time
+		)
+		if err := old.Scan(&org, &alert, &by, &at, &until); err != nil {
+			return nil, err
+		}
+		k := markKey{org, alert}
+		m := states[k]
+		if m == nil {
+			m = &markState{AlertMark: AlertMark{OrgID: org, AlertID: alert}}
+			states[k] = m
+		}
+		if by != nil && !m.ackLine {
+			m.AckedBy, m.AckedAt = by, at
+		}
+		if until != nil && !m.snoozeLine {
+			m.SnoozedUntil = until
+		}
+	}
+	if err := old.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]AlertMark, 0, len(states))
+	for _, m := range states {
+		out = append(out, m.AlertMark)
+	}
+	return out, nil
+}
+
+// AlertMarks gives the last ack state and the last snooze state of each
+// alert. An alert with no ack and no snooze has no entry.
+func (c *Client) AlertMarks(ctx context.Context, orgID uuid.UUID, alertIDs []uuid.UUID) (map[uuid.UUID]AlertMark, error) {
+	out := map[uuid.UUID]AlertMark{}
+	if len(alertIDs) == 0 {
+		return out, nil
+	}
+	ms, err := c.marks(ctx, "org_id = ? AND alert_id IN ?", orgID, alertIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range ms {
+		out[m.AlertID] = m
+	}
+	return out, nil
+}
+
+// OpenMarks gives the marks of all orgs for the lines since the time. The
+// alerter reads them after a restart.
+func (c *Client) OpenMarks(ctx context.Context, since time.Time) ([]AlertMark, error) {
+	return c.marks(ctx, "ts >= ?", since)
 }

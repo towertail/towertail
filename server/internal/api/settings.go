@@ -24,9 +24,10 @@ func (s *Server) handleGetSettings(c echo.Context) error {
 func (s *Server) handlePutSettings(c echo.Context) error {
 	t, _ := authctx.TokenFrom(c)
 	var cfg store.ServerSettings
-	// A client that does not know longProc keeps the stored rule.
+	// A client that does not know longProc or muted keeps the stored values.
 	if old, err := s.store.GetSettings(c.Request().Context(), t.OrgID); err == nil {
 		cfg.LongProc = old.LongProc
+		cfg.Muted = old.Muted
 	}
 	if err := c.Bind(&cfg); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
@@ -38,10 +39,15 @@ func (s *Server) handlePutSettings(c echo.Context) error {
 	if s.alerter != nil {
 		s.alerter.InvalidateSettings(t.OrgID)
 	}
-	if s.hub != nil {
-		if raw, err := json.Marshal(cfg); err == nil {
-			s.hub.BroadcastOrg(t.OrgID, wire.WSMessage{Type: "settings_updated", Setting: raw})
-		}
-	}
+	s.broadcastSettings(t.OrgID, cfg)
 	return c.JSON(http.StatusOK, cfg)
+}
+
+func (s *Server) broadcastSettings(orgID uuid.UUID, cfg store.ServerSettings) {
+	if s.hub == nil {
+		return
+	}
+	if raw, err := json.Marshal(cfg); err == nil {
+		s.hub.BroadcastOrg(orgID, wire.WSMessage{Type: "settings_updated", Setting: raw})
+	}
 }

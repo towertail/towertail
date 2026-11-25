@@ -91,10 +91,13 @@ type ProcRow struct {
 
 // EventRow is a persisted alert.
 type EventRow struct {
-	TS           time.Time
-	OrgID        uuid.UUID
-	NodeID       uuid.UUID
-	EventID      uuid.UUID
+	TS      time.Time
+	OrgID   uuid.UUID
+	NodeID  uuid.UUID
+	EventID uuid.UUID
+	// AlertID is the id of the alert that the event belongs to. A zero
+	// value writes EventID.
+	AlertID      uuid.UUID
 	Kind         string
 	Metric       string
 	Tint         string
@@ -102,6 +105,29 @@ type EventRow struct {
 	AckedBy      *uuid.UUID
 	AckedAt      *time.Time
 	SnoozedUntil *time.Time
+}
+
+// AlertLine is one append-only line of the alert log.
+type AlertLine struct {
+	TS      time.Time
+	OrgID   uuid.UUID
+	NodeID  uuid.UUID
+	AlertID uuid.UUID
+	Kind    string
+	User    *uuid.UUID
+	Until   *time.Time
+	Text    string
+}
+
+// AlertMark is the last ack state and the last snooze state of an alert.
+// AckedBy is nil after an unack. SnoozedUntil is nil after an unsnooze.
+type AlertMark struct {
+	OrgID        uuid.UUID
+	AlertID      uuid.UUID
+	AckedBy      *uuid.UUID
+	AckedAt      *time.Time
+	SnoozedUntil *time.Time
+	SnoozedBy    *uuid.UUID
 }
 
 // IngestBundle carries every row set derived from one Sample. Ingest

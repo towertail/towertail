@@ -43,6 +43,11 @@ func TestRouteRoles(t *testing.T) {
 
 		{"POST", "/v1/alerts/" + id + "/ack", store.RoleMember},
 		{"POST", "/v1/alerts/" + id + "/snooze", store.RoleMember},
+		{"DELETE", "/v1/alerts/" + id + "/ack", store.RoleMember},
+		{"DELETE", "/v1/alerts/" + id + "/snooze", store.RoleMember},
+		{"POST", "/v1/nodes/" + id + "/snooze", store.RoleMember},
+		{"DELETE", "/v1/nodes/" + id + "/snooze", store.RoleMember},
+		{"PUT", "/v1/mutes", store.RoleMember},
 		{"POST", "/v1/nodes/" + id + "/disk-scans", store.RoleMember},
 		{"POST", "/v1/disk-scans/" + id + "/cancel", store.RoleMember},
 
@@ -50,6 +55,8 @@ func TestRouteRoles(t *testing.T) {
 		{"PUT", "/v1/nodes/" + id, store.RoleAdmin},
 		{"DELETE", "/v1/nodes/" + id, store.RoleAdmin},
 		{"POST", "/v1/nodes/" + id + "/kill-process", store.RoleAdmin},
+		{"POST", "/v1/alerts/" + id + "/ignore", store.RoleAdmin},
+		{"DELETE", "/v1/alerts/" + id + "/ignore", store.RoleAdmin},
 		{"PUT", "/v1/settings", store.RoleAdmin},
 		{"GET", "/v1/channels", store.RoleAdmin},
 		{"POST", "/v1/channels", store.RoleAdmin},

@@ -48,10 +48,20 @@ func (s *Service) Alerts(ctx context.Context, r AlertsRequest) (wire.AlertList, 
 	if err != nil {
 		return wire.AlertList{}, err
 	}
+	var keep []clickhouse.AlertRow
+	var ids []uuid.UUID
 	for _, row := range rows {
 		if r.NodeID == uuid.Nil || row.NodeID == r.NodeID {
-			out.Alerts = append(out.Alerts, AlertFromRow(row))
+			keep = append(keep, row)
+			ids = append(ids, alertID(row))
 		}
+	}
+	marks, err := s.ch.AlertMarks(ctx, r.OrgID, ids)
+	if err != nil {
+		return wire.AlertList{}, err
+	}
+	for i, row := range keep {
+		out.Alerts = append(out.Alerts, AlertFromRow(row, marks[ids[i]]))
 	}
 	return out, nil
 }
@@ -90,21 +100,31 @@ func (p alertPayload) proc() *wire.AlertProc {
 	}
 }
 
-// AlertFromRow converts an alert row to its wire form.
-func AlertFromRow(r clickhouse.AlertRow) wire.Alert {
+// alertID is the alert id of the row. A row with no alert id has the id of
+// its event.
+func alertID(r clickhouse.AlertRow) uuid.UUID {
+	if r.AlertID != uuid.Nil {
+		return r.AlertID
+	}
+	return r.EventID
+}
+
+// AlertFromRow converts an alert row and the mark of its alert to the wire
+// form.
+func AlertFromRow(r clickhouse.AlertRow, m clickhouse.AlertMark) wire.Alert {
 	var p alertPayload
 	_ = json.Unmarshal([]byte(r.Payload), &p)
 	a := wire.Alert{
-		ID:           r.EventID,
+		ID:           alertID(r),
 		NodeID:       r.NodeID,
 		Kind:         r.Kind,
 		Metric:       r.Metric,
 		Tint:         wire.Tint(r.Tint),
 		TS:           r.TS,
 		Value:        p.Value,
-		AckedBy:      r.AckedBy,
-		AckedAt:      r.AckedAt,
-		SnoozedUntil: r.SnoozedUntil,
+		AckedBy:      m.AckedBy,
+		AckedAt:      m.AckedAt,
+		SnoozedUntil: m.SnoozedUntil,
 	}
 	if r.Kind == "long_process" {
 		a.Proc = p.proc()

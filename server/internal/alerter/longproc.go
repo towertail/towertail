@@ -62,6 +62,9 @@ type procChange struct {
 	proc      clickhouse.ProcRow
 	highSince time.Time
 	flagged   bool
+	// ignored is true for a clear change of a process that the ignore list
+	// dropped.
+	ignored bool
 }
 
 // procTracker follows the processes of one node, with the same rules as
@@ -70,10 +73,13 @@ type procChange struct {
 type procTracker struct {
 	entries  map[procKey]*procEntry
 	reported map[procKey]procChange
+	// dropped holds the keys that the ignore list removed in the last
+	// observe call.
+	dropped map[procKey]bool
 }
 
 func newProcTracker() *procTracker {
-	return &procTracker{entries: map[procKey]*procEntry{}, reported: map[procKey]procChange{}}
+	return &procTracker{entries: map[procKey]*procEntry{}, reported: map[procKey]procChange{}, dropped: map[procKey]bool{}}
 }
 
 func (t *procTracker) empty() bool { return len(t.entries) == 0 && len(t.reported) == 0 }
@@ -119,6 +125,7 @@ func (t *procTracker) observe(items []clickhouse.ProcRow, at time.Time, rule sto
 		}
 		if ignored[strings.ToLower(e.proc.Name)] {
 			delete(t.entries, k)
+			t.dropped[k] = true
 			continue
 		}
 		e.present = false
@@ -161,8 +168,10 @@ func (t *procTracker) diff(at time.Time) []procChange {
 		}
 		delete(t.reported, k)
 		c.flagged = false
+		c.ignored = t.dropped[k]
 		removed = append(removed, c)
 	}
+	clear(t.dropped)
 	slices.SortFunc(added, func(a, b procChange) int { return cmp.Compare(b.proc.CPUPct, a.proc.CPUPct) })
 	slices.SortFunc(removed, func(a, b procChange) int { return cmp.Compare(a.key.pid, b.key.pid) })
 	return append(added, removed...)

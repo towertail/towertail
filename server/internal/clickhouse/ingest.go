@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/towertail/towertail/server/config"
 )
 
@@ -322,12 +324,15 @@ func (c *Client) flush(ctx context.Context, samples []SampleRow, disks []DiskRow
 // WriteEvent inserts a single event row synchronously. Events are rare
 // enough that batching adds no meaningful win.
 func (c *Client) WriteEvent(ctx context.Context, e EventRow) error {
+	if e.AlertID == uuid.Nil {
+		e.AlertID = e.EventID
+	}
 	batch, err := c.conn.PrepareBatch(ctx, "INSERT INTO "+c.table("events"))
 	if err != nil {
 		return err
 	}
 	if err := batch.Append(
-		e.TS, e.OrgID, e.NodeID, e.EventID, e.Kind, e.Metric, e.Tint, e.Payload,
+		e.TS, e.OrgID, e.NodeID, e.EventID, e.AlertID, e.Kind, e.Metric, e.Tint, e.Payload,
 		e.AckedBy, e.AckedAt, e.SnoozedUntil,
 	); err != nil {
 		return err

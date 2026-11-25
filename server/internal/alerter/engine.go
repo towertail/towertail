@@ -3,6 +3,7 @@ package alerter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"maps"
 	"strings"
@@ -16,6 +17,9 @@ import (
 	"github.com/towertail/towertail/server/store"
 	"github.com/towertail/towertail/server/wire"
 )
+
+// reasonMuted is the reason of the change to ok of a muted alert.
+const reasonMuted = "muted"
 
 const (
 	settingsTTL = 30 * time.Second
@@ -48,6 +52,8 @@ type Store interface {
 	LastTints(ctx context.Context, since time.Time) ([]clickhouse.TintRow, error)
 	LastSeen(ctx context.Context, since time.Time) ([]clickhouse.NodeSeen, error)
 	Registrations(ctx context.Context, since time.Time) ([]clickhouse.NodeSeen, error)
+	// OpenMarks gives the acks and snoozes of the alert log since the time.
+	OpenMarks(ctx context.Context, since time.Time) ([]clickhouse.AlertMark, error)
 }
 
 // Config gives the settings of each org and the nodes.
@@ -85,6 +91,21 @@ type Engine struct {
 	expected map[nodeKey]time.Time
 	sent     map[sentKey]time.Time
 	procs    map[nodeKey]*procTracker
+	// open holds the alert (incident) of each key that is not ok.
+	open map[stateKey]*openAlert
+}
+
+// openAlert is one alert from the change out of ok to the change back to
+// ok. An ack or a snooze stops its notifications.
+type openAlert struct {
+	id           uuid.UUID
+	tint         Tint
+	ackedBy      *uuid.UUID
+	snoozedUntil time.Time
+	// snoozeDone is true after the reminder that follows the snooze.
+	snoozeDone bool
+	// last is the change that set the tint. The reminder reuses it.
+	last change
 }
 
 type cachedSettings struct {
@@ -112,6 +133,7 @@ func New(log *slog.Logger, clock Clock, sink EventSink, st Store, cfg Config, no
 		expected:  map[nodeKey]time.Time{},
 		sent:      map[sentKey]time.Time{},
 		procs:     map[nodeKey]*procTracker{},
+		open:      map[stateKey]*openAlert{},
 	}
 }
 
@@ -182,6 +204,7 @@ func (e *Engine) Evaluate(ctx context.Context, orgID, nodeID uuid.UUID, node *st
 	}
 	now := e.clock.Now()
 	debounce := time.Duration(cfg.NotifyDebounceSeconds) * time.Second
+	muted := cfg.MutedSet(node)
 
 	var changes []change
 	e.stateMu.Lock()
@@ -198,6 +221,12 @@ func (e *Engine) Evaluate(ctx context.Context, orgID, nodeID uuid.UUID, node *st
 		{"disk", maxDiskRatio, thresholds.DiskWarn, thresholds.DiskCritical},
 	} {
 		k := stateKey{org: orgID, node: nodeID, metric: m.metric}
+		if muted.Has(store.ThresholdMetric(m.metric)) {
+			if ch, ok := e.muteMetric(k, now); ok {
+				changes = append(changes, ch)
+			}
+			continue
+		}
 		if ch, ok := e.evalMetric(k, m.value, m.warn, m.critical, now, debounce); ok {
 			changes = append(changes, ch)
 		}
@@ -222,6 +251,11 @@ func (e *Engine) EvaluateProcs(ctx context.Context, orgID, nodeID uuid.UUID, nod
 		nodeIgnore = node.IgnoredProcs
 	}
 	ignored := rule.IgnoreSet(cfg.LongProc.Ignore, nodeIgnore)
+	// A muted rule follows no process, so the open alerts close quietly.
+	muted := cfg.MutedSet(node).Has(store.MetricLong)
+	if muted {
+		rule.Enabled = false
+	}
 
 	nk := nodeKey{org: orgID, node: nodeID}
 	e.stateMu.Lock()
@@ -241,7 +275,11 @@ func (e *Engine) EvaluateProcs(ctx context.Context, orgID, nodeID uuid.UUID, nod
 	e.stateMu.Unlock()
 
 	for _, pc := range pcs {
-		e.emit(ctx, cfg, node, procEvent(nk, pc, at, !rule.Notifies()))
+		c := procEvent(nk, pc, at, !rule.Notifies())
+		if muted {
+			c.quiet, c.reason = true, reasonMuted
+		}
+		e.emit(ctx, cfg, node, c)
 	}
 }
 
@@ -259,7 +297,28 @@ func procEvent(nk nodeKey, pc procChange, at time.Time, quiet bool) change {
 	if pc.flagged {
 		c.from, c.to = TintOK, TintWarn
 	}
+	if pc.ignored {
+		c.quiet = true
+		c.payload["closed"] = "ignored"
+	}
 	return c
+}
+
+// muteMetric closes the alert of a muted metric. It runs under stateMu.
+// A muted metric keeps an ok state, so the alert can open again after an
+// unmute.
+func (e *Engine) muteMetric(k stateKey, now time.Time) (change, bool) {
+	st, ok := e.states[k]
+	if !ok {
+		e.states[k] = &metricState{tint: TintOK, changed: now}
+		return change{}, false
+	}
+	if st.tint == TintOK {
+		return change{}, false
+	}
+	c := st.set(k, TintOK, 0, now)
+	c.quiet, c.reason = true, reasonMuted
+	return c, true
 }
 
 // evalMetric runs under stateMu.
@@ -341,13 +400,23 @@ func (e *Engine) emit(ctx context.Context, cfg store.ServerSettings, node *store
 	}
 	maps.Copy(body, c.payload)
 	payload, _ := json.Marshal(body)
+
+	eventID := uuid.New()
+	alertID := e.track(c, eventID)
+	sendIt := e.shouldNotify(cfg, node, c)
+	a := e.alertOf(c, node)
+	a.EventID, a.AlertID = eventID, alertID
 	evt := wire.Event{
-		ID:     uuid.New(),
-		TS:     c.at,
-		Kind:   c.kind(),
-		NodeID: c.key.node,
-		Metric: c.metric(),
-		Tint:   string(c.to),
+		ID:      eventID,
+		AlertID: alertID,
+		TS:      c.at,
+		Kind:    c.kind(),
+		NodeID:  c.key.node,
+		Metric:  c.metric(),
+		Tint:    string(c.to),
+		Notify:  sendIt,
+		Title:   a.Title(),
+		Text:    a.Text(),
 	}
 	if e.sink != nil {
 		e.sink.Publish(c.key.org, evt)
@@ -357,7 +426,8 @@ func (e *Engine) emit(ctx context.Context, cfg store.ServerSettings, node *store
 			TS:      c.at,
 			OrgID:   c.key.org,
 			NodeID:  c.key.node,
-			EventID: evt.ID,
+			EventID: eventID,
+			AlertID: alertID,
 			Kind:    evt.Kind,
 			Metric:  c.key.metric,
 			Tint:    string(c.to),
@@ -367,21 +437,79 @@ func (e *Engine) emit(ctx context.Context, cfg store.ServerSettings, node *store
 			e.log.Warn("alerter: write event", "err", err)
 		}
 	}
-	if e.shouldNotify(cfg, node, c) {
-		e.notify(evt.ID, c, node)
+	if c.to == TintOK {
+		e.stateMu.Lock()
+		delete(e.open, c.key)
+		e.stateMu.Unlock()
+	}
+	if sendIt {
+		e.notify(a)
 	}
 }
 
-// shouldNotify applies the org flags, the node flags, the node snooze
-// and the cooldown. A change to ok uses the flags of the tint that it
-// ends.
+// track gives the alert id of the change and keeps the open alert. A
+// change out of ok opens a new alert, and its id is the id of the event.
+func (e *Engine) track(c change, eventID uuid.UUID) uuid.UUID {
+	e.stateMu.Lock()
+	defer e.stateMu.Unlock()
+	o := e.open[c.key]
+	if c.to == TintOK {
+		if o != nil {
+			return o.id
+		}
+		return eventID
+	}
+	if o == nil || c.from == TintOK {
+		o = &openAlert{id: eventID}
+		e.open[c.key] = o
+	}
+	o.tint, o.last = c.to, c
+	return o.id
+}
+
+// shouldNotify applies the org flags, the node flags, the node snooze,
+// the ack and the snooze of the alert, and the cooldown. A change to ok
+// uses the flags of the tint that it ends. An ack stops all changes except
+// the change to ok. A snooze stops all changes until its time.
 func (e *Engine) shouldNotify(cfg store.ServerSettings, node *store.Node, c change) bool {
-	if len(e.notifiers) == 0 || !cfg.NotificationsEnabled || c.quiet {
+	if c.quiet {
 		return false
 	}
 	tint := c.to
 	if tint == TintOK {
 		tint = c.from
+	}
+	if !e.flagsAllow(cfg, node, tint, c.at) {
+		return false
+	}
+	cooldown := time.Duration(cfg.NotifyCooldownSeconds) * time.Second
+	if cooldown <= 0 {
+		cooldown = defaultCooldown
+	}
+	k := sentKey{stateKey: c.key, tint: c.to}
+	e.stateMu.Lock()
+	defer e.stateMu.Unlock()
+	if o := e.open[c.key]; o != nil {
+		if o.snoozedUntil.After(c.at) || (o.ackedBy != nil && c.to != TintOK) {
+			return false
+		}
+	}
+	if last, ok := e.sent[k]; ok && c.at.Sub(last) < cooldown {
+		return false
+	}
+	// Each process has its own keys, so drop the old ones.
+	if len(e.sent) > maxSent {
+		maps.DeleteFunc(e.sent, func(_ sentKey, t time.Time) bool { return c.at.Sub(t) >= cooldown })
+	}
+	e.sent[k] = c.at
+	return true
+}
+
+// flagsAllow applies the org flags, the node flags and the node snooze to
+// a notification of the tint.
+func (e *Engine) flagsAllow(cfg store.ServerSettings, node *store.Node, tint Tint, at time.Time) bool {
+	if len(e.notifiers) == 0 || !cfg.NotificationsEnabled {
+		return false
 	}
 	switch tint {
 	case TintWarn:
@@ -395,31 +523,25 @@ func (e *Engine) shouldNotify(cfg store.ServerSettings, node *store.Node, c chan
 	default:
 		return false
 	}
-	if node != nil && node.SnoozedUntil != nil && node.SnoozedUntil.After(c.at) {
-		return false
-	}
-	cooldown := time.Duration(cfg.NotifyCooldownSeconds) * time.Second
-	if cooldown <= 0 {
-		cooldown = defaultCooldown
-	}
-	k := sentKey{stateKey: c.key, tint: c.to}
-	e.stateMu.Lock()
-	defer e.stateMu.Unlock()
-	if last, ok := e.sent[k]; ok && c.at.Sub(last) < cooldown {
-		return false
-	}
-	// Each process has its own keys, so drop the old ones.
-	if len(e.sent) > maxSent {
-		maps.DeleteFunc(e.sent, func(_ sentKey, t time.Time) bool { return c.at.Sub(t) >= cooldown })
-	}
-	e.sent[k] = c.at
-	return true
+	return node == nil || node.SnoozedUntil == nil || !node.SnoozedUntil.After(at)
 }
 
 // notify calls each notifier in its own goroutine with a timeout.
-func (e *Engine) notify(eventID uuid.UUID, c change, node *store.Node) {
+func (e *Engine) notify(a notify.Alert) {
+	for _, n := range e.notifiers {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), notifyTimeout)
+			defer cancel()
+			if err := n.Notify(ctx, a); err != nil {
+				e.log.Warn("alerter: notify", "notifier", n.Name(), "node_id", a.NodeID, "metric", a.Metric, "err", err)
+			}
+		}()
+	}
+}
+
+// alertOf builds the notification of a change. The caller sets the ids.
+func (e *Engine) alertOf(c change, node *store.Node) notify.Alert {
 	a := notify.Alert{
-		EventID:  eventID,
 		OrgID:    c.key.org,
 		NodeID:   c.key.node,
 		Metric:   c.metric(),
@@ -442,20 +564,32 @@ func (e *Engine) notify(eventID uuid.UUID, c change, node *store.Node) {
 			}
 		}
 	}
-	for _, n := range e.notifiers {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), notifyTimeout)
-			defer cancel()
-			if err := n.Notify(ctx, a); err != nil {
-				e.log.Warn("alerter: notify", "notifier", n.Name(), "node_id", a.NodeID, "metric", a.Metric, "err", err)
-			}
-		}()
-	}
+	return a
 }
 
-// Acked tells the notifiers that implement notify.AckObserver about an ack
-// or a snooze. Each call has its own goroutine and timeout.
+// Acked sets the ack or the snooze of the open alert, then tells the
+// notifiers that implement notify.AckObserver. An undo changes only the
+// state. Each call has its own goroutine and timeout.
 func (e *Engine) Acked(_ context.Context, a notify.Ack) {
+	key := stateKey{org: a.OrgID, node: a.NodeID, metric: a.Metric}
+	e.stateMu.Lock()
+	if o := e.open[key]; o != nil && o.id == a.AlertID {
+		switch {
+		case a.Snooze && a.Undo:
+			o.snoozedUntil, o.snoozeDone = time.Time{}, false
+		case a.Snooze && a.Until != nil:
+			o.snoozedUntil, o.snoozeDone = *a.Until, false
+		case a.Undo:
+			o.ackedBy = nil
+		case !a.Snooze:
+			by := a.By
+			o.ackedBy = &by
+		}
+	}
+	e.stateMu.Unlock()
+	if a.Undo {
+		return
+	}
 	for _, n := range e.notifiers {
 		o, ok := n.(notify.AckObserver)
 		if !ok {
@@ -468,5 +602,40 @@ func (e *Engine) Acked(_ context.Context, a notify.Ack) {
 				e.log.Warn("alerter: ack", "notifier", n.Name(), "node_id", a.NodeID, "metric", a.Metric, "err", err)
 			}
 		}()
+	}
+}
+
+// wakeSnoozed sends one reminder for each open alert whose snooze ended.
+func (e *Engine) wakeSnoozed(ctx context.Context, now time.Time) {
+	var due []openAlert
+	e.stateMu.Lock()
+	for _, o := range e.open {
+		if o.snoozedUntil.IsZero() || o.snoozedUntil.After(now) || o.snoozeDone || o.ackedBy != nil {
+			continue
+		}
+		o.snoozeDone = true
+		due = append(due, *o)
+	}
+	e.stateMu.Unlock()
+
+	for _, o := range due {
+		c := o.last
+		if c.quiet {
+			continue
+		}
+		org := c.key.org
+		var node *store.Node
+		if n, err := e.config.GetNode(ctx, org, c.key.node); err == nil {
+			node = &n
+		} else if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if !e.flagsAllow(e.settings(ctx, org), node, o.tint, now) {
+			continue
+		}
+		c.at = now
+		a := e.alertOf(c, node)
+		a.AlertID, a.Repeat = o.id, true
+		e.notify(a)
 	}
 }

@@ -66,6 +66,7 @@ type Reader interface {
 	DiskHistory(ctx context.Context, q clickhouse.RangeQuery) ([]clickhouse.DiskPoint, time.Duration, error)
 	OpenAlerts(ctx context.Context, orgID uuid.UUID) ([]clickhouse.AlertRow, error)
 	RecentAlerts(ctx context.Context, orgID uuid.UUID, since time.Time, limit int) ([]clickhouse.AlertRow, error)
+	AlertMarks(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]clickhouse.AlertMark, error)
 }
 
 // Nodes lists the nodes of an org.

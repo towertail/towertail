@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -102,16 +103,17 @@ func (s *Server) handleUpdateNode(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	// A client that does not know allowDiskScan, hideProcFolders,
-	// ignoredProcs or machineId keeps the stored values. Such a client also does not know
+	// ignoredProcs, machineId or mutedSignals keeps the stored values. Such a client also does not know
 	// customLongProc.
 	var opt struct {
 		AllowDiskScan   *bool           `json:"allowDiskScan"`
 		HideProcFolders *bool           `json:"hideProcFolders"`
 		IgnoredProcs    json.RawMessage `json:"ignoredProcs"`
 		MachineID       *string         `json:"machineId"`
+		MutedSignals    json.RawMessage `json:"mutedSignals"`
 	}
 	_ = json.Unmarshal(body, &opt)
-	if opt.AllowDiskScan == nil || opt.HideProcFolders == nil || opt.IgnoredProcs == nil || opt.MachineID == nil {
+	if opt.AllowDiskScan == nil || opt.HideProcFolders == nil || opt.IgnoredProcs == nil || opt.MachineID == nil || opt.MutedSignals == nil {
 		if old, err := s.store.GetNode(c.Request().Context(), t.OrgID, id); err == nil {
 			if opt.AllowDiskScan == nil {
 				n.AllowDiskScan = old.AllowDiskScan
@@ -125,6 +127,9 @@ func (s *Server) handleUpdateNode(c echo.Context) error {
 			}
 			if opt.MachineID == nil {
 				n.MachineID = old.MachineID
+			}
+			if opt.MutedSignals == nil {
+				n.MutedSignals = old.MutedSignals
 			}
 		}
 	}
@@ -164,4 +169,33 @@ func (s *Server) broadcastNode(orgID uuid.UUID, n store.Node) {
 		return
 	}
 	s.hub.BroadcastOrg(orgID, wire.WSMessage{Type: "node_updated", Node: raw})
+}
+
+func (s *Server) handleSnoozeNode(c echo.Context) error {
+	until, err := parseFuture(c.QueryParam("until"), time.Now())
+	if err != nil {
+		return err
+	}
+	return s.snoozeNode(c, &until)
+}
+
+func (s *Server) handleUnsnoozeNode(c echo.Context) error { return s.snoozeNode(c, nil) }
+
+// snoozeNode sets or clears the snooze of the host in the path.
+func (s *Server) snoozeNode(c echo.Context, until *time.Time) error {
+	t, _ := authctx.TokenFrom(c)
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "bad id")
+	}
+	n, err := s.store.EditNode(c.Request().Context(), t.OrgID, id, func(n *store.Node) error {
+		n.SnoozedUntil = until
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	s.audit(c, "snooze", "node", id, "until", until)
+	s.broadcastNode(t.OrgID, n)
+	return c.JSON(http.StatusOK, n)
 }

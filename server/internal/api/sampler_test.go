@@ -396,6 +396,10 @@ func (*registeredStore) Registrations(context.Context, time.Time) ([]clickhouse.
 	return nil, nil
 }
 
+func (*registeredStore) OpenMarks(context.Context, time.Time) ([]clickhouse.AlertMark, error) {
+	return nil, nil
+}
+
 func TestEnrollAndJoin_ExpectFirstSample(t *testing.T) {
 	e := newEnrollEnv(t, config.Config{}, nil)
 	rs := &registeredStore{}

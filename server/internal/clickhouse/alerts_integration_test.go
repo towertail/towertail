@@ -17,11 +17,12 @@ func TestAlertsAckSnoozeRoundTrip(t *testing.T) {
 
 	org, otherOrg, node := uuid.New(), uuid.New(), uuid.New()
 	now := time.Now().UTC().Truncate(time.Millisecond)
-	write := func(org uuid.UUID, metric, tint string, ts time.Time) uuid.UUID {
+	// write stores one event. A zero alert id means the id of the event.
+	write := func(org uuid.UUID, metric, tint string, ts time.Time, alert uuid.UUID) uuid.UUID {
 		t.Helper()
 		id := uuid.New()
 		err := client.WriteEvent(ctx, EventRow{
-			TS: ts, OrgID: org, NodeID: node, EventID: id, Kind: "threshold_crossed",
+			TS: ts, OrgID: org, NodeID: node, EventID: id, AlertID: alert, Kind: "threshold_crossed",
 			Metric: metric, Tint: tint, Payload: `{"value":0.95}`,
 		})
 		if err != nil {
@@ -29,41 +30,55 @@ func TestAlertsAckSnoozeRoundTrip(t *testing.T) {
 		}
 		return id
 	}
-	write(org, "cpu", "warn", now.Add(-3*time.Minute))
-	open := write(org, "cpu", "critical", now.Add(-2*time.Minute))
-	closed := write(org, "mem", "critical", now.Add(-2*time.Minute))
-	write(org, "mem", "ok", now.Add(-time.Minute))
-	write(otherOrg, "cpu", "critical", now)
+	cpu := write(org, "cpu", "warn", now.Add(-3*time.Minute), uuid.Nil)
+	open := write(org, "cpu", "critical", now.Add(-2*time.Minute), cpu)
+	closed := write(org, "mem", "critical", now.Add(-2*time.Minute), uuid.Nil)
+	write(org, "mem", "ok", now.Add(-time.Minute), closed)
+	write(otherOrg, "cpu", "critical", now, uuid.Nil)
 
 	alerts, err := client.OpenAlerts(ctx, org)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(alerts) != 1 || alerts[0].EventID != open || alerts[0].Tint != "critical" || alerts[0].Kind != "threshold_crossed" {
+	if len(alerts) != 1 || alerts[0].EventID != open || alerts[0].AlertID != cpu || alerts[0].Tint != "critical" || alerts[0].Kind != "threshold_crossed" {
 		t.Fatalf("open alerts = %+v", alerts)
 	}
-	if _, err := client.Alert(ctx, org, closed); err != ErrNoAlert {
-		t.Fatalf("closed alert: err = %v, want ErrNoAlert", err)
+	// An alert is found by its alert id and by the event id of an old client.
+	for _, id := range []uuid.UUID{cpu, open} {
+		a, err := client.Alert(ctx, org, id)
+		if err != nil || a.EventID != open || a.AlertID != cpu {
+			t.Fatalf("Alert(%s) = %+v, %v", id, a, err)
+		}
+	}
+	// A closed alert is found, with the tint ok.
+	if a, err := client.Alert(ctx, org, closed); err != nil || a.Tint != "ok" {
+		t.Fatalf("closed alert = %+v, %v", a, err)
+	}
+	// An id that no event has gives ErrNoAlert.
+	if _, err := client.Alert(ctx, org, uuid.New()); err != ErrNoAlert {
+		t.Fatalf("unknown alert: err = %v, want ErrNoAlert", err)
 	}
 	if _, err := client.Alert(ctx, otherOrg, open); err != ErrNoAlert {
 		t.Fatalf("alert of other org: err = %v, want ErrNoAlert", err)
 	}
 
 	by := uuid.New()
-	if err := client.AckAlert(ctx, org, open, by, now); err != nil {
-		t.Fatal(err)
-	}
 	until := now.Add(time.Hour)
-	if err := client.SnoozeAlert(ctx, org, open, until); err != nil {
-		t.Fatal(err)
-	}
-	a, err := client.Alert(ctx, org, open)
+	err = client.WriteAlertLines(ctx, []AlertLine{
+		{TS: now, OrgID: org, NodeID: node, AlertID: cpu, Kind: "acked", User: &by},
+		{TS: now.Add(time.Second), OrgID: org, NodeID: node, AlertID: cpu, Kind: "snoozed", User: &by, Until: &until},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.AckedBy == nil || *a.AckedBy != by || a.AckedAt == nil || !a.AckedAt.Equal(now) ||
-		a.SnoozedUntil == nil || !a.SnoozedUntil.Equal(until) {
-		t.Fatalf("after ack and snooze: %+v", a)
+	marks, err := client.AlertMarks(ctx, org, []uuid.UUID{cpu, closed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := marks[cpu]
+	if m.AckedBy == nil || *m.AckedBy != by || m.AckedAt == nil || !m.AckedAt.Equal(now) ||
+		m.SnoozedUntil == nil || !m.SnoozedUntil.Equal(until) || len(marks) != 1 {
+		t.Fatalf("marks after ack and snooze: %+v", marks)
 	}
 
 	recent, err := client.RecentAlerts(ctx, org, now.Add(-150*time.Second), 10)
@@ -82,13 +97,98 @@ func TestAlertsAckSnoozeRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := map[string]string{}
+	alertOf := map[string]uuid.UUID{}
 	for _, r := range tints {
 		if r.OrgID == org {
 			got[r.Metric] = r.Tint
+			alertOf[r.Metric] = r.AlertID
 		}
 	}
-	if got["cpu"] != "critical" || got["mem"] != "ok" || len(got) != 2 {
-		t.Fatalf("last tints = %v", got)
+	if got["cpu"] != "critical" || got["mem"] != "ok" || len(got) != 2 || alertOf["cpu"] != cpu || alertOf["mem"] != closed {
+		t.Fatalf("last tints = %v, alerts = %v", got, alertOf)
+	}
+}
+
+func TestAlertLogMarks(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	org, node, user := uuid.New(), uuid.New(), uuid.New()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	line := func(alert uuid.UUID, kind string, at time.Duration, until *time.Time) AlertLine {
+		return AlertLine{TS: now.Add(at), OrgID: org, NodeID: node, AlertID: alert, Kind: kind, User: &user, Until: until}
+	}
+	acked, unacked, snoozed, plain, legacy := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	first, last := now.Add(time.Hour), now.Add(3*time.Hour)
+	err := client.WriteAlertLines(ctx, []AlertLine{
+		line(acked, "acked", -3*time.Second, nil),
+		line(unacked, "acked", -3*time.Second, nil),
+		line(unacked, "unacked", -2*time.Second, nil),
+		line(snoozed, "snoozed", -3*time.Second, &first),
+		line(snoozed, "snoozed", -2*time.Second, &last),
+		line(plain, "notified", -time.Second, nil),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An alert from before the log has its state in the old columns.
+	ackAt, snoozeUntil := now.Add(-time.Minute), now.Add(2*time.Hour)
+	err = client.WriteEvent(ctx, EventRow{
+		TS: now.Add(-time.Hour), OrgID: org, NodeID: node, EventID: legacy, Kind: "threshold_crossed",
+		Metric: "disk", Tint: "warn", Payload: `{}`, AckedBy: &user, AckedAt: &ackAt, SnoozedUntil: &snoozeUntil,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	marks, err := client.AlertMarks(ctx, org, []uuid.UUID{acked, unacked, snoozed, plain, legacy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := marks[acked]; m.AckedBy == nil || *m.AckedBy != user || m.SnoozedUntil != nil {
+		t.Errorf("acked = %+v", m)
+	}
+	if m := marks[unacked]; m.AckedBy != nil || m.AckedAt != nil {
+		t.Errorf("acked then unacked = %+v, want no ack", m)
+	}
+	if m := marks[snoozed]; m.SnoozedUntil == nil || !m.SnoozedUntil.Equal(last) || m.AckedBy != nil {
+		t.Errorf("snoozed twice = %+v, want the last until", m)
+	}
+	if m, ok := marks[plain]; ok && (m.AckedBy != nil || m.SnoozedUntil != nil) {
+		t.Errorf("notified only = %+v", m)
+	}
+	if m := marks[legacy]; m.AckedBy == nil || *m.AckedBy != user || m.AckedAt == nil || !m.AckedAt.Equal(ackAt) ||
+		m.SnoozedUntil == nil || !m.SnoozedUntil.Equal(snoozeUntil) {
+		t.Errorf("old columns = %+v", m)
+	}
+
+	// An unack after an old ack removes it. The old column does not come back.
+	err = client.WriteAlertLines(ctx, []AlertLine{line(legacy, "unacked", 0, nil)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	marks, err = client.AlertMarks(ctx, org, []uuid.UUID{legacy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := marks[legacy]; m.AckedBy != nil || m.SnoozedUntil == nil {
+		t.Errorf("old ack, then unack = %+v", m)
+	}
+
+	open, err := client.OpenMarks(ctx, now.Add(-2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	byAlert := map[uuid.UUID]AlertMark{}
+	for _, m := range open {
+		byAlert[m.AlertID] = m
+	}
+	if m := byAlert[acked]; m.OrgID != org || m.AckedBy == nil {
+		t.Errorf("open marks, acked = %+v", m)
+	}
+	if m := byAlert[unacked]; m.AckedBy != nil {
+		t.Errorf("open marks, unacked = %+v", m)
 	}
 }
 
