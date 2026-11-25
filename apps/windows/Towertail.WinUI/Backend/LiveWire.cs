@@ -152,4 +152,18 @@ public static class DetailTabMap
         "health" => DetailTab.Health,
         _ => null,
     };
+
+    /// <summary>
+    /// The detail tab for a workbench tab. Overview, Alerts and Settings use the process list.
+    /// <paramref name="portsShown"/> is true when the Ports toggle of the Processes tab shows.
+    /// <paramref name="usageShown"/> is true for the Usage view of the Disks tab.
+    /// </summary>
+    public static DetailTab? For(HostTab tab, bool portsShown, bool usageShown) => tab switch
+    {
+        HostTab.Overview or HostTab.Alerts or HostTab.Settings => DetailTab.Processes,
+        HostTab.Processes => portsShown ? DetailTab.Ports : DetailTab.Processes,
+        HostTab.Health => DetailTab.Health,
+        HostTab.Disks => usageShown ? null : DetailTab.Disks,
+        _ => null,
+    };
 }

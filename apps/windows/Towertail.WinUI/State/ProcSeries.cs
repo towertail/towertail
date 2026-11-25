@@ -58,6 +58,27 @@ public sealed class ProcSeries
         }
     }
 
+    /// <summary>The snapshots inside the window, oldest first.</summary>
+    public IReadOnlyList<Snapshot> In((DateTime From, DateTime To) window)
+    {
+        lock (_lock) return _snapshots.Where(s => s.T >= window.From && s.T <= window.To).ToList();
+    }
+
+    /// <summary>The newest snapshot before <paramref name="s"/>, or null.</summary>
+    public Snapshot? Before(Snapshot s)
+    {
+        lock (_lock)
+        {
+            Snapshot? best = null;
+            foreach (var x in _snapshots)
+            {
+                if (x.T < s.T) best = x;
+                else break;
+            }
+            return best;
+        }
+    }
+
     private void TrimLocked()
     {
         var cutoff = DateTime.UtcNow - Retention;

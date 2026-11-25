@@ -65,4 +65,58 @@ public sealed class HistoryStoreTests : IAsyncLifetime
         var rows = _store.LoadRecent(node, limit: 100);
         rows.Should().HaveCount(10);
     }
+
+    [Fact]
+    public async Task ScoreAndLoadRoundTrip()
+    {
+        var node = Guid.NewGuid();
+        _store.Append(node, new HistoryPoint(DateTime.UtcNow.AddSeconds(-1), 1, 2, 3, 4, 5, 6, Score: 64.5, Load: 2.25));
+        await Task.Delay(100);
+        var row = _store.LoadRecent(node, limit: 10).Single();
+        row.Score.Should().Be(64.5);
+        row.Load.Should().Be(2.25);
+    }
+
+    [Fact]
+    public async Task LoadRangeAveragesToMaxPoints()
+    {
+        var node = Guid.NewGuid();
+        var from = DateTime.UtcNow.AddMinutes(-10);
+        for (int i = 0; i < 600; i++)
+            _store.Append(node, new HistoryPoint(from.AddSeconds(i), i < 300 ? 10 : 30, null, null, null, null, null, Score: 90, Load: 1));
+        await Task.Delay(300);
+
+        var rows = _store.LoadRange(node, from, from.AddMinutes(10), 10);
+
+        rows.Should().HaveCount(10);
+        rows[0].Cpu.Should().BeApproximately(10, 0.001);
+        rows[^1].Cpu.Should().BeApproximately(30, 0.001);
+        rows[0].T.Should().BeBefore(rows[^1].T);
+        rows.Should().OnlyContain(r => r.Score == 90 && r.Load == 1);
+        _store.LoadRange(node, from, from, 10).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task MigrationAddsScoreAndLoadColumns()
+    {
+        // A database from before the workbench has no health_score and load_1 columns.
+        await _store.DisposeAsync();
+        File.Delete(_path);
+        using (var old = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_path};Pooling=False"))
+        {
+            old.Open();
+            using var cmd = old.CreateCommand();
+            cmd.CommandText = "CREATE TABLE samples (node_id TEXT NOT NULL, ts REAL NOT NULL, cpu REAL, mem REAL, disk REAL, net REAL, rx_mbps REAL, tx_mbps REAL, procs REAL); INSERT INTO samples (node_id, ts, cpu) VALUES ('" + Guid.Empty + "', 1000, 5)";
+            cmd.ExecuteNonQuery();
+        }
+        _store = new HistoryStore(_path);
+        var node = Guid.NewGuid();
+        _store.Append(node, new HistoryPoint(DateTime.UtcNow.AddSeconds(-1), 1, 2, 3, 4, 5, 6, Score: 80, Load: 3));
+        await Task.Delay(100);
+
+        _store.LoadRecent(node, limit: 5).Single().Score.Should().Be(80);
+        var old1 = _store.LoadRecent(Guid.Empty, limit: 5).Single();
+        old1.Cpu.Should().Be(5);
+        old1.Score.Should().BeNull();
+    }
 }

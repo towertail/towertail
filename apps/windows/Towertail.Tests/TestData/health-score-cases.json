@@ -1,0 +1,17 @@
+[
+  { "value": 0,       "warn": 0.75, "critical": 0.9,   "score": 100,   "tint": "nominal" },
+  { "value": 0.375,   "warn": 0.75, "critical": 0.9,   "score": 90.5,  "tint": "nominal" },
+  { "value": 0.7499,  "warn": 0.75, "critical": 0.9,   "score": 81, "tint": "nominal" },
+  { "value": 0.75,    "warn": 0.75, "critical": 0.9,   "score": 80,    "tint": "warn" },
+  { "value": 0.825,   "warn": 0.75, "critical": 0.9,   "score": 60.5,  "tint": "warn" },
+  { "value": 0.8999,  "warn": 0.75, "critical": 0.9,   "score": 41.03, "tint": "warn" },
+  { "value": 0.9,     "warn": 0.75, "critical": 0.9,   "score": 40,    "tint": "critical" },
+  { "value": 0.95,    "warn": 0.75, "critical": 0.9,   "score": 37.78, "tint": "critical" },
+  { "value": 1,       "warn": 0.75, "critical": 0.9,   "score": 35.56, "tint": "critical" },
+  { "value": 1.8,     "warn": 0.75, "critical": 0.9,   "score": 0,     "tint": "critical" },
+  { "value": 2500,    "warn": 5000, "critical": 20000, "score": 90.5,  "tint": "nominal" },
+  { "value": 5000,    "warn": 5000, "critical": 20000, "score": 80,    "tint": "warn" },
+  { "value": 12500,   "warn": 5000, "critical": 20000, "score": 60.5,  "tint": "warn" },
+  { "value": 20000,   "warn": 5000, "critical": 20000, "score": 40,    "tint": "critical" },
+  { "value": 40000,   "warn": 5000, "critical": 20000, "score": 0,     "tint": "critical" }
+]

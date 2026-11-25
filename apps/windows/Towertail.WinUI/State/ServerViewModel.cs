@@ -27,6 +27,12 @@ public sealed partial class ServerViewModel : ObservableObject
     [ObservableProperty] private string? _offlineReason;
     [ObservableProperty] private int _errorCount;
     [ObservableProperty] private HealthStatus _health = HealthStatus.Nominal;
+    /// <summary>"windows amd64 · 8 cores · 16.0 GB · up 3d". Null until the first sample.</summary>
+    [ObservableProperty] private string? _factsLine;
+    public long? MemTotal { get; private set; }
+    public int? Cores { get; private set; }
+    /// <summary>The worst check, from the current values. Muted checks are skipped.</summary>
+    [ObservableProperty] private HealthScore _healthScore = HealthScore.Empty;
     /// <summary>Latest <c>procs.total</c> when the sampler skipped the per-process scan.</summary>
     [ObservableProperty] private int? _procsSkippedTotal;
     /// <summary>Set when the watchdog finds no sample for longer than the limit.</summary>
@@ -96,6 +102,13 @@ public sealed partial class ServerViewModel : ObservableObject
     public ProcSeries Procs { get; } = new();
     /// <summary>Raw process count per sample (not a percentage).</summary>
     public MetricSeries ProcCountSeries { get; } = new();
+    /// <summary>The health score of each sample, 0 to 100.</summary>
+    public MetricSeries HealthScoreSeries { get; } = new();
+    /// <summary>The 1 minute load average of each sample.</summary>
+    public MetricSeries LoadSeries { get; } = new();
+    /// <summary>Total disk read and write rate in MB/s.</summary>
+    public MetricSeries DiskReadSeries { get; } = new();
+    public MetricSeries DiskWriteSeries { get; } = new();
 
     /// <summary>
     /// Latest-known per-process port snapshot. Snapshot-only (not
@@ -109,6 +122,7 @@ public sealed partial class ServerViewModel : ObservableObject
     [ObservableProperty] private bool _portsAvailable;
 
     private HealthInfo? _healthInfo;
+    private IReadOnlyList<DiskSample>? _scoreDisks;
     private long? _lastRxCum;
     private long? _lastTxCum;
     private DateTime? _lastSampleTs;
@@ -133,10 +147,14 @@ public sealed partial class ServerViewModel : ObservableObject
         LastSeen = now;
         SamplerVersion = s.Host.Sampler;
         HostOs = s.Host.Os;
+        MemTotal = s.Mem.Total;
+        Cores = s.Cpu.Cores;
+        FactsLine = $"{s.Host.Os}/{s.Host.Arch} · {s.Cpu.Cores} cores · {s.Mem.Total / 1_073_741_824.0:0.0} GB · up {ShortDuration.Age(TimeSpan.FromSeconds(s.Host.UptimeS))} · sampler {s.Host.Sampler}";
         ErrorCount = s.Errors.Count;
 
         CpuPct = Math.Clamp(s.Cpu.Pct, 0, 100);
         CpuSeries.Append(now, CpuPct.Value);
+        LoadSeries.Append(now, s.Cpu.Load1);
 
         var memFrac = s.Mem.Total > 0 ? (double)s.Mem.Used / s.Mem.Total : 0;
         MemPct = memFrac * 100.0;
@@ -177,7 +195,11 @@ public sealed partial class ServerViewModel : ObservableObject
         _lastSampleTs = now;
 
         if (s.DiskIo is { } dio)
+        {
             Disk.AppendIo(now, dio.Devices);
+            DiskReadSeries.Append(now, Math.Max(0, dio.ReadBps) / 1_048_576.0);
+            DiskWriteSeries.Append(now, Math.Max(0, dio.WriteBps) / 1_048_576.0);
+        }
 
         if (s.Procs is { } p)
         {
@@ -189,6 +211,9 @@ public sealed partial class ServerViewModel : ObservableObject
         if (s.Health is { } h)
             ProcCountSeries.Append(now, h.Procs);
         Health = HealthStatus.Evaluate(s.Health, s.Disks, Thresholds, LongProcs, now, MemPressureOverridden);
+        _healthInfo = s.Health;
+        _scoreDisks = s.Disks;
+        RefreshScore(now);
         foreach (var (m, w) in _windows)
             w.Record(now, m == AlertMetric.Health ? Health.AlertWindowLevel(Muted) : RawLevel(m),
                      AlertRules.For(m).SustainSeconds);
@@ -286,9 +311,20 @@ public sealed partial class ServerViewModel : ObservableObject
         StaleBaseline = DateTime.UtcNow;
     }
 
+    /// <summary>Sets <see cref="HealthScore"/> from the last values and adds a point to the score series.</summary>
+    private void RefreshScore(DateTime now)
+    {
+        HealthScore = HealthScore.Evaluate(_healthInfo, _scoreDisks,
+            CpuPct / 100, MemPct / 100, DiskMaxPct / 100,
+            LongProcs, Thresholds, Muted, kernelCriticalOnly: MemPressureOverridden);
+        HealthScoreSeries.Append(now, HealthScore.Score);
+    }
+
     private void RebuildHealth(DateTime now)
     {
         Health = HealthStatus.Evaluate(_healthInfo, null, Thresholds, LongProcs, now, MemPressureOverridden);
+        _scoreDisks = null;
+        RefreshScore(now);
         _windows[AlertMetric.Health].Record(now, Health.AlertWindowLevel(Muted), AlertRules.For(AlertMetric.Health).SustainSeconds);
     }
 

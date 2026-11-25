@@ -96,13 +96,16 @@ public sealed class HistoryStore : IAsyncDisposable
 
         // Added after v1 shipped. SQLite has no ADD COLUMN IF NOT EXISTS, so
         // ignore the "duplicate column" error on databases that have it.
-        try
+        foreach (var column in new[] { "procs", "health_score", "load_1" })
         {
-            using var alter = _conn.CreateCommand();
-            alter.CommandText = "ALTER TABLE samples ADD COLUMN procs REAL";
-            alter.ExecuteNonQuery();
+            try
+            {
+                using var alter = _conn.CreateCommand();
+                alter.CommandText = $"ALTER TABLE samples ADD COLUMN {column} REAL";
+                alter.ExecuteNonQuery();
+            }
+            catch (SqliteException ex) when (ex.Message.Contains("duplicate column", StringComparison.OrdinalIgnoreCase)) { }
         }
-        catch (SqliteException ex) when (ex.Message.Contains("duplicate column", StringComparison.OrdinalIgnoreCase)) { }
     }
 
     private void WorkerLoop()
@@ -128,7 +131,7 @@ public sealed class HistoryStore : IAsyncDisposable
         Enqueue(conn =>
         {
             using var cmd = conn.CreateCommand();
-            cmd.CommandText = "INSERT INTO samples (node_id, ts, cpu, mem, disk, net, rx_mbps, tx_mbps, procs) VALUES ($id, $ts, $cpu, $mem, $disk, $net, $rx, $tx, $procs)";
+            cmd.CommandText = "INSERT INTO samples (node_id, ts, cpu, mem, disk, net, rx_mbps, tx_mbps, procs, health_score, load_1) VALUES ($id, $ts, $cpu, $mem, $disk, $net, $rx, $tx, $procs, $score, $load)";
             cmd.Parameters.AddWithValue("$id", id);
             cmd.Parameters.AddWithValue("$ts", ToEpoch(point.T));
             cmd.Parameters.AddWithValue("$cpu", (object?)point.Cpu ?? DBNull.Value);
@@ -138,6 +141,8 @@ public sealed class HistoryStore : IAsyncDisposable
             cmd.Parameters.AddWithValue("$rx", (object?)point.RxMBps ?? DBNull.Value);
             cmd.Parameters.AddWithValue("$tx", (object?)point.TxMBps ?? DBNull.Value);
             cmd.Parameters.AddWithValue("$procs", (object?)point.Procs ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$score", (object?)point.Score ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$load", (object?)point.Load ?? DBNull.Value);
             cmd.ExecuteNonQuery();
         });
     }
@@ -150,7 +155,7 @@ public sealed class HistoryStore : IAsyncDisposable
             var list = new List<HistoryPoint>();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = @"
-                SELECT ts, cpu, mem, disk, net, rx_mbps, tx_mbps, procs FROM samples
+                SELECT ts, cpu, mem, disk, net, rx_mbps, tx_mbps, procs, health_score, load_1 FROM samples
                 WHERE node_id = $id ORDER BY ts DESC LIMIT $limit";
             cmd.Parameters.AddWithValue("$id", nodeId.ToString());
             cmd.Parameters.AddWithValue("$limit", limit);
@@ -165,9 +170,46 @@ public sealed class HistoryStore : IAsyncDisposable
                     Net: reader.IsDBNull(4) ? null : reader.GetDouble(4),
                     RxMBps: reader.IsDBNull(5) ? null : reader.GetDouble(5),
                     TxMBps: reader.IsDBNull(6) ? null : reader.GetDouble(6),
-                    Procs: reader.IsDBNull(7) ? null : reader.GetDouble(7)));
+                    Procs: reader.IsDBNull(7) ? null : reader.GetDouble(7),
+                    Score: reader.IsDBNull(8) ? null : reader.GetDouble(8),
+                    Load: reader.IsDBNull(9) ? null : reader.GetDouble(9)));
             }
             list.Reverse();
+            tcs.TrySetResult(list);
+        });
+        return tcs.Task.GetAwaiter().GetResult();
+    }
+
+    /// <summary>
+    /// Rows of a time range, averaged in at most <paramref name="maxPoints"/> equal steps, oldest first.
+    /// A step with no rows gives no point.
+    /// </summary>
+    public IReadOnlyList<HistoryPoint> LoadRange(Guid nodeId, DateTime from, DateTime to, int maxPoints)
+    {
+        var span = (to - from).TotalSeconds;
+        if (maxPoints <= 0 || span <= 0) return Array.Empty<HistoryPoint>();
+        var step = span / maxPoints;
+        var tcs = new TaskCompletionSource<IReadOnlyList<HistoryPoint>>();
+        Enqueue(conn =>
+        {
+            var list = new List<HistoryPoint>();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+                SELECT MIN(CAST((ts - $from) / $step AS INTEGER), $last) AS b, AVG(ts),
+                       AVG(cpu), AVG(mem), AVG(disk), AVG(net), AVG(rx_mbps), AVG(tx_mbps),
+                       AVG(procs), AVG(health_score), AVG(load_1)
+                FROM samples WHERE node_id = $id AND ts >= $from AND ts <= $to
+                GROUP BY b ORDER BY b";
+            cmd.Parameters.AddWithValue("$id", nodeId.ToString());
+            cmd.Parameters.AddWithValue("$from", ToEpoch(from));
+            cmd.Parameters.AddWithValue("$to", ToEpoch(to));
+            cmd.Parameters.AddWithValue("$step", step);
+            cmd.Parameters.AddWithValue("$last", maxPoints - 1);
+            using var reader = cmd.ExecuteReader();
+            double? Col(int i) => reader.IsDBNull(i) ? null : reader.GetDouble(i);
+            while (reader.Read())
+                list.Add(new HistoryPoint(DateTime.UnixEpoch.AddSeconds(reader.GetDouble(1)),
+                    Col(2), Col(3), Col(4), Col(5), Col(6), Col(7), Col(8), Col(9), Col(10)));
             tcs.TrySetResult(list);
         });
         return tcs.Task.GetAwaiter().GetResult();
@@ -385,4 +427,6 @@ public sealed record HistoryPoint(
     double? Net,
     double? RxMBps,
     double? TxMBps,
-    double? Procs = null);
+    double? Procs = null,
+    double? Score = null,
+    double? Load = null);

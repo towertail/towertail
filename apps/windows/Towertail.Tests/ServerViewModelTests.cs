@@ -117,6 +117,29 @@ public sealed class ServerViewModelTests
         vm.LastError.Should().BeNull();
     }
 
+    [Fact]
+    public void IngestSetsHealthScore()
+    {
+        var vm = new ServerViewModel(Node.LocalWindows("pc"));
+        vm.Ingest(Sample(DateTime.UtcNow, cpu: 10, mem: 8, load: 1.5));
+        vm.HealthScore.Level.Should().Be(HealthLevel.Nominal);
+        vm.HealthScore.Score.Should().BeGreaterThan(80);
+        vm.LoadSeries.Latest.Should().Be(1.5);
+
+        vm.Ingest(Sample(DateTime.UtcNow.AddSeconds(2), cpu: 95, mem: 8, load: 9));
+        vm.HealthScore.Worst!.Check.Should().Be(HealthCheck.Cpu);
+        vm.HealthScore.Level.Should().Be(HealthLevel.Critical);
+        vm.HealthScoreSeries.Points.Select(p => p.Value).Last().Should().Be(vm.HealthScore.Score);
+        vm.HealthScore.Level.Should().Be(vm.Health.Level == HealthLevel.Nominal ? HealthScore.LevelOf(vm.HealthScore.Score) : vm.Health.Level);
+    }
+
+    private static Sample Sample(DateTime t, double cpu, long mem, double load) => new(1, t,
+        new HostInfo("h", "windows", "amd64", "10.0", 0, "s", null),
+        new CpuInfo(cpu, load, 0, 0, 8),
+        new MemInfo(mem, 100),
+        new MemInfo(0, 0),
+        null, null, null, null, null, Array.Empty<string>());
+
     private static Sample Make(DateTime t, long rxCum)
     {
         return new Sample(1, t,

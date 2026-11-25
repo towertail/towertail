@@ -121,7 +121,9 @@ public sealed partial class ServerStore : ObservableObject
             Net: net,
             RxMBps: vm.RxMBps,
             TxMBps: vm.TxMBps,
-            Procs: sample.Health?.Procs));
+            Procs: sample.Health?.Procs,
+            Score: vm.HealthScore.Score,
+            Load: sample.Cpu.Load1));
 
         if (sample.Disks is { Count: > 0 } ds)
             _history.AppendDiskCapacity(nodeId, sample.Ts, ds);
@@ -302,6 +304,14 @@ public sealed partial class ServerStore : ObservableObject
             if (p.RxMBps is double rx) vm.RxSeries.Append(p.T, rx);
             if (p.TxMBps is double tx) vm.TxSeries.Append(p.T, tx);
             if (p.Procs is double pc) vm.ProcCountSeries.Append(p.T, pc);
+            if (p.Score is double sc) vm.HealthScoreSeries.Append(p.T, sc);
+            if (p.Load is double ld) vm.LoadSeries.Append(p.T, ld);
+        }
+        foreach (var r in _history.LoadRecentDiskIO(n.Id))
+        {
+            if (r.Device.Length > 0) continue;
+            vm.DiskReadSeries.Append(r.T, r.ReadMBps);
+            vm.DiskWriteSeries.Append(r.T, r.WriteMBps);
         }
         return vm;
     }
