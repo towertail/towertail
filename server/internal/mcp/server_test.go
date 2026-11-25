@@ -62,6 +62,9 @@ type fakeQueries struct {
 	rules       *query.RulesResult
 	rulesErr    error
 	gotRulesFor uuid.UUID
+	stats       *query.AlertStats
+	statsErr    error
+	gotStatsReq query.AlertStatsRequest
 	days        int
 	detail      *query.HostDetail
 	summary     query.FleetSummary
@@ -194,6 +197,18 @@ func (f *fakeQueries) AlertDetail(_ context.Context, org, id uuid.UUID) (wire.Al
 	f.seen(org)
 	f.gotAlertID = id
 	return f.alertDetail, f.alertErr
+}
+
+func (f *fakeQueries) AlertStats(_ context.Context, r query.AlertStatsRequest) (query.AlertStats, error) {
+	f.seen(r.OrgID)
+	f.gotStatsReq = r
+	if f.stats != nil || f.statsErr != nil {
+		if f.stats == nil {
+			return query.AlertStats{}, f.statsErr
+		}
+		return *f.stats, f.statsErr
+	}
+	return query.AlertStats{From: r.From, To: r.To}, nil
 }
 
 func (f *fakeQueries) Rules(_ context.Context, org, node uuid.UUID) (query.RulesResult, error) {
@@ -359,7 +374,7 @@ func TestTools(t *testing.T) {
 		}
 	}
 	slices.Sort(names)
-	want := []string{"alerts", "disk_scans", "disks", "fleet_summary", "get_alert", "get_host", "host_metrics", "host_rules", "list_hosts", "process_history", "reference", "top_processes", "whoami"}
+	want := []string{"alert_stats", "alerts", "disk_scans", "disks", "fleet_summary", "get_alert", "get_host", "host_metrics", "host_rules", "list_hosts", "process_history", "reference", "top_processes", "whoami"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("tools = %v, want %v", names, want)
 	}
@@ -445,6 +460,9 @@ func TestToolInputErrors(t *testing.T) {
 		{"sort", "list_hosts", map[string]any{"sort": "bogus"}, "sort must be"},
 		{"order", "top_processes", map[string]any{"by": "disk"}, "by must be cpu, mem or io"},
 		{"state", "alerts", map[string]any{"state": "closed"}, "state must be one of"},
+		{"stats kind", "alert_stats", map[string]any{"kind": []string{"gpu"}}, "kind must be one of"},
+		{"stats top", "alert_stats", map[string]any{"top": 21}, "top must be 1 to 20"},
+		{"stats range", "alert_stats", map[string]any{"range": "5m"}, "range must be"},
 		{"at without host", "top_processes", map[string]any{"at": "now-1h"}, "at needs host"},
 		{"bad at", "top_processes", map[string]any{"host": "web-1", "at": "soon"}, "at must be"},
 		{"at and range", "top_processes", map[string]any{"host": "web-1", "at": "now", "range": "1h"}, "not together"},
@@ -520,6 +538,7 @@ func TestMCPOrgScope(t *testing.T) {
 			{"alerts", map[string]any{"host": "web-1"}},
 			{"host_rules", map[string]any{"host": "web-1"}},
 			{"disks", map[string]any{"host": "web-1"}},
+			{"alert_stats", map[string]any{"host": "web-1"}},
 		} {
 			f.orgs = nil
 			if res := call(t, cs, tc.tool, tc.args); res.IsError {
@@ -601,7 +620,7 @@ func TestToolsRegistrationOrder(t *testing.T) {
 	for _, tl := range newServer(newFake()).Tools(ToolSetV1) {
 		names = append(names, tl.Name)
 	}
-	want := []string{"fleet_summary", "list_hosts", "get_host", "host_metrics", "top_processes", "process_history", "alerts", "get_alert", "host_rules", "disks", "disk_scans", "reference", "whoami"}
+	want := []string{"fleet_summary", "list_hosts", "get_host", "host_metrics", "top_processes", "process_history", "alerts", "get_alert", "host_rules", "disks", "disk_scans", "alert_stats", "reference", "whoami"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("names = %v, want %v", names, want)
 	}
@@ -643,6 +662,7 @@ func TestToolResultHasJSONText(t *testing.T) {
 		{"top_processes", nil},
 		{"process_history", map[string]any{"host": "web-1", "process": "api"}},
 		{"alerts", nil},
+		{"alert_stats", nil},
 		{"disks", map[string]any{"host": "web-1"}},
 		{"fleet_summary", nil},
 		{"get_host", map[string]any{"host": "web-1"}},

@@ -192,11 +192,13 @@ type NotifiedQuery struct {
 
 // NotifiedRow counts the sends of one alert. Sends counts each channel of
 // each notification. Failed counts the sends that failed. Channels counts
-// the sends of each channel name.
+// the sends of each channel name. FailedChannels counts the failed sends of
+// each channel name.
 type NotifiedRow struct {
 	AlertID, NodeID uuid.UUID
 	Sends, Failed   int
 	Channels        map[string]int
+	FailedChannels  map[string]int
 }
 
 const failedSuffix = " (failed)"
@@ -229,7 +231,7 @@ func (c *Client) NotifiedCounts(ctx context.Context, q NotifiedQuery) ([]Notifie
 		}
 		row := byAlert[alert]
 		if row == nil {
-			row = &NotifiedRow{AlertID: alert, NodeID: node, Channels: map[string]int{}}
+			row = &NotifiedRow{AlertID: alert, NodeID: node, Channels: map[string]int{}, FailedChannels: map[string]int{}}
 			byAlert[alert] = row
 		}
 		for _, name := range strings.Split(text, ", ") {
@@ -238,6 +240,7 @@ func (c *Client) NotifiedCounts(ctx context.Context, q NotifiedQuery) ([]Notifie
 			row.Channels[name]++
 			if failed {
 				row.Failed++
+				row.FailedChannels[name]++
 			}
 		}
 	}

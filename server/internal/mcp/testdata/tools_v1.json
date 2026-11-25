@@ -2738,6 +2738,327 @@
       "idempotentHint": true,
       "openWorldHint": false,
       "readOnlyHint": true,
+      "title": "Alert statistics"
+    },
+    "description": "Get the statistics of the alerts of a range: the totals, the notifications (and the ones sent by email), the alerts and notifications by host, kind, rule and channel, the metrics that flap (many short alerts) and the alert starts over time. Use it first to find why alerts came.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "description": "start of the range in RFC 3339. Use it with to, instead of range.",
+          "type": "string"
+        },
+        "host": {
+          "description": "host ID or name. Empty means the whole fleet.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "keep these kinds: cpu, mem, disk, health, long (long-running process) or nodata",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "range": {
+          "description": "span up to now, for example 24h or 7d. Alerts that overlap the range count. At most 90d. Default 7d. Do not use with from.",
+          "type": "string"
+        },
+        "to": {
+          "description": "end of the range in RFC 3339. Default now.",
+          "type": "string"
+        },
+        "top": {
+          "description": "length of the top lists (hosts, rules, flapping), 1 to 20. Default 10.",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "name": "alert_stats",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "alerts": {
+          "type": "integer"
+        },
+        "bins": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "critical": {
+                "type": "integer"
+              },
+              "end": {
+                "type": "string"
+              },
+              "start": {
+                "type": "string"
+              },
+              "warn": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "start",
+              "end",
+              "critical",
+              "warn"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "by_channel": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "failed": {
+                "type": "integer"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "sends": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "name",
+              "sends",
+              "failed"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "by_host": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "alerts": {
+                "type": "integer"
+              },
+              "critical": {
+                "type": "integer"
+              },
+              "key": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "notifications": {
+                "type": "integer"
+              },
+              "warn": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "key",
+              "name",
+              "alerts",
+              "critical",
+              "warn",
+              "notifications"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "by_kind": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "alerts": {
+                "type": "integer"
+              },
+              "critical": {
+                "type": "integer"
+              },
+              "key": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "notifications": {
+                "type": "integer"
+              },
+              "warn": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "key",
+              "name",
+              "alerts",
+              "critical",
+              "warn",
+              "notifications"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "by_rule": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "alerts": {
+                "type": "integer"
+              },
+              "cpu_pct": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "critical": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "host": {
+                "type": "string"
+              },
+              "host_id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "notifications": {
+                "type": "integer"
+              },
+              "notify": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              },
+              "sustain_seconds": {
+                "type": "integer"
+              },
+              "unit": {
+                "type": "string"
+              },
+              "warn": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "source",
+              "sustain_seconds",
+              "alerts",
+              "notifications"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "clamped": {
+          "type": "boolean"
+        },
+        "email_sends": {
+          "type": "integer"
+        },
+        "flapping": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "alerts": {
+                "type": "integer"
+              },
+              "host": {
+                "type": "string"
+              },
+              "host_id": {
+                "type": "string"
+              },
+              "median_duration_seconds": {
+                "type": "number"
+              },
+              "metric": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "host",
+              "host_id",
+              "metric",
+              "alerts",
+              "median_duration_seconds"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "from": {
+          "type": "string"
+        },
+        "notifications": {
+          "type": "integer"
+        },
+        "to": {
+          "type": "string"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "alerts",
+        "notifications",
+        "email_sends",
+        "by_host",
+        "by_kind",
+        "by_rule",
+        "flapping",
+        "by_channel",
+        "bins"
+      ],
+      "type": "object"
+    },
+    "title": "Alert statistics"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
       "title": "Reference facts"
     },
     "description": "Get the facts behind a metric, a rule or a plan limit. Topics: metrics, thresholds, alerts, long_process, history and plan.",

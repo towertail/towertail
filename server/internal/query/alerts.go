@@ -153,33 +153,10 @@ func (s *Service) ListAlerts(ctx context.Context, q AlertQuery) (wire.AlertPage,
 	if s.ch == nil || !q.From.Before(q.To) {
 		return out, nil
 	}
-	iq := clickhouse.IncidentQuery{OrgID: q.OrgID, From: q.From, To: q.To, Limit: MaxIncidents}
-	// The host facet counts the other hosts, so it needs all nodes.
-	if !slices.Contains(q.Facets, "host") {
-		iq.NodeIDs = q.Hosts
-	}
-	rows, truncated, err := s.ch.Incidents(ctx, iq)
+	set, truncated, err := s.loadAlerts(ctx, q)
 	if err != nil {
 		return wire.AlertPage{}, err
 	}
-	names, err := s.nodeNames(ctx, q.OrgID)
-	if err != nil {
-		return wire.AlertPage{}, err
-	}
-	var live map[uuid.UUID]float64
-	if s.peaks != nil {
-		live = s.peaks.Peaks(q.OrgID)
-	}
-	set := make(alertSet, 0, len(rows))
-	for _, r := range rows {
-		set = append(set, alertFromIncident(r, names[r.NodeID], live[r.AlertID], now))
-	}
-	set = slices.DeleteFunc(set.closeSuperseded(), func(a wire.Alert) bool {
-		// An old alert has a row for its change back to ok. It only closes
-		// the alert before it.
-		return a.Severity == wire.TintOK || a.Start.After(q.To) || (a.End != nil && a.End.Before(q.From))
-	})
-
 	out.Truncated = truncated
 	out.Counts = set.counts(q)
 	if len(q.Facets) > 0 {
@@ -191,6 +168,39 @@ func (s *Service) ListAlerts(ctx context.Context, q AlertQuery) (wire.AlertPage,
 	out.Total = len(match)
 	out.Alerts = match[:min(len(match), q.Limit)]
 	return out, nil
+}
+
+// loadAlerts reads the incidents of a valid query and builds the alert set
+// that overlaps the range. It reports whether the read hit MaxIncidents.
+// The query has the clamped From and a set Now.
+func (s *Service) loadAlerts(ctx context.Context, q AlertQuery) (alertSet, bool, error) {
+	iq := clickhouse.IncidentQuery{OrgID: q.OrgID, From: q.From, To: q.To, Limit: MaxIncidents}
+	// The host facet counts the other hosts, so it needs all nodes.
+	if !slices.Contains(q.Facets, "host") {
+		iq.NodeIDs = q.Hosts
+	}
+	rows, truncated, err := s.ch.Incidents(ctx, iq)
+	if err != nil {
+		return nil, false, err
+	}
+	names, err := s.nodeNames(ctx, q.OrgID)
+	if err != nil {
+		return nil, false, err
+	}
+	var live map[uuid.UUID]float64
+	if s.peaks != nil {
+		live = s.peaks.Peaks(q.OrgID)
+	}
+	set := make(alertSet, 0, len(rows))
+	for _, r := range rows {
+		set = append(set, alertFromIncident(r, names[r.NodeID], live[r.AlertID], q.Now))
+	}
+	set = slices.DeleteFunc(set.closeSuperseded(), func(a wire.Alert) bool {
+		// An old alert has a row for its change back to ok. It only closes
+		// the alert before it.
+		return a.Severity == wire.TintOK || a.Start.After(q.To) || (a.End != nil && a.End.Before(q.From))
+	})
+	return set, truncated, nil
 }
 
 // nodeNames gives the display name of each node of the org.

@@ -467,7 +467,7 @@ func TestNotifiedCounts(t *testing.T) {
 		by[r.AlertID] = r
 	}
 	r1 := by[a1]
-	if len(rows) != 2 || r1.Sends != 3 || r1.Failed != 1 || r1.Channels["Email ops"] != 2 || r1.Channels["Slack"] != 1 || len(r1.Channels) != 2 {
+	if len(rows) != 2 || r1.Sends != 3 || r1.Failed != 1 || r1.FailedChannels["Slack"] != 1 || len(r1.FailedChannels) != 1 || r1.Channels["Email ops"] != 2 || r1.Channels["Slack"] != 1 || len(r1.Channels) != 2 {
 		t.Fatalf("rows = %+v", rows)
 	}
 	if r2 := by[a2]; r2.Sends != 1 || r2.Failed != 0 || r2.Channels["Slack"] != 1 {

@@ -110,16 +110,22 @@ type Config interface {
 	GetSettings(ctx context.Context, orgID uuid.UUID) (store.ServerSettings, error)
 }
 
+// Channels lists the alert channels of an org.
+type Channels interface {
+	ListChannels(ctx context.Context, orgID uuid.UUID) ([]store.Channel, error)
+}
+
 // Service reads the fleet of an org. A nil Reader gives ErrNoHistory on
 // each read. A nil Limits gives no clamp. A nil Peaks gives no live peak.
-// A nil Config gives the default settings.
+// A nil Config gives the default settings. A nil Channels gives no channel kinds.
 type Service struct {
-	ch     Reader
-	nodes  Nodes
-	limits Limits
-	peaks  Peaks
-	config Config
-	now    func() time.Time
+	ch       Reader
+	nodes    Nodes
+	limits   Limits
+	peaks    Peaks
+	config   Config
+	channels Channels
+	now      func() time.Time
 }
 
 // ServiceOption sets an optional dependency of the service.
@@ -127,6 +133,9 @@ type ServiceOption func(*Service)
 
 // WithConfig sets the source of the node and the settings.
 func WithConfig(c Config) ServiceOption { return func(s *Service) { s.config = c } }
+
+// WithChannels sets the source of the alert channels.
+func WithChannels(c Channels) ServiceOption { return func(s *Service) { s.channels = c } }
 
 func NewService(ch Reader, nodes Nodes, limits Limits, peaks Peaks, opts ...ServiceOption) *Service {
 	s := &Service{ch: ch, nodes: nodes, limits: limits, peaks: peaks, now: time.Now}

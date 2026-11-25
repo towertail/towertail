@@ -188,7 +188,7 @@ func New(d Deps) *Server {
 		roles:         d.Roles,
 		ranks:         newRankCache(),
 		netRates:      newNetRates(),
-		query:         query.NewService(reader, d.Store, d.Limits, peaks, query.WithConfig(d.Store)),
+		query:         query.NewService(reader, d.Store, d.Limits, peaks, query.WithConfig(d.Store), query.WithChannels(d.Store)),
 		apiKeyRates:   newKeyLimiters(d.Config.HTTP.APIKeyRateLimitRPS, d.Config.HTTP.APIKeyRateLimitBurst),
 	}
 	if d.Config.MCP.Enabled {
