@@ -37,6 +37,17 @@ type MuteResult struct {
 	Rules    *RulesResult
 }
 
+// MuteEdit is the rules edit of an org mute.
+func MuteEdit(metric store.ThresholdMetric, muted bool) RulesEdit {
+	return RulesEdit{
+		Org: true,
+		Apply: func(cfg *store.ServerSettings, _ map[uuid.UUID]*store.Node) error {
+			cfg.Muted = cfg.Muted.Set(metric, muted)
+			return nil
+		},
+	}
+}
+
 // SetMute sets or clears the mute of one metric on a host, or on the org
 // when nodeID is nil. The engine closes a muted open alert. A host mute
 // makes no backup. An org mute makes one when the mute changes.
@@ -55,13 +66,7 @@ func (s *Service) SetMute(ctx context.Context, a Actor, metric store.ThresholdMe
 		s.broadcastNode(a.OrgID, n)
 		return MuteResult{Node: &n}, nil
 	}
-	res, err := s.EditRules(ctx, a, RulesEdit{
-		Org: true,
-		Apply: func(cfg *store.ServerSettings, _ map[uuid.UUID]*store.Node) error {
-			cfg.Muted = cfg.Muted.Set(metric, muted)
-			return nil
-		},
-	})
+	res, err := s.EditRules(ctx, a, MuteEdit(metric, muted))
 	if err != nil {
 		return MuteResult{}, err
 	}

@@ -70,8 +70,8 @@ func TestMCPHTTP(t *testing.T) {
 		if rec.Code != http.StatusOK || !strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") || !strings.Contains(rec.Body.String(), `"list_hosts"`) {
 			t.Errorf("%s: tools/list = %d %s %s", name, rec.Code, rec.Header().Get("Content-Type"), rec.Body)
 		}
-		if n := strings.Count(rec.Body.String(), `"readOnlyHint"`); n != 18 {
-			t.Errorf("%s: tools/list has %d tools, want 18", name, n)
+		if n := strings.Count(rec.Body.String(), `"readOnlyHint"`); n != 25 {
+			t.Errorf("%s: tools/list has %d tools, want 25 (18 read and 7 write)", name, n)
 		}
 	}
 
@@ -93,6 +93,30 @@ func TestMCPHTTP(t *testing.T) {
 	} {
 		if rec := e.mcpPost(t, tc.method, tc.token, mcpToolsList); rec.Code != tc.want {
 			t.Errorf("%s: %d %s, want %d", tc.name, rec.Code, rec.Body, tc.want)
+		}
+	}
+}
+
+func TestMCPHTTPWrites(t *testing.T) {
+	e := newOAuthEnv(t, config.HTTPConfig{})
+	user, owner := e.login(t, store.RoleOwner)
+	_, viewer := e.login(t, store.RoleViewer)
+	key := e.create(t, user, "claude").Token
+	withScopes := func(u *uuid.UUID) string {
+		return e.oauthToken(t, u, func(tk *store.Token) { tk.Scopes = store.ParseScopes("fleet:read alerts:write rules:write") })
+	}
+	ack := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"ack_alert","arguments":{"alert_id":"` + uuid.NewString() + `"}}}`
+	for _, tc := range []struct{ name, token, want string }{
+		{"api key", key, "API keys can only read"},
+		{"user token", user, "no write scopes"},
+		{"read-only oauth token", e.oauthToken(t, &owner, nil), "does not have the scope alerts:write"},
+		{"viewer", withScopes(&viewer), "Your role is viewer"},
+		// The right check passes. The test server has no ClickHouse, so the alert is unknown.
+		{"owner", withScopes(&owner), "alert not found"},
+	} {
+		rec := e.mcpPost(t, http.MethodPost, tc.token, ack)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"isError":true`) || !strings.Contains(rec.Body.String(), tc.want) {
+			t.Errorf("%s: ack_alert = %d %s, want the tool error %q", tc.name, rec.Code, rec.Body, tc.want)
 		}
 	}
 }

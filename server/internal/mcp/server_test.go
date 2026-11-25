@@ -403,12 +403,14 @@ func TestTools(t *testing.T) {
 	var names []string
 	for _, tool := range list.Tools {
 		names = append(names, tool.Name)
-		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint {
-			t.Errorf("%s is not marked read-only", tool.Name)
+		if tool.Annotations == nil || tool.Annotations.ReadOnlyHint == slices.Contains(writeToolNames, tool.Name) {
+			t.Errorf("%s has the wrong read-only hint", tool.Name)
 		}
 	}
 	slices.Sort(names)
 	want := []string{"alert_stats", "alerts", "disk_scans", "disks", "explain_change", "fetch", "fleet_summary", "get_alert", "get_host", "host_metrics", "host_rules", "list_hosts", "process_history", "reference", "search", "suggest_thresholds", "top_processes", "whoami"}
+	want = append(want, writeToolNames...)
+	slices.Sort(want)
 	if !slices.Equal(names, want) {
 		t.Fatalf("tools = %v, want %v", names, want)
 	}
@@ -674,6 +676,7 @@ func TestToolsRegistrationOrder(t *testing.T) {
 		names = append(names, tl.Name)
 	}
 	want := []string{"fleet_summary", "list_hosts", "get_host", "host_metrics", "top_processes", "process_history", "alerts", "get_alert", "host_rules", "disks", "disk_scans", "alert_stats", "explain_change", "suggest_thresholds", "reference", "search", "fetch", "whoami"}
+	want = append(want, "ack_alert", "snooze_alert", "snooze_host", "mute_metric", "set_thresholds", "ignore_process", "undo_rules_change")
 	if !slices.Equal(names, want) {
 		t.Fatalf("names = %v, want %v", names, want)
 	}

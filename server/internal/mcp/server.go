@@ -125,6 +125,9 @@ type Options struct {
 	// AppURL is the base URL of the dashboard. Empty means no url in
 	// search and fetch.
 	AppURL string
+	// Actions runs the write tools. With nil, the tools are listed, and a
+	// call gives an error.
+	Actions Actions
 }
 
 // setServer is the MCP server of one tool set.
@@ -139,6 +142,7 @@ type Server struct {
 	scans    Scans
 	orgInfo  OrgInfo
 	settings SettingsReader
+	actions  Actions
 	appURL   string
 	version  string
 	ref      Reference
@@ -154,6 +158,7 @@ func New(q Queries, o Options) *Server {
 		scans:    o.Scans,
 		orgInfo:  o.OrgInfo,
 		settings: o.Settings,
+		actions:  o.Actions,
 		appURL:   o.AppURL,
 		version:  o.Version,
 		ref:      NewReference(),
@@ -186,7 +191,14 @@ func New(q Queries, o Options) *Server {
 	addTool(s, readTool("reference", "Reference facts", "Get the facts behind a metric, a rule or a plan limit. Topics: metrics, thresholds, alerts, long_process, history and plan."), s.reference)
 	addTool(s, readTool("search", "Search", "Search the organization by text: host names and tags, the alerts of the last 7 days and the reference topics. Each result has an id for fetch."), s.search)
 	addTool(s, readTool("fetch", "Fetch", "Get the full document of a search result: a host (as get_host), an alert (as get_alert) or a reference topic (as reference). The text is JSON."), s.fetch)
-	addTool(s, readTool("whoami", "Who am I", "Get the organization, the plan, the history limit and the sign-in (token kind and role) of this connection."), s.whoami)
+	addTool(s, readTool("whoami", "Who am I", "Get the organization, the plan, the history limit, the sign-in (token kind, role and scopes) and the changes that this connection can make."), s.whoami)
+	addTool(s, writeTool("ack_alert", "Acknowledge alert", "Acknowledge an open alert. An acknowledged alert sends no more notifications. With undo, take the acknowledgement back. Needs the scope alerts:write and the role member. The result has the alert and change.", true), s.ackAlert)
+	addTool(s, writeTool("snooze_alert", "Snooze alert", "Snooze an open alert until a time (until, RFC 3339) or for a time (for, 5m to 30d). A snoozed alert sends no notifications. With undo, remove the snooze. Needs the scope alerts:write and the role member. The result has the alert and change.", true), s.snoozeAlert)
+	addTool(s, writeTool("snooze_host", "Snooze host", "Snooze a host until a time (until, RFC 3339) or for a time (for, 5m to 30d). A snoozed host sends no notifications. With undo, remove the snooze. Needs the scope alerts:write and the role member. The result has change.", true), s.snoozeHost)
+	addTool(s, writeTool("mute_metric", "Mute metric", "Mute a metric on one host, or on the whole organization when host is empty. A muted metric makes no alerts. Set muted to false to unmute. A host mute needs the scope alerts:write and the role member. An organization mute needs the scope rules:write and the role admin, and it saves a rules backup (change.backup_id).", true), s.muteMetric)
+	addTool(s, writeTool("set_thresholds", "Set alert limits", "Set the warn and critical limits of a metric, the sustain time and the notify level, on the organization or on one host. cpu, mem, disk, pids, files and inodes are ratios from 0 to 1. A host with clear follows the organization again. With cooldown_seconds, set the organization cooldown between two notifications. Needs the scope rules:write and the role admin. It saves a rules backup (change.backup_id). The result has the limits that apply now.", true), s.setThresholds)
+	addTool(s, writeTool("ignore_process", "Ignore process", "Add a process name to the ignore list of the long-process alert, on one host or on all hosts. Give name (and host), or the alert_id of a long_process alert. With undo, remove the name. Needs the scope rules:write and the role admin. It saves a rules backup (change.backup_id).", true), s.ignoreProcess)
+	addTool(s, writeTool("undo_rules_change", "Undo rules change", "Restore the rules from the backup of an earlier rules change (change.backup_id). It refuses when a rule changed after the backup, and it restores nothing then. The restore saves its own backup. Needs the scope rules:write and the role admin.", false), s.undoRulesChange)
 	return s
 }
 

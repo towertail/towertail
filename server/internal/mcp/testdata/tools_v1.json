@@ -3743,7 +3743,7 @@
       "readOnlyHint": true,
       "title": "Who am I"
     },
-    "description": "Get the organization, the plan, the history limit and the sign-in (token kind and role) of this connection.",
+    "description": "Get the organization, the plan, the history limit, the sign-in (token kind, role and scopes) and the changes that this connection can make.",
     "inputSchema": {
       "additionalProperties": false,
       "type": "object"
@@ -3752,6 +3752,25 @@
     "outputSchema": {
       "additionalProperties": false,
       "properties": {
+        "can": {
+          "additionalProperties": false,
+          "properties": {
+            "alerts": {
+              "type": "boolean"
+            },
+            "rules": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "alerts",
+            "rules"
+          ],
+          "type": "object"
+        },
+        "changes_by_ai": {
+          "type": "string"
+        },
         "history_days": {
           "type": "integer"
         },
@@ -3770,6 +3789,15 @@
         "role": {
           "type": "string"
         },
+        "scopes": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
         "server_version": {
           "type": "string"
         },
@@ -3786,10 +3814,1170 @@
         "history_days",
         "token_kind",
         "role",
-        "server_version"
+        "server_version",
+        "scopes",
+        "changes_by_ai",
+        "can"
       ],
       "type": "object"
     },
     "title": "Who am I"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false,
+      "title": "Acknowledge alert"
+    },
+    "description": "Acknowledge an open alert. An acknowledged alert sends no more notifications. With undo, take the acknowledgement back. Needs the scope alerts:write and the role member. The result has the alert and change.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "alert_id": {
+          "description": "alert ID from the alerts tool",
+          "type": "string"
+        },
+        "undo": {
+          "description": "take back the acknowledgement",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "alert_id"
+      ],
+      "type": "object"
+    },
+    "name": "ack_alert",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "alert": {
+          "additionalProperties": false,
+          "properties": {
+            "acked_by": {
+              "type": "string"
+            },
+            "end": {
+              "type": "string"
+            },
+            "host": {
+              "type": "string"
+            },
+            "host_id": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "metric": {
+              "type": "string"
+            },
+            "peak": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "proc": {
+              "additionalProperties": false,
+              "properties": {
+                "command": {
+                  "type": "string"
+                },
+                "cpu_pct": {
+                  "type": "number"
+                },
+                "cwd": {
+                  "type": "string"
+                },
+                "high_since": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "parent": {
+                  "type": "string"
+                },
+                "pid": {
+                  "maximum": 2147483647,
+                  "minimum": -2147483648,
+                  "type": "integer"
+                },
+                "repo": {
+                  "type": "string"
+                },
+                "started_at": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key",
+                "pid",
+                "name",
+                "command",
+                "cpu_pct"
+              ],
+              "type": [
+                "null",
+                "object"
+              ]
+            },
+            "severity": {
+              "type": "string"
+            },
+            "snoozed_until": {
+              "type": "string"
+            },
+            "start": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "value": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "id",
+            "host",
+            "host_id",
+            "kind",
+            "metric",
+            "severity",
+            "state",
+            "value",
+            "start"
+          ],
+          "type": "object"
+        },
+        "change": {
+          "additionalProperties": false,
+          "properties": {
+            "backup_id": {
+              "type": "string"
+            },
+            "fields": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "after": true,
+                  "before": true,
+                  "path": {
+                    "type": "string"
+                  },
+                  "target": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "target",
+                  "path"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "targets": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            }
+          },
+          "required": [
+            "targets",
+            "fields"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "alert",
+        "change"
+      ],
+      "type": "object"
+    },
+    "title": "Acknowledge alert"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false,
+      "title": "Snooze alert"
+    },
+    "description": "Snooze an open alert until a time (until, RFC 3339) or for a time (for, 5m to 30d). A snoozed alert sends no notifications. With undo, remove the snooze. Needs the scope alerts:write and the role member. The result has the alert and change.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "alert_id": {
+          "description": "alert ID from the alerts tool",
+          "type": "string"
+        },
+        "for": {
+          "description": "length of the snooze, 5m to 30d, for example 2h or 3d. Do not use with until.",
+          "type": "string"
+        },
+        "undo": {
+          "description": "remove the snooze. Give no until and no for.",
+          "type": "boolean"
+        },
+        "until": {
+          "description": "end of the snooze in RFC 3339, 5m to 30d from now. Do not use with for.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "alert_id"
+      ],
+      "type": "object"
+    },
+    "name": "snooze_alert",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "alert": {
+          "additionalProperties": false,
+          "properties": {
+            "acked_by": {
+              "type": "string"
+            },
+            "end": {
+              "type": "string"
+            },
+            "host": {
+              "type": "string"
+            },
+            "host_id": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "metric": {
+              "type": "string"
+            },
+            "peak": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "proc": {
+              "additionalProperties": false,
+              "properties": {
+                "command": {
+                  "type": "string"
+                },
+                "cpu_pct": {
+                  "type": "number"
+                },
+                "cwd": {
+                  "type": "string"
+                },
+                "high_since": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "parent": {
+                  "type": "string"
+                },
+                "pid": {
+                  "maximum": 2147483647,
+                  "minimum": -2147483648,
+                  "type": "integer"
+                },
+                "repo": {
+                  "type": "string"
+                },
+                "started_at": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key",
+                "pid",
+                "name",
+                "command",
+                "cpu_pct"
+              ],
+              "type": [
+                "null",
+                "object"
+              ]
+            },
+            "severity": {
+              "type": "string"
+            },
+            "snoozed_until": {
+              "type": "string"
+            },
+            "start": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "value": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "id",
+            "host",
+            "host_id",
+            "kind",
+            "metric",
+            "severity",
+            "state",
+            "value",
+            "start"
+          ],
+          "type": "object"
+        },
+        "change": {
+          "additionalProperties": false,
+          "properties": {
+            "backup_id": {
+              "type": "string"
+            },
+            "fields": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "after": true,
+                  "before": true,
+                  "path": {
+                    "type": "string"
+                  },
+                  "target": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "target",
+                  "path"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "targets": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            }
+          },
+          "required": [
+            "targets",
+            "fields"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "alert",
+        "change"
+      ],
+      "type": "object"
+    },
+    "title": "Snooze alert"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false,
+      "title": "Snooze host"
+    },
+    "description": "Snooze a host until a time (until, RFC 3339) or for a time (for, 5m to 30d). A snoozed host sends no notifications. With undo, remove the snooze. Needs the scope alerts:write and the role member. The result has change.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "for": {
+          "description": "length of the snooze, 5m to 30d, for example 2h or 3d. Do not use with until.",
+          "type": "string"
+        },
+        "host": {
+          "description": "host ID or name",
+          "type": "string"
+        },
+        "undo": {
+          "description": "remove the snooze. Give no until and no for.",
+          "type": "boolean"
+        },
+        "until": {
+          "description": "end of the snooze in RFC 3339, 5m to 30d from now. Do not use with for.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host"
+      ],
+      "type": "object"
+    },
+    "name": "snooze_host",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "change": {
+          "additionalProperties": false,
+          "properties": {
+            "backup_id": {
+              "type": "string"
+            },
+            "fields": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "after": true,
+                  "before": true,
+                  "path": {
+                    "type": "string"
+                  },
+                  "target": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "target",
+                  "path"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "targets": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            }
+          },
+          "required": [
+            "targets",
+            "fields"
+          ],
+          "type": "object"
+        },
+        "host": {
+          "type": "string"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "snoozed_until": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "host",
+        "host_id",
+        "change"
+      ],
+      "type": "object"
+    },
+    "title": "Snooze host"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false,
+      "title": "Mute metric"
+    },
+    "description": "Mute a metric on one host, or on the whole organization when host is empty. A muted metric makes no alerts. Set muted to false to unmute. A host mute needs the scope alerts:write and the role member. An organization mute needs the scope rules:write and the role admin, and it saves a rules backup (change.backup_id).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "description": "host ID or name. Empty mutes the metric for the whole organization.",
+          "type": "string"
+        },
+        "metric": {
+          "description": "metric to mute: cpu, mem, disk, procs, zombies, pids, files, inodes, memPressure, ioPressure or long (long-running process)",
+          "type": "string"
+        },
+        "muted": {
+          "description": "true mutes (default). false unmutes.",
+          "type": [
+            "null",
+            "boolean"
+          ]
+        }
+      },
+      "required": [
+        "metric"
+      ],
+      "type": "object"
+    },
+    "name": "mute_metric",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "change": {
+          "additionalProperties": false,
+          "properties": {
+            "backup_id": {
+              "type": "string"
+            },
+            "fields": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "after": true,
+                  "before": true,
+                  "path": {
+                    "type": "string"
+                  },
+                  "target": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "target",
+                  "path"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "targets": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            }
+          },
+          "required": [
+            "targets",
+            "fields"
+          ],
+          "type": "object"
+        },
+        "muted": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "muted",
+        "change"
+      ],
+      "type": "object"
+    },
+    "title": "Mute metric"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false,
+      "title": "Set alert limits"
+    },
+    "description": "Set the warn and critical limits of a metric, the sustain time and the notify level, on the organization or on one host. cpu, mem, disk, pids, files and inodes are ratios from 0 to 1. A host with clear follows the organization again. With cooldown_seconds, set the organization cooldown between two notifications. Needs the scope rules:write and the role admin. It saves a rules backup (change.backup_id). The result has the limits that apply now.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "clear": {
+          "description": "for a host: remove its override of the metric, so the host follows the organization again. Do not use with other values.",
+          "type": "boolean"
+        },
+        "cooldown_seconds": {
+          "description": "organization only: the least seconds between two notifications of the same host, metric and level, 0 to 86400. 0 means the default of 600.",
+          "type": [
+            "null",
+            "integer"
+          ]
+        },
+        "critical": {
+          "description": "critical limit, in the same unit as warn. It must not be less than warn.",
+          "type": [
+            "null",
+            "number"
+          ]
+        },
+        "host": {
+          "description": "host ID or name. Empty changes the limits of the organization.",
+          "type": "string"
+        },
+        "metric": {
+          "description": "metric with limits: cpu, mem, disk, procs, zombies, pids, files, inodes, memPressure or ioPressure. health sets only sustain_seconds and notify of the health checks. Not needed when only cooldown_seconds is set.",
+          "type": "string"
+        },
+        "notify": {
+          "description": "which levels send a notification: off, critical or all. For cpu, mem, disk and the health checks.",
+          "type": "string"
+        },
+        "sustain_seconds": {
+          "description": "seconds that the value must stay over the limit before the alert starts, 0 to 3600. For cpu, mem, disk and the health checks.",
+          "type": [
+            "null",
+            "integer"
+          ]
+        },
+        "warn": {
+          "description": "warn limit in the unit of the metric. cpu, mem, disk, pids, files and inodes are ratios from 0 to 1 (0.9 is 90 %). memPressure and ioPressure are percents. procs and zombies are counts.",
+          "type": [
+            "null",
+            "number"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "set_thresholds",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "change": {
+          "additionalProperties": false,
+          "properties": {
+            "backup_id": {
+              "type": "string"
+            },
+            "fields": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "after": true,
+                  "before": true,
+                  "path": {
+                    "type": "string"
+                  },
+                  "target": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "target",
+                  "path"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "targets": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            }
+          },
+          "required": [
+            "targets",
+            "fields"
+          ],
+          "type": "object"
+        },
+        "effective": {
+          "additionalProperties": false,
+          "properties": {
+            "cooldown_seconds": {
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "critical": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "metric": {
+              "type": "string"
+            },
+            "notify": {
+              "type": "string"
+            },
+            "sustain_seconds": {
+              "type": [
+                "null",
+                "integer"
+              ]
+            },
+            "unit": {
+              "type": "string"
+            },
+            "warn": {
+              "type": [
+                "null",
+                "number"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "effective",
+        "change"
+      ],
+      "type": "object"
+    },
+    "title": "Set alert limits"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false,
+      "title": "Ignore process"
+    },
+    "description": "Add a process name to the ignore list of the long-process alert, on one host or on all hosts. Give name (and host), or the alert_id of a long_process alert. With undo, remove the name. Needs the scope rules:write and the role admin. It saves a rules backup (change.backup_id).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "alert_id": {
+          "description": "ID of a long_process alert. The tool ignores the process of the alert on the host of the alert.",
+          "type": "string"
+        },
+        "host": {
+          "description": "host ID or name, with name. Empty ignores the name on all hosts.",
+          "type": "string"
+        },
+        "name": {
+          "description": "process name to ignore. Give name or alert_id.",
+          "type": "string"
+        },
+        "undo": {
+          "description": "remove the name from the ignore list",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "name": "ignore_process",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "alert": {
+          "additionalProperties": false,
+          "properties": {
+            "acked_by": {
+              "type": "string"
+            },
+            "end": {
+              "type": "string"
+            },
+            "host": {
+              "type": "string"
+            },
+            "host_id": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "metric": {
+              "type": "string"
+            },
+            "peak": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "proc": {
+              "additionalProperties": false,
+              "properties": {
+                "command": {
+                  "type": "string"
+                },
+                "cpu_pct": {
+                  "type": "number"
+                },
+                "cwd": {
+                  "type": "string"
+                },
+                "high_since": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "parent": {
+                  "type": "string"
+                },
+                "pid": {
+                  "maximum": 2147483647,
+                  "minimum": -2147483648,
+                  "type": "integer"
+                },
+                "repo": {
+                  "type": "string"
+                },
+                "started_at": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key",
+                "pid",
+                "name",
+                "command",
+                "cpu_pct"
+              ],
+              "type": [
+                "null",
+                "object"
+              ]
+            },
+            "severity": {
+              "type": "string"
+            },
+            "snoozed_until": {
+              "type": "string"
+            },
+            "start": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "value": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "id",
+            "host",
+            "host_id",
+            "kind",
+            "metric",
+            "severity",
+            "state",
+            "value",
+            "start"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "change": {
+          "additionalProperties": false,
+          "properties": {
+            "backup_id": {
+              "type": "string"
+            },
+            "fields": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "after": true,
+                  "before": true,
+                  "path": {
+                    "type": "string"
+                  },
+                  "target": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "target",
+                  "path"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "targets": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            }
+          },
+          "required": [
+            "targets",
+            "fields"
+          ],
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "scope",
+        "change"
+      ],
+      "type": "object"
+    },
+    "title": "Ignore process"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false,
+      "title": "Undo rules change"
+    },
+    "description": "Restore the rules from the backup of an earlier rules change (change.backup_id). It refuses when a rule changed after the backup, and it restores nothing then. The restore saves its own backup. Needs the scope rules:write and the role admin.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "backup_id": {
+          "description": "backup ID from change.backup_id of a rules tool",
+          "type": "string"
+        }
+      },
+      "required": [
+        "backup_id"
+      ],
+      "type": "object"
+    },
+    "name": "undo_rules_change",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "change": {
+          "additionalProperties": false,
+          "properties": {
+            "backup_id": {
+              "type": "string"
+            },
+            "fields": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "after": true,
+                  "before": true,
+                  "path": {
+                    "type": "string"
+                  },
+                  "target": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "target",
+                  "path"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "targets": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            }
+          },
+          "required": [
+            "targets",
+            "fields"
+          ],
+          "type": "object"
+        },
+        "restored_backup_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "restored_backup_id",
+        "change"
+      ],
+      "type": "object"
+    },
+    "title": "Undo rules change"
   }
 ]

@@ -5,6 +5,8 @@ import (
 
 	"github.com/google/uuid"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/towertail/towertail/server/store"
 )
 
 // WhoamiIn is the input of whoami. It has no fields.
@@ -21,6 +23,12 @@ type WhoamiOut struct {
 	TokenKind     string `json:"token_kind"`
 	Role          string `json:"role"`
 	ServerVersion string `json:"server_version"`
+	// Scopes are the scopes of the token. ChangesByAI is the org setting
+	// (off, alerts or alerts_and_rules). Can tells which changes this
+	// connection can make now.
+	Scopes      []string `json:"scopes"`
+	ChangesByAI string   `json:"changes_by_ai"`
+	Can         Can      `json:"can"`
 }
 
 func (s *Server) whoami(ctx context.Context, _ *sdk.CallToolRequest, _ WhoamiIn) (*sdk.CallToolResult, WhoamiOut, error) {
@@ -32,9 +40,19 @@ func (s *Server) whoami(ctx context.Context, _ *sdk.CallToolRequest, _ WhoamiIn)
 	if err != nil {
 		return nil, WhoamiOut{}, s.toolError("whoami", err)
 	}
+	g, err := s.grantOf(ctx, c)
+	if err != nil {
+		return nil, WhoamiOut{}, s.toolError("whoami", err)
+	}
 	out := WhoamiOut{
 		OrgID: c.Token.OrgID.String(), OrgName: facts.Name, Plan: facts.Plan, HistoryDays: facts.HistoryDays, MaxHosts: facts.MaxHosts,
 		TokenKind: string(c.Token.Kind), Role: string(c.Role), ServerVersion: s.version,
+		Scopes: []string{}, ChangesByAI: string(g.mcp.AIChanges), Can: g.can(),
+	}
+	for _, sc := range []store.Scope{store.ScopeFleetRead, store.ScopeAlertsWrite, store.ScopeRulesWrite} {
+		if c.Token.HasScope(sc) {
+			out.Scopes = append(out.Scopes, string(sc))
+		}
 	}
 	if c.Token.UserID != nil {
 		out.UserID = c.Token.UserID.String()

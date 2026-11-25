@@ -174,25 +174,24 @@ func (s *Service) Restore(ctx context.Context, a Actor, backupID uuid.UUID, mode
 	return s.Replace(ctx, a, store.RulesChange{Org: backup.Org, Hosts: hosts})
 }
 
-// restoreIfUnchanged checks the targets again inside the transaction, so a
-// change between the check and the write is also a conflict.
-func (s *Service) restoreIfUnchanged(ctx context.Context, a Actor, backup store.RulesBackup, nodes []store.Node) (RulesResult, error) {
-	cfg := store.ServerSettings{}
-	if backup.Org != nil {
-		var err error
-		if cfg, err = s.st.GetSettings(ctx, a.OrgID); err != nil {
-			return RulesResult{}, err
-		}
+// RestoreEdit is the rules edit that writes the old rules of a backup. The
+// edit gives a *ConflictError when a target changed after the backup, also
+// when it runs inside the store transaction.
+func (s *Service) RestoreEdit(ctx context.Context, a Actor, backupID uuid.UUID) (RulesEdit, error) {
+	backup, err := s.st.GetRulesBackup(ctx, a.OrgID, backupID)
+	if err != nil {
+		return RulesEdit{}, err
 	}
-	if changed := backup.ChangedSince(cfg, nodes); len(changed) > 0 {
-		return RulesResult{}, &ConflictError{Targets: changed}
-	}
+	return restoreEdit(backup), nil
+}
+
+func restoreEdit(backup store.RulesBackup) RulesEdit {
 	hosts := make([]uuid.UUID, 0, len(backup.Hosts))
 	for id := range backup.Hosts {
 		hosts = append(hosts, id)
 	}
 	slices.SortFunc(hosts, func(x, y uuid.UUID) int { return slices.Compare(x[:], y[:]) })
-	return s.EditRules(ctx, a, RulesEdit{
+	return RulesEdit{
 		Org: backup.Org != nil, Hosts: hosts,
 		Apply: func(c *store.ServerSettings, locked map[uuid.UUID]*store.Node) error {
 			cur := store.ServerSettings{}
@@ -214,7 +213,24 @@ func (s *Service) restoreIfUnchanged(ctx context.Context, a Actor, backup store.
 			}
 			return nil
 		},
-	})
+	}
+}
+
+// restoreIfUnchanged checks the targets first, then again inside the
+// transaction, so a change between the check and the write is also a
+// conflict.
+func (s *Service) restoreIfUnchanged(ctx context.Context, a Actor, backup store.RulesBackup, nodes []store.Node) (RulesResult, error) {
+	cfg := store.ServerSettings{}
+	if backup.Org != nil {
+		var err error
+		if cfg, err = s.st.GetSettings(ctx, a.OrgID); err != nil {
+			return RulesResult{}, err
+		}
+	}
+	if changed := backup.ChangedSince(cfg, nodes); len(changed) > 0 {
+		return RulesResult{}, &ConflictError{Targets: changed}
+	}
+	return s.EditRules(ctx, a, restoreEdit(backup))
 }
 
 // publish tells the engine and the dashboards about the targets, and puts

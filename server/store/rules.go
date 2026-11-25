@@ -212,6 +212,9 @@ func (t MetricThresholds) Pair(m ThresholdMetric) ThresholdPair {
 	return ThresholdPair{}
 }
 
+// SetPair sets the pair of a metric. A metric with no pair changes nothing.
+func (t *MetricThresholds) SetPair(m ThresholdMetric, p ThresholdPair) { t.setPair(m, p) }
+
 func (t *MetricThresholds) setPair(m ThresholdMetric, p ThresholdPair) {
 	switch m {
 	case MetricCPU:
@@ -289,6 +292,14 @@ func (o *ThresholdOverrides) slot(m ThresholdMetric) **ThresholdPair {
 		return &o.IOPressure
 	}
 	return nil
+}
+
+// SetPair sets the override of m. A nil pair clears it. A metric with no
+// pair changes nothing.
+func (o *ThresholdOverrides) SetPair(m ThresholdMetric, p *ThresholdPair) {
+	if s := o.slot(m); s != nil {
+		*s = p
+	}
 }
 
 // Pair gives the override of m, or nil.

@@ -202,7 +202,7 @@ func New(d Deps) *Server {
 	}
 	s.actions = actions.NewService(d.Store, alerts, d.Journal, engine, events, d.Log)
 	if d.Config.MCP.Enabled {
-		o := mcp.Options{Version: version.Version, Log: d.Log, Settings: d.Store, OrgInfo: d.OrgInfo, AppURL: d.Config.MCP.AppURL}
+		o := mcp.Options{Version: version.Version, Log: d.Log, Settings: d.Store, OrgInfo: d.OrgInfo, AppURL: d.Config.MCP.AppURL, Actions: s.actions}
 		// A nil *scan.Manager in the interface would not be nil.
 		if d.Scans != nil {
 			o.Scans = d.Scans

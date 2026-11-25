@@ -41,12 +41,10 @@ func (s *Service) IgnoreProcesses(ctx context.Context, a Actor, items []IgnoreIt
 	return res, errs, nil
 }
 
-// writeIgnores adds the names to the ignore lists, or removes them, with
-// one rules edit for all items: one write, and one backup. It gives the log
-// text and the error of each item. An item with an unknown host gets
-// ErrNotFound and the others go on. A failed edit gives its error to each
-// item that it holds.
-func (s *Service) writeIgnores(ctx context.Context, a Actor, scope IgnoreScope, undo bool, items []IgnoreItem) (text []string, errs []error, res RulesResult) {
+// IgnoreEdit is the rules edit that adds the names of the items to the
+// ignore lists, or removes them. With ScopeAll it edits the org list. With
+// ScopeHost it edits the list of each host of the items.
+func IgnoreEdit(scope IgnoreScope, items []IgnoreItem, undo bool) RulesEdit {
 	edit := func(l []string, names []string) []string {
 		l = slices.DeleteFunc(slices.Clone(l), func(x string) bool {
 			return slices.ContainsFunc(names, func(n string) bool { return strings.EqualFold(x, n) })
@@ -61,41 +59,28 @@ func (s *Service) writeIgnores(ctx context.Context, a Actor, scope IgnoreScope, 
 		}
 		return l
 	}
-	text, errs = make([]string, len(items)), make([]error, len(items))
 	if scope == ScopeAll {
 		names := make([]string, len(items))
 		for i, it := range items {
 			names[i] = it.Name
-			text[i] = it.Name + " ignored on all hosts"
 		}
-		res, err := s.EditRules(ctx, a, RulesEdit{
+		return RulesEdit{
 			Org: true,
 			Apply: func(cfg *store.ServerSettings, _ map[uuid.UUID]*store.Node) error {
 				cfg.LongProc.Ignore = edit(cfg.LongProc.Ignore, names)
 				return nil
 			},
-		})
-		if err != nil {
-			return nil, slices.Repeat([]error{err}, len(items)), RulesResult{}
 		}
-		return text, errs, res
 	}
 	var hosts []uuid.UUID
 	names := map[uuid.UUID][]string{}
-	for i, it := range items {
+	for _, it := range items {
 		if _, ok := names[it.NodeID]; !ok {
-			if _, err := s.st.GetNode(ctx, a.OrgID, it.NodeID); err != nil {
-				errs[i] = err
-				continue
-			}
 			hosts = append(hosts, it.NodeID)
 		}
 		names[it.NodeID] = append(names[it.NodeID], it.Name)
 	}
-	if len(hosts) == 0 {
-		return text, errs, res
-	}
-	res, err := s.EditRules(ctx, a, RulesEdit{
+	return RulesEdit{
 		Hosts: hosts,
 		Apply: func(_ *store.ServerSettings, nodes map[uuid.UUID]*store.Node) error {
 			for id, n := range nodes {
@@ -103,23 +88,61 @@ func (s *Service) writeIgnores(ctx context.Context, a Actor, scope IgnoreScope, 
 			}
 			return nil
 		},
-	})
-	for i, it := range items {
-		if errs[i] != nil {
-			continue
+	}
+}
+
+// writeIgnores adds the names to the ignore lists, or removes them, with
+// one rules edit for all items: one write, and one backup. It gives the log
+// text and the error of each item. An item with an unknown host gets
+// ErrNotFound and the others go on. A failed edit gives its error to each
+// item that it holds.
+func (s *Service) writeIgnores(ctx context.Context, a Actor, scope IgnoreScope, undo bool, items []IgnoreItem) (text []string, errs []error, res RulesResult) {
+	text, errs = make([]string, len(items)), make([]error, len(items))
+	var valid []IgnoreItem
+	if scope == ScopeAll {
+		valid = items
+		for i, it := range items {
+			text[i] = it.Name + " ignored on all hosts"
 		}
-		if err != nil {
-			errs[i] = err
-			continue
-		}
-		for _, n := range res.Nodes {
-			if n.ID == it.NodeID {
-				text[i] = it.Name + " ignored on " + n.DisplayName
+	} else {
+		known := map[uuid.UUID]bool{}
+		for i, it := range items {
+			if !known[it.NodeID] {
+				if _, err := s.st.GetNode(ctx, a.OrgID, it.NodeID); err != nil {
+					errs[i] = err
+					continue
+				}
+				known[it.NodeID] = true
 			}
+			valid = append(valid, it)
+		}
+		if len(valid) == 0 {
+			return text, errs, res
 		}
 	}
+	res, err := s.EditRules(ctx, a, IgnoreEdit(scope, valid, undo))
 	if err != nil {
+		for i := range items {
+			if errs[i] == nil {
+				errs[i] = err
+			}
+		}
+		if scope == ScopeAll {
+			return nil, errs, RulesResult{}
+		}
 		return text, errs, RulesResult{}
+	}
+	if scope != ScopeAll {
+		for i, it := range items {
+			if errs[i] != nil {
+				continue
+			}
+			for _, n := range res.Nodes {
+				if n.ID == it.NodeID {
+					text[i] = it.Name + " ignored on " + n.DisplayName
+				}
+			}
+		}
 	}
 	return text, errs, res
 }
