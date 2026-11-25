@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -37,6 +38,8 @@ type Node struct {
 	CustomLongProc *LongProcRule `json:"customLongProc,omitempty"`
 	// IgnoredProcs is added to the ignore lists of the rule and the org.
 	IgnoredProcs []string `json:"ignoredProcs,omitempty"`
+	// MutedSignals are the metrics that never alert on this node.
+	MutedSignals MutedSignals `json:"mutedSignals"`
 	// CreatedAt is set by the store on the first PutNode.
 	CreatedAt time.Time `json:"createdAt"`
 	// MachineID is the machine id of the host that enrolled for the node.
@@ -53,6 +56,82 @@ func (n Node) MarshalJSON() ([]byte, error) {
 		a.Tags = []string{}
 	}
 	return json.Marshal(a)
+}
+
+// ThresholdMetric names a signal that can be muted. The names are the
+// keys of the Mac MutedSignals.
+type ThresholdMetric string
+
+const (
+	MetricCPU  ThresholdMetric = "cpu"
+	MetricMem  ThresholdMetric = "mem"
+	MetricDisk ThresholdMetric = "disk"
+	// MetricLong is the long-running process alert.
+	MetricLong ThresholdMetric = "long"
+)
+
+// Valid reports whether m is a known name.
+func (m ThresholdMetric) Valid() bool {
+	switch m {
+	case MetricCPU, MetricMem, MetricDisk, MetricLong:
+		return true
+	}
+	return false
+}
+
+// MutedSignals is a sorted list of muted metrics with no duplicates.
+type MutedSignals []ThresholdMetric
+
+// Has reports whether x is muted.
+func (m MutedSignals) Has(x ThresholdMetric) bool { return slices.Contains(m, x) }
+
+// Set gives the list with x muted or not. The receiver does not change.
+func (m MutedSignals) Set(x ThresholdMetric, muted bool) MutedSignals {
+	out := slices.DeleteFunc(slices.Clone(m), func(y ThresholdMetric) bool { return y == x })
+	if muted {
+		out = append(out, x)
+	}
+	return normalizeMuted(out)
+}
+
+// Union gives the sorted union of both lists.
+func (m MutedSignals) Union(o MutedSignals) MutedSignals {
+	return normalizeMuted(append(slices.Clone(m), o...))
+}
+
+func normalizeMuted(m MutedSignals) MutedSignals {
+	m = slices.DeleteFunc(m, func(x ThresholdMetric) bool { return !x.Valid() })
+	slices.Sort(m)
+	return slices.Compact(m)
+}
+
+// MarshalJSON writes [] for a nil list.
+func (m MutedSignals) MarshalJSON() ([]byte, error) {
+	if m == nil {
+		return []byte("[]"), nil
+	}
+	return json.Marshal([]ThresholdMetric(m))
+}
+
+// UnmarshalJSON skips unknown names and sorts the rest. A null leaves the
+// list as it is.
+func (m *MutedSignals) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		return nil
+	}
+	var names []string
+	if err := json.Unmarshal(b, &names); err != nil {
+		return err
+	}
+	out := make(MutedSignals, 0, len(names))
+	for _, n := range names {
+		out = append(out, ThresholdMetric(n))
+	}
+	if out = normalizeMuted(out); len(out) == 0 {
+		out = nil
+	}
+	*m = out
+	return nil
 }
 
 // MetricThresholds mirrors the Swift MetricThresholds struct. Values are
@@ -83,6 +162,17 @@ type ServerSettings struct {
 	AutoUpdateSamplersEnabled bool         `json:"autoUpdateSamplersEnabled"`
 	PostWakeGraceSeconds      int          `json:"postWakeGraceSeconds"`
 	LongProc                  LongProcRule `json:"longProc"`
+	// Muted are the metrics that never alert on any node of the org.
+	Muted MutedSignals `json:"muted"`
+}
+
+// MutedSet gives the metrics that are muted on the node: the union of the
+// org list and the node list. The node can be nil.
+func (s ServerSettings) MutedSet(n *Node) MutedSignals {
+	if n == nil {
+		return s.Muted.Union(nil)
+	}
+	return s.Muted.Union(n.MutedSignals)
 }
 
 // UnmarshalJSON sets the default long-process rule when the JSON has no

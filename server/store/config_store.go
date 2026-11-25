@@ -30,6 +30,10 @@ type ConfigStore interface {
 	GetNode(ctx context.Context, orgID, id uuid.UUID) (Node, error)
 	PutNode(ctx context.Context, orgID uuid.UUID, node Node) error
 	DeleteNode(ctx context.Context, orgID, id uuid.UUID) error
+	// EditNode reads, changes and writes one node in one transaction, so
+	// two edits do not lose each other's change. It returns ErrNotFound
+	// for a missing node, and the error of f without a write.
+	EditNode(ctx context.Context, orgID, id uuid.UUID, f func(*Node) error) (Node, error)
 	// FindNodeByMachineID returns ErrNotFound when no node of the org has
 	// the machine id.
 	FindNodeByMachineID(ctx context.Context, orgID uuid.UUID, machineID string) (Node, error)
@@ -37,6 +41,9 @@ type ConfigStore interface {
 	// Settings
 	GetSettings(ctx context.Context, orgID uuid.UUID) (ServerSettings, error)
 	PutSettings(ctx context.Context, orgID uuid.UUID, settings ServerSettings) error
+	// EditSettings is EditNode for the settings of the org. An org with no
+	// stored settings starts from the defaults.
+	EditSettings(ctx context.Context, orgID uuid.UUID, f func(*ServerSettings) error) (ServerSettings, error)
 
 	// Tokens
 	PutToken(ctx context.Context, t Token) error

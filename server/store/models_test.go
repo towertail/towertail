@@ -98,3 +98,48 @@ func TestParseRole(t *testing.T) {
 		t.Error("ParseRole(root) has no error")
 	}
 }
+
+func TestMutedSignalsSkipsUnknownAndSorts(t *testing.T) {
+	var m MutedSignals
+	if err := json.Unmarshal([]byte(`["mem","nope","cpu","cpu"]`), &m); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(m, MutedSignals{MetricCPU, MetricMem}) {
+		t.Fatalf("muted = %v", m)
+	}
+	m = m.Set(MetricDisk, true).Set(MetricCPU, false).Set(MetricDisk, true)
+	if !reflect.DeepEqual(m, MutedSignals{MetricDisk, MetricMem}) {
+		t.Fatalf("after set: %v", m)
+	}
+	if !m.Has(MetricDisk) || m.Has(MetricCPU) {
+		t.Fatalf("has: %v", m)
+	}
+	var none MutedSignals
+	if b, _ := json.Marshal(none); string(b) != "[]" {
+		t.Errorf("nil marshals as %s, want []", b)
+	}
+	b, _ := json.Marshal(Node{})
+	var raw map[string]json.RawMessage
+	_ = json.Unmarshal(b, &raw)
+	if string(raw["mutedSignals"]) != "[]" {
+		t.Errorf("node mutedSignals = %s, want []", raw["mutedSignals"])
+	}
+}
+
+func TestServerSettingsMutedSet(t *testing.T) {
+	s := ServerSettings{Muted: MutedSignals{MetricMem, MetricCPU}}
+	n := Node{MutedSignals: MutedSignals{MetricCPU, MetricDisk, "Bogus"}}
+	if got := s.MutedSet(&n); !reflect.DeepEqual(got, MutedSignals{MetricCPU, MetricDisk, MetricMem}) {
+		t.Errorf("union = %v", got)
+	}
+	if got := s.MutedSet(nil); !reflect.DeepEqual(got, MutedSignals{MetricCPU, MetricMem}) {
+		t.Errorf("nil node = %v", got)
+	}
+	var old ServerSettings
+	if err := json.Unmarshal([]byte(`{"muted":["CPU","disk"]}`), &old); err != nil {
+		t.Fatal(err)
+	}
+	if !old.Muted.Has(MetricDisk) || old.Muted.Has(MetricCPU) {
+		t.Errorf("decoded = %v", old.Muted)
+	}
+}

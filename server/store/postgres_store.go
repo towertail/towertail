@@ -120,6 +120,31 @@ func (s *PostgresStore) PutNode(ctx context.Context, orgID uuid.UUID, node Node)
 	return err
 }
 
+func (s *PostgresStore) EditNode(ctx context.Context, orgID, id uuid.UUID, f func(*Node) error) (Node, error) {
+	var out Node
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		n, err := scanNode(tx.QueryRow(ctx,
+			`SELECT data, created_at FROM nodes WHERE org_id = $1 AND id = $2 FOR UPDATE`, orgID, id))
+		if err != nil {
+			return notFound(err)
+		}
+		if err := f(&n); err != nil {
+			return err
+		}
+		n.ID = id
+		data, err := json.Marshal(n)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `
+			UPDATE nodes SET data = $3, machine_id = NULLIF($4, ''), updated_at = now()
+			WHERE org_id = $1 AND id = $2`, orgID, id, data, n.MachineID)
+		out = n
+		return err
+	})
+	return out, err
+}
+
 func (s *PostgresStore) DeleteNode(ctx context.Context, orgID, id uuid.UUID) error {
 	_, err := s.pool.Exec(ctx, `DELETE FROM nodes WHERE org_id = $1 AND id = $2`, orgID, id)
 	return err
@@ -149,6 +174,37 @@ func (s *PostgresStore) PutSettings(ctx context.Context, orgID uuid.UUID, settin
 		ON CONFLICT (org_id) DO UPDATE SET data = EXCLUDED.data, updated_at = now()`,
 		orgID, data)
 	return err
+}
+
+func (s *PostgresStore) EditSettings(ctx context.Context, orgID uuid.UUID, f func(*ServerSettings) error) (ServerSettings, error) {
+	var out ServerSettings
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		def, err := json.Marshal(DefaultServerSettings())
+		if err != nil {
+			return err
+		}
+		// A missing row is made first, so the next read can lock it.
+		if _, err := tx.Exec(ctx, `INSERT INTO settings (org_id, data) VALUES ($1, $2) ON CONFLICT (org_id) DO NOTHING`, orgID, def); err != nil {
+			return err
+		}
+		var data []byte
+		if err := tx.QueryRow(ctx, `SELECT data FROM settings WHERE org_id = $1 FOR UPDATE`, orgID).Scan(&data); err != nil {
+			return err
+		}
+		if err := json.Unmarshal(data, &out); err != nil {
+			return err
+		}
+		if err := f(&out); err != nil {
+			return err
+		}
+		data, err = json.Marshal(out)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `UPDATE settings SET data = $2, updated_at = now() WHERE org_id = $1`, orgID, data)
+		return err
+	})
+	return out, err
 }
 
 const tokenCols = `id, org_id, kind, label, token_hash, node_id, user_id, created_at, last_used_at, revoked_at, expires_at`

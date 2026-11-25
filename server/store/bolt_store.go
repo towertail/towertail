@@ -145,6 +145,32 @@ func (s *BoltStore) PutNode(_ context.Context, orgID uuid.UUID, node Node) error
 	})
 }
 
+func (s *BoltStore) EditNode(_ context.Context, orgID, id uuid.UUID, f func(*Node) error) (Node, error) {
+	var n Node
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketNodes)
+		key := nodeKey(orgID, id)
+		v := b.Get(key)
+		if v == nil {
+			return ErrNotFound
+		}
+		if err := json.Unmarshal(v, &n); err != nil {
+			return err
+		}
+		created := n.CreatedAt
+		if err := f(&n); err != nil {
+			return err
+		}
+		n.ID, n.CreatedAt = id, created
+		data, err := json.Marshal(n)
+		if err != nil {
+			return err
+		}
+		return b.Put(key, data)
+	})
+	return n, err
+}
+
 // FindNodeByMachineID gives the node of the org with the machine id.
 func (s *BoltStore) FindNodeByMachineID(ctx context.Context, orgID uuid.UUID, machineID string) (Node, error) {
 	if machineID == "" {
@@ -189,6 +215,29 @@ func (s *BoltStore) PutSettings(_ context.Context, orgID uuid.UUID, settings Ser
 	return s.db.Update(func(tx *bolt.Tx) error {
 		return tx.Bucket(bucketSettings).Put(orgID[:], data)
 	})
+}
+
+func (s *BoltStore) EditSettings(_ context.Context, orgID uuid.UUID, f func(*ServerSettings) error) (ServerSettings, error) {
+	var out ServerSettings
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketSettings)
+		if v := b.Get(orgID[:]); v != nil {
+			if err := json.Unmarshal(v, &out); err != nil {
+				return err
+			}
+		} else {
+			out = DefaultServerSettings()
+		}
+		if err := f(&out); err != nil {
+			return err
+		}
+		data, err := json.Marshal(out)
+		if err != nil {
+			return err
+		}
+		return b.Put(orgID[:], data)
+	})
+	return out, err
 }
 
 // token bucket layout:

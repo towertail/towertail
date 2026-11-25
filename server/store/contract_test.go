@@ -22,6 +22,8 @@ type storeHarness struct {
 func testContract(t *testing.T, h storeHarness) {
 	t.Run("Nodes", func(t *testing.T) { contractNodes(t, h) })
 	t.Run("Settings", func(t *testing.T) { contractSettings(t, h) })
+	t.Run("EditNode", func(t *testing.T) { contractEditNode(t, h) })
+	t.Run("EditSettings", func(t *testing.T) { contractEditSettings(t, h) })
 	t.Run("Tokens", func(t *testing.T) { contractTokens(t, h) })
 	t.Run("Users", func(t *testing.T) { contractUsers(t, h) })
 	t.Run("Control", func(t *testing.T) { contractControl(t, h) })
@@ -130,6 +132,77 @@ func contractSettings(t *testing.T, h storeHarness) {
 	}
 	if o, _ := h.s.GetSettings(ctx, other); !reflect.DeepEqual(o, DefaultServerSettings()) {
 		t.Errorf("other org: %+v", o)
+	}
+}
+
+// Two parallel edits keep both changes.
+func contractEditNode(t *testing.T, h storeHarness) {
+	ctx := context.Background()
+	org, other := h.newOrg(t), h.newOrg(t)
+	n := Node{ID: uuid.New(), DisplayName: "web-1", Kind: "ssh", MachineID: "m-edit"}
+	if err := h.s.PutNode(ctx, org, n); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := h.s.GetNode(ctx, org, n.ID)
+	var wg sync.WaitGroup
+	for _, name := range []string{"node", "vitest"} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := h.s.EditNode(ctx, org, n.ID, func(n *Node) error {
+				n.IgnoredProcs = append(n.IgnoredProcs, name)
+				return nil
+			})
+			if err != nil {
+				t.Errorf("edit %s: %v", name, err)
+			}
+		}()
+	}
+	wg.Wait()
+	got, _ := h.s.GetNode(ctx, org, n.ID)
+	if len(got.IgnoredProcs) != 2 || got.DisplayName != "web-1" || got.MachineID != "m-edit" || !got.CreatedAt.Equal(before.CreatedAt) {
+		t.Errorf("after edits: %+v", got)
+	}
+	boom := errors.New("boom")
+	if _, err := h.s.EditNode(ctx, org, n.ID, func(n *Node) error { n.DisplayName = "x"; return boom }); !errors.Is(err, boom) {
+		t.Errorf("edit with error: %v", err)
+	}
+	if again, _ := h.s.GetNode(ctx, org, n.ID); again.DisplayName != "web-1" {
+		t.Errorf("a failed edit wrote: %+v", again)
+	}
+	if _, err := h.s.EditNode(ctx, other, n.ID, func(*Node) error { return nil }); !errors.Is(err, ErrNotFound) {
+		t.Errorf("edit in other org: %v, want ErrNotFound", err)
+	}
+}
+
+func contractEditSettings(t *testing.T, h storeHarness) {
+	ctx := context.Background()
+	org := h.newOrg(t)
+	var wg sync.WaitGroup
+	for _, name := range []string{"node", "vitest"} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := h.s.EditSettings(ctx, org, func(s *ServerSettings) error {
+				s.LongProc.Ignore = append(s.LongProc.Ignore, name)
+				return nil
+			})
+			if err != nil {
+				t.Errorf("edit %s: %v", name, err)
+			}
+		}()
+	}
+	wg.Wait()
+	got, _ := h.s.GetSettings(ctx, org)
+	if len(got.LongProc.Ignore) != 2 || !got.NotifyWarn {
+		t.Errorf("after edits: %+v", got)
+	}
+	boom := errors.New("boom")
+	if _, err := h.s.EditSettings(ctx, org, func(s *ServerSettings) error { s.NotifyWarn = false; return boom }); !errors.Is(err, boom) {
+		t.Errorf("edit with error: %v", err)
+	}
+	if again, _ := h.s.GetSettings(ctx, org); !again.NotifyWarn {
+		t.Errorf("a failed edit wrote: %+v", again)
 	}
 }
 
