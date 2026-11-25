@@ -27,6 +27,8 @@ var (
 	bucketUsers    = []byte("users")
 	bucketControl  = []byte("control")
 	bucketChannels = []byte("channels")
+	// bucketRulesBackups: key = orgID | backup id.
+	bucketRulesBackups = []byte("rules_backups")
 )
 
 // OpenBolt initialises the ConfigStore backed by a BoltDB file at the
@@ -61,7 +63,7 @@ func OpenBoltFile(dir, name string) (*bolt.DB, error) {
 
 func (s *BoltStore) init() error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		for _, name := range [][]byte{bucketNodes, bucketSettings, bucketTokens, bucketUsers, bucketControl, bucketChannels} {
+		for _, name := range [][]byte{bucketNodes, bucketSettings, bucketTokens, bucketUsers, bucketControl, bucketChannels, bucketRulesBackups} {
 			if _, err := tx.CreateBucketIfNotExists(name); err != nil {
 				return err
 			}

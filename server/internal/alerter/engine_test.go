@@ -165,8 +165,11 @@ func TestAlerter_PerNodeThresholdsOverrideGlobal(t *testing.T) {
 	e := New(nil, clock, sink, nopStore{}, newFakeConfig(cfg))
 	org, nodeID := uuid.New(), uuid.New()
 
-	stricter := store.MetricThresholds{CPUWarn: 0.30, CPUCritical: 0.50, MemWarn: 0.90, MemCritical: 0.99, DiskWarn: 0.90, DiskCritical: 0.99}
-	node := &store.Node{ID: nodeID, CustomThresholds: &stricter}
+	node := &store.Node{ID: nodeID, ThresholdOverrides: &store.ThresholdOverrides{
+		CPU:  &store.ThresholdPair{Warn: 0.30, Critical: 0.50},
+		Mem:  &store.ThresholdPair{Warn: 0.90, Critical: 0.99},
+		Disk: &store.ThresholdPair{Warn: 0.90, Critical: 0.99},
+	}}
 
 	// 0.35 is OK under defaults (warn 0.75) but warn under stricter (warn 0.30).
 	e.Evaluate(context.Background(), org, nodeID, node, 0.10, 0.10, 0.10)

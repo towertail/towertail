@@ -199,8 +199,8 @@ func (e *Engine) Expect(ctx context.Context, orgID, nodeID uuid.UUID, at time.Ti
 func (e *Engine) Evaluate(ctx context.Context, orgID, nodeID uuid.UUID, node *store.Node, cpuPct, memRatio, maxDiskRatio float64) {
 	cfg := e.settings(ctx, orgID)
 	thresholds := cfg.Thresholds
-	if node != nil && node.CustomThresholds != nil {
-		thresholds = *node.CustomThresholds
+	if node != nil && node.ThresholdOverrides != nil {
+		thresholds = node.ThresholdOverrides.Applied(thresholds)
 	}
 	now := e.clock.Now()
 	debounce := time.Duration(cfg.NotifyDebounceSeconds) * time.Second

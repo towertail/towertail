@@ -24,6 +24,7 @@ func testContract(t *testing.T, h storeHarness) {
 	t.Run("Settings", func(t *testing.T) { contractSettings(t, h) })
 	t.Run("EditNode", func(t *testing.T) { contractEditNode(t, h) })
 	t.Run("EditSettings", func(t *testing.T) { contractEditSettings(t, h) })
+	t.Run("Rules", func(t *testing.T) { contractRules(t, h) })
 	t.Run("Tokens", func(t *testing.T) { contractTokens(t, h) })
 	t.Run("Users", func(t *testing.T) { contractUsers(t, h) })
 	t.Run("Control", func(t *testing.T) { contractControl(t, h) })
@@ -37,7 +38,7 @@ func contractNodes(t *testing.T, h storeHarness) {
 	n := Node{
 		ID: uuid.New(), DisplayName: "web-1", Kind: "ssh", SSHUser: &user, Tags: []string{"prod"},
 		Enabled: true, NotifyOnCritical: true, SnoozedUntil: &until,
-		CustomThresholds: &MetricThresholds{CPUWarn: 0.5},
+		ThresholdOverrides: &ThresholdOverrides{CPU: &ThresholdPair{Warn: 0.5, Critical: 0.6}},
 	}
 	if err := h.s.PutNode(ctx, org, Node{}); err == nil {
 		t.Error("put without id: want error")
@@ -50,7 +51,7 @@ func contractNodes(t *testing.T, h storeHarness) {
 		t.Fatalf("get: %v", err)
 	}
 	if got.DisplayName != "web-1" || *got.SSHUser != "root" || got.Tags[0] != "prod" ||
-		got.CustomThresholds.CPUWarn != 0.5 || !got.SnoozedUntil.Equal(until) {
+		got.ThresholdOverrides.CPU.Warn != 0.5 || !got.SnoozedUntil.Equal(until) {
 		t.Errorf("get: %+v", got)
 	}
 	if got.CreatedAt.IsZero() {
@@ -414,5 +415,101 @@ func contractChannels(t *testing.T, h storeHarness) {
 	}
 	if list, _ := h.s.ListChannels(ctx, org); len(list) != 0 {
 		t.Errorf("after delete: %d", len(list))
+	}
+}
+
+func contractRules(t *testing.T, h storeHarness) {
+	ctx := context.Background()
+	org, other := h.newOrg(t), h.newOrg(t)
+	a, b, foreign := uuid.New(), uuid.New(), uuid.New()
+	for _, id := range []uuid.UUID{a, b} {
+		if err := h.s.PutNode(ctx, org, Node{ID: id, DisplayName: "n-" + id.String()[:4]}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.s.PutNode(ctx, other, Node{ID: foreign}); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().UTC().Truncate(time.Second)
+	origin := RulesOrigin{Client: "mac", Device: "mbp", UserID: uuid.New(), At: at}
+
+	orgRules := DefaultServerSettings().Rules()
+	orgRules.Thresholds.CPUWarn = 0.6
+	orgRules.Alerts.CPU = AlertRule{SustainSeconds: 60, Notify: NotifyAll}
+	orgRules.Muted = MutedSignals{MetricZombies}
+	hostA := HostRules{
+		Thresholds: &ThresholdOverrides{Mem: &ThresholdPair{Warn: 0.85, Critical: 0.95}},
+		Muted:      MutedSignals{MetricDisk},
+	}
+	bk, err := h.s.ReplaceRules(ctx, org, RulesChange{Org: &orgRules, Hosts: map[uuid.UUID]HostRules{a: hostA, b: {}}, Origin: origin})
+	if err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	cfg, _ := h.s.GetSettings(ctx, org)
+	if cfg.Thresholds.CPUWarn != 0.6 || cfg.Alerts.CPU.SustainSeconds != 60 || !cfg.Muted.Has(MetricZombies) ||
+		cfg.RulesOrigin == nil || cfg.RulesOrigin.Client != "mac" || !cfg.RulesOrigin.At.Equal(at) {
+		t.Errorf("settings: %+v", cfg)
+	}
+	na, _ := h.s.GetNode(ctx, org, a)
+	if na.ThresholdOverrides == nil || na.ThresholdOverrides.Mem.Warn != 0.85 || !na.MutedSignals.Has(MetricDisk) ||
+		na.RulesOrigin == nil || na.RulesOrigin.Device != "mbp" {
+		t.Errorf("node a: %+v", na)
+	}
+	if nb, _ := h.s.GetNode(ctx, org, b); nb.RulesOrigin == nil || nb.ThresholdOverrides != nil {
+		t.Errorf("node b: %+v", nb)
+	}
+	if bk.Org == nil || bk.Org.Thresholds.CPUWarn != 0.75 || bk.Hosts[a].Thresholds != nil {
+		t.Errorf("backup has the new values: %+v", bk)
+	}
+	got, err := h.s.GetRulesBackup(ctx, org, bk.ID)
+	if err != nil || got.Org == nil || got.Org.Thresholds.CPUWarn != 0.75 || got.Origin.Client != "mac" {
+		t.Errorf("get backup: %+v, %v", got, err)
+	}
+	if _, err := h.s.GetRulesBackup(ctx, other, bk.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("backup of other org: %v, want ErrNotFound", err)
+	}
+
+	// A host of another org: nothing is written.
+	bad := orgRules
+	bad.Thresholds.CPUWarn = 0.3
+	_, err = h.s.ReplaceRules(ctx, org, RulesChange{Org: &bad, Hosts: map[uuid.UUID]HostRules{foreign: {}}, Origin: origin})
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("foreign host: %v, want ErrNotFound", err)
+	}
+	if cfg, _ := h.s.GetSettings(ctx, org); cfg.Thresholds.CPUWarn != 0.6 {
+		t.Errorf("a failed replace wrote: %+v", cfg.Thresholds)
+	}
+	bad.Thresholds.CPUWarn = 0.99
+	if _, err := h.s.ReplaceRules(ctx, org, RulesChange{Org: &bad, Origin: origin}); !errors.Is(err, ErrInvalidRules) {
+		t.Errorf("warn over critical: %v, want ErrInvalidRules", err)
+	}
+
+	// An org with no org rules in the change keeps its settings.
+	if _, err := h.s.ReplaceRules(ctx, org, RulesChange{Hosts: map[uuid.UUID]HostRules{b: {Muted: MutedSignals{MetricCPU}}}, Origin: origin}); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, _ := h.s.GetSettings(ctx, org); cfg.Thresholds.CPUWarn != 0.6 {
+		t.Errorf("settings changed: %+v", cfg.Thresholds)
+	}
+
+	// A backup older than the TTL is gone after the next replace.
+	old := origin
+	old.At = at.Add(-RulesBackupTTL - 24*time.Hour)
+	oldBk, err := h.s.ReplaceRules(ctx, org, RulesChange{Hosts: map[uuid.UUID]HostRules{b: {}}, Origin: old})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.s.ReplaceRules(ctx, org, RulesChange{Hosts: map[uuid.UUID]HostRules{b: {}}, Origin: origin}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.s.GetRulesBackup(ctx, org, oldBk.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("old backup: %v, want ErrNotFound", err)
+	}
+	list, err := h.s.ListRulesBackups(ctx, org)
+	if err != nil || len(list) != 3 {
+		t.Fatalf("list: %d backups, %v", len(list), err)
+	}
+	if list[0].At.Before(list[1].At) {
+		t.Error("list is not newest first")
 	}
 }

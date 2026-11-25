@@ -45,6 +45,17 @@ type ConfigStore interface {
 	// stored settings starts from the defaults.
 	EditSettings(ctx context.Context, orgID uuid.UUID, f func(*ServerSettings) error) (ServerSettings, error)
 
+	// ReplaceRules replaces the rules of the org (when ch.Org is set) and of
+	// the named hosts in one transaction. It keeps the old values in a
+	// backup and deletes the backups older than RulesBackupTTL. It returns
+	// ErrNotFound for a host that is not in the org (nothing is written),
+	// and ErrInvalidRules for a bad rule.
+	ReplaceRules(ctx context.Context, orgID uuid.UUID, ch RulesChange) (RulesBackup, error)
+	// ListRulesBackups gives the backups younger than the TTL, newest first.
+	ListRulesBackups(ctx context.Context, orgID uuid.UUID) ([]RulesBackup, error)
+	// GetRulesBackup returns ErrNotFound for an unknown or old backup.
+	GetRulesBackup(ctx context.Context, orgID, id uuid.UUID) (RulesBackup, error)
+
 	// Tokens
 	PutToken(ctx context.Context, t Token) error
 	GetTokenByHash(ctx context.Context, hash []byte) (Token, error)

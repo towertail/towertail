@@ -21,15 +21,18 @@ type Node struct {
 	// Tags is serialized via MarshalJSON so nil → `[]` (not `null`).
 	// Swift's RemoteNode decodes `tags` as non-optional `[String]` and a
 	// bare `null` breaks the whole node list decode.
-	Tags             []string          `json:"tags"`
-	Enabled          bool              `json:"enabled"`
-	IconOnWarn       bool              `json:"iconOnWarn"`
-	IconOnCritical   bool              `json:"iconOnCritical"`
-	NotifyOnWarn     bool              `json:"notifyOnWarn"`
-	NotifyOnCritical bool              `json:"notifyOnCritical"`
-	CustomThresholds *MetricThresholds `json:"customThresholds,omitempty"`
-	SnoozedUntil     *time.Time        `json:"snoozedUntil,omitempty"`
-	Favorite         bool              `json:"favorite"`
+	Tags             []string `json:"tags"`
+	Enabled          bool     `json:"enabled"`
+	IconOnWarn       bool     `json:"iconOnWarn"`
+	IconOnCritical   bool     `json:"iconOnCritical"`
+	NotifyOnWarn     bool     `json:"notifyOnWarn"`
+	NotifyOnCritical bool     `json:"notifyOnCritical"`
+	// ThresholdOverrides replaces the org pair of each metric that it sets.
+	ThresholdOverrides *ThresholdOverrides `json:"thresholdOverrides,omitempty"`
+	// AlertOverrides replaces the org timing of each rule that it sets.
+	AlertOverrides *AlertOverrides `json:"alertOverrides,omitempty"`
+	SnoozedUntil   *time.Time      `json:"snoozedUntil,omitempty"`
+	Favorite       bool            `json:"favorite"`
 	// AllowDiskScan lets a user start a disk scan on the node. It is off by default.
 	AllowDiskScan bool `json:"allowDiskScan"`
 	// HideProcFolders tells push samplers not to send process folders.
@@ -40,6 +43,8 @@ type Node struct {
 	IgnoredProcs []string `json:"ignoredProcs,omitempty"`
 	// MutedSignals are the metrics that never alert on this node.
 	MutedSignals MutedSignals `json:"mutedSignals"`
+	// RulesOrigin tells which client set the rules of the node last.
+	RulesOrigin *RulesOrigin `json:"rulesOrigin,omitempty"`
 	// CreatedAt is set by the store on the first PutNode.
 	CreatedAt time.Time `json:"createdAt"`
 	// MachineID is the machine id of the host that enrolled for the node.
@@ -58,25 +63,27 @@ func (n Node) MarshalJSON() ([]byte, error) {
 	return json.Marshal(a)
 }
 
-// ThresholdMetric names a signal that can be muted. The names are the
-// keys of the Mac MutedSignals.
-type ThresholdMetric string
-
-const (
-	MetricCPU  ThresholdMetric = "cpu"
-	MetricMem  ThresholdMetric = "mem"
-	MetricDisk ThresholdMetric = "disk"
-	// MetricLong is the long-running process alert.
-	MetricLong ThresholdMetric = "long"
-)
-
-// Valid reports whether m is a known name.
-func (m ThresholdMetric) Valid() bool {
-	switch m {
-	case MetricCPU, MetricMem, MetricDisk, MetricLong:
-		return true
+// UnmarshalJSON reads the old customThresholds key as overrides of cpu,
+// mem and disk, unless the JSON has thresholdOverrides. The server never
+// writes customThresholds again.
+func (n *Node) UnmarshalJSON(b []byte) error {
+	type alias Node
+	a := alias(*n)
+	if err := json.Unmarshal(b, &a); err != nil {
+		return err
 	}
-	return false
+	var old struct {
+		Custom *MetricThresholds `json:"customThresholds"`
+	}
+	if err := json.Unmarshal(b, &old); err != nil {
+		return err
+	}
+	if old.Custom != nil && a.ThresholdOverrides == nil {
+		o := LegacyOverrides(*old.Custom)
+		a.ThresholdOverrides = &o
+	}
+	*n = Node(a)
+	return nil
 }
 
 // MutedSignals is a sorted list of muted metrics with no duplicates.
@@ -134,18 +141,6 @@ func (m *MutedSignals) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// MetricThresholds mirrors the Swift MetricThresholds struct. Values are
-// 0..1 ratios except for raw-percent fields that stay percents on the
-// Swift side — keep that contract identical.
-type MetricThresholds struct {
-	CPUWarn      float64 `json:"cpuWarn"`
-	CPUCritical  float64 `json:"cpuCritical"`
-	MemWarn      float64 `json:"memWarn"`
-	MemCritical  float64 `json:"memCritical"`
-	DiskWarn     float64 `json:"diskWarn"`
-	DiskCritical float64 `json:"diskCritical"`
-}
-
 // ServerSettings mirrors Swift ServerSettings. Units: ratios for
 // thresholds, seconds for intervals/debounce/grace.
 type ServerSettings struct {
@@ -164,6 +159,10 @@ type ServerSettings struct {
 	LongProc                  LongProcRule `json:"longProc"`
 	// Muted are the metrics that never alert on any node of the org.
 	Muted MutedSignals `json:"muted"`
+	// Alerts holds the sustain time and the notify level of each metric.
+	Alerts AlertRules `json:"alerts"`
+	// RulesOrigin tells which client set the org rules last.
+	RulesOrigin *RulesOrigin `json:"rulesOrigin,omitempty"`
 }
 
 // MutedSet gives the metrics that are muted on the node: the union of the
@@ -175,13 +174,17 @@ func (s ServerSettings) MutedSet(n *Node) MutedSignals {
 	return s.Muted.Union(n.MutedSignals)
 }
 
-// UnmarshalJSON sets the default long-process rule when the JSON has no
-// longProc key and the target has no rule yet.
+// UnmarshalJSON sets the default long-process rule and the default alert
+// rules when the target has none yet. A key that the JSON has not
+// changes only the keys of the JSON.
 func (s *ServerSettings) UnmarshalJSON(b []byte) error {
 	type alias ServerSettings
 	a := alias(*s)
 	if a.LongProc.CPUPct == 0 {
 		a.LongProc = DefaultLongProcRule()
+	}
+	if a.Alerts == (AlertRules{}) {
+		a.Alerts = DefaultAlertRules()
 	}
 	if err := json.Unmarshal(b, &a); err != nil {
 		return err
@@ -270,6 +273,9 @@ func DefaultServerSettings() ServerSettings {
 			CPUWarn: 0.75, CPUCritical: 0.90,
 			MemWarn: 0.75, MemCritical: 0.90,
 			DiskWarn: 0.85, DiskCritical: 0.95,
+			ProcsWarn: DefaultProcsWarn, ProcsCritical: DefaultProcsCritical,
+			ZombiesWarn: DefaultZombiesWarn, ZombiesCritical: DefaultZombiesCritical,
+			Health: DefaultHealthLimits(),
 		},
 		LocalPollingIntervalSeconds: 5,
 		SSHPollingIntervalSeconds:   30,
@@ -281,6 +287,7 @@ func DefaultServerSettings() ServerSettings {
 		AutoUpdateSamplersEnabled:   true,
 		PostWakeGraceSeconds:        30,
 		LongProc:                    DefaultLongProcRule(),
+		Alerts:                      DefaultAlertRules(),
 	}
 }
 
