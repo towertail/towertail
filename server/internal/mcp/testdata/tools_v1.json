@@ -3376,6 +3376,182 @@
       "idempotentHint": true,
       "openWorldHint": false,
       "readOnlyHint": true,
+      "title": "Test alert limits"
+    },
+    "description": "Replay the stored cpu, mem or disk values of one host, or of the hosts on the organization limits, under the current limits and other pairs of limits. Each pair gives the number of alerts, critical alerts and notifications that it would have made, with the time spent over each limit. Compare with the alerts that really happened. The data is the 1 minute rollup, so the counts are approximate.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "candidates": {
+          "description": "extra pairs of limits to test (at most 10). The current limits and pairs from the percentiles of the data are always tested.",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "critical": {
+                "description": "critical limit, a ratio from warn up to 1",
+                "type": "number"
+              },
+              "warn": {
+                "description": "warn limit, a ratio above 0 and up to 1. 0.75 is 75 percent.",
+                "type": "number"
+              }
+            },
+            "required": [
+              "warn",
+              "critical"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "host": {
+          "description": "host ID or name. Empty means the hosts that use the limits of the organization (at most 50).",
+          "type": "string"
+        },
+        "metric": {
+          "description": "cpu, mem or disk",
+          "type": "string"
+        },
+        "range": {
+          "description": "span up to now to replay, 15m to 30d, for example 7d. Default 7d.",
+          "type": "string"
+        },
+        "sustain_seconds": {
+          "description": "sustain time to test, 0 to 3600. Default is the sustain time of the rule.",
+          "type": [
+            "null",
+            "integer"
+          ]
+        }
+      },
+      "required": [
+        "metric"
+      ],
+      "type": "object"
+    },
+    "name": "suggest_thresholds",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "actual_alerts": {
+          "type": "integer"
+        },
+        "actual_sends": {
+          "type": "integer"
+        },
+        "approximate": {
+          "type": "boolean"
+        },
+        "candidates": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "alerts": {
+                "type": "integer"
+              },
+              "critical": {
+                "type": "number"
+              },
+              "critical_alerts": {
+                "type": "integer"
+              },
+              "critical_seconds": {
+                "type": "number"
+              },
+              "current": {
+                "type": "boolean"
+              },
+              "hosts_alerting": {
+                "type": "integer"
+              },
+              "notifications": {
+                "type": "integer"
+              },
+              "sustain_seconds": {
+                "type": "integer"
+              },
+              "warn": {
+                "type": "number"
+              },
+              "warn_seconds": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "warn",
+              "critical",
+              "sustain_seconds",
+              "alerts",
+              "critical_alerts",
+              "notifications",
+              "hosts_alerting",
+              "warn_seconds",
+              "critical_seconds"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "clamped": {
+          "type": "boolean"
+        },
+        "from": {
+          "type": "string"
+        },
+        "hosts": {
+          "type": "integer"
+        },
+        "metric": {
+          "type": "string"
+        },
+        "percentiles": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "type": "object"
+        },
+        "resolution": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "unit": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "resolution",
+        "approximate",
+        "metric",
+        "unit",
+        "hosts",
+        "actual_alerts",
+        "actual_sends",
+        "percentiles",
+        "candidates"
+      ],
+      "type": "object"
+    },
+    "title": "Test alert limits"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
       "title": "Reference facts"
     },
     "description": "Get the facts behind a metric, a rule or a plan limit. Topics: metrics, thresholds, alerts, long_process, history and plan.",

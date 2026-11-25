@@ -331,6 +331,40 @@ func TestQueryHistoryMultiMatchesSingle(t *testing.T) {
 	}
 }
 
+// MinuteHistory reads the 1 minute rollup, also for a short range.
+func TestMinuteHistory(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	org, node := uuid.New(), uuid.New()
+	end := time.Now().UTC().Truncate(time.Hour)
+	var bundles []IngestBundle
+	for i, ts := 0, end.Add(-time.Hour); ts.Before(end); i, ts = i+1, ts.Add(10*time.Second) {
+		bundles = append(bundles, IngestBundle{Sample: SampleRow{
+			TS: ts, OrgID: org, NodeID: node, SchemaV: 1, CPUPct: float32(i % 100), MemUsed: 1, MemTotal: 4, Errors: []string{},
+		}})
+	}
+	if err := client.insert(ctx, bundles); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	got, err := client.MinuteHistory(ctx, HistoryMultiQuery{
+		OrgID: org, NodeIDs: []uuid.UUID{node}, Metrics: []string{"cpu", "mem"}, From: end.Add(-time.Hour), To: end, Step: time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range []string{"cpu", "mem"} {
+		pts := got[node][m]
+		if len(pts) < 59 || pts[1].TS.Sub(pts[0].TS) != time.Minute {
+			t.Fatalf("%s: %d points, want 1 minute buckets", m, len(pts))
+		}
+	}
+	if _, err := client.MinuteHistory(ctx, HistoryMultiQuery{OrgID: org, NodeIDs: []uuid.UUID{node}, Metrics: []string{"nope"}, From: end.Add(-time.Hour), To: end}); !errors.Is(err, ErrUnknownMetric) {
+		t.Fatalf("unknown metric: err = %v", err)
+	}
+}
+
 // A node of another org gives no series.
 func TestQueryHistoryMultiOrgFilter(t *testing.T) {
 	client, cleanup := startClickHouse(t)

@@ -351,7 +351,7 @@ func procEvent(nk nodeKey, pc procChange, at time.Time, quiet bool) change {
 func (e *Engine) muteMetric(k stateKey, now time.Time) (change, bool) {
 	st, ok := e.states[k]
 	if !ok {
-		e.states[k] = &metricState{tint: TintOK, changed: now}
+		e.states[k] = newMetricState(TintOK, now)
 		return change{}, false
 	}
 	if st.tint == TintOK {
@@ -363,41 +363,22 @@ func (e *Engine) muteMetric(k stateKey, now time.Time) (change, bool) {
 }
 
 // evalMetric runs under stateMu. The tint of the state follows the
-// sustained level of the raw tint. With a sustain time of 0 the first sample
-// sets the state and no event comes. With a longer sustain time the state
-// starts at ok and the first event comes when the window is full.
+// sustained level of the raw tint (see levelMachine.step).
 func (e *Engine) evalMetric(k stateKey, value float64, limits store.ThresholdPair, rule store.AlertRule, tolerance float64, now time.Time, debounce time.Duration) (change, bool) {
 	if o := e.open[k]; o != nil {
 		o.peak = max(o.peak, value)
 	}
-	raw := rawTint(value, limits)
-	sustain := time.Duration(rule.SustainSeconds) * time.Second
 	st, ok := e.states[k]
 	if !ok {
-		st = &metricState{tint: TintOK, changed: now}
+		st = &metricState{}
 		e.states[k] = st
-		if sustain == 0 {
-			st.tint = raw
-			return change{}, false
-		}
 	}
-	st.window.record(raw, now, sustain)
-	newTint, ready := st.window.level(sustain, tolerance)
-	if !ready || newTint == st.tint {
+	from := st.tint
+	to, changed := st.step(rawTint(value, limits), now, time.Duration(rule.SustainSeconds)*time.Second, tolerance, debounce)
+	if !changed {
 		return change{}, false
 	}
-	if e.debounced(st, newTint, now, debounce) {
-		return change{}, false
-	}
-	c := st.set(k, newTint, value, now)
-	c.warn, c.critical = limits.Warn, limits.Critical
-	return c, true
-}
-
-// debounced requires a sustained observation before the state flips back
-// to ok. Escalations fire at once.
-func (e *Engine) debounced(st *metricState, to Tint, now time.Time, debounce time.Duration) bool {
-	return to == TintOK && debounce > 0 && now.Sub(st.changed) < debounce
+	return change{key: k, from: from, to: to, value: value, at: now, warn: limits.Warn, critical: limits.Critical}, true
 }
 
 // healthMuteSig names the muted health checks, so a change of the list is
@@ -430,7 +411,8 @@ func (e *Engine) evalHealth(k stateKey, checks []store.HealthCheck, muteSig stri
 	sustain := time.Duration(rule.SustainSeconds) * time.Second
 	st, ok := e.states[k]
 	if !ok {
-		st = &metricState{tint: TintOK, changed: now, muteSig: muteSig}
+		st = newMetricState(TintOK, now)
+		st.muteSig = muteSig
 		e.states[k] = st
 		if sustain == 0 {
 			st.tint = maxTint(rest, inode)
@@ -453,7 +435,7 @@ func (e *Engine) evalHealth(k stateKey, checks []store.HealthCheck, muteSig stri
 	} else if tintRank(inode) <= tintRank(st.tint) {
 		return change{}, false
 	}
-	if target == st.tint || e.debounced(st, target, now, debounce) {
+	if target == st.tint || st.debounced(target, now, debounce) {
 		return change{}, false
 	}
 	c := st.set(k, target, float64(len(checks)), now)

@@ -85,7 +85,7 @@ func (e *Engine) Sweep(ctx context.Context) {
 		}
 		st := e.states[k]
 		if st == nil {
-			st = &metricState{tint: TintOK, changed: s.at}
+			st = newMetricState(TintOK, s.at)
 			e.states[k] = st
 		}
 		if st.tint == TintCritical {
@@ -152,7 +152,7 @@ func (e *Engine) sweepExpected(ctx context.Context, now time.Time) {
 		e.seen[nk] = &nodeSeen{at: at, interval: defaultInterval}
 		st := e.states[k]
 		if st == nil {
-			st = &metricState{tint: TintOK, changed: at}
+			st = newMetricState(TintOK, at)
 			e.states[k] = st
 		}
 		if st.tint == TintCritical {

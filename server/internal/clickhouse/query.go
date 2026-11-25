@@ -164,16 +164,33 @@ var ErrNoRollup = errors.New("clickhouse: metric has no rollup for this range")
 // their own table, so the query runs once for each family.
 func (c *Client) QueryHistoryMulti(ctx context.Context, q HistoryMultiQuery) (map[uuid.UUID]map[string][]HistoryPoint, time.Duration, error) {
 	t := historyTier(q.To.Sub(q.From), time.Since(q.From))
+	out, err := c.queryTier(ctx, t, q)
+	if err != nil {
+		return nil, 0, err
+	}
+	return out, t.resolution(q.Step), nil
+}
+
+// MinuteHistory returns the 1 minute rollup of each metric of each node,
+// whatever the span of the range. It ignores Step. The result has the same
+// shape as the one of QueryHistoryMulti.
+func (c *Client) MinuteHistory(ctx context.Context, q HistoryMultiQuery) (map[uuid.UUID]map[string][]HistoryPoint, error) {
+	q.Step = 0
+	return c.queryTier(ctx, tier1m, q)
+}
+
+// queryTier reads the metrics of the query from one tier.
+func (c *Client) queryTier(ctx context.Context, t tier, q HistoryMultiQuery) (map[uuid.UUID]map[string][]HistoryPoint, error) {
 	out := map[uuid.UUID]map[string][]HistoryPoint{}
 	if len(q.Metrics) == 0 || len(q.NodeIDs) == 0 {
-		return out, t.resolution(q.Step), nil
+		return out, nil
 	}
 	var families []string
 	byFamily := map[string][]string{}
 	for _, m := range q.Metrics {
 		f, err := metricFamily(t, m)
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 		if _, ok := byFamily[f]; !ok {
 			families = append(families, f)
@@ -182,10 +199,10 @@ func (c *Client) QueryHistoryMulti(ctx context.Context, q HistoryMultiQuery) (ma
 	}
 	for _, f := range families {
 		if err := c.queryFamily(ctx, t, f, byFamily[f], q, out); err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 	}
-	return out, t.resolution(q.Step), nil
+	return out, nil
 }
 
 // queryFamily runs the query of the metrics of one family and adds the

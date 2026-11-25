@@ -38,11 +38,50 @@ type sentKey struct {
 }
 
 type metricState struct {
-	tint    Tint
-	changed time.Time
-	window  sustainWindow
+	levelMachine
 	// muteSig is the list of muted health checks of the last sample.
 	muteSig string
+}
+
+// newMetricState makes the state of a metric that has already been seen.
+func newMetricState(tint Tint, changed time.Time) *metricState {
+	return &metricState{levelMachine: levelMachine{tint: tint, changed: changed, started: true}}
+}
+
+// levelMachine follows the sustained level of one metric. The zero value
+// is a metric with no sample yet.
+type levelMachine struct {
+	window  sustainWindow
+	tint    Tint
+	changed time.Time
+	started bool
+}
+
+// step takes one raw level and gives the tint of the metric and whether it
+// changed. With a sustain time of 0, the first sample sets the tint and no
+// change comes. With a longer sustain time, the tint starts at ok and the
+// first change comes when the window is full.
+func (m *levelMachine) step(raw Tint, at time.Time, sustain time.Duration, tolerance float64, debounce time.Duration) (Tint, bool) {
+	if !m.started {
+		m.started, m.tint, m.changed = true, TintOK, at
+		if sustain == 0 {
+			m.tint = raw
+			return m.tint, false
+		}
+	}
+	m.window.record(raw, at, sustain)
+	level, ready := m.window.level(sustain, tolerance)
+	if !ready || level == m.tint || m.debounced(level, at, debounce) {
+		return m.tint, false
+	}
+	m.tint, m.changed = level, at
+	return m.tint, true
+}
+
+// debounced requires a sustained observation before the tint flips back
+// to ok. Escalations come at once.
+func (m *levelMachine) debounced(to Tint, now time.Time, debounce time.Duration) bool {
+	return to == TintOK && debounce > 0 && now.Sub(m.changed) < debounce
 }
 
 // sustainWindow holds the recent raw levels of one metric. Each point
@@ -164,7 +203,7 @@ func (e *Engine) markSeen(org, node uuid.UUID, now time.Time) (change, bool) {
 	k := stateKey{org: org, node: node, metric: metricReachability}
 	st, ok := e.states[k]
 	if !ok {
-		e.states[k] = &metricState{tint: TintOK, changed: now}
+		e.states[k] = newMetricState(TintOK, now)
 		return change{}, false
 	}
 	if st.tint == TintOK {
@@ -212,7 +251,7 @@ func (e *Engine) Load(ctx context.Context) error {
 		}
 		k := stateKey{org: r.OrgID, node: r.NodeID, metric: r.Metric}
 		if _, ok := e.states[k]; !ok {
-			e.states[k] = &metricState{tint: Tint(r.Tint), changed: r.TS}
+			e.states[k] = newMetricState(Tint(r.Tint), r.TS)
 		}
 		if _, ok := e.open[k]; !ok && Tint(r.Tint) != TintOK {
 			e.open[k] = &openAlert{id: r.AlertID, tint: Tint(r.Tint), last: restoredChange(k, Tint(r.Tint), r.TS)}
@@ -226,7 +265,7 @@ func (e *Engine) Load(ctx context.Context) error {
 		}
 		k := stateKey{org: r.OrgID, node: r.NodeID, metric: metricReachability}
 		if _, ok := e.states[k]; !ok {
-			e.states[k] = &metricState{tint: TintOK, changed: r.TS}
+			e.states[k] = newMetricState(TintOK, r.TS)
 		}
 	}
 	for _, r := range regs {

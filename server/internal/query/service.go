@@ -38,6 +38,10 @@ var (
 	ErrProcessNotFound = errors.New("query: process not found")
 	// ErrProcessAmbiguous is returned when a process name has more than one command.
 	ErrProcessAmbiguous = errors.New("query: process name is not unique")
+	// ErrBadMetric is returned for a metric that the analysis does not support.
+	ErrBadMetric = errors.New("query: unknown metric for this tool")
+	// ErrBadRange is returned for a range that the analysis does not accept.
+	ErrBadRange = errors.New("query: range must be 30d or less, and from must be before to")
 )
 
 // Limits of the fleet reads.
@@ -68,6 +72,7 @@ type Reader interface {
 	WindowStats(ctx context.Context, q clickhouse.StatsQuery) ([]clickhouse.NodeStat, error)
 	QueryHistory(ctx context.Context, q clickhouse.HistoryQuery) ([]clickhouse.HistoryPoint, time.Duration, error)
 	QueryHistoryMulti(ctx context.Context, q clickhouse.HistoryMultiQuery) (map[uuid.UUID]map[string][]clickhouse.HistoryPoint, time.Duration, error)
+	MinuteHistory(ctx context.Context, q clickhouse.HistoryMultiQuery) (map[uuid.UUID]map[string][]clickhouse.HistoryPoint, error)
 	DiskHistory(ctx context.Context, q clickhouse.RangeQuery) ([]clickhouse.DiskPoint, time.Duration, error)
 	OpenAlerts(ctx context.Context, orgID uuid.UUID) ([]clickhouse.AlertRow, error)
 	RecentAlerts(ctx context.Context, orgID uuid.UUID, since time.Time, limit int) ([]clickhouse.AlertRow, error)

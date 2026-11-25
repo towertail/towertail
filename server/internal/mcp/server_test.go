@@ -68,6 +68,9 @@ type fakeQueries struct {
 	change      *query.ChangeReport
 	changeErr   error
 	gotChange   query.ChangeRequest
+	suggest     *query.Suggestion
+	suggestErr  error
+	gotSuggest  query.SuggestRequest
 	days        int
 	detail      *query.HostDetail
 	summary     query.FleetSummary
@@ -224,6 +227,18 @@ func (f *fakeQueries) ExplainChange(_ context.Context, r query.ChangeRequest) (q
 		return *f.change, f.changeErr
 	}
 	return query.ChangeReport{From: r.From, To: r.To, Metric: r.Metric, By: clickhouse.ProcByCPU}, nil
+}
+
+func (f *fakeQueries) SuggestThresholds(_ context.Context, r query.SuggestRequest) (query.Suggestion, error) {
+	f.seen(r.OrgID)
+	f.gotSuggest = r
+	if f.suggest != nil || f.suggestErr != nil {
+		if f.suggest == nil {
+			return query.Suggestion{}, f.suggestErr
+		}
+		return *f.suggest, f.suggestErr
+	}
+	return query.Suggestion{From: r.From, To: r.To, Metric: r.Metric, Approximate: true, Resolution: time.Minute}, nil
 }
 
 func (f *fakeQueries) Rules(_ context.Context, org, node uuid.UUID) (query.RulesResult, error) {
@@ -389,7 +404,7 @@ func TestTools(t *testing.T) {
 		}
 	}
 	slices.Sort(names)
-	want := []string{"alert_stats", "alerts", "disk_scans", "disks", "explain_change", "fleet_summary", "get_alert", "get_host", "host_metrics", "host_rules", "list_hosts", "process_history", "reference", "top_processes", "whoami"}
+	want := []string{"alert_stats", "alerts", "disk_scans", "disks", "explain_change", "fleet_summary", "get_alert", "get_host", "host_metrics", "host_rules", "list_hosts", "process_history", "reference", "suggest_thresholds", "top_processes", "whoami"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("tools = %v, want %v", names, want)
 	}
@@ -482,6 +497,12 @@ func TestToolInputErrors(t *testing.T) {
 		{"change metric", "explain_change", map[string]any{"host": "web-1", "metric": "bogus"}, "metric must be one of"},
 		{"change range", "explain_change", map[string]any{"host": "web-1", "metric": "cpu", "range": "5m"}, "range must be"},
 		{"change unknown host", "explain_change", map[string]any{"host": "ghost", "metric": "cpu"}, "host not found"},
+		{"suggest metric", "suggest_thresholds", map[string]any{"metric": "procs"}, "metric must be one of cpu, mem, disk"},
+		{"suggest range", "suggest_thresholds", map[string]any{"metric": "cpu", "range": "31d"}, "range must be 15m to 30d"},
+		{"suggest candidate", "suggest_thresholds", map[string]any{"metric": "cpu", "candidates": []map[string]any{{"warn": 0.9, "critical": 0.8}}}, "each candidate needs"},
+		{"suggest percent", "suggest_thresholds", map[string]any{"metric": "cpu", "candidates": []map[string]any{{"warn": 75, "critical": 90}}}, "each candidate needs"},
+		{"suggest sustain", "suggest_thresholds", map[string]any{"metric": "cpu", "sustain_seconds": 7200}, "sustain_seconds must be"},
+		{"suggest unknown host", "suggest_thresholds", map[string]any{"metric": "cpu", "host": "ghost"}, "host not found"},
 		{"change no metric", "explain_change", map[string]any{"host": "web-1"}, `missing properties: ["metric"]`},
 		{"at without host", "top_processes", map[string]any{"at": "now-1h"}, "at needs host"},
 		{"bad at", "top_processes", map[string]any{"host": "web-1", "at": "soon"}, "at must be"},
@@ -560,6 +581,7 @@ func TestMCPOrgScope(t *testing.T) {
 			{"disks", map[string]any{"host": "web-1"}},
 			{"alert_stats", map[string]any{"host": "web-1"}},
 			{"explain_change", map[string]any{"host": "web-1", "metric": "cpu"}},
+			{"suggest_thresholds", map[string]any{"metric": "cpu", "host": "web-1"}},
 		} {
 			f.orgs = nil
 			if res := call(t, cs, tc.tool, tc.args); res.IsError {
@@ -641,7 +663,7 @@ func TestToolsRegistrationOrder(t *testing.T) {
 	for _, tl := range newServer(newFake()).Tools(ToolSetV1) {
 		names = append(names, tl.Name)
 	}
-	want := []string{"fleet_summary", "list_hosts", "get_host", "host_metrics", "top_processes", "process_history", "alerts", "get_alert", "host_rules", "disks", "disk_scans", "alert_stats", "explain_change", "reference", "whoami"}
+	want := []string{"fleet_summary", "list_hosts", "get_host", "host_metrics", "top_processes", "process_history", "alerts", "get_alert", "host_rules", "disks", "disk_scans", "alert_stats", "explain_change", "suggest_thresholds", "reference", "whoami"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("names = %v, want %v", names, want)
 	}
@@ -685,6 +707,7 @@ func TestToolResultHasJSONText(t *testing.T) {
 		{"alerts", nil},
 		{"alert_stats", nil},
 		{"explain_change", map[string]any{"host": "web-1", "metric": "cpu"}},
+		{"suggest_thresholds", map[string]any{"metric": "cpu"}},
 		{"disks", map[string]any{"host": "web-1"}},
 		{"fleet_summary", nil},
 		{"get_host", map[string]any{"host": "web-1"}},

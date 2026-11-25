@@ -40,6 +40,8 @@ type fakeReader struct {
 	history     []clickhouse.HistoryPoint
 	gotHistory  clickhouse.HistoryQuery
 	multi       map[uuid.UUID]map[string][]clickhouse.HistoryPoint
+	minute      map[uuid.UUID]map[string][]clickhouse.HistoryPoint
+	gotMinute   []clickhouse.HistoryMultiQuery
 	gotMulti    []clickhouse.HistoryMultiQuery
 	disk        []clickhouse.DiskPoint
 	gotDisk     clickhouse.RangeQuery
@@ -104,6 +106,11 @@ func (f *fakeReader) QueryHistory(_ context.Context, q clickhouse.HistoryQuery) 
 func (f *fakeReader) QueryHistoryMulti(_ context.Context, q clickhouse.HistoryMultiQuery) (map[uuid.UUID]map[string][]clickhouse.HistoryPoint, time.Duration, error) {
 	f.gotMulti = append(f.gotMulti, q)
 	return f.multi, time.Minute, nil
+}
+
+func (f *fakeReader) MinuteHistory(_ context.Context, q clickhouse.HistoryMultiQuery) (map[uuid.UUID]map[string][]clickhouse.HistoryPoint, error) {
+	f.gotMinute = append(f.gotMinute, q)
+	return f.minute, nil
 }
 
 func (f *fakeReader) DiskHistory(_ context.Context, q clickhouse.RangeQuery) ([]clickhouse.DiskPoint, time.Duration, error) {
