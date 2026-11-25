@@ -268,6 +268,121 @@ func (c *Client) ProcessFacts(ctx context.Context, org, node uuid.UUID, key wire
 	return f, true, nil
 }
 
+// ProcStartKey names a process of a node.
+type ProcStartKey struct {
+	NodeID uuid.UUID
+	Key    wire.ProcessKey
+}
+
+// ProcStart is the newest raw row of a process. StartTS is nil when the
+// row has no start time.
+type ProcStart struct {
+	PID     int32
+	StartTS *time.Time
+	SeenAt  time.Time
+}
+
+// keyFilter gives the SQL of the keys and its arguments. The condition
+// holds the nodes and the (name, hash) pairs, so a row can match a key of
+// another node. The caller keeps only the rows of the keys.
+func keyFilter(keys []ProcStartKey, hash string) (string, []any) {
+	var (
+		nodes []uuid.UUID
+		pairs []string
+		args  []any
+	)
+	seen := map[uuid.UUID]bool{}
+	for _, k := range keys {
+		if !seen[k.NodeID] {
+			seen[k.NodeID] = true
+			nodes = append(nodes, k.NodeID)
+		}
+		pairs = append(pairs, "(?, ?)")
+		args = append(args, k.Key.Name, k.Key.CmdHash)
+	}
+	return fmt.Sprintf("node_id IN ? AND (name, %s) IN (%s)", hash, strings.Join(pairs, ", ")), append([]any{nodes}, args...)
+}
+
+// ProcessStarts gives the newest raw row of each key at or before the
+// time, in the hour before it. A key with no row has no entry.
+func (c *Client) ProcessStarts(ctx context.Context, orgID uuid.UUID, keys []ProcStartKey, at time.Time) (map[ProcStartKey]ProcStart, error) {
+	out := make(map[ProcStartKey]ProcStart, len(keys))
+	if len(keys) == 0 {
+		return out, nil
+	}
+	cond, kargs := keyFilter(keys, "cityHash64(cmd)")
+	args := append([]any{orgID}, kargs...)
+	args = append(args, at.UnixMilli(), at.Add(-time.Hour).UnixMilli())
+	rows, err := c.conn.Query(ctx, "SELECT node_id, name, cityHash64(cmd) AS h, argMax(pid, ts), argMax(start_ts, ts), max(ts) FROM "+c.table("procs_topn")+
+		" WHERE org_id = ? AND "+cond+" AND ts <= "+msArg+" AND ts > "+msArg+" GROUP BY node_id, name, h", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	want := make(map[ProcStartKey]bool, len(keys))
+	for _, k := range keys {
+		want[k] = true
+	}
+	for rows.Next() {
+		var (
+			k     ProcStartKey
+			p     ProcStart
+			start time.Time
+		)
+		if err := rows.Scan(&k.NodeID, &k.Key.Name, &k.Key.CmdHash, &p.PID, &start, &p.SeenAt); err != nil {
+			return nil, err
+		}
+		if !want[k] {
+			continue
+		}
+		if start.Unix() > 0 {
+			p.StartTS = &start
+		}
+		out[k] = p
+	}
+	return out, rows.Err()
+}
+
+// FirstSeen gives the oldest bucket of each key at or after the time. It
+// reads the 1 minute rollup when the time is 7 days old or less, and the
+// 1 hour rollup otherwise. A key with no bucket has no entry.
+func (c *Client) FirstSeen(ctx context.Context, orgID uuid.UUID, keys []ProcStartKey, since time.Time) (map[ProcStartKey]time.Time, error) {
+	out := make(map[ProcStartKey]time.Time, len(keys))
+	if len(keys) == 0 {
+		return out, nil
+	}
+	table, ts := "procs_top_1m", "ts_minute"
+	if time.Since(since) > 7*24*time.Hour {
+		table, ts = "procs_top_1h", "ts_hour"
+	}
+	cond, kargs := keyFilter(keys, "cmd_hash")
+	args := append([]any{orgID}, kargs...)
+	args = append(args, since)
+	rows, err := c.conn.Query(ctx, fmt.Sprintf("SELECT node_id, name, cmd_hash, min(%[1]s) FROM %[2]s FINAL WHERE org_id = ? AND %[3]s AND %[1]s >= ? GROUP BY node_id, name, cmd_hash",
+		ts, c.table(table), cond), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	want := make(map[ProcStartKey]bool, len(keys))
+	for _, k := range keys {
+		want[k] = true
+	}
+	for rows.Next() {
+		var (
+			k ProcStartKey
+			t time.Time
+		)
+		if err := rows.Scan(&k.NodeID, &k.Key.Name, &k.Key.CmdHash, &t); err != nil {
+			return nil, err
+		}
+		if want[k] {
+			out[k] = t
+		}
+	}
+	return out, rows.Err()
+}
+
 // SnapshotQuery asks for the top processes of a node at one time.
 type SnapshotQuery struct {
 	OrgID, NodeID uuid.UUID

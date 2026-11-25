@@ -156,3 +156,47 @@ func TestHandleProcess(t *testing.T) {
 		t.Errorf("bad id: %d", rec.Code)
 	}
 }
+
+type snapReader struct {
+	query.Reader
+	snap clickhouse.Snapshot
+	got  clickhouse.SnapshotQuery
+}
+
+func (r *snapReader) ProcessesAt(_ context.Context, q clickhouse.SnapshotQuery) (clickhouse.Snapshot, error) {
+	r.got = q
+	return r.snap, nil
+}
+
+// TestServiceProcessesAtMatchesREST checks the body of the route after
+// the read moved to the query service.
+func TestServiceProcessesAtMatchesREST(t *testing.T) {
+	rt := runtime.New(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	rt.Register(readyComponent{})
+	at := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	start := at.Add(-time.Hour)
+	rd := &snapReader{snap: clickhouse.Snapshot{TS: at, Tier: "raw", Total: 40, Procs: []clickhouse.SnapshotProc{
+		{CmdHash: 5, PID: 7, PPID: 1, Name: "api", Cmd: "api -x", User: "app", CPUPct: 12.5, RSS: 1024, Threads: 3, State: "S", StartTS: &start},
+	}}}
+	s := &Server{ch: &clickhouse.Client{}, runtime: rt, query: query.NewService(rd, nil, nil, nil)}
+	node, org := uuid.New(), uuid.New()
+	req := httptest.NewRequest(http.MethodGet, "/v1/nodes/x/processes/at?by=mem&limit=5", nil)
+	rec := httptest.NewRecorder()
+	c := echo.New().NewContext(req, rec)
+	c.SetParamNames("id")
+	c.SetParamValues(node.String())
+	authctx.Set(c, store.Token{OrgID: org, Kind: store.TokenKindUser})
+	if err := s.handleProcessesAt(c); err != nil {
+		t.Fatal(err)
+	}
+	if rd.got.OrgID != org || rd.got.NodeID != node || rd.got.By != clickhouse.ProcByMem || rd.got.Limit != 5 {
+		t.Errorf("snapshot query = %+v", rd.got)
+	}
+	key := wire.ProcessKey{Name: "api", CmdHash: 5}
+	want := `{"node_id":"` + node.String() + `","ts":"` + at.Format(time.RFC3339) + `","tier":"raw","bucket_s":0,"by":"mem","total":40,` +
+		`"processes":[{"key":"` + key.String() + `","pid":7,"ppid":1,"user":"app","name":"api","cmd":"api -x","cpu_pct":12.5,"rss":1024,` +
+		`"threads":3,"state":"S","start_ts":"` + start.Format(time.RFC3339) + `"}]}`
+	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != want {
+		t.Fatalf("body = %s\nwant   %s", rec.Body, want)
+	}
+}

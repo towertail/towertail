@@ -1354,3 +1354,61 @@ func TestHealthColumns(t *testing.T) {
 		}
 	}
 }
+
+// ProcessStarts gives the newest raw row of each key. FirstSeen gives the
+// oldest 1 minute bucket.
+func TestProcessStartsIntegration(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	org, node := uuid.New(), uuid.New()
+	start := time.Now().UTC().Truncate(time.Minute).Add(-5 * time.Minute)
+	born := start.Add(-time.Hour)
+	var procs []ProcRow
+	for ts := start; ts.Before(start.Add(3 * time.Minute)); ts = ts.Add(10 * time.Second) {
+		pid := int32(10)
+		if ts.After(start.Add(time.Minute)) {
+			pid = 11
+		}
+		procs = append(procs, ProcRow{TS: ts, OrgID: org, NodeID: node, PID: pid, Name: "api", Cmd: "/bin/api", CPUPct: 5, RSS: 1 << 20, StartTS: born})
+	}
+	procs = append(procs, ProcRow{TS: start, OrgID: org, NodeID: node, PID: 3, Name: "nostart", Cmd: "/bin/nostart", CPUPct: 1, RSS: 1 << 20})
+	if err := client.insert(ctx, []IngestBundle{{Sample: SampleRow{TS: start, OrgID: org, NodeID: node, SchemaV: 1, Errors: []string{}}, Procs: procs}}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	mv := client.table("procs_top_1m_mv")
+	if err := client.conn.Exec(ctx, "SYSTEM REFRESH VIEW "+mv); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if err := client.conn.Exec(ctx, "SYSTEM WAIT VIEW "+mv); err != nil {
+		t.Fatalf("wait: %v", err)
+	}
+
+	api := ProcStartKey{NodeID: node, Key: wire.NewProcessKey("api", "/bin/api")}
+	nostart := ProcStartKey{NodeID: node, Key: wire.NewProcessKey("nostart", "/bin/nostart")}
+	missing := ProcStartKey{NodeID: node, Key: wire.NewProcessKey("ghost", "/bin/ghost")}
+	other := ProcStartKey{NodeID: uuid.New(), Key: api.Key}
+	keys := []ProcStartKey{api, nostart, missing, other}
+
+	got, err := client.ProcessStarts(ctx, org, keys, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[api].PID != 11 || got[api].StartTS == nil || !got[api].StartTS.Equal(born) || got[nostart].StartTS != nil {
+		t.Fatalf("starts = %+v", got)
+	}
+	// An earlier time sees the older pid.
+	got, err = client.ProcessStarts(ctx, org, []ProcStartKey{api}, start.Add(30*time.Second))
+	if err != nil || got[api].PID != 10 {
+		t.Fatalf("starts at an earlier time = %+v, %v", got, err)
+	}
+
+	seen, err := client.FirstSeen(ctx, org, keys, start.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 2 || !seen[api].Equal(start) || !seen[nostart].Equal(start) {
+		t.Fatalf("first seen = %+v, want %v", seen, start)
+	}
+}

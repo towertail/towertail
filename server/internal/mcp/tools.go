@@ -39,68 +39,6 @@ func (s *Server) hostID(ctx context.Context, orgID uuid.UUID, ref string) (uuid.
 	return n.ID, err
 }
 
-// TopProcessesIn is the input of top_processes.
-type TopProcessesIn struct {
-	Host  string `json:"host,omitempty" jsonschema:"host ID or name. Empty means the whole fleet."`
-	By    string `json:"by,omitempty" jsonschema:"order: cpu (average CPU) or mem (peak memory). Default cpu."`
-	Range string `json:"range,omitempty" jsonschema:"span up to now, 15m to 365d, for example 1h, 24h or 7d. Default 1h."`
-	Limit int    `json:"limit,omitempty" jsonschema:"most processes to return, 1 to 50. Default 20."`
-}
-
-// Process is one process of a host over a range.
-type Process struct {
-	Host        string  `json:"host"`
-	HostID      string  `json:"host_id"`
-	Name        string  `json:"name"`
-	Command     string  `json:"command"`
-	Repo        string  `json:"repo,omitempty"`
-	CPUPctAvg   float64 `json:"cpu_pct_avg"`
-	CPUPctMax   float64 `json:"cpu_pct_max"`
-	RSSMaxBytes uint64  `json:"rss_max_bytes"`
-}
-
-// TopProcessesOut is the output of top_processes.
-type TopProcessesOut struct {
-	From    string `json:"from"`
-	To      string `json:"to"`
-	By      string `json:"by"`
-	Clamped bool   `json:"clamped,omitempty"`
-	// Processes come in the order of By.
-	Processes []Process `json:"processes"`
-}
-
-func (s *Server) topProcesses(ctx context.Context, _ *sdk.CallToolRequest, in TopProcessesIn) (*sdk.CallToolResult, TopProcessesOut, error) {
-	c, err := callerOf(ctx)
-	if err != nil {
-		return nil, TopProcessesOut{}, err
-	}
-	orgID := c.Token.OrgID
-	by, err := query.ParseProcOrder(in.By)
-	if err != nil {
-		return nil, TopProcessesOut{}, s.toolError("top_processes", err)
-	}
-	from, to, err := parseRange(in.Range, "", "", s.now().UTC())
-	if err != nil {
-		return nil, TopProcessesOut{}, err
-	}
-	node, err := s.hostID(ctx, orgID, in.Host)
-	if err != nil {
-		return nil, TopProcessesOut{}, s.toolError("top_processes", err)
-	}
-	res, err := s.q.TopProcesses(ctx, query.ProcQuery{OrgID: orgID, NodeID: node, From: from, To: to, By: by, Limit: in.Limit})
-	if err != nil {
-		return nil, TopProcessesOut{}, s.toolError("top_processes", err)
-	}
-	out := TopProcessesOut{From: ts(res.From), To: ts(res.To), By: res.By, Clamped: res.Clamped, Processes: make([]Process, 0, len(res.Processes))}
-	for _, p := range res.Processes {
-		out.Processes = append(out.Processes, Process{
-			Host: p.NodeName, HostID: p.NodeID.String(), Name: p.Name, Command: p.Cmd, Repo: p.Repo,
-			CPUPctAvg: p.CPUPctAvg, CPUPctMax: p.CPUPctMax, RSSMaxBytes: p.RSSMax,
-		})
-	}
-	return nil, out, nil
-}
-
 // AlertsIn is the input of alerts.
 type AlertsIn struct {
 	State string `json:"state,omitempty" jsonschema:"open (default) or recent. Recent alerts also include the changes back to ok."`

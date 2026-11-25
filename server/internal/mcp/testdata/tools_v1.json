@@ -920,12 +920,20 @@
       "readOnlyHint": true,
       "title": "Top processes"
     },
-    "description": "Get the top processes of one host, or of the fleet, by CPU or memory over a range.",
+    "description": "Get the top processes of one host, or of the fleet, by CPU, memory or disk I/O over a range. With at and a host, get the processes at one time, with PID, user and state. Each process has its start time and run time where known.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "at": {
+          "description": "one point in time instead of a range: RFC 3339, now or now-\u003cspan\u003e, for example now-2h. Needs host. Gives PID, user and state for a time in the last hour.",
+          "type": "string"
+        },
         "by": {
-          "description": "order: cpu (average CPU) or mem (peak memory). Default cpu.",
+          "description": "order: cpu (average CPU), mem (peak memory) or io (average disk I/O). Default cpu.",
+          "type": "string"
+        },
+        "from": {
+          "description": "start of the range in RFC 3339. Use it with to, instead of range.",
           "type": "string"
         },
         "host": {
@@ -937,7 +945,11 @@
           "type": "integer"
         },
         "range": {
-          "description": "span up to now, 15m to 365d, for example 1h, 24h or 7d. Default 1h.",
+          "description": "span up to now, 15m to 365d, for example 1h, 24h or 7d. Default 1h. Do not use with from or at.",
+          "type": "string"
+        },
+        "to": {
+          "description": "end of the range in RFC 3339. Default now.",
           "type": "string"
         }
       },
@@ -947,6 +959,9 @@
     "outputSchema": {
       "additionalProperties": false,
       "properties": {
+        "at": {
+          "type": "string"
+        },
         "by": {
           "type": "string"
         },
@@ -969,14 +984,28 @@
               "cpu_pct_max": {
                 "type": "number"
               },
+              "first_seen": {
+                "type": "string"
+              },
               "host": {
                 "type": "string"
               },
               "host_id": {
                 "type": "string"
               },
+              "io_bps_avg": {
+                "type": "number"
+              },
+              "key": {
+                "type": "string"
+              },
               "name": {
                 "type": "string"
+              },
+              "pid": {
+                "maximum": 2147483647,
+                "minimum": -2147483648,
+                "type": "integer"
               },
               "repo": {
                 "type": "string"
@@ -984,16 +1013,33 @@
               "rss_max_bytes": {
                 "minimum": 0,
                 "type": "integer"
+              },
+              "run_seconds": {
+                "type": "integer"
+              },
+              "start_exact": {
+                "type": "boolean"
+              },
+              "started_at": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "user": {
+                "type": "string"
               }
             },
             "required": [
               "host",
               "host_id",
+              "key",
               "name",
               "command",
               "cpu_pct_avg",
               "cpu_pct_max",
-              "rss_max_bytes"
+              "rss_max_bytes",
+              "start_exact"
             ],
             "type": "object"
           },
@@ -1002,19 +1048,232 @@
             "array"
           ]
         },
+        "tier": {
+          "type": "string"
+        },
         "to": {
           "type": "string"
         }
       },
       "required": [
-        "from",
-        "to",
         "by",
         "processes"
       ],
       "type": "object"
     },
     "title": "Top processes"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "title": "Process history"
+    },
+    "description": "Get the history of one process of a host: CPU, memory and disk I/O points, the stats of the range, the facts (PID, user, ports) and the start time. The process is a key from top_processes or a name.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "description": "start of the range in RFC 3339. Use it with to, instead of range.",
+          "type": "string"
+        },
+        "host": {
+          "description": "host ID or name",
+          "type": "string"
+        },
+        "process": {
+          "description": "the key of a process from top_processes, or a process name. A name that has more than one command gives an error with the keys.",
+          "type": "string"
+        },
+        "range": {
+          "description": "span up to now, 15m to 365d, for example 1h, 24h or 7d. Default 1h. Do not use with from.",
+          "type": "string"
+        },
+        "to": {
+          "description": "end of the range in RFC 3339. Default now.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host",
+        "process"
+      ],
+      "type": "object"
+    },
+    "name": "process_history",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "clamped": {
+          "type": "boolean"
+        },
+        "command": {
+          "type": "string"
+        },
+        "facts": {
+          "additionalProperties": false,
+          "properties": {
+            "cwd": {
+              "type": "string"
+            },
+            "listen_tcp": {
+              "items": {
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "listen_udp": {
+              "items": {
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "pid": {
+              "maximum": 2147483647,
+              "minimum": -2147483648,
+              "type": "integer"
+            },
+            "ppid": {
+              "maximum": 2147483647,
+              "minimum": -2147483648,
+              "type": "integer"
+            },
+            "state": {
+              "type": "string"
+            },
+            "threads": {
+              "maximum": 2147483647,
+              "minimum": -2147483648,
+              "type": "integer"
+            },
+            "user": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "pid"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "first_seen": {
+          "type": "string"
+        },
+        "from": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "points": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "cpu_pct": {
+                "type": "number"
+              },
+              "io_bps": {
+                "type": "number"
+              },
+              "rss_bytes": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "ts": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ts",
+              "cpu_pct",
+              "rss_bytes"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "repo": {
+          "type": "string"
+        },
+        "resolution": {
+          "type": "string"
+        },
+        "run_seconds": {
+          "type": "integer"
+        },
+        "start_exact": {
+          "type": "boolean"
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "stats": {
+          "additionalProperties": false,
+          "properties": {
+            "cpu_pct_avg": {
+              "type": "number"
+            },
+            "cpu_pct_max": {
+              "type": "number"
+            },
+            "io_bps_avg": {
+              "type": "number"
+            },
+            "rss_max_bytes": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cpu_pct_avg",
+            "cpu_pct_max",
+            "rss_max_bytes",
+            "io_bps_avg"
+          ],
+          "type": "object"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "host",
+        "key",
+        "name",
+        "command",
+        "from",
+        "to",
+        "resolution",
+        "stats",
+        "points",
+        "start_exact"
+      ],
+      "type": "object"
+    },
+    "title": "Process history"
   },
   {
     "annotations": {

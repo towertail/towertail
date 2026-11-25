@@ -358,6 +358,7 @@ type FleetProcess struct {
 	CPUPctAvg float64    `json:"cpu_pct_avg"`
 	CPUPctMax float64    `json:"cpu_pct_max"`
 	RSSMax    uint64     `json:"rss_max"`
+	IOBpsAvg  float64    `json:"io_bps_avg,omitempty"`
 }
 
 // FleetProcesses is the body of GET /v1/fleet/processes. By is cpu, mem or io.

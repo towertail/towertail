@@ -43,6 +43,10 @@ type HistoryQueries interface {
 // ProcessQueries are the process reads.
 type ProcessQueries interface {
 	TopProcesses(ctx context.Context, q query.ProcQuery) (wire.FleetProcesses, error)
+	ProcessesAt(ctx context.Context, r query.SnapshotRequest) (wire.ProcessSnapshot, error)
+	ProcessStarts(ctx context.Context, orgID uuid.UUID, keys []clickhouse.ProcStartKey, at time.Time) (map[clickhouse.ProcStartKey]query.ProcStart, error)
+	ResolveProcess(ctx context.Context, orgID, nodeID uuid.UUID, ref string, from, to time.Time) (wire.ProcessKey, error)
+	ProcessHistory(ctx context.Context, r query.ProcessHistoryRequest) (query.ProcessHistory, error)
 }
 
 // AlertQueries are the alert reads.
@@ -157,7 +161,8 @@ func New(q Queries, o Options) *Server {
 	addTool(s, readTool("list_hosts", "List hosts", "List the hosts of the fleet with the latest CPU (percent), memory and disk (ratio 0 to 1), load and network (bytes each second). Offline hosts have no values."), s.listHosts)
 	addTool(s, readTool("get_host", "Get host", "Get one host: its latest values, facts (OS, kernel, cores, memory, uptime), open alerts and the effective limits with their source (org or host)."), s.getHost)
 	addTool(s, readTool("host_metrics", "Host metrics", "Get the history of metrics of one host, of many hosts or of a tag: min, avg, max, last and a capped list of points for each metric. Any history metric works (see reference). With compare, each metric also has the window before the range and the change of the average. The plan can shorten the range (clamped)."), s.hostMetrics)
-	addTool(s, readTool("top_processes", "Top processes", "Get the top processes of one host, or of the fleet, by CPU or memory over a range."), s.topProcesses)
+	addTool(s, readTool("top_processes", "Top processes", "Get the top processes of one host, or of the fleet, by CPU, memory or disk I/O over a range. With at and a host, get the processes at one time, with PID, user and state. Each process has its start time and run time where known."), s.topProcesses)
+	addTool(s, readTool("process_history", "Process history", "Get the history of one process of a host: CPU, memory and disk I/O points, the stats of the range, the facts (PID, user, ports) and the start time. The process is a key from top_processes or a name."), s.processHistory)
 	addTool(s, readTool("alerts", "Alerts", "List the open alerts, or the recent alerts, of the fleet or of one host."), s.alerts)
 	addTool(s, readTool("disks", "Disk usage", "Get the use of each disk mount of one host and the change over a range."), s.disks)
 	addTool(s, readTool("reference", "Reference facts", "Get the facts behind a metric, a rule or a plan limit. Topics: metrics, thresholds, alerts, long_process, history and plan."), s.reference)
@@ -283,6 +288,7 @@ func (s *Server) toolError(tool string, err error) error {
 		errors.Is(err, query.ErrBadDays),
 		errors.Is(err, query.ErrHostNotFound),
 		errors.Is(err, query.ErrHostAmbiguous),
+		errors.Is(err, query.ErrProcessAmbiguous),
 		errors.Is(err, clickhouse.ErrUnknownMetric),
 		errors.Is(err, clickhouse.ErrNoRollup):
 		return err
@@ -291,6 +297,8 @@ func (s *Server) toolError(tool string, err error) error {
 			return errors.New("alert not found")
 		}
 		return errors.New("host not found")
+	case errors.Is(err, query.ErrProcessNotFound):
+		return errors.New("process not found")
 	case errors.Is(err, query.ErrBadSort):
 		return errors.New("sort must be cpu, mem, disk or net")
 	}

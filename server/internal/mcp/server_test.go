@@ -36,7 +36,18 @@ type fakeQueries struct {
 	nodes  []store.Node
 	points []clickhouse.HistoryPoint
 	// prev holds the points of the previous window. A nil value gives none.
-	prev []clickhouse.HistoryPoint
+	prev        []clickhouse.HistoryPoint
+	snap        wire.ProcessSnapshot
+	gotSnap     query.SnapshotRequest
+	starts      map[clickhouse.ProcStartKey]query.ProcStart
+	gotStartsAt time.Time
+	gotStarts   []clickhouse.ProcStartKey
+	procKey     wire.ProcessKey
+	procErr     error
+	gotRef      string
+	procHist    query.ProcessHistory
+	procHistErr error
+	gotProcHist query.ProcessHistoryRequest
 	// prevOutside gives an empty previous window, as when the plan cuts it.
 	prevOutside bool
 	// hostPoints overrides points for one host.
@@ -126,8 +137,32 @@ func (f *fakeQueries) TopProcesses(_ context.Context, q query.ProcQuery) (wire.F
 	f.seen(q.OrgID)
 	f.gotProc = q
 	return wire.FleetProcesses{From: q.From, To: q.To, By: string(q.By), Processes: []wire.FleetProcess{
-		{NodeID: f.nodes[0].ID, NodeName: f.nodes[0].DisplayName, Name: "postgres", Cmd: "postgres -D /data", CPUPctAvg: 80, CPUPctMax: 99, RSSMax: 1 << 30},
+		{NodeID: f.nodes[0].ID, NodeName: f.nodes[0].DisplayName, Key: wire.ProcessKey{Name: "postgres", CmdHash: 7}, Name: "postgres", Cmd: "postgres -D /data", CPUPctAvg: 80, CPUPctMax: 99, RSSMax: 1 << 30},
 	}}, nil
+}
+
+func (f *fakeQueries) ProcessesAt(_ context.Context, r query.SnapshotRequest) (wire.ProcessSnapshot, error) {
+	f.seen(r.OrgID)
+	f.gotSnap = r
+	return f.snap, nil
+}
+
+func (f *fakeQueries) ProcessStarts(_ context.Context, org uuid.UUID, keys []clickhouse.ProcStartKey, at time.Time) (map[clickhouse.ProcStartKey]query.ProcStart, error) {
+	f.seen(org)
+	f.gotStarts, f.gotStartsAt = keys, at
+	return f.starts, nil
+}
+
+func (f *fakeQueries) ResolveProcess(_ context.Context, org, _ uuid.UUID, ref string, _, _ time.Time) (wire.ProcessKey, error) {
+	f.seen(org)
+	f.gotRef = ref
+	return f.procKey, f.procErr
+}
+
+func (f *fakeQueries) ProcessHistory(_ context.Context, r query.ProcessHistoryRequest) (query.ProcessHistory, error) {
+	f.seen(r.OrgID)
+	f.gotProcHist = r
+	return f.procHist, f.procHistErr
 }
 
 func (f *fakeQueries) Alerts(_ context.Context, r query.AlertsRequest) (wire.AlertList, error) {
@@ -276,7 +311,7 @@ func TestTools(t *testing.T) {
 		}
 	}
 	slices.Sort(names)
-	want := []string{"alerts", "disks", "fleet_summary", "get_host", "host_metrics", "list_hosts", "reference", "top_processes", "whoami"}
+	want := []string{"alerts", "disks", "fleet_summary", "get_host", "host_metrics", "list_hosts", "process_history", "reference", "top_processes", "whoami"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("tools = %v, want %v", names, want)
 	}
@@ -364,8 +399,14 @@ func TestToolInputErrors(t *testing.T) {
 		{"empty host", "disks", map[string]any{"host": ""}, "host is required"},
 		{"resolution", "host_metrics", map[string]any{"host": "web-1", "resolution": "2m"}, "resolution must be"},
 		{"sort", "list_hosts", map[string]any{"sort": "bogus"}, "sort must be"},
-		{"order", "top_processes", map[string]any{"by": "disk"}, "by must be cpu or mem"},
+		{"order", "top_processes", map[string]any{"by": "disk"}, "by must be cpu, mem or io"},
 		{"state", "alerts", map[string]any{"state": "closed"}, "state must be"},
+		{"at without host", "top_processes", map[string]any{"at": "now-1h"}, "at needs host"},
+		{"bad at", "top_processes", map[string]any{"host": "web-1", "at": "soon"}, "at must be"},
+		{"at and range", "top_processes", map[string]any{"host": "web-1", "at": "now", "range": "1h"}, "not together"},
+		{"limit", "top_processes", map[string]any{"limit": 51}, "limit must be 1 to 50"},
+		{"history no host", "process_history", map[string]any{"process": "api"}, `missing properties: ["host"]`},
+		{"history no process", "process_history", map[string]any{"host": "web-1"}, `missing properties: ["process"]`},
 		{"get_host no host", "get_host", map[string]any{"host": ""}, "host is required"},
 		{"get_host unknown host", "get_host", map[string]any{"host": "ghost"}, "host not found"},
 		{"reference topic", "reference", map[string]any{"topic": "bogus"}, "topic must be one of"},
@@ -430,6 +471,8 @@ func TestMCPOrgScope(t *testing.T) {
 			{"whoami", nil},
 			{"reference", map[string]any{"topic": "plan"}},
 			{"host_metrics", map[string]any{"tag": "web", "compare": true}},
+			{"top_processes", map[string]any{"host": "web-1", "at": "now-2h"}},
+			{"process_history", map[string]any{"host": "web-1", "process": "api"}},
 		} {
 			f.orgs = nil
 			if res := call(t, cs, tc.tool, tc.args); res.IsError {
@@ -511,7 +554,7 @@ func TestToolsRegistrationOrder(t *testing.T) {
 	for _, tl := range newServer(newFake()).Tools(ToolSetV1) {
 		names = append(names, tl.Name)
 	}
-	want := []string{"fleet_summary", "list_hosts", "get_host", "host_metrics", "top_processes", "alerts", "disks", "reference", "whoami"}
+	want := []string{"fleet_summary", "list_hosts", "get_host", "host_metrics", "top_processes", "process_history", "alerts", "disks", "reference", "whoami"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("names = %v, want %v", names, want)
 	}
@@ -551,6 +594,7 @@ func TestToolResultHasJSONText(t *testing.T) {
 		{"list_hosts", nil},
 		{"host_metrics", map[string]any{"host": "web-1"}},
 		{"top_processes", nil},
+		{"process_history", map[string]any{"host": "web-1", "process": "api"}},
 		{"alerts", nil},
 		{"disks", map[string]any{"host": "web-1"}},
 		{"fleet_summary", nil},

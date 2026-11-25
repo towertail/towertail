@@ -75,3 +75,29 @@ func parseRange(rangeText, from, to string, now time.Time) (time.Time, time.Time
 	}
 	return start, end, nil
 }
+
+// parseAt reads a point in time: RFC 3339, "now", or "now-" and a span,
+// for example now-90m or now-2d. A time in the future moves to now.
+func parseAt(text string, now time.Time) (time.Time, error) {
+	text = strings.TrimSpace(text)
+	if rest, ok := strings.CutPrefix(text, "now"); ok {
+		if rest == "" {
+			return now, nil
+		}
+		if span, ok := strings.CutPrefix(rest, "-"); ok {
+			d, err := parseSpan(span)
+			if err != nil {
+				return time.Time{}, err
+			}
+			return now.Add(-d), nil
+		}
+	}
+	t, err := time.Parse(time.RFC3339, text)
+	if err != nil {
+		return time.Time{}, badf("at must be RFC 3339, now or now-<span>, for example 2026-11-20T08:00:00Z or now-2h")
+	}
+	if t = t.UTC(); t.After(now) {
+		t = now
+	}
+	return t, nil
+}

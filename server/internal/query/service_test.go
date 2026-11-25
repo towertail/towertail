@@ -12,6 +12,7 @@ import (
 
 	"github.com/towertail/towertail/server/internal/clickhouse"
 	"github.com/towertail/towertail/server/store"
+	"github.com/towertail/towertail/server/wire"
 )
 
 type fixedLimits int
@@ -52,6 +53,17 @@ type fakeReader struct {
 	byID      map[uuid.UUID]clickhouse.AlertRow
 	events    []clickhouse.EventRow
 	lines     []clickhouse.AlertLine
+
+	snap         clickhouse.Snapshot
+	gotSnap      clickhouse.SnapshotQuery
+	procInfo     func(key wire.ProcessKey) (cmd, repo string, err error)
+	procPts      map[wire.ProcessKey][]clickhouse.ProcPoint
+	gotSeries    clickhouse.ProcSeriesQuery
+	procFacts    *clickhouse.ProcFacts
+	starts       map[clickhouse.ProcStartKey]clickhouse.ProcStart
+	gotStarts    []clickhouse.ProcStartKey
+	firstSeen    map[clickhouse.ProcStartKey]time.Time
+	gotSeenSince time.Time
 
 	facts    *clickhouse.HostFacts
 	notified []clickhouse.NotifiedRow
@@ -126,6 +138,40 @@ func (f *fakeReader) AlertEvents(context.Context, uuid.UUID, uuid.UUID) ([]click
 
 func (f *fakeReader) AlertLines(context.Context, uuid.UUID, uuid.UUID) ([]clickhouse.AlertLine, error) {
 	return f.lines, nil
+}
+
+func (f *fakeReader) ProcessesAt(_ context.Context, q clickhouse.SnapshotQuery) (clickhouse.Snapshot, error) {
+	f.gotSnap = q
+	return f.snap, nil
+}
+
+func (f *fakeReader) ProcessInfo(_ context.Context, _, _ uuid.UUID, key wire.ProcessKey, _, _ time.Time) (string, string, error) {
+	if f.procInfo == nil {
+		return "", "", clickhouse.ErrNoProcess
+	}
+	return f.procInfo(key)
+}
+
+func (f *fakeReader) ProcessSeries(_ context.Context, q clickhouse.ProcSeriesQuery) (map[wire.ProcessKey][]clickhouse.ProcPoint, error) {
+	f.gotSeries = q
+	return f.procPts, nil
+}
+
+func (f *fakeReader) ProcessFacts(context.Context, uuid.UUID, uuid.UUID, wire.ProcessKey, time.Time) (clickhouse.ProcFacts, bool, error) {
+	if f.procFacts == nil {
+		return clickhouse.ProcFacts{}, false, nil
+	}
+	return *f.procFacts, true, nil
+}
+
+func (f *fakeReader) ProcessStarts(_ context.Context, _ uuid.UUID, keys []clickhouse.ProcStartKey, _ time.Time) (map[clickhouse.ProcStartKey]clickhouse.ProcStart, error) {
+	f.gotStarts = keys
+	return f.starts, nil
+}
+
+func (f *fakeReader) FirstSeen(_ context.Context, _ uuid.UUID, keys []clickhouse.ProcStartKey, since time.Time) (map[clickhouse.ProcStartKey]time.Time, error) {
+	f.gotSeenSince = since
+	return f.firstSeen, nil
 }
 
 func (f *fakeReader) HostFacts(context.Context, uuid.UUID, uuid.UUID, time.Time) (clickhouse.HostFacts, bool, error) {

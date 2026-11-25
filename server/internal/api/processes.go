@@ -8,6 +8,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/towertail/towertail/server/authctx"
 	"github.com/towertail/towertail/server/internal/clickhouse"
 	"github.com/towertail/towertail/server/internal/query"
 	"github.com/towertail/towertail/server/wire"
@@ -146,29 +147,10 @@ func (s *Server) handleProcessesAt(c echo.Context) error {
 	if err := s.requireCH(c); err != nil {
 		return err
 	}
-	out := wire.ProcessSnapshot{NodeID: id, TS: at, By: string(by), Processes: []wire.SnapshotProcess{}}
-	r := s.clampRange(c, at, at, time.Now().UTC())
-	if r.Clamped {
-		out.Clamped = true
-		return c.JSON(http.StatusOK, out)
-	}
-	snap, err := s.ch.ProcessesAt(c.Request().Context(), clickhouse.SnapshotQuery{OrgID: r.OrgID, NodeID: id, At: at, By: by, Limit: limit})
+	t, _ := authctx.TokenFrom(c)
+	out, err := s.query.ProcessesAt(c.Request().Context(), query.SnapshotRequest{OrgID: t.OrgID, NodeID: id, At: at, By: by, Limit: limit})
 	if err != nil {
 		return err
-	}
-	out.TS, out.Tier, out.BucketS, out.Total = snap.TS, snap.Tier, int(snap.Bucket/time.Second), snap.Total
-	out.Prev, out.Next = snap.Prev, snap.Next
-	if snap.TS.IsZero() {
-		out.TS = at
-	}
-	for _, p := range snap.Procs {
-		out.Processes = append(out.Processes, wire.SnapshotProcess{
-			Key: wire.ProcessKey{Name: p.Name, CmdHash: p.CmdHash},
-			PID: p.PID, PPID: p.PPID, Parent: p.Parent, User: p.User,
-			Name: p.Name, Cmd: p.Cmd, Repo: p.Repo, Cwd: p.Cwd,
-			CPUPct: p.CPUPct, CPUPctMax: p.CPUPctMax, RSS: p.RSS, IOBps: p.IOBps,
-			Threads: p.Threads, State: p.State, StartTS: p.StartTS,
-		})
 	}
 	return c.JSON(http.StatusOK, out)
 }

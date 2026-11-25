@@ -27,13 +27,17 @@ var (
 	// ErrBadWindow is returned for a compare window out of range.
 	ErrBadWindow = errors.New("query: window must be 15m to 30d")
 	// ErrBadOrder is returned for an unknown process order.
-	ErrBadOrder = errors.New("query: by must be cpu or mem")
+	ErrBadOrder = errors.New("query: by must be cpu, mem or io")
 	// ErrBadDays is returned for a days value out of range.
 	ErrBadDays = errors.New("query: days must be 1 to 90")
 	// ErrHostNotFound is returned when no host matches a reference.
 	ErrHostNotFound = errors.New("query: host not found")
 	// ErrHostAmbiguous is returned when a name matches more than one host.
 	ErrHostAmbiguous = errors.New("query: host name is not unique")
+	// ErrProcessNotFound is returned when no process matches a reference.
+	ErrProcessNotFound = errors.New("query: process not found")
+	// ErrProcessAmbiguous is returned when a process name has more than one command.
+	ErrProcessAmbiguous = errors.New("query: process name is not unique")
 )
 
 // Limits of the fleet reads.
@@ -72,6 +76,12 @@ type Reader interface {
 	AlertsByID(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]clickhouse.AlertRow, error)
 	AlertEvents(ctx context.Context, orgID, alertID uuid.UUID) ([]clickhouse.EventRow, error)
 	AlertLines(ctx context.Context, orgID, alertID uuid.UUID) ([]clickhouse.AlertLine, error)
+	ProcessesAt(ctx context.Context, q clickhouse.SnapshotQuery) (clickhouse.Snapshot, error)
+	ProcessInfo(ctx context.Context, org, node uuid.UUID, key wire.ProcessKey, from, to time.Time) (cmd, repo string, err error)
+	ProcessSeries(ctx context.Context, q clickhouse.ProcSeriesQuery) (map[wire.ProcessKey][]clickhouse.ProcPoint, error)
+	ProcessFacts(ctx context.Context, org, node uuid.UUID, key wire.ProcessKey, before time.Time) (clickhouse.ProcFacts, bool, error)
+	ProcessStarts(ctx context.Context, orgID uuid.UUID, keys []clickhouse.ProcStartKey, at time.Time) (map[clickhouse.ProcStartKey]clickhouse.ProcStart, error)
+	FirstSeen(ctx context.Context, orgID uuid.UUID, keys []clickhouse.ProcStartKey, since time.Time) (map[clickhouse.ProcStartKey]time.Time, error)
 	HostFacts(ctx context.Context, orgID, nodeID uuid.UUID, since time.Time) (clickhouse.HostFacts, bool, error)
 	NotifiedCounts(ctx context.Context, q clickhouse.NotifiedQuery) ([]clickhouse.NotifiedRow, error)
 }
@@ -309,7 +319,7 @@ func (s *Service) TopProcesses(ctx context.Context, q ProcQuery) (wire.FleetProc
 		out.Processes = append(out.Processes, wire.FleetProcess{
 			NodeID: p.NodeID, NodeName: names[p.NodeID], Key: wire.ProcessKey{Name: p.Name, CmdHash: p.CmdHash}, Name: p.Name, Cmd: p.Cmd,
 			Repo: p.Repo, Cwd: p.Cwd, Parent: p.Parent,
-			CPUPctAvg: p.CPUPctAvg, CPUPctMax: p.CPUPctMax, RSSMax: p.RSSMax,
+			CPUPctAvg: p.CPUPctAvg, CPUPctMax: p.CPUPctMax, RSSMax: p.RSSMax, IOBpsAvg: p.IOBpsAvg,
 		})
 	}
 	return out, nil
