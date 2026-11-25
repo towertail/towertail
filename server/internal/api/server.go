@@ -162,6 +162,10 @@ func New(d Deps) *Server {
 	if d.CH != nil {
 		reader = d.CH
 	}
+	var peaks query.Peaks
+	if d.Alerter != nil {
+		peaks = d.Alerter
+	}
 	var alerts alertReader
 	if d.CH != nil {
 		alerts = d.CH
@@ -188,7 +192,7 @@ func New(d Deps) *Server {
 		roles:         d.Roles,
 		ranks:         newRankCache(),
 		netRates:      newNetRates(),
-		query:         query.NewService(reader, d.Store, d.Limits),
+		query:         query.NewService(reader, d.Store, d.Limits, peaks),
 		apiKeyRates:   newKeyLimiters(d.Config.HTTP.APIKeyRateLimitRPS, d.Config.HTTP.APIKeyRateLimitBurst),
 	}
 	if d.Config.MCP.Enabled {
@@ -288,6 +292,7 @@ func (s *Server) registerRoutes() {
 	read.GET("/nodes/:id/rules", s.handleGetNodeRules)
 	read.GET("/alerts", s.handleListAlerts)
 	read.GET("/alerts/recent", s.handleRecentAlerts)
+	read.GET("/alerts/:id", s.handleGetAlert)
 	read.GET("/sampler/versions", s.handleSamplerVersions)
 	read.GET("/nodes/:id/disk-scans", s.handleListDiskScans)
 	read.GET("/disk-scans/:job", s.handleGetDiskScan)
@@ -299,6 +304,7 @@ func (s *Server) registerRoutes() {
 	write.POST("/api-keys", s.handleCreateAPIKey, viewer)
 	write.DELETE("/api-keys/:id", s.handleRevokeAPIKey, viewer)
 
+	write.POST("/alerts/bulk", s.handleBulkAlerts, member)
 	write.POST("/alerts/:id/ack", s.handleAckAlert, member)
 	write.POST("/alerts/:id/snooze", s.handleSnoozeAlert, member)
 	write.DELETE("/alerts/:id/ack", s.handleUnackAlert, member)

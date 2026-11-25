@@ -67,6 +67,16 @@ type Reader interface {
 	OpenAlerts(ctx context.Context, orgID uuid.UUID) ([]clickhouse.AlertRow, error)
 	RecentAlerts(ctx context.Context, orgID uuid.UUID, since time.Time, limit int) ([]clickhouse.AlertRow, error)
 	AlertMarks(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]clickhouse.AlertMark, error)
+	Incidents(ctx context.Context, q clickhouse.IncidentQuery) ([]clickhouse.IncidentRow, bool, error)
+	AlertsByID(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]clickhouse.AlertRow, error)
+	AlertEvents(ctx context.Context, orgID, alertID uuid.UUID) ([]clickhouse.EventRow, error)
+	AlertLines(ctx context.Context, orgID, alertID uuid.UUID) ([]clickhouse.AlertLine, error)
+}
+
+// Peaks gives the highest value of each open alert of an org, by alert id.
+// The alerter keeps it in memory.
+type Peaks interface {
+	Peaks(orgID uuid.UUID) map[uuid.UUID]float64
 }
 
 // Nodes lists the nodes of an org.
@@ -82,16 +92,17 @@ type Limits interface {
 }
 
 // Service reads the fleet of an org. A nil Reader gives ErrNoHistory on
-// each read. A nil Limits gives no clamp.
+// each read. A nil Limits gives no clamp. A nil Peaks gives no live peak.
 type Service struct {
 	ch     Reader
 	nodes  Nodes
 	limits Limits
+	peaks  Peaks
 	now    func() time.Time
 }
 
-func NewService(ch Reader, nodes Nodes, limits Limits) *Service {
-	return &Service{ch: ch, nodes: nodes, limits: limits, now: time.Now}
+func NewService(ch Reader, nodes Nodes, limits Limits, peaks Peaks) *Service {
+	return &Service{ch: ch, nodes: nodes, limits: limits, peaks: peaks, now: time.Now}
 }
 
 // Clamp moves from to the oldest time that the plan of the org allows.

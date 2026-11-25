@@ -43,8 +43,13 @@ type Router struct {
 	log     *slog.Logger
 	senders map[store.ChannelKind]sender
 	// delays are the waits before the second and the third attempt.
-	delays []time.Duration
+	delays  []time.Duration
+	journal notify.Journal
 }
+
+// UseJournal sets the journal that gets one "notified" line for each
+// alert.
+func (r *Router) UseJournal(j notify.Journal) { r.journal = j }
 
 // NewRouter makes the router. The email channel uses m when it is not
 // nil, else SMTP. It is off when there is no m and no SMTP host. A nil
@@ -84,6 +89,9 @@ func (r *Router) Notify(ctx context.Context, a notify.Alert) error {
 		wg   sync.WaitGroup
 		mu   sync.Mutex
 		errs []error
+		sent = make([]string, 0, len(list))
+		// failed[i] is set by the send of sent[i].
+		failed = make([]bool, len(list))
 	)
 	for _, ch := range list {
 		if !ch.Enabled || !ch.Route.Match(a) {
@@ -93,6 +101,8 @@ func (r *Router) Notify(ctx context.Context, a notify.Alert) error {
 			r.log.Debug("channels: kind blocked by plan", "channel_id", ch.ID, "kind", ch.Kind)
 			continue
 		}
+		i := len(sent)
+		sent = append(sent, ch.Name)
 		wg.Go(func() {
 			err := r.sendRetry(ctx, ch, a)
 			result := "ok"
@@ -104,11 +114,32 @@ func (r *Router) Notify(ctx context.Context, a notify.Alert) error {
 				mu.Lock()
 				errs = append(errs, fmt.Errorf("channel %s (%s): %w", ch.Name, ch.Kind, err))
 				mu.Unlock()
+				failed[i] = true
 			}
 		})
 	}
 	wg.Wait()
+	for i := range sent {
+		if failed[i] {
+			sent[i] += " (failed)"
+		}
+	}
+	r.writeNotified(ctx, a, sent)
 	return errors.Join(errs...)
+}
+
+// writeNotified writes the line of the channels that got the alert.
+func (r *Router) writeNotified(ctx context.Context, a notify.Alert, sent []string) {
+	if r.journal == nil || a.Test || a.AlertID == uuid.Nil || len(sent) == 0 {
+		return
+	}
+	err := r.journal.Write(ctx, notify.Line{
+		OrgID: a.OrgID, NodeID: a.NodeID, AlertID: a.AlertID,
+		At: time.Now().UTC(), Kind: notify.LineNotified, Text: strings.Join(sent, ", "),
+	})
+	if err != nil {
+		r.log.Warn("channels: alert log", "err", err)
+	}
 }
 
 // Test sends one test alert to the channel, with no retry.

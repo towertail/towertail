@@ -20,6 +20,7 @@ import (
 	"github.com/towertail/towertail/server/internal/auth"
 	"github.com/towertail/towertail/server/internal/clickhouse"
 	"github.com/towertail/towertail/server/internal/hub"
+	"github.com/towertail/towertail/server/internal/query"
 	"github.com/towertail/towertail/server/notify"
 	"github.com/towertail/towertail/server/store"
 	"github.com/towertail/towertail/server/wire"
@@ -50,18 +51,30 @@ func (f fakeAlerts) Alert(_ context.Context, _, id uuid.UUID) (clickhouse.AlertR
 	return clickhouse.AlertRow{}, clickhouse.ErrNoAlert
 }
 
+func (f fakeAlerts) AlertsByID(_ context.Context, _ uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]clickhouse.AlertRow, error) {
+	out := map[uuid.UUID]clickhouse.AlertRow{}
+	for _, id := range ids {
+		if r, ok := f.rows[id]; ok {
+			out[id] = r
+		}
+	}
+	return out, nil
+}
+
 func (fakeAlerts) AlertMarks(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]clickhouse.AlertMark, error) {
 	return nil, nil
 }
 
 type fakeJournal struct {
-	mu    sync.Mutex
-	lines []notify.Line
+	mu     sync.Mutex
+	lines  []notify.Line
+	writes int
 }
 
 func (j *fakeJournal) Write(_ context.Context, lines ...notify.Line) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	j.writes++
 	j.lines = append(j.lines, lines...)
 	return nil
 }
@@ -92,6 +105,8 @@ type alertEnv struct {
 	long    uuid.UUID
 	closed  uuid.UUID
 	tokens  map[store.Role]string
+	srv     *Server
+	rows    map[uuid.UUID]clickhouse.AlertRow
 }
 
 func newAlertEnv(t *testing.T) *alertEnv {
@@ -136,6 +151,7 @@ func newAlertEnv(t *testing.T) *alertEnv {
 		Journal: e.journal,
 	})
 	srv.alerts = alerts
+	e.srv, e.rows = srv, alerts.rows
 	e.ts = httptest.NewServer(srv.Handler())
 	t.Cleanup(e.ts.Close)
 	return e
@@ -363,5 +379,246 @@ func TestUpdateNodeKeepsMutedSignals(t *testing.T) {
 	}
 	if s := e.settings(); !s.Muted.Has(store.MetricMem) {
 		t.Fatalf("settings lost the mute: %v", s.Muted)
+	}
+}
+
+// pageReader gives the incidents and events of the alert page routes. The
+// other methods of query.Reader panic.
+type pageReader struct {
+	query.Reader
+	incidents []clickhouse.IncidentRow
+	got       clickhouse.IncidentQuery
+	events    []clickhouse.EventRow
+}
+
+func (r *pageReader) Incidents(_ context.Context, q clickhouse.IncidentQuery) ([]clickhouse.IncidentRow, bool, error) {
+	r.got = q
+	return r.incidents, false, nil
+}
+
+func (r *pageReader) AlertEvents(context.Context, uuid.UUID, uuid.UUID) ([]clickhouse.EventRow, error) {
+	if len(r.events) == 0 {
+		return nil, clickhouse.ErrNoAlert
+	}
+	return r.events, nil
+}
+
+func (r *pageReader) AlertLines(context.Context, uuid.UUID, uuid.UUID) ([]clickhouse.AlertLine, error) {
+	return nil, nil
+}
+
+func (r *pageReader) AlertMarks(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]clickhouse.AlertMark, error) {
+	return nil, nil
+}
+
+func (r *pageReader) OpenAlerts(context.Context, uuid.UUID) ([]clickhouse.AlertRow, error) {
+	return nil, nil
+}
+
+func (r *pageReader) RecentAlerts(context.Context, uuid.UUID, time.Time, int) ([]clickhouse.AlertRow, error) {
+	return nil, nil
+}
+
+func (r *pageReader) AlertsByID(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]clickhouse.AlertRow, error) {
+	return map[uuid.UUID]clickhouse.AlertRow{}, nil
+}
+
+func (e *alertEnv) withPages(r *pageReader) {
+	e.srv.query = query.NewService(r, e.store, nil, nil)
+}
+
+func TestListAlertsRoute(t *testing.T) {
+	e := newAlertEnv(t)
+	start := time.Now().Add(-2 * time.Hour).UTC()
+	r := &pageReader{incidents: []clickhouse.IncidentRow{
+		{AlertID: e.cpu, NodeID: e.node, Kind: "threshold_crossed", Metric: "cpu", Tint: "critical", Severity: "critical", Start: start, LastTS: start, Value: 0.97, Peak: 0.97, Payload: `{}`},
+		{AlertID: e.closed, NodeID: e.node, Kind: "threshold_crossed", Metric: "mem", Tint: "ok", Severity: "warn", Start: start, LastTS: start, End: &start, Payload: `{}`},
+	}}
+	e.withPages(r)
+
+	// No state gives the old shape: the open alerts of the old reader.
+	code, body := e.do(store.RoleViewer, "GET", "/v1/alerts", "")
+	if code != 200 {
+		t.Fatalf("old route: %d %s", code, body)
+	}
+	var old map[string]json.RawMessage
+	if err := json.Unmarshal(body, &old); err != nil || old["counts"] != nil || old["total"] != nil {
+		t.Fatalf("old route has the page shape: %s", body)
+	}
+
+	code, body = e.do(store.RoleViewer, "GET", "/v1/alerts?state=all&facets=tint,kind&bins=4&tint=critical&host="+e.node.String()+"&sort=peak&dir=asc&limit=10&from=now-48h", "")
+	if code != 200 {
+		t.Fatalf("page: %d %s", code, body)
+	}
+	var page wire.AlertPage
+	if err := json.Unmarshal(body, &page); err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 1 || len(page.Alerts) != 1 || page.Alerts[0].ID != e.cpu || page.Alerts[0].State != "open" || page.Alerts[0].NodeName != "web1" {
+		t.Fatalf("alerts = %+v", page.Alerts)
+	}
+	if page.Counts.All != 1 || page.Facets == nil || page.Facets.Tint["warn"] != 1 || page.Facets.Tint["critical"] != 1 || len(page.Bins) != 4 {
+		t.Fatalf("counts = %+v, facets = %+v, bins = %d", page.Counts, page.Facets, len(page.Bins))
+	}
+	if d := time.Since(r.got.From); d < 47*time.Hour || d > 49*time.Hour || r.got.OrgID != store.ZeroOrg {
+		t.Fatalf("incident query = %+v", r.got)
+	}
+
+	for _, q := range []string{"state=x", "state=all&tint=ok", "state=all&host=nope", "state=all&bins=99", "state=all&bins=x",
+		"state=all&limit=0", "state=all&dir=up", "state=all&started_from=yesterday", "state=all&from=now&to=now-1h"} {
+		if code, body := e.do(store.RoleViewer, "GET", "/v1/alerts?"+q, ""); code != 400 {
+			t.Errorf("%s: %d %s, want 400", q, code, body)
+		}
+	}
+}
+
+func TestGetAlertRoute(t *testing.T) {
+	e := newAlertEnv(t)
+	at := time.Now().Add(-time.Hour).UTC()
+	e.withPages(&pageReader{events: []clickhouse.EventRow{
+		{TS: at, NodeID: e.node, EventID: e.cpu, AlertID: e.cpu, Kind: "threshold_crossed", Metric: "cpu", Tint: "warn", Payload: `{"value":0.9,"warn":0.8,"critical":0.95}`},
+	}})
+	code, body := e.do(store.RoleViewer, "GET", "/v1/alerts/"+e.cpu.String(), "")
+	var d wire.AlertDetail
+	if err := json.Unmarshal(body, &d); code != 200 || err != nil || d.Alert.ID != e.cpu || d.Limits == nil || len(d.Timeline) != 1 || d.Timeline[0].Kind != "opened" {
+		t.Fatalf("detail: %d %s", code, body)
+	}
+	if code, _ := e.do(store.RoleViewer, "GET", "/v1/alerts/nope", ""); code != 400 {
+		t.Errorf("bad id: %d", code)
+	}
+	if code, _ := e.do(store.RoleViewer, "GET", "/v1/alerts/"+uuid.NewString(), ""); code != 200 {
+		// The fake gives the same events for each id.
+		t.Errorf("other id: %d", code)
+	}
+	e.withPages(&pageReader{})
+	if code, _ := e.do(store.RoleViewer, "GET", "/v1/alerts/"+e.cpu.String(), ""); code != 404 {
+		t.Errorf("unknown alert: %d, want 404", code)
+	}
+	// /v1/alerts/recent keeps its own route.
+	if code, body := e.do(store.RoleViewer, "GET", "/v1/alerts/recent", ""); code != 200 {
+		t.Errorf("recent: %d %s", code, body)
+	}
+}
+
+// countingStore counts the node edits.
+type countingStore struct {
+	store.ConfigStore
+	nodeEdits, settingEdits int
+}
+
+func (c *countingStore) EditNode(ctx context.Context, org, id uuid.UUID, fn func(*store.Node) error) (store.Node, error) {
+	c.nodeEdits++
+	return c.ConfigStore.EditNode(ctx, org, id, fn)
+}
+
+func (c *countingStore) EditSettings(ctx context.Context, org uuid.UUID, fn func(*store.ServerSettings) error) (store.ServerSettings, error) {
+	c.settingEdits++
+	return c.ConfigStore.EditSettings(ctx, org, fn)
+}
+
+func TestBulkAlerts(t *testing.T) {
+	e := newAlertEnv(t)
+	cs := &countingStore{ConfigStore: e.srv.store}
+	e.srv.store = cs
+	long2, other := uuid.New(), uuid.New()
+	e.rows[long2] = clickhouse.AlertRow{EventID: long2, AlertID: long2, NodeID: e.node, Kind: "long_process", Metric: "long_proc/813/1", Tint: "warn", TS: time.Now(), Payload: `{"name":"node","pid":813,"cpu_pct":90}`}
+	e.rows[other] = clickhouse.AlertRow{EventID: other, AlertID: other, NodeID: e.node, Kind: "threshold_crossed", Metric: "disk", Tint: "warn", TS: time.Now(), Payload: `{"value":0.9}`}
+	post := func(role store.Role, body string) (int, []bulkResult) {
+		t.Helper()
+		code, b := e.do(role, "POST", "/v1/alerts/bulk", body)
+		var out struct{ Results []bulkResult }
+		if code == 200 {
+			if err := json.Unmarshal(b, &out); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return code, out.Results
+	}
+	ids := func(l ...uuid.UUID) string {
+		b, _ := json.Marshal(l)
+		return string(b)
+	}
+	unknown := uuid.New()
+
+	code, res := post(store.RoleMember, `{"action":"ack","ids":`+ids(e.cpu, other, unknown)+`}`)
+	if code != 200 || len(res) != 3 {
+		t.Fatalf("ack: %d %+v", code, res)
+	}
+	if res[0].Alert == nil || res[0].Alert.AckedBy == nil || res[1].Alert == nil || res[2].Alert != nil || res[2].Error != "alert not found" || res[2].ID != unknown {
+		t.Fatalf("ack results = %+v", res)
+	}
+	if e.journal.writes != 1 || !slices.Equal(e.journal.kinds(), []notify.LineKind{notify.LineAcked, notify.LineAcked}) {
+		t.Fatalf("journal: %d writes, %v", e.journal.writes, e.journal.kinds())
+	}
+
+	// A closed alert is not open; an id twice gives one result.
+	code, res = post(store.RoleMember, `{"action":"unack","ids":`+ids(e.closed, e.cpu, e.cpu)+`}`)
+	if code != 200 || len(res) != 2 || res[0].Error != "alert is not open" || res[1].Alert == nil || res[1].Alert.AckedBy != nil {
+		t.Fatalf("unack: %d %+v", code, res)
+	}
+
+	until := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	code, res = post(store.RoleMember, `{"action":"snooze","until":"`+until+`","ids":`+ids(e.cpu)+`}`)
+	if code != 200 || res[0].Alert == nil || res[0].Alert.SnoozedUntil == nil {
+		t.Fatalf("snooze: %d %+v", code, res)
+	}
+	if code, _ := post(store.RoleMember, `{"action":"snooze","ids":`+ids(e.cpu)+`}`); code != 400 {
+		t.Errorf("snooze with no until: %d", code)
+	}
+	if code, _ := post(store.RoleMember, `{"action":"unsnooze","ids":`+ids(e.cpu)+`}`); code != 200 {
+		t.Errorf("unsnooze: %d", code)
+	}
+
+	many := make([]uuid.UUID, MaxBulkAlerts+1)
+	for i := range many {
+		many[i] = uuid.New()
+	}
+	for name, body := range map[string]string{
+		"201 ids":    `{"action":"ack","ids":` + ids(many...) + `}`,
+		"no ids":     `{"action":"ack","ids":[]}`,
+		"bad action": `{"action":"nope","ids":` + ids(e.cpu) + `}`,
+		"bad body":   `{`,
+	} {
+		if code, _ := post(store.RoleMember, body); code != 400 {
+			t.Errorf("%s: %d, want 400", name, code)
+		}
+	}
+	if code, _ := post(store.RoleMember, `{"action":"ack","ids":`+ids(many[:200]...)+`}`); code != 200 {
+		t.Errorf("200 ids: %d", code)
+	}
+	if code, _ := post(store.RoleViewer, `{"action":"ack","ids":`+ids(e.cpu)+`}`); code != 403 {
+		t.Errorf("ack as viewer: %d", code)
+	}
+
+	// Ignore is for an admin, and edits each node one time.
+	body := `{"action":"ignore","scope":"host","ids":` + ids(e.long, long2, e.cpu) + `}`
+	if code, _ := post(store.RoleMember, body); code != 403 {
+		t.Fatalf("ignore as member: %d, want 403", code)
+	}
+	if code, _ := post(store.RoleAdmin, `{"action":"ignore","scope":"x","ids":`+ids(e.long)+`}`); code != 400 {
+		t.Errorf("ignore with a bad scope: %d", code)
+	}
+	before, writes := cs.nodeEdits, e.journal.writes
+	code, res = post(store.RoleAdmin, body)
+	if code != 200 || len(res) != 3 || res[0].Alert == nil || res[1].Alert == nil || res[2].Alert != nil || res[2].Error == "" {
+		t.Fatalf("ignore: %d %+v", code, res)
+	}
+	if cs.nodeEdits-before != 1 || e.journal.writes-writes != 1 {
+		t.Fatalf("node edits = %d, journal writes = %d, want 1 and 1", cs.nodeEdits-before, e.journal.writes-writes)
+	}
+	if n := e.nodeNow(); !slices.Contains(n.IgnoredProcs, "python3") || !slices.Contains(n.IgnoredProcs, "node") || len(n.IgnoredProcs) != 2 {
+		t.Fatalf("ignored = %v", n.IgnoredProcs)
+	}
+	if l := e.journal.lines[len(e.journal.lines)-1]; l.Kind != notify.LineClosed || l.Text != "node ignored on web1" {
+		t.Fatalf("last line = %+v", l)
+	}
+
+	code, res = post(store.RoleAdmin, `{"action":"ignore","scope":"all","ids":`+ids(e.long, long2)+`}`)
+	if code != 200 || res[0].Alert == nil || cs.settingEdits != 1 {
+		t.Fatalf("ignore all: %d %+v, %d settings edits", code, res, cs.settingEdits)
+	}
+	code, res = post(store.RoleAdmin, `{"action":"unignore","scope":"host","ids":`+ids(e.long, long2)+`}`)
+	if code != 200 || res[0].Alert == nil || len(e.nodeNow().IgnoredProcs) != 0 {
+		t.Fatalf("unignore: %d %+v", code, res)
 	}
 }

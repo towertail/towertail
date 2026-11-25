@@ -106,6 +106,8 @@ type openAlert struct {
 	snoozeDone bool
 	// last is the change that set the tint. The reminder reuses it.
 	last change
+	// peak is the highest value of the samples since the alert opened.
+	peak float64
 }
 
 type cachedSettings struct {
@@ -241,8 +243,8 @@ func (e *Engine) Evaluate(ctx context.Context, orgID, nodeID uuid.UUID, node *st
 			continue
 		}
 		rule, _ := rules.Alerts.For(string(m.metric))
-		raw := rawTint(m.value, rules.Thresholds.Pair(m.metric))
-		if ch, ok := e.evalMetric(k, m.value, raw, rule, tolerance, at, debounce); ok {
+		limits := rules.Thresholds.Pair(m.metric)
+		if ch, ok := e.evalMetric(k, m.value, limits, rule, tolerance, at, debounce); ok {
 			changes = append(changes, ch)
 		}
 	}
@@ -302,6 +304,12 @@ func (e *Engine) EvaluateProcs(ctx context.Context, orgID, nodeID uuid.UUID, nod
 		e.procs[nk] = t
 	}
 	pcs := t.observe(procs, at, rule, ignored)
+	for _, p := range procs {
+		k := stateKey{org: orgID, node: nodeID, metric: newProcKey(p).metric()}
+		if o := e.open[k]; o != nil {
+			o.peak = max(o.peak, float64(p.CPUPct))
+		}
+	}
 	if t.empty() {
 		delete(e.procs, nk)
 	}
@@ -358,7 +366,11 @@ func (e *Engine) muteMetric(k stateKey, now time.Time) (change, bool) {
 // sustained level of the raw tint. With a sustain time of 0 the first sample
 // sets the state and no event comes. With a longer sustain time the state
 // starts at ok and the first event comes when the window is full.
-func (e *Engine) evalMetric(k stateKey, value float64, raw Tint, rule store.AlertRule, tolerance float64, now time.Time, debounce time.Duration) (change, bool) {
+func (e *Engine) evalMetric(k stateKey, value float64, limits store.ThresholdPair, rule store.AlertRule, tolerance float64, now time.Time, debounce time.Duration) (change, bool) {
+	if o := e.open[k]; o != nil {
+		o.peak = max(o.peak, value)
+	}
+	raw := rawTint(value, limits)
 	sustain := time.Duration(rule.SustainSeconds) * time.Second
 	st, ok := e.states[k]
 	if !ok {
@@ -377,7 +389,9 @@ func (e *Engine) evalMetric(k stateKey, value float64, raw Tint, rule store.Aler
 	if e.debounced(st, newTint, now, debounce) {
 		return change{}, false
 	}
-	return st.set(k, newTint, value, now), true
+	c := st.set(k, newTint, value, now)
+	c.warn, c.critical = limits.Warn, limits.Critical
+	return c, true
 }
 
 // debounced requires a sustained observation before the state flips back
@@ -475,6 +489,8 @@ type change struct {
 	detail  string
 	payload map[string]any
 	quiet   bool
+	// warn and critical are the limits of a threshold change.
+	warn, critical float64
 }
 
 func (c change) kind() string {
@@ -512,6 +528,14 @@ func (e *Engine) emit(ctx context.Context, cfg store.ServerSettings, node *store
 	}
 	if !c.since.IsZero() {
 		body["since"] = c.since
+	}
+	if c.critical > 0 {
+		body["warn"], body["critical"] = c.warn, c.critical
+	}
+	if c.to == TintOK {
+		if p := e.peakOf(c.key); p > 0 {
+			body["peak"] = p
+		}
 	}
 	maps.Copy(body, c.payload)
 	payload, _ := json.Marshal(body)
@@ -579,7 +603,32 @@ func (e *Engine) track(c change, eventID uuid.UUID) uuid.UUID {
 		e.open[c.key] = o
 	}
 	o.tint, o.last = c.to, c
+	o.peak = max(o.peak, c.value)
 	return o.id
+}
+
+// peakOf is the peak of the open alert of the key, or 0.
+func (e *Engine) peakOf(k stateKey) float64 {
+	e.stateMu.Lock()
+	defer e.stateMu.Unlock()
+	if o := e.open[k]; o != nil {
+		return o.peak
+	}
+	return 0
+}
+
+// Peaks gives the highest value of each open alert of the org, by alert
+// id. The events keep the peak only when the alert closes.
+func (e *Engine) Peaks(orgID uuid.UUID) map[uuid.UUID]float64 {
+	e.stateMu.Lock()
+	defer e.stateMu.Unlock()
+	out := map[uuid.UUID]float64{}
+	for k, o := range e.open {
+		if k.org == orgID && o.peak > 0 {
+			out[o.id] = o.peak
+		}
+	}
+	return out
 }
 
 // shouldNotify applies the notify level of the metric, the org flags, the

@@ -43,6 +43,13 @@ type fakeReader struct {
 	gotSince    time.Time
 	gotRowLimit int
 	marks       map[uuid.UUID]clickhouse.AlertMark
+
+	incidents []clickhouse.IncidentRow
+	truncated bool
+	gotIncs   clickhouse.IncidentQuery
+	byID      map[uuid.UUID]clickhouse.AlertRow
+	events    []clickhouse.EventRow
+	lines     []clickhouse.AlertLine
 }
 
 func (f *fakeReader) LatestByNode(_ context.Context, _ uuid.UUID, since time.Time) ([]clickhouse.NodeLatest, error) {
@@ -90,10 +97,30 @@ func (f *fakeReader) AlertMarks(context.Context, uuid.UUID, []uuid.UUID) (map[uu
 	return f.marks, nil
 }
 
+func (f *fakeReader) Incidents(_ context.Context, q clickhouse.IncidentQuery) ([]clickhouse.IncidentRow, bool, error) {
+	f.gotIncs = q
+	return f.incidents, f.truncated, nil
+}
+
+func (f *fakeReader) AlertsByID(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]clickhouse.AlertRow, error) {
+	return f.byID, nil
+}
+
+func (f *fakeReader) AlertEvents(context.Context, uuid.UUID, uuid.UUID) ([]clickhouse.EventRow, error) {
+	if len(f.events) == 0 {
+		return nil, clickhouse.ErrNoAlert
+	}
+	return f.events, nil
+}
+
+func (f *fakeReader) AlertLines(context.Context, uuid.UUID, uuid.UUID) ([]clickhouse.AlertLine, error) {
+	return f.lines, nil
+}
+
 var now = time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 
 func newService(r Reader, nodes []store.Node, days int) *Service {
-	s := NewService(r, fakeNodes(nodes), fixedLimits(days))
+	s := NewService(r, fakeNodes(nodes), fixedLimits(days), nil)
 	s.now = func() time.Time { return now }
 	return s
 }
@@ -113,7 +140,7 @@ func TestClamp(t *testing.T) {
 		{"0 days", fixedLimits(0), now.Add(-90 * day), now.Add(-90 * day), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, clamped := NewService(nil, nil, tc.limits).Clamp(context.Background(), uuid.New(), tc.from, now)
+			got, clamped := NewService(nil, nil, tc.limits, nil).Clamp(context.Background(), uuid.New(), tc.from, now)
 			if !got.Equal(tc.want) || clamped != tc.wantClamped {
 				t.Fatalf("Clamp = %v, %v; want %v, %v", got, clamped, tc.want, tc.wantClamped)
 			}
@@ -122,7 +149,7 @@ func TestClamp(t *testing.T) {
 }
 
 func TestNoHistory(t *testing.T) {
-	s := NewService(nil, fakeNodes(nil), nil)
+	s := NewService(nil, fakeNodes(nil), nil, nil)
 	ctx := context.Background()
 	if _, err := s.Hosts(ctx, uuid.New(), SortCPU, 10); !errors.Is(err, ErrNoHistory) {
 		t.Errorf("Hosts: %v", err)
@@ -345,7 +372,7 @@ func TestServiceHistoryClamp(t *testing.T) {
 	if clamped || !r.gotHistory.To.Equal(now) {
 		t.Fatalf("inside plan: clamped = %v, to = %v", clamped, r.gotHistory.To)
 	}
-	if _, _, _, err := NewService(nil, fakeNodes(nil), nil).History(context.Background(), HistoryRequest{}); !errors.Is(err, ErrNoHistory) {
+	if _, _, _, err := NewService(nil, fakeNodes(nil), nil, nil).History(context.Background(), HistoryRequest{}); !errors.Is(err, ErrNoHistory) {
 		t.Errorf("no ClickHouse: %v", err)
 	}
 }
@@ -407,7 +434,7 @@ func TestServiceAlerts(t *testing.T) {
 	if err != nil || len(got.Alerts) != 1 || got.Alerts[0].NodeID != a || got.Clamped {
 		t.Fatalf("open alerts = %+v, %v", got, err)
 	}
-	empty, err := NewService(nil, fakeNodes(nil), nil).Alerts(ctx, AlertsRequest{Open: true})
+	empty, err := NewService(nil, fakeNodes(nil), nil, nil).Alerts(ctx, AlertsRequest{Open: true})
 	if err != nil || empty.Alerts == nil || len(empty.Alerts) != 0 {
 		t.Fatalf("no ClickHouse = %+v, %v; want an empty list", empty, err)
 	}

@@ -61,7 +61,7 @@ func TestHandleProcessesAtClamped(t *testing.T) {
 	rt := runtime.New(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	rt.Register(readyComponent{})
 	// The empty client has no connection: a query would panic.
-	s := &Server{ch: &clickhouse.Client{}, runtime: rt, query: query.NewService(nil, nil, fixedLimits(7))}
+	s := &Server{ch: &clickhouse.Client{}, runtime: rt, query: query.NewService(nil, nil, fixedLimits(7), nil)}
 	req := httptest.NewRequest(http.MethodGet, "/v1/nodes/x/processes/at?ts=now-720h", nil)
 	rec := httptest.NewRecorder()
 	c := echo.New().NewContext(req, rec)

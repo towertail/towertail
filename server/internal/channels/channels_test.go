@@ -512,3 +512,58 @@ func TestRouterSkipsBlockedKind(t *testing.T) {
 		})
 	}
 }
+
+type lineJournal struct {
+	mu    sync.Mutex
+	lines []notify.Line
+}
+
+func (j *lineJournal) Write(_ context.Context, lines ...notify.Line) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.lines = append(j.lines, lines...)
+	return nil
+}
+
+func TestRouterJournalLine(t *testing.T) {
+	good, bad := newHook(t), newHook(t, http.StatusBadRequest)
+	off := channel(store.ChannelWebhook, good.srv.URL)
+	off.Name, off.Enabled = "off", false
+	slack, hookCh := channel(store.ChannelSlack, good.srv.URL), channel(store.ChannelWebhook, bad.srv.URL)
+	slack.Name, hookCh.Name = "Slack #ops-alerts", "billing hook"
+	r := newTestRouter(slack, off, hookCh)
+	j := &lineJournal{}
+	r.UseJournal(j)
+
+	a := testAlert()
+	a.AlertID = uuid.New()
+	if err := r.Notify(context.Background(), a); err == nil {
+		t.Fatal("no error for the failed channel")
+	}
+	if len(j.lines) != 1 {
+		t.Fatalf("lines = %+v, want one", j.lines)
+	}
+	l := j.lines[0]
+	if l.Kind != notify.LineNotified || l.AlertID != a.AlertID || l.OrgID != a.OrgID || l.NodeID != a.NodeID ||
+		l.Text != "Slack #ops-alerts, billing hook (failed)" {
+		t.Fatalf("line = %+v", l)
+	}
+
+	// No line for a test alert, an alert with no id, or no matching channel.
+	for name, mod := range map[string]func(*notify.Alert){
+		"test":  func(a *notify.Alert) { a.Test = true },
+		"no id": func(a *notify.Alert) { a.AlertID = uuid.Nil },
+	} {
+		b := a
+		mod(&b)
+		_ = r.Notify(context.Background(), b)
+		if len(j.lines) != 1 {
+			t.Fatalf("%s: lines = %+v", name, j.lines)
+		}
+	}
+	empty := newTestRouter()
+	empty.UseJournal(j)
+	if err := empty.Notify(context.Background(), a); err != nil || len(j.lines) != 1 {
+		t.Fatalf("no channel: %v, lines = %+v", err, j.lines)
+	}
+}

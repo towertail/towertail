@@ -514,6 +514,17 @@ type Alert struct {
 	AckedAt      *time.Time `json:"acked_at,omitempty"`
 	SnoozedUntil *time.Time `json:"snoozed_until,omitempty"`
 	Proc         *AlertProc `json:"proc,omitempty"`
+	// The fields below are set by the alerts page (GET /v1/alerts with
+	// state) and by GET /v1/alerts/{id}. The old lists leave them empty.
+	// Start is the first event of the alert and End the change back to ok.
+	Start *time.Time `json:"start,omitempty"`
+	End   *time.Time `json:"end,omitempty"`
+	// Peak is the highest value. Severity is the worst tint of the alert.
+	Peak     *float64 `json:"peak,omitempty"`
+	Severity Tint     `json:"severity,omitempty"`
+	// State is open, acked, snoozed or resolved.
+	State    string `json:"state,omitempty"`
+	NodeName string `json:"node_name,omitempty"`
 }
 
 // AlertProc is the process of a long_process alert, from the event
@@ -536,6 +547,73 @@ type AlertList struct {
 	Alerts []Alert `json:"alerts"`
 	// Clamped is true when the plan history limit moved the start later.
 	Clamped bool `json:"clamped,omitempty"`
+}
+
+// AlertCounts is the count of each state tab of the alerts page.
+type AlertCounts struct {
+	Open     int `json:"open"`
+	Action   int `json:"action"`
+	Resolved int `json:"resolved"`
+	All      int `json:"all"`
+}
+
+// AlertFacets count the alerts by value. Each facet leaves its own filter
+// out, so a menu shows what a click would add.
+type AlertFacets struct {
+	State map[string]int `json:"state,omitempty"`
+	Tint  map[string]int `json:"tint,omitempty"`
+	Kind  map[string]int `json:"kind,omitempty"`
+	Host  map[string]int `json:"host,omitempty"`
+}
+
+// AlertBin counts the alerts that started in [Start, End), by severity.
+type AlertBin struct {
+	Start    time.Time `json:"start"`
+	End      time.Time `json:"end"`
+	Critical int       `json:"critical"`
+	Warn     int       `json:"warn"`
+}
+
+// AlertPage is the body of GET /v1/alerts with a state. It is a superset
+// of AlertList. Total is the count of the alerts that match all filters.
+// Truncated is true when the server read only the newest 10000 alerts, so
+// the counts are not complete.
+type AlertPage struct {
+	Alerts    []Alert      `json:"alerts"`
+	Total     int          `json:"total"`
+	Truncated bool         `json:"truncated,omitempty"`
+	Clamped   bool         `json:"clamped,omitempty"`
+	Counts    AlertCounts  `json:"counts"`
+	Facets    *AlertFacets `json:"facets,omitempty"`
+	Bins      []AlertBin   `json:"bins,omitempty"`
+	From      time.Time    `json:"from"`
+	To        time.Time    `json:"to"`
+}
+
+// AlertLine is one entry of the timeline of an alert. Kind is opened,
+// changed, notified, escalated, acked, unacked, snoozed, unsnoozed,
+// recovered or closed.
+type AlertLine struct {
+	TS    time.Time  `json:"ts"`
+	Kind  string     `json:"kind"`
+	Tint  Tint       `json:"tint,omitempty"`
+	User  *uuid.UUID `json:"user,omitempty"`
+	Until *time.Time `json:"until,omitempty"`
+	Text  string     `json:"text,omitempty"`
+}
+
+// AlertLimits are the warn and critical limits of the rule of an alert.
+type AlertLimits struct {
+	Warn     float64 `json:"warn"`
+	Critical float64 `json:"critical"`
+}
+
+// AlertDetail is the body of GET /v1/alerts/{id}. Limits is nil for an
+// alert with no limits in its events.
+type AlertDetail struct {
+	Alert    Alert        `json:"alert"`
+	Limits   *AlertLimits `json:"limits,omitempty"`
+	Timeline []AlertLine  `json:"timeline"`
 }
 
 // DiskScanRequest is the body of POST /v1/nodes/{id}/disk-scans. All

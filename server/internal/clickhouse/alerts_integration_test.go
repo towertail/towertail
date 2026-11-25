@@ -252,3 +252,186 @@ func TestRegistrations(t *testing.T) {
 		t.Fatalf("registrations = %+v", got)
 	}
 }
+
+// incidentEnv writes events of one org for the tests of the incident reads.
+type incidentEnv struct {
+	t      *testing.T
+	client *Client
+	org    uuid.UUID
+	now    time.Time
+}
+
+// event writes one event. A zero alert id means the id of the event.
+func (e *incidentEnv) event(node uuid.UUID, metric, tint string, ago time.Duration, alert uuid.UUID, payload string) uuid.UUID {
+	e.t.Helper()
+	id := uuid.New()
+	err := e.client.WriteEvent(context.Background(), EventRow{
+		TS: e.now.Add(-ago), OrgID: e.org, NodeID: node, EventID: id, AlertID: alert,
+		Kind: "threshold_crossed", Metric: metric, Tint: tint, Payload: payload,
+	})
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return id
+}
+
+func TestIncidents(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+	e := &incidentEnv{t: t, client: client, org: uuid.New(), now: time.Now().UTC().Truncate(time.Millisecond)}
+	node, node2 := uuid.New(), uuid.New()
+	h := time.Hour
+
+	// ok -> warn -> critical -> warn -> ok: one incident.
+	cpu := e.event(node, "cpu", "warn", 3*h, uuid.Nil, `{"value":0.85,"warn":0.8,"critical":0.95}`)
+	e.event(node, "cpu", "critical", 2*h, cpu, `{"value":0.97}`)
+	e.event(node, "cpu", "warn", 90*time.Minute, cpu, `{"value":0.9}`)
+	e.event(node, "cpu", "ok", h, cpu, `{"value":0.2,"peak":0.97}`)
+	// An open alert has no end.
+	mem := e.event(node, "mem", "warn", 30*time.Minute, uuid.Nil, `{"value":0.9}`)
+	// An open alert that started before the range, and a resolved one.
+	disk := e.event(node2, "disk", "critical", 3*24*h, uuid.Nil, `{"value":0.97}`)
+	oldDone := e.event(node2, "cpu", "warn", 10*24*h, uuid.Nil, `{"value":0.9}`)
+	e.event(node2, "cpu", "ok", 9*24*h, oldDone, `{"value":0.1}`)
+	// An alert from before alert_id: each event is its own alert.
+	legacy := e.event(node2, "mem", "warn", 5*h, uuid.Nil, `{"value":0.9}`)
+	legacyOK := e.event(node2, "mem", "ok", 4*h, uuid.Nil, `{"value":0.1}`)
+	otherOrg := &incidentEnv{t: t, client: client, org: uuid.New(), now: e.now}
+	otherOrg.event(node, "cpu", "critical", h, uuid.Nil, `{}`)
+
+	by := uuid.New()
+	err := client.WriteAlertLines(ctx, []AlertLine{{TS: e.now.Add(-100 * time.Minute), OrgID: e.org, NodeID: node, AlertID: cpu, Kind: "acked", User: &by}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rows, truncated, err := client.Incidents(ctx, IncidentQuery{OrgID: e.org, From: e.now.Add(-24 * h), To: e.now, Limit: 100})
+	if err != nil || truncated {
+		t.Fatalf("incidents: truncated = %v, err = %v", truncated, err)
+	}
+	byID := map[uuid.UUID]IncidentRow{}
+	for _, r := range rows {
+		byID[r.AlertID] = r
+	}
+	// cpu, mem, disk (still open), and the two rows of the old alert.
+	if len(rows) != 5 {
+		t.Fatalf("rows = %d: %+v", len(rows), rows)
+	}
+	if _, ok := byID[oldDone]; ok {
+		t.Fatal("an alert that ended before the range is in the rows")
+	}
+	c := byID[cpu]
+	if c.End == nil || !c.End.Equal(e.now.Add(-h)) || !c.Start.Equal(e.now.Add(-3*h)) || c.Severity != "critical" || c.Tint != "ok" ||
+		c.Peak != 0.97 || c.Value != 0.9 || c.NodeID != node || c.Kind != "threshold_crossed" || c.Metric != "cpu" ||
+		c.Payload != `{"value":0.85,"warn":0.8,"critical":0.95}` || c.Mark.AckedBy == nil || *c.Mark.AckedBy != by {
+		t.Fatalf("cpu incident = %+v", c)
+	}
+	if m := byID[mem]; m.End != nil || m.Severity != "warn" || m.Tint != "warn" || m.Mark.AckedBy != nil {
+		t.Fatalf("open incident = %+v", m)
+	}
+	if d := byID[disk]; d.End != nil || d.Severity != "critical" {
+		t.Fatalf("incident from before the range = %+v", d)
+	}
+	if l := byID[legacy]; l.End != nil || l.Severity != "warn" {
+		t.Fatalf("old alert = %+v", l)
+	}
+	if l := byID[legacyOK]; l.End == nil || l.Severity != "ok" {
+		t.Fatalf("old change back to ok = %+v", l)
+	}
+	if rows[0].AlertID != mem {
+		t.Fatalf("first row = %+v, want the newest start", rows[0])
+	}
+
+	// A wider range finds the old resolved alert.
+	wide, _, err := client.Incidents(ctx, IncidentQuery{OrgID: e.org, From: e.now.Add(-11 * 24 * h), To: e.now, Limit: 100})
+	if err != nil || len(wide) != 6 {
+		t.Fatalf("wide range: %d rows, %v", len(wide), err)
+	}
+	// A range that ends before an alert started leaves it out.
+	early, _, err := client.Incidents(ctx, IncidentQuery{OrgID: e.org, From: e.now.Add(-11 * 24 * h), To: e.now.Add(-6 * 24 * h), Limit: 100})
+	if err != nil || len(early) != 1 || early[0].AlertID != oldDone {
+		t.Fatalf("early range: %d rows, %v", len(early), err)
+	}
+	only, _, err := client.Incidents(ctx, IncidentQuery{OrgID: e.org, From: e.now.Add(-24 * h), To: e.now, NodeIDs: []uuid.UUID{node}, Limit: 100})
+	if err != nil || len(only) != 2 {
+		t.Fatalf("one node: %d rows, %v", len(only), err)
+	}
+	// Limit+1 rows give truncated.
+	cut, truncated, err := client.Incidents(ctx, IncidentQuery{OrgID: e.org, From: e.now.Add(-24 * h), To: e.now, Limit: 3})
+	if err != nil || !truncated || len(cut) != 3 {
+		t.Fatalf("limit 3: %d rows, truncated = %v, %v", len(cut), truncated, err)
+	}
+	exact, truncated, err := client.Incidents(ctx, IncidentQuery{OrgID: e.org, From: e.now.Add(-24 * h), To: e.now, Limit: 5})
+	if err != nil || truncated || len(exact) != 5 {
+		t.Fatalf("limit 5: %d rows, truncated = %v, %v", len(exact), truncated, err)
+	}
+}
+
+func TestAlertsByIDAndEvents(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+	e := &incidentEnv{t: t, client: client, org: uuid.New(), now: time.Now().UTC().Truncate(time.Millisecond)}
+	node := uuid.New()
+	h := time.Hour
+
+	first := e.event(node, "cpu", "warn", 3*h, uuid.Nil, `{"value":0.85}`)
+	last := e.event(node, "cpu", "critical", 2*h, first, `{"value":0.97}`)
+	// A later alert of the same key replaces the first one.
+	second := e.event(node, "cpu", "warn", h, uuid.Nil, `{"value":0.85}`)
+	other := e.event(node, "mem", "warn", h, uuid.Nil, `{}`)
+	unknown := uuid.New()
+
+	got, err := client.AlertsByID(ctx, e.org, []uuid.UUID{second, other, unknown, first})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[second].EventID != second || got[other].Metric != "mem" {
+		t.Fatalf("by id = %+v", got)
+	}
+	// The first alert is replaced, so only its alert id of the old form
+	// misses. An event id of the open alert finds it.
+	got, err = client.AlertsByID(ctx, e.org, []uuid.UUID{second})
+	if err != nil || got[second].AlertID != second {
+		t.Fatalf("by alert id = %+v, %v", got, err)
+	}
+	if got, _ := client.AlertsByID(ctx, uuid.New(), []uuid.UUID{second}); len(got) != 0 {
+		t.Fatalf("other org = %+v", got)
+	}
+	if got, err := client.AlertsByID(ctx, e.org, nil); err != nil || len(got) != 0 {
+		t.Fatalf("no ids = %+v, %v", got, err)
+	}
+
+	// Events: by alert id, and by any event id of the alert.
+	for _, id := range []uuid.UUID{first, last} {
+		evs, err := client.AlertEvents(ctx, e.org, id)
+		if err != nil || len(evs) != 2 || evs[0].EventID != first || evs[1].EventID != last || evs[1].Tint != "critical" || evs[0].AlertID != first {
+			t.Fatalf("events of %s = %+v, %v", id, evs, err)
+		}
+	}
+	if _, err := client.AlertEvents(ctx, e.org, unknown); err != ErrNoAlert {
+		t.Fatalf("unknown alert: %v", err)
+	}
+	if _, err := client.AlertEvents(ctx, uuid.New(), first); err != ErrNoAlert {
+		t.Fatalf("other org: %v", err)
+	}
+
+	by := uuid.New()
+	until := e.now.Add(h)
+	err = client.WriteAlertLines(ctx, []AlertLine{
+		{TS: e.now.Add(-time.Minute), OrgID: e.org, NodeID: node, AlertID: first, Kind: "snoozed", User: &by, Until: &until, Text: "t"},
+		{TS: e.now.Add(-2 * time.Minute), OrgID: e.org, NodeID: node, AlertID: first, Kind: "notified", Text: "Slack"},
+		{TS: e.now, OrgID: e.org, NodeID: node, AlertID: second, Kind: "acked", User: &by},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines, err := client.AlertLines(ctx, e.org, first)
+	if err != nil || len(lines) != 2 || lines[0].Kind != "notified" || lines[1].Kind != "snoozed" || lines[1].Until == nil || !lines[1].Until.Equal(until) || *lines[1].User != by {
+		t.Fatalf("lines = %+v, %v", lines, err)
+	}
+	if lines, _ := client.AlertLines(ctx, e.org, unknown); len(lines) != 0 {
+		t.Fatalf("lines of an unknown alert = %+v", lines)
+	}
+}
