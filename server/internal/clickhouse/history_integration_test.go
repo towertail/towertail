@@ -1058,3 +1058,91 @@ func TestProcessSeriesMinuteTier(t *testing.T) {
 		}
 	}
 }
+
+func TestProcessFacts(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	org, node := uuid.New(), uuid.New()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	start := now.Add(-30 * time.Minute)
+	var procs []ProcRow
+	for i, ts := range []time.Time{now.Add(-20 * time.Second), now.Add(-10 * time.Second), now.Add(10 * time.Second)} {
+		procs = append(procs,
+			ProcRow{TS: ts, OrgID: org, NodeID: node, PID: 100, PPID: int32(i + 1), Name: "nginx", Cmd: "/usr/sbin/nginx", UserName: "www",
+				Cwd: "/srv", Repo: "/srv", Parent: "init", State: "S", Threads: 4, StartTS: start},
+			ProcRow{TS: ts, OrgID: org, NodeID: node, PID: 200, Name: "other", Cmd: "/bin/other", StartTS: start})
+	}
+	ports := []PortRow{
+		{TS: now.Add(-15 * time.Second), OrgID: org, NodeID: node, PID: 100, Name: "nginx", ListenTCP: []uint16{80}},
+		{TS: now.Add(-5 * time.Second), OrgID: org, NodeID: node, PID: 100, Name: "nginx", ListenTCP: []uint16{80, 443}, ListenUDP: []uint16{53}},
+		// Another process with the same PID before the start of nginx.
+		{TS: start.Add(-time.Hour), OrgID: org, NodeID: node, PID: 100, Name: "old", ListenTCP: []uint16{1}},
+		{TS: now.Add(-5 * time.Second), OrgID: org, NodeID: node, PID: 200, Name: "other", ListenTCP: []uint16{9}},
+	}
+	if err := client.insert(ctx, []IngestBundle{{Sample: SampleRow{TS: now, OrgID: org, NodeID: node, SchemaV: 1, Errors: []string{}}, Procs: procs, Ports: ports}}); err != nil {
+		t.Fatal(err)
+	}
+
+	key := wire.NewProcessKey("nginx", "/usr/sbin/nginx")
+	f, ok, err := client.ProcessFacts(ctx, org, node, key, now)
+	if err != nil || !ok {
+		t.Fatalf("facts: %v %v", ok, err)
+	}
+	if f.PID != 100 || f.PPID != 2 || f.User != "www" || f.Cwd != "/srv" || f.Parent != "init" || f.Threads != 4 || f.State != "S" ||
+		!f.SeenAt.Equal(now.Add(-10*time.Second)) || f.StartTS == nil || !f.StartTS.Equal(start) {
+		t.Errorf("facts = %+v", f)
+	}
+	if len(f.ListenTCP) != 2 || f.ListenTCP[1] != 443 || len(f.ListenUDP) != 1 || f.ListenUDP[0] != 53 {
+		t.Errorf("ports = %v %v", f.ListenTCP, f.ListenUDP)
+	}
+
+	// An earlier time gives the earlier row and the earlier ports.
+	f, ok, err = client.ProcessFacts(ctx, org, node, key, now.Add(-12*time.Second))
+	if err != nil || !ok || f.PPID != 1 || len(f.ListenTCP) != 1 || f.ListenTCP[0] != 80 || len(f.ListenUDP) != 0 {
+		t.Errorf("earlier facts = %+v %v %v", f, ok, err)
+	}
+	// More than 1 h later there is no row.
+	if _, ok, err := client.ProcessFacts(ctx, org, node, key, now.Add(2*time.Hour)); err != nil || ok {
+		t.Errorf("late facts: %v %v", ok, err)
+	}
+	// An unknown key and another node have no row.
+	if _, ok, err := client.ProcessFacts(ctx, org, node, wire.NewProcessKey("nginx", "/other"), now); err != nil || ok {
+		t.Errorf("unknown key: %v %v", ok, err)
+	}
+	if _, ok, err := client.ProcessFacts(ctx, org, uuid.New(), key, now); err != nil || ok {
+		t.Errorf("other node: %v %v", ok, err)
+	}
+
+	cmd, repo, err := client.ProcessInfo(ctx, org, node, key, now.Add(-time.Minute), now.Add(time.Minute))
+	if err != nil || cmd != "/usr/sbin/nginx" || repo != "/srv" {
+		t.Errorf("info = %q %q %v", cmd, repo, err)
+	}
+}
+
+func TestProcessInfoNoRow(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	now := time.Now().UTC()
+	for _, from := range []time.Time{now.Add(-time.Minute), now.Add(-3 * time.Hour), now.Add(-10 * 24 * time.Hour)} {
+		_, _, err := client.ProcessInfo(context.Background(), uuid.New(), uuid.New(), wire.NewProcessKey("x", "y"), from, from.Add(time.Minute))
+		if !errors.Is(err, ErrNoProcess) {
+			t.Errorf("from %v: err = %v, want ErrNoProcess", from, err)
+		}
+	}
+}
+
+// The info of a process in a rollup range comes from the rollup.
+func TestProcessInfoRollup(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	org, node := uuid.New(), uuid.New()
+	minute := time.Now().UTC().Truncate(time.Minute).Add(-3 * time.Hour)
+	insertTop(t, client, "procs_top_1m", "ts_minute", org, node, minute, 2)
+	key := wire.ProcessKey{Name: "p2", CmdHash: 2}
+	cmd, _, err := client.ProcessInfo(context.Background(), org, node, key, minute, minute.Add(time.Minute))
+	if err != nil || cmd != "/bin/p2" {
+		t.Fatalf("info = %q %v", cmd, err)
+	}
+}

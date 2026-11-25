@@ -136,6 +136,13 @@ type ProcPoint struct {
 // less than the bucket of the table that the span and the age select.
 // It is a multiple of that bucket.
 func SeriesStep(span, age time.Duration, n int) time.Duration {
+	n = max(n, 1)
+	return FitStep(span, age, (span+time.Duration(n)-1)/time.Duration(n))
+}
+
+// FitStep raises a step to the bucket of the table that the span and the
+// age select, and rounds it up to a multiple of that bucket.
+func FitStep(span, age, step time.Duration) time.Duration {
 	table, _ := procsSource(span, age)
 	bucket := 10 * time.Second
 	switch table {
@@ -144,7 +151,6 @@ func SeriesStep(span, age time.Duration, n int) time.Duration {
 	case "procs_top_1h":
 		bucket = time.Hour
 	}
-	step := (span + time.Duration(max(n, 1)) - 1) / time.Duration(max(n, 1))
 	return max(bucket, (step+bucket-1)/bucket*bucket)
 }
 
@@ -191,6 +197,75 @@ func (c *Client) ProcessSeries(ctx context.Context, q ProcSeriesQuery) (map[wire
 		out[k] = append(out[k], p)
 	}
 	return out, rows.Err()
+}
+
+// ErrNoProcess is returned when no row has the process key in the range.
+var ErrNoProcess = errors.New("clickhouse: process not found")
+
+// ProcFacts are the facts of the newest raw row of a process, and its
+// listening ports.
+type ProcFacts struct {
+	SeenAt       time.Time
+	PID, PPID    int32
+	Parent, User string
+	Cwd, Repo    string
+	State        string
+	Threads      int32
+	StartTS      *time.Time
+	ListenTCP    []uint16
+	ListenUDP    []uint16
+}
+
+// ProcessInfo gives the command and the last repo of a process in the
+// range. The span and the age of the range select the table.
+func (c *Client) ProcessInfo(ctx context.Context, org, node uuid.UUID, key wire.ProcessKey, from, to time.Time) (cmd, repo string, err error) {
+	table, ts := procsSource(to.Sub(from), time.Since(from))
+	hash, final := "cityHash64(cmd)", ""
+	if table != "procs_topn" {
+		hash, final = "cmd_hash", " FINAL"
+	}
+	var n uint64
+	err = c.conn.QueryRow(ctx, fmt.Sprintf("SELECT count(), argMax(cmd, %[1]s), argMax(repo, %[1]s) FROM %[2]s%[3]s "+
+		"WHERE org_id = ? AND node_id = ? AND %[1]s BETWEEN ? AND ? AND name = ? AND %[4]s = ?",
+		ts, c.table(table), final, hash), org, node, from, to, key.Name, key.CmdHash).Scan(&n, &cmd, &repo)
+	if err != nil {
+		return "", "", err
+	}
+	if n == 0 {
+		return "", "", ErrNoProcess
+	}
+	return cmd, repo, nil
+}
+
+// ProcessFacts gives the facts of the newest raw row of the process at
+// or before the time, in the last hour. It is false when there is no
+// row. The ports are the newest ports row of the same process (PID and
+// name) since the process started.
+func (c *Client) ProcessFacts(ctx context.Context, org, node uuid.UUID, key wire.ProcessKey, before time.Time) (ProcFacts, bool, error) {
+	var (
+		f     ProcFacts
+		start time.Time
+	)
+	err := c.conn.QueryRow(ctx, "SELECT ts, pid, ppid, parent, user_name, cwd, repo, state, threads, start_ts FROM "+c.table("procs_topn")+
+		" WHERE org_id = ? AND node_id = ? AND ts <= "+msArg+" AND ts > "+msArg+" AND name = ? AND cityHash64(cmd) = ? ORDER BY ts DESC LIMIT 1",
+		org, node, before.UnixMilli(), before.Add(-time.Hour).UnixMilli(), key.Name, key.CmdHash).
+		Scan(&f.SeenAt, &f.PID, &f.PPID, &f.Parent, &f.User, &f.Cwd, &f.Repo, &f.State, &f.Threads, &start)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ProcFacts{}, false, nil
+	}
+	if err != nil {
+		return ProcFacts{}, false, err
+	}
+	if start.Unix() > 0 {
+		f.StartTS = &start
+	}
+	err = c.conn.QueryRow(ctx, "SELECT listen_tcp, listen_udp FROM "+c.table("proc_ports")+
+		" WHERE org_id = ? AND node_id = ? AND pid = ? AND name = ? AND ts <= "+msArg+" AND ts >= "+msArg+" ORDER BY ts DESC LIMIT 1",
+		org, node, f.PID, key.Name, before.UnixMilli(), start.UnixMilli()).Scan(&f.ListenTCP, &f.ListenUDP)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return ProcFacts{}, false, err
+	}
+	return f, true, nil
 }
 
 // SnapshotQuery asks for the top processes of a node at one time.

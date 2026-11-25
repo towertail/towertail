@@ -206,7 +206,7 @@ func (b *batcher) wait(d time.Duration) bool {
 func rowCount(bundles []IngestBundle) int {
 	n := 0
 	for _, bd := range bundles {
-		n += 1 + len(bd.Disks) + len(bd.DiskIO) + len(bd.Procs)
+		n += 1 + len(bd.Disks) + len(bd.DiskIO) + len(bd.Procs) + len(bd.Ports)
 	}
 	return n
 }
@@ -218,17 +218,19 @@ func (c *Client) insert(ctx context.Context, bundles []IngestBundle) error {
 		disks   []DiskRow
 		ios     []DiskIORow
 		procs   []ProcRow
+		ports   []PortRow
 	)
 	for _, bd := range bundles {
 		samples = append(samples, bd.Sample)
 		disks = append(disks, bd.Disks...)
 		ios = append(ios, bd.DiskIO...)
 		procs = append(procs, bd.Procs...)
+		ports = append(ports, bd.Ports...)
 	}
-	return c.flush(ctx, samples, disks, ios, procs)
+	return c.flush(ctx, samples, disks, ios, procs, ports)
 }
 
-func (c *Client) flush(ctx context.Context, samples []SampleRow, disks []DiskRow, ios []DiskIORow, procs []ProcRow) error {
+func (c *Client) flush(ctx context.Context, samples []SampleRow, disks []DiskRow, ios []DiskIORow, procs []ProcRow, ports []PortRow) error {
 	if len(samples) > 0 {
 		// Explicit column list skips `ingested_at` (defaulted in the
 		// table DDL) so the row count matches `Append` arity.
@@ -318,7 +320,28 @@ func (c *Client) flush(ctx context.Context, samples []SampleRow, disks []DiskRow
 			return err
 		}
 	}
+	if len(ports) > 0 {
+		batch, err := c.conn.PrepareBatch(ctx, "INSERT INTO "+c.table("proc_ports"))
+		if err != nil {
+			return err
+		}
+		for _, p := range ports {
+			if err := batch.Append(p.TS, p.OrgID, p.NodeID, p.PID, p.Name, p.User, nonNil(p.ListenTCP), nonNil(p.ListenUDP), p.EstIn, p.EstOut); err != nil {
+				return err
+			}
+		}
+		if err := batch.Send(); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func nonNil(v []uint16) []uint16 {
+	if v == nil {
+		return []uint16{}
+	}
+	return v
 }
 
 // WriteEvent inserts a single event row synchronously. Events are rare

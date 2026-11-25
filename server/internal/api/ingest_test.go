@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -365,6 +366,43 @@ func TestDecodeSample_ProcFolders(t *testing.T) {
 	}
 	if o.Cwd != "" || o.Repo != "" || o.Parent != "" || o.ReadBps != nil || o.WriteBps != nil {
 		t.Errorf("a row without the fields has values: %+v", o)
+	}
+}
+
+func TestDecodeSample_Ports(t *testing.T) {
+	head := `{"v":1,"ts":"2026-04-23T10:00:05.000Z",
+		"host":{"name":"x","os":"linux","arch":"amd64","kernel":"6.6","uptime_s":1,"sampler":"1.5.0"},
+		"cpu":{"pct":1,"load_1":0,"load_5":0,"load_15":0,"cores":2},
+		"mem":{"used":1,"total":100},"swap":{"used":0,"total":0},`
+	org, node := uuid.New(), uuid.New()
+
+	b, _, err := decodeSample([]byte(head+`"ports":{"root":true,"collected_ts":"2026-04-23T10:00:00.000Z","items":[
+			{"pid":10,"name":"nginx","user":"www","listen_tcp":[80,443],"listen_udp":[53],"est_in":3,"est_out":1},
+			{"pid":11,"name":"curl","est_out":2},
+			{"pid":12,"name":"odd","listen_tcp":[70000]}]},"errors":[]}`), org, node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Ports) != 1 {
+		t.Fatalf("ports = %+v, want 1 row", b.Ports)
+	}
+	p := b.Ports[0]
+	if p.PID != 10 || p.Name != "nginx" || p.User != "www" || p.EstIn != 3 || p.EstOut != 1 ||
+		!reflect.DeepEqual(p.ListenTCP, []uint16{80, 443}) || !reflect.DeepEqual(p.ListenUDP, []uint16{53}) || p.OrgID != org || p.NodeID != node {
+		t.Errorf("row = %+v", p)
+	}
+	if want := time.Date(2026, 4, 23, 10, 0, 0, 0, time.UTC); !p.TS.Equal(want) {
+		t.Errorf("ts = %v, want the snapshot time %v", p.TS, want)
+	}
+
+	b, _, err = decodeSample([]byte(head+`"errors":[]}`), org, node)
+	if err != nil || len(b.Ports) != 0 {
+		t.Errorf("sample with no ports: %+v, %v", b.Ports, err)
+	}
+	// A snapshot time after the sample time is not valid.
+	b, _, err = decodeSample([]byte(head+`"ports":{"collected_ts":"2026-04-23T11:00:00.000Z","items":[{"pid":1,"listen_tcp":[22]}]},"errors":[]}`), org, node)
+	if err != nil || len(b.Ports) != 1 || !b.Ports[0].TS.Equal(time.Date(2026, 4, 23, 10, 0, 5, 0, time.UTC)) {
+		t.Errorf("future snapshot: %+v, %v", b.Ports, err)
 	}
 }
 

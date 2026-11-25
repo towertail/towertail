@@ -128,3 +128,31 @@ func TestAlignDown(t *testing.T) {
 		t.Fatalf("alignDown = %v", got)
 	}
 }
+
+func TestHandleProcess(t *testing.T) {
+	e := newKeyEnv(t, config.HTTPConfig{})
+	user, _ := e.login(t, store.RoleViewer)
+	node := "/v1/nodes/" + uuid.NewString() + "/processes/"
+	key := wire.NewProcessKey("nginx", "/usr/sbin/nginx").String()
+	for _, tc := range []struct {
+		path string
+		want int
+	}{
+		{"bad", http.StatusBadRequest},
+		{"zz.bmFtZQ", http.StatusBadRequest},
+		{"0123456789abcdef.", http.StatusBadRequest},
+		// A valid key reaches requireCH. The server has no ClickHouse.
+		{key, http.StatusServiceUnavailable},
+		{key + "?from=now-3h&to=now-2h&step=5m", http.StatusServiceUnavailable},
+		// The static route "at" still goes to the snapshot handler.
+		{"at?limit=0", http.StatusBadRequest},
+		{"at", http.StatusServiceUnavailable},
+	} {
+		if rec := e.do(http.MethodGet, node+tc.path, user, ""); rec.Code != tc.want {
+			t.Errorf("GET %s: %d %s, want %d", tc.path, rec.Code, rec.Body, tc.want)
+		}
+	}
+	if rec := e.do(http.MethodGet, "/v1/nodes/x/processes/"+key, user, ""); rec.Code != http.StatusBadRequest {
+		t.Errorf("bad id: %d", rec.Code)
+	}
+}

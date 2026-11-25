@@ -249,7 +249,7 @@ func TestMigrationsCreateExpectedTables(t *testing.T) {
 		seen[name] = true
 	}
 	want := []string{"samples_raw", "disks", "disk_io_devices", "procs_topn", "events",
-		"samples_1m", "samples_5m", "samples_1h", "procs_top_1m", "procs_top_1h"}
+		"samples_1m", "samples_5m", "samples_1h", "procs_top_1m", "procs_top_1h", "proc_ports"}
 	for _, tbl := range want {
 		if !seen[tbl] {
 			t.Errorf("expected table %q missing; got %v", tbl, seen)
@@ -321,6 +321,48 @@ func TestBatcherFlushesAndRoundtripsSamples(t *testing.T) {
 	}
 	if diskCount != 1 {
 		t.Fatalf("expected 1 disk row, got %d", diskCount)
+	}
+}
+
+func TestBatcherFlushesPorts(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	org, node := uuid.New(), uuid.New()
+	ts := time.Now().UTC().Truncate(time.Millisecond)
+	err := client.Batcher().Enqueue(IngestBundle{
+		Sample: SampleRow{TS: ts, OrgID: org, NodeID: node, SchemaV: 1, Errors: []string{}},
+		Ports: []PortRow{
+			{TS: ts, OrgID: org, NodeID: node, PID: 10, Name: "nginx", User: "www", ListenTCP: []uint16{80, 443}, EstIn: 3, EstOut: 1},
+			{TS: ts, OrgID: org, NodeID: node, PID: 11, Name: "dns", ListenUDP: []uint16{53}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	var n uint64
+	for time.Now().Before(deadline) {
+		if err := client.conn.QueryRow(ctx, "SELECT count() FROM "+client.table("proc_ports")+" WHERE node_id = ?", node).Scan(&n); err == nil && n == 2 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if n != 2 {
+		t.Fatalf("proc_ports rows = %d, want 2", n)
+	}
+	var (
+		tcp, udp []uint16
+		user     string
+		in, out  uint32
+	)
+	if err := client.conn.QueryRow(ctx, "SELECT listen_tcp, listen_udp, user_name, est_in, est_out FROM "+client.table("proc_ports")+
+		" WHERE node_id = ? AND pid = 10", node).Scan(&tcp, &udp, &user, &in, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(tcp) != 2 || tcp[1] != 443 || len(udp) != 0 || user != "www" || in != 3 || out != 1 {
+		t.Fatalf("row = %v %v %q %d %d", tcp, udp, user, in, out)
 	}
 }
 

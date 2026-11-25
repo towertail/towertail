@@ -43,3 +43,20 @@ func TestSeriesStep(t *testing.T) {
 		}
 	}
 }
+
+func TestFitStep(t *testing.T) {
+	day := 24 * time.Hour
+	for _, tc := range []struct {
+		span, age, step, want time.Duration
+	}{
+		{time.Hour, 0, time.Second, 10 * time.Second},
+		{time.Hour, 0, time.Minute, time.Minute},
+		{time.Hour, 3 * time.Hour, 90 * time.Second, 2 * time.Minute},
+		{day, 8 * day, 5 * time.Minute, time.Hour},
+		{2 * day, 0, 90 * time.Minute, 90 * time.Minute},
+	} {
+		if got := FitStep(tc.span, tc.age, tc.step); got != tc.want {
+			t.Errorf("FitStep(%v, %v, %v) = %v, want %v", tc.span, tc.age, tc.step, got, tc.want)
+		}
+	}
+}

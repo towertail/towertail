@@ -296,6 +296,47 @@ type NodeProcessesResponse struct {
 	Processes   []TopProcess `json:"processes"`
 }
 
+// ProcessDetail is one process of a node over a range. Points are on the
+// buckets of Resolution. A bucket with no row has no point.
+type ProcessDetail struct {
+	NodeID     uuid.UUID     `json:"node_id"`
+	Key        ProcessKey    `json:"key"`
+	Name       string        `json:"name"`
+	Cmd        string        `json:"cmd"`
+	Repo       string        `json:"repo,omitempty"`
+	From       time.Time     `json:"from"`
+	To         time.Time     `json:"to"`
+	Resolution string        `json:"resolution"`
+	Clamped    bool          `json:"clamped,omitempty"`
+	Points     []ProcPoint   `json:"points"`
+	Facts      *ProcessFacts `json:"facts,omitempty"` // nil when the process has no row in the last hour
+}
+
+// ProcPoint is one bucket of a process: the average CPU, the highest
+// memory and the average disk I/O.
+type ProcPoint struct {
+	TS     time.Time `json:"ts"`
+	CPUPct float64   `json:"cpu_pct"`
+	RSS    uint64    `json:"rss"`
+	IOBps  float64   `json:"io_bps,omitempty"`
+}
+
+// ProcessFacts are the facts of the newest raw row of a process. The
+// ports come from the samples that carry ports.
+type ProcessFacts struct {
+	SeenAt    time.Time  `json:"seen_at"`
+	PID       int32      `json:"pid"`
+	PPID      int32      `json:"ppid,omitempty"`
+	Parent    string     `json:"parent,omitempty"`
+	User      string     `json:"user,omitempty"`
+	Cwd       string     `json:"cwd,omitempty"`
+	State     string     `json:"state,omitempty"`
+	Threads   int32      `json:"threads,omitempty"`
+	StartTS   *time.Time `json:"start_ts,omitempty"`
+	ListenTCP []uint16   `json:"listen_tcp,omitempty"`
+	ListenUDP []uint16   `json:"listen_udp,omitempty"`
+}
+
 // ProcessSnapshot is the top processes of a node at one time.
 type ProcessSnapshot struct {
 	NodeID    uuid.UUID         `json:"node_id"`

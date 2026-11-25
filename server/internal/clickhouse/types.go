@@ -89,6 +89,21 @@ type ProcRow struct {
 	WriteBps   *uint64
 }
 
+// PortRow is the port footprint of one process in one ports snapshot. A
+// row exists only for a process with a listening port.
+type PortRow struct {
+	TS        time.Time
+	OrgID     uuid.UUID
+	NodeID    uuid.UUID
+	PID       int32
+	Name      string
+	User      string
+	ListenTCP []uint16
+	ListenUDP []uint16
+	EstIn     uint32
+	EstOut    uint32
+}
+
 // EventRow is a persisted alert.
 type EventRow struct {
 	TS      time.Time
@@ -137,4 +152,5 @@ type IngestBundle struct {
 	Disks  []DiskRow
 	DiskIO []DiskIORow
 	Procs  []ProcRow
+	Ports  []PortRow
 }

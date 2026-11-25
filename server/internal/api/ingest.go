@@ -6,12 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
+	"github.com/towertail/sampler/pkg/schema"
 
 	"github.com/towertail/towertail/server/authctx"
 	"github.com/towertail/towertail/server/internal/clickhouse"
@@ -66,6 +68,7 @@ func (s *Server) handleIngest(c echo.Context) error {
 	scanner.Buffer(make([]byte, 128*1024), 4*1024*1024)
 	var (
 		bundles  []clickhouse.IngestBundle
+		portsTS  time.Time
 		samples  []wire.Sample
 		lines    [][]byte
 		rejected int
@@ -85,6 +88,14 @@ func (s *Server) handleIngest(c echo.Context) error {
 			continue
 		}
 		s.netRates.apply(*t.NodeID, &bundle, &sample)
+		// Store each ports snapshot of the request once.
+		if len(bundle.Ports) > 0 {
+			if bundle.Ports[0].TS.Equal(portsTS) {
+				bundle.Ports = nil
+			} else {
+				portsTS = bundle.Ports[0].TS
+			}
+		}
 		bundles = append(bundles, bundle)
 		samples = append(samples, sample)
 		lines = append(lines, append([]byte(nil), line...))
@@ -251,7 +262,45 @@ func decodeSample(line []byte, orgID, nodeID uuid.UUID) (clickhouse.IngestBundle
 			})
 		}
 	}
+	if s.Ports != nil {
+		b.Ports = portRows(s.Ports, ts, orgID, nodeID)
+	}
 	return b, s, nil
+}
+
+// portRows gives a row for each process with a listening port. The
+// sampler sends the last ports snapshot again in each sample, so the row
+// time is the time of the snapshot, when it is valid. The same snapshot
+// then gives the same rows.
+func portRows(l *schema.PortList, sampleTS time.Time, orgID, nodeID uuid.UUID) []clickhouse.PortRow {
+	ts := sampleTS
+	if t, err := parseTS(l.CollectedTS); l.CollectedTS != "" && err == nil && t.Before(sampleTS) {
+		ts = t
+	}
+	var out []clickhouse.PortRow
+	for _, it := range l.Items {
+		tcp, udp := ports16(it.ListenTCP), ports16(it.ListenUDP)
+		if len(tcp)+len(udp) == 0 {
+			continue
+		}
+		out = append(out, clickhouse.PortRow{
+			TS: ts, OrgID: orgID, NodeID: nodeID, PID: it.PID, Name: it.Name, User: it.User,
+			ListenTCP: tcp, ListenUDP: udp,
+			EstIn: uint32Positive(it.EstIn), EstOut: uint32Positive(it.EstOut),
+		})
+	}
+	return out
+}
+
+// ports16 converts port numbers and drops the values that are not ports.
+func ports16(in []uint32) []uint16 {
+	var out []uint16
+	for _, p := range in {
+		if p > 0 && p <= math.MaxUint16 {
+			out = append(out, uint16(p))
+		}
+	}
+	return out
 }
 
 func uint64Positive(v int64) uint64 {

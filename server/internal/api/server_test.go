@@ -24,6 +24,7 @@ func TestRouteRoles(t *testing.T) {
 		{"GET", "/v1/nodes/" + id + "/history", store.RoleViewer},
 		{"GET", "/v1/nodes/" + id + "/processes", store.RoleViewer},
 		{"GET", "/v1/nodes/" + id + "/processes/at", store.RoleViewer},
+		{"GET", "/v1/nodes/" + id + "/processes/0123456789abcdef.bmFtZQ", store.RoleViewer},
 		{"GET", "/v1/nodes/" + id + "/disks", store.RoleViewer},
 		{"GET", "/v1/history", store.RoleViewer},
 		{"GET", "/v1/fleet/hosts", store.RoleViewer},

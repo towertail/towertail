@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -13,6 +14,7 @@ import (
 )
 
 const (
+	maxProcessPoints = 300
 	maxProcessLimit  = 50
 	defaultSnapLimit = 20
 	maxProcessSeries = 120
@@ -170,6 +172,61 @@ func (s *Server) handleProcessesAt(c echo.Context) error {
 			CPUPct: p.CPUPct, CPUPctMax: p.CPUPctMax, RSS: p.RSS, IOBps: p.IOBps,
 			Threads: p.Threads, State: p.State, StartTS: p.StartTS,
 		})
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
+// handleProcess returns the points and the facts of one process.
+func (s *Server) handleProcess(c echo.Context) error {
+	id, err := parseNodeID(c)
+	if err != nil {
+		return err
+	}
+	key, err := wire.ParseProcessKey(c.Param("key"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "bad key")
+	}
+	r, err := s.parseRange(c, time.Hour)
+	if err != nil {
+		return err
+	}
+	r.NodeID = id
+	if err := s.requireCH(c); err != nil {
+		return err
+	}
+	ctx := c.Request().Context()
+	span, age := r.To.Sub(r.From), time.Since(r.From)
+	step := clickhouse.FitStep(span, age, max(historyStep(c), (span+maxProcessPoints-1)/maxProcessPoints))
+	cmd, repo, err := s.ch.ProcessInfo(ctx, r.OrgID, id, key, r.From, r.To)
+	if errors.Is(err, clickhouse.ErrNoProcess) {
+		return echo.NewHTTPError(http.StatusNotFound, "process not found")
+	}
+	if err != nil {
+		return err
+	}
+	pts, err := s.ch.ProcessSeries(ctx, clickhouse.ProcSeriesQuery{RangeQuery: r.RangeQuery, Keys: []wire.ProcessKey{key}, Step: step})
+	if err != nil {
+		return err
+	}
+	out := wire.ProcessDetail{
+		NodeID: id, Key: key, Name: key.Name, Cmd: cmd, Repo: repo,
+		From: r.From, To: r.To, Resolution: resolution(step), Clamped: r.Clamped,
+		Points: make([]wire.ProcPoint, 0, len(pts[key])),
+	}
+	for _, p := range pts[key] {
+		out.Points = append(out.Points, wire.ProcPoint{TS: p.TS, CPUPct: p.CPUPct, RSS: p.RSS, IOBps: p.IOBps})
+	}
+	if time.Since(r.To) <= time.Hour {
+		f, ok, err := s.ch.ProcessFacts(ctx, r.OrgID, id, key, r.To)
+		if err != nil {
+			return err
+		}
+		if ok {
+			out.Facts = &wire.ProcessFacts{
+				SeenAt: f.SeenAt, PID: f.PID, PPID: f.PPID, Parent: f.Parent, User: f.User, Cwd: f.Cwd,
+				State: f.State, Threads: f.Threads, StartTS: f.StartTS, ListenTCP: f.ListenTCP, ListenUDP: f.ListenUDP,
+			}
+		}
 	}
 	return c.JSON(http.StatusOK, out)
 }
