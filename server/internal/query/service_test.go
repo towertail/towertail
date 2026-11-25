@@ -29,6 +29,7 @@ type fakeReader struct {
 	latest  []clickhouse.NodeLatest
 	disks   map[uuid.UUID]float64
 	procs   []clickhouse.TopProc
+	procsAt func(q clickhouse.RangeQuery) []clickhouse.TopProc
 	stats   func(q clickhouse.StatsQuery) []clickhouse.NodeStat
 	gotProc clickhouse.RangeQuery
 	gotBy   clickhouse.ProcOrder
@@ -81,6 +82,9 @@ func (f *fakeReader) LatestDiskRatio(context.Context, uuid.UUID, time.Time) (map
 
 func (f *fakeReader) TopProcesses(_ context.Context, q clickhouse.RangeQuery, by clickhouse.ProcOrder, n int) ([]clickhouse.TopProc, error) {
 	f.gotProc, f.gotBy, f.gotN = q, by, n
+	if f.procsAt != nil {
+		return f.procsAt(q), nil
+	}
 	return f.procs, nil
 }
 

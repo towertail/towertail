@@ -59,6 +59,7 @@ type AlertQueries interface {
 // AnalysisQueries are the alert and metric analyses.
 type AnalysisQueries interface {
 	AlertStats(ctx context.Context, r query.AlertStatsRequest) (query.AlertStats, error)
+	ExplainChange(ctx context.Context, r query.ChangeRequest) (query.ChangeReport, error)
 }
 
 // Queries is the part of the query service that the tools read. A test
@@ -177,6 +178,7 @@ func New(q Queries, o Options) *Server {
 	addTool(s, readTool("disks", "Disk use", "Get the use of each disk mount of one host and the change over a range."), s.disks)
 	addTool(s, readTool("disk_scans", "Disk scans", "Get the disk scans of one host: the newest 5 jobs and, for the newest finished scan or a job_id, the file system, the 20 largest entries and the cleanup recommendations."), s.diskScans)
 	addTool(s, readTool("alert_stats", "Alert statistics", "Get the statistics of the alerts of a range: the totals, the notifications (and the ones sent by email), the alerts and notifications by host, kind, rule and channel, the metrics that flap (many short alerts) and the alert starts over time. Use it first to find why alerts came."), s.alertStats)
+	addTool(s, readTool("explain_change", "Explain a metric change", "Find the level shifts of one metric of one host over a range, such as a jump of CPU use. For the largest shift, get the processes that rose or fell (CPU, memory or disk I/O, by metric) and the alerts of the host that started around it. Use it to find why a metric changed."), s.explainChange)
 	addTool(s, readTool("reference", "Reference facts", "Get the facts behind a metric, a rule or a plan limit. Topics: metrics, thresholds, alerts, long_process, history and plan."), s.reference)
 	addTool(s, readTool("whoami", "Who am I", "Get the organization, the plan, the history limit and the sign-in (token kind and role) of this connection."), s.whoami)
 	return s

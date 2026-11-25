@@ -3059,6 +3059,323 @@
       "idempotentHint": true,
       "openWorldHint": false,
       "readOnlyHint": true,
+      "title": "Explain a metric change"
+    },
+    "description": "Find the level shifts of one metric of one host over a range, such as a jump of CPU use. For the largest shift, get the processes that rose or fell (CPU, memory or disk I/O, by metric) and the alerts of the host that started around it. Use it to find why a metric changed.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "description": "start of the range in RFC 3339. Use it with to, instead of range.",
+          "type": "string"
+        },
+        "host": {
+          "description": "host ID or name",
+          "type": "string"
+        },
+        "metric": {
+          "description": "history metric to explain, for example cpu or mem. Call reference with topic metrics for the names and units.",
+          "type": "string"
+        },
+        "range": {
+          "description": "span up to now, 15m to 365d, for example 6h or 24h. Default 24h. Do not use with from.",
+          "type": "string"
+        },
+        "to": {
+          "description": "end of the range in RFC 3339. Default now.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host",
+        "metric"
+      ],
+      "type": "object"
+    },
+    "name": "explain_change",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "additionalProperties": false,
+          "properties": {
+            "from": {
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "from",
+            "to"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "alerts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "acked_by": {
+                "type": "string"
+              },
+              "end": {
+                "type": "string"
+              },
+              "host": {
+                "type": "string"
+              },
+              "host_id": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "metric": {
+                "type": "string"
+              },
+              "peak": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "proc": {
+                "additionalProperties": false,
+                "properties": {
+                  "command": {
+                    "type": "string"
+                  },
+                  "cpu_pct": {
+                    "type": "number"
+                  },
+                  "cwd": {
+                    "type": "string"
+                  },
+                  "high_since": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "parent": {
+                    "type": "string"
+                  },
+                  "pid": {
+                    "maximum": 2147483647,
+                    "minimum": -2147483648,
+                    "type": "integer"
+                  },
+                  "repo": {
+                    "type": "string"
+                  },
+                  "started_at": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "key",
+                  "pid",
+                  "name",
+                  "command",
+                  "cpu_pct"
+                ],
+                "type": [
+                  "null",
+                  "object"
+                ]
+              },
+              "severity": {
+                "type": "string"
+              },
+              "snoozed_until": {
+                "type": "string"
+              },
+              "start": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "value": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "host",
+              "host_id",
+              "kind",
+              "metric",
+              "severity",
+              "state",
+              "value",
+              "start"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "before": {
+          "additionalProperties": false,
+          "properties": {
+            "from": {
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "from",
+            "to"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "clamped": {
+          "type": "boolean"
+        },
+        "from": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "metric": {
+          "type": "string"
+        },
+        "points": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "type": "number"
+              },
+              "before": {
+                "type": "number"
+              },
+              "delta": {
+                "type": "number"
+              },
+              "ts": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ts",
+              "before",
+              "after",
+              "delta"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "process_unit": {
+          "type": "string"
+        },
+        "processes": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "type": "number"
+              },
+              "before": {
+                "type": "number"
+              },
+              "command": {
+                "type": "string"
+              },
+              "delta": {
+                "type": "number"
+              },
+              "gone": {
+                "type": "boolean"
+              },
+              "key": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "new": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "key",
+              "name",
+              "command",
+              "before",
+              "after",
+              "delta"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "processes_by": {
+          "type": "string"
+        },
+        "resolution": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "host",
+        "host_id",
+        "from",
+        "to",
+        "resolution",
+        "metric",
+        "unit",
+        "points",
+        "processes_by",
+        "process_unit",
+        "processes",
+        "alerts"
+      ],
+      "type": "object"
+    },
+    "title": "Explain a metric change"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
       "title": "Reference facts"
     },
     "description": "Get the facts behind a metric, a rule or a plan limit. Topics: metrics, thresholds, alerts, long_process, history and plan.",

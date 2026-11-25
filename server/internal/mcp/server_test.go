@@ -65,6 +65,9 @@ type fakeQueries struct {
 	stats       *query.AlertStats
 	statsErr    error
 	gotStatsReq query.AlertStatsRequest
+	change      *query.ChangeReport
+	changeErr   error
+	gotChange   query.ChangeRequest
 	days        int
 	detail      *query.HostDetail
 	summary     query.FleetSummary
@@ -209,6 +212,18 @@ func (f *fakeQueries) AlertStats(_ context.Context, r query.AlertStatsRequest) (
 		return *f.stats, f.statsErr
 	}
 	return query.AlertStats{From: r.From, To: r.To}, nil
+}
+
+func (f *fakeQueries) ExplainChange(_ context.Context, r query.ChangeRequest) (query.ChangeReport, error) {
+	f.seen(r.OrgID)
+	f.gotChange = r
+	if f.change != nil || f.changeErr != nil {
+		if f.change == nil {
+			return query.ChangeReport{}, f.changeErr
+		}
+		return *f.change, f.changeErr
+	}
+	return query.ChangeReport{From: r.From, To: r.To, Metric: r.Metric, By: clickhouse.ProcByCPU}, nil
 }
 
 func (f *fakeQueries) Rules(_ context.Context, org, node uuid.UUID) (query.RulesResult, error) {
@@ -374,7 +389,7 @@ func TestTools(t *testing.T) {
 		}
 	}
 	slices.Sort(names)
-	want := []string{"alert_stats", "alerts", "disk_scans", "disks", "fleet_summary", "get_alert", "get_host", "host_metrics", "host_rules", "list_hosts", "process_history", "reference", "top_processes", "whoami"}
+	want := []string{"alert_stats", "alerts", "disk_scans", "disks", "explain_change", "fleet_summary", "get_alert", "get_host", "host_metrics", "host_rules", "list_hosts", "process_history", "reference", "top_processes", "whoami"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("tools = %v, want %v", names, want)
 	}
@@ -463,6 +478,11 @@ func TestToolInputErrors(t *testing.T) {
 		{"stats kind", "alert_stats", map[string]any{"kind": []string{"gpu"}}, "kind must be one of"},
 		{"stats top", "alert_stats", map[string]any{"top": 21}, "top must be 1 to 20"},
 		{"stats range", "alert_stats", map[string]any{"range": "5m"}, "range must be"},
+		{"change no host", "explain_change", map[string]any{"host": " ", "metric": "cpu"}, "host is required"},
+		{"change metric", "explain_change", map[string]any{"host": "web-1", "metric": "bogus"}, "metric must be one of"},
+		{"change range", "explain_change", map[string]any{"host": "web-1", "metric": "cpu", "range": "5m"}, "range must be"},
+		{"change unknown host", "explain_change", map[string]any{"host": "ghost", "metric": "cpu"}, "host not found"},
+		{"change no metric", "explain_change", map[string]any{"host": "web-1"}, `missing properties: ["metric"]`},
 		{"at without host", "top_processes", map[string]any{"at": "now-1h"}, "at needs host"},
 		{"bad at", "top_processes", map[string]any{"host": "web-1", "at": "soon"}, "at must be"},
 		{"at and range", "top_processes", map[string]any{"host": "web-1", "at": "now", "range": "1h"}, "not together"},
@@ -539,6 +559,7 @@ func TestMCPOrgScope(t *testing.T) {
 			{"host_rules", map[string]any{"host": "web-1"}},
 			{"disks", map[string]any{"host": "web-1"}},
 			{"alert_stats", map[string]any{"host": "web-1"}},
+			{"explain_change", map[string]any{"host": "web-1", "metric": "cpu"}},
 		} {
 			f.orgs = nil
 			if res := call(t, cs, tc.tool, tc.args); res.IsError {
@@ -620,7 +641,7 @@ func TestToolsRegistrationOrder(t *testing.T) {
 	for _, tl := range newServer(newFake()).Tools(ToolSetV1) {
 		names = append(names, tl.Name)
 	}
-	want := []string{"fleet_summary", "list_hosts", "get_host", "host_metrics", "top_processes", "process_history", "alerts", "get_alert", "host_rules", "disks", "disk_scans", "alert_stats", "reference", "whoami"}
+	want := []string{"fleet_summary", "list_hosts", "get_host", "host_metrics", "top_processes", "process_history", "alerts", "get_alert", "host_rules", "disks", "disk_scans", "alert_stats", "explain_change", "reference", "whoami"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("names = %v, want %v", names, want)
 	}
@@ -663,6 +684,7 @@ func TestToolResultHasJSONText(t *testing.T) {
 		{"process_history", map[string]any{"host": "web-1", "process": "api"}},
 		{"alerts", nil},
 		{"alert_stats", nil},
+		{"explain_change", map[string]any{"host": "web-1", "metric": "cpu"}},
 		{"disks", map[string]any{"host": "web-1"}},
 		{"fleet_summary", nil},
 		{"get_host", map[string]any{"host": "web-1"}},
