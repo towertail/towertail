@@ -58,6 +58,9 @@ public sealed partial class ServerViewModel : ObservableObject
     /// <summary>Effective thresholds for this host. Set by <see cref="ServerStore"/> before each ingest.</summary>
     public MetricThresholds Thresholds { get; set; } = MetricThresholds.Defaults;
 
+    /// <summary>True when this host overrides memory pressure. Kernel level 2 then does not warn.</summary>
+    public bool MemPressureOverridden { get; set; }
+
     /// <summary>Effective alert rules for this host. Set by <see cref="ServerStore"/> before each ingest.</summary>
     public AlertRules AlertRules { get; set; } = AlertRules.Defaults;
 
@@ -169,7 +172,7 @@ public sealed partial class ServerViewModel : ObservableObject
             _lastRxCum = net.RxCum;
             _lastTxCum = net.TxCum;
         }
-        MemPressured = MemPressureOf(s, _lastSwapUsed, _lastSampleTs is DateTime prevTs ? (now - prevTs).TotalSeconds : null);
+        MemPressured = MemPressureOf(s, MacPressureCritical, _lastSwapUsed, _lastSampleTs is DateTime prevTs ? (now - prevTs).TotalSeconds : null);
         _lastSwapUsed = s.Swap.Total > 0 ? s.Swap.Used : null;
         _lastSampleTs = now;
 
@@ -185,7 +188,7 @@ public sealed partial class ServerViewModel : ObservableObject
 
         if (s.Health is { } h)
             ProcCountSeries.Append(now, h.Procs);
-        Health = HealthStatus.Evaluate(s.Health, s.Disks, Thresholds, LongProcs, now);
+        Health = HealthStatus.Evaluate(s.Health, s.Disks, Thresholds, LongProcs, now, MemPressureOverridden);
         foreach (var (m, w) in _windows)
             w.Record(now, m == AlertMetric.Health ? Health.AlertWindowLevel(Muted) : RawLevel(m),
                      AlertRules.For(m).SustainSeconds);
@@ -230,7 +233,7 @@ public sealed partial class ServerViewModel : ObservableObject
         if (s.Health is { } brief)
         {
             _healthInfo = brief.Info;
-            MemPressured = HealthPressure(brief.Info);
+            MemPressured = HealthPressure(brief.Info, MacPressureCritical);
         }
         RebuildHealth(now);
         RecordWindows(now);
@@ -266,7 +269,7 @@ public sealed partial class ServerViewModel : ObservableObject
                 break;
             case DetailTab.Health when d.Health is { } h:
                 _healthInfo = h;
-                MemPressured = HealthPressure(h);
+                MemPressured = HealthPressure(h, MacPressureCritical);
                 rebuild = true;
                 break;
         }
@@ -285,7 +288,7 @@ public sealed partial class ServerViewModel : ObservableObject
 
     private void RebuildHealth(DateTime now)
     {
-        Health = HealthStatus.Evaluate(_healthInfo, null, Thresholds, LongProcs, now);
+        Health = HealthStatus.Evaluate(_healthInfo, null, Thresholds, LongProcs, now, MemPressureOverridden);
         _windows[AlertMetric.Health].Record(now, Health.AlertWindowLevel(Muted), AlertRules.For(AlertMetric.Health).SustainSeconds);
     }
 
@@ -408,18 +411,20 @@ public sealed partial class ServerViewModel : ObservableObject
         return f >= critical ? HealthLevel.Critical : f >= warn ? HealthLevel.Warn : HealthLevel.Nominal;
     }
 
-    private static bool? MemPressureOf(Sample s, long? prevSwapUsed, double? elapsed)
+    private double MacPressureCritical => Thresholds.HealthOrDefault.MacMemPressure.Critical;
+
+    private static bool? MemPressureOf(Sample s, double macCritical, long? prevSwapUsed, double? elapsed)
     {
-        if (HealthPressure(s.Health) is bool p) return p;
+        if (HealthPressure(s.Health, macCritical) is bool p) return p;
         if (s.Swap.Total > 0 && prevSwapUsed is long prev && elapsed is double dt && dt > 0)
             return (s.Swap.Used - prev) / dt >= SwapGrowthPressuredBps;
         return null;
     }
 
-    private static bool? HealthPressure(HealthInfo? h)
+    private static bool? HealthPressure(HealthInfo? h, double macCritical)
     {
         if (h?.Psi is { } psi) return psi.MemFull >= PsiMemFullPressured || psi.MemSome >= PsiMemSomePressured;
-        if (h?.MemPressurePct is int pct) return pct >= HealthStatus.MacMemPressureCritical;
+        if (h?.MemPressurePct is int pct) return pct >= macCritical;
         if (h?.MemPressure is int mp) return mp == 4;
         return null;
     }

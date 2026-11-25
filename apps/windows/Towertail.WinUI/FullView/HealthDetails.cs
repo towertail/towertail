@@ -80,7 +80,7 @@ public sealed class HealthDetails : UserControl
         foreach (var d in status.Disks ?? Array.Empty<DiskSample>())
         {
             if (d.InodesUsed is long iu && d.InodesTotal is long it && it > 0)
-                AddRow($"Inodes {d.Mount}", $"{N(iu)} / {N(it)} ({(double)iu / it:P0})", HealthStatus.InodeLevel((double)iu / it));
+                AddRow($"Inodes {d.Mount}", $"{N(iu)} / {N(it)} ({(double)iu / it:P0})", HealthStatus.InodeLevel((double)iu / it, _vm!.Thresholds.HealthOrDefault.Inodes));
         }
     }
 

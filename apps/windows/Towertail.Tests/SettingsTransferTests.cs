@@ -98,4 +98,56 @@ public sealed class SettingsTransferTests
         }
         finally { File.Delete(path); }
     }
+
+    [Fact]
+    public void ImportsMacFileWithHealthLimitsAndPerMetricOverrides()
+    {
+        var src = Path.GetTempFileName();
+        var dst = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(src, """
+            {"schemaVersion":1,
+             "nodes":[{"id":"1e9e5d70-9aa3-4c8f-9ff4-7b7b9c5d8e2a","displayName":"db","kind":"ssh",
+               "thresholdOverrides":{"mem":{"warn":0.6,"critical":0.7},"zombies":{"warn":5,"critical":9},"memPressure":{"warn":50,"critical":60}}}],
+             "thresholds":{"cpuWarn":0.75,"cpuCritical":0.9,"memWarn":0.75,"memCritical":0.9,"diskWarn":0.85,"diskCritical":0.95,
+               "procsWarn":100,"procsCritical":200,"zombiesWarn":3,"zombiesCritical":4,
+               "health":{"pids":{"warn":0.5,"critical":0.6},"macMemPressure":{"warn":70,"critical":85}}}}
+            """);
+            var p = SettingsPersistence.Load(src);
+            var export = new SettingsExport { GlobalThresholds = p.Thresholds, Nodes = p.Nodes };
+            SettingsTransfer.Apply(export, new SettingsImportOptions(false, true, false, true, true), dst);
+
+            var settings = new ServerSettings(dst);
+            var h = settings.Thresholds.HealthOrDefault;
+            h.Pids.Should().Be(new ThresholdPair(0.5, 0.6));
+            h.MacMemPressure.Should().Be(new ThresholdPair(70, 85));
+            h.Files.Should().Be(HealthLimits.Defaults.Files);
+
+            var node = SettingsPersistence.Load(dst).Nodes.Single(n => n.DisplayName == "db");
+            node.ThresholdOverrides.Should().Be(new ThresholdOverrides(
+                Mem: new ThresholdPair(0.6, 0.7), Zombies: new ThresholdPair(5, 9), MemPressure: new ThresholdPair(50, 60)));
+            MetricThresholds.Effective(settings.Thresholds, node.ThresholdOverrides).HealthOrDefault.MacMemPressure
+                .Should().Be(new ThresholdPair(50, 60));
+        }
+        finally { File.Delete(src); File.Delete(dst); }
+    }
+
+    [Fact]
+    public void PersistKeepsHealthLimits()
+    {
+        var path = Path.GetTempFileName();
+        try
+        {
+            var limits = HealthLimits.Defaults with { Inodes = new ThresholdPair(0.4, 0.5), IoPressure = new ThresholdPair(1, 2) };
+            var s = new ServerSettings(path);
+            s.Thresholds = s.Thresholds with { Health = limits };
+            s.Persist();
+
+            new ServerSettings(path).Thresholds.HealthOrDefault.Should().Be(limits);
+            var root = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+            root["thresholds"]!["health"]!["inodes"]!["warn"]!.GetValue<double>().Should().Be(0.4);
+        }
+        finally { File.Delete(path); }
+    }
 }

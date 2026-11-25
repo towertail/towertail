@@ -153,7 +153,8 @@ public sealed partial class ServerStore : ObservableObject
 
     private void ApplyEffectiveSettings(ServerViewModel vm)
     {
-        vm.Thresholds = MetricThresholds.Effective(_settings.Thresholds, vm.Node.CustomThresholds);
+        vm.Thresholds = MetricThresholds.Effective(_settings.Thresholds, vm.Node.ThresholdOverrides);
+        vm.MemPressureOverridden = vm.Node.ThresholdOverrides?.MemPressure is not null;
         vm.AlertRules = vm.Node.EffectiveAlerts(_settings.Alerts);
         vm.ApplyLongProc(vm.Node, _settings.LongProc);
         vm.Muted = MutedSignals.Effective(_settings.MutedSignals, vm.Node.MutedSignals);

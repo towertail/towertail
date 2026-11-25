@@ -61,6 +61,7 @@ public sealed partial class ServerSettings : ObservableObject
             ProcsCritical = Thresholds.ProcsCritical,
             ZombiesWarn = Thresholds.ZombiesWarn,
             ZombiesCritical = Thresholds.ZombiesCritical,
+            Health = Thresholds.HealthOrDefault,
             Muted = MutedSignals,
         };
         p.LocalPollingIntervalSeconds = LocalPollingIntervalSeconds;
@@ -82,7 +83,8 @@ public sealed partial class ServerSettings : ObservableObject
             p.Thresholds.MemWarn, p.Thresholds.MemCritical,
             p.Thresholds.DiskWarn, p.Thresholds.DiskCritical)
             .WithHealth(p.Thresholds.ProcsWarn, p.Thresholds.ProcsCritical,
-                        p.Thresholds.ZombiesWarn, p.Thresholds.ZombiesCritical);
+                        p.Thresholds.ZombiesWarn, p.Thresholds.ZombiesCritical)
+            with { Health = p.Thresholds.Health ?? HealthLimits.Defaults };
         LocalPollingIntervalSeconds = Math.Clamp(p.LocalPollingIntervalSeconds, 1, 300);
         SshPollingIntervalSeconds = Math.Clamp(p.SshPollingIntervalSeconds, 1, 300);
         Alerts = p.Thresholds.AlertsOrMigrated(SshPollingIntervalSeconds);

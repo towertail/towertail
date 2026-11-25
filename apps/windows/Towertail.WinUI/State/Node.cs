@@ -59,7 +59,19 @@ public sealed record Node
     public bool IconOnCritical { get; init; } = true;
     public bool NotifyOnWarn { get; init; } = true;
     public bool NotifyOnCritical { get; init; } = true;
-    public MetricThresholds? CustomThresholds { get; init; }
+    /// <summary>Per-metric threshold overrides; null uses the global thresholds.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ThresholdOverrides? ThresholdOverrides { get => _overrides; init => _overrides = value; }
+    private readonly ThresholdOverrides? _overrides;
+
+    /// <summary>Old all-or-nothing key. Read only: a value fills <see cref="ThresholdOverrides"/> when it has none.</summary>
+    [JsonPropertyName("customThresholds")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public MetricThresholds? LegacyCustomThresholds
+    {
+        get => null;
+        init { if (value is not null) _overrides ??= ThresholdOverrides.FromLegacy(value); }
+    }
     /// <summary>Per-node alert rules; null inherits the global rules.</summary>
     public AlertRules? CustomAlerts { get; init; }
     public DateTime? SnoozedUntil { get; init; }
@@ -115,12 +127,15 @@ public sealed record MetricThresholds(
     int ProcsWarn = MetricThresholds.DefaultProcsWarn,
     int ProcsCritical = MetricThresholds.DefaultProcsCritical,
     int ZombiesWarn = MetricThresholds.DefaultZombiesWarn,
-    int ZombiesCritical = MetricThresholds.DefaultZombiesCritical)
+    int ZombiesCritical = MetricThresholds.DefaultZombiesCritical,
+    HealthLimits? Health = null)
 {
     public const int DefaultProcsWarn = 5000;
     public const int DefaultProcsCritical = 20000;
     public const int DefaultZombiesWarn = 200;
     public const int DefaultZombiesCritical = 2000;
+
+    public HealthLimits HealthOrDefault => Health ?? HealthLimits.Defaults;
 
     /// <summary>Copy with health counts clamped to min 1 and warn &lt;= critical.</summary>
     public MetricThresholds WithHealth(int procsWarn, int procsCritical, int zombiesWarn, int zombiesCritical)
@@ -136,12 +151,44 @@ public sealed record MetricThresholds(
         };
     }
 
-    /// <summary>
-    /// Thresholds that apply to one host. The per-node editor has no health fields, so the
-    /// health counts always come from <paramref name="global"/>.
-    /// </summary>
-    public static MetricThresholds Effective(MetricThresholds global, MetricThresholds? custom)
-        => custom is null ? global : custom.WithHealth(global.ProcsWarn, global.ProcsCritical, global.ZombiesWarn, global.ZombiesCritical);
+    /// <summary>Warn/critical pair for one metric. Counts are rounded.</summary>
+    public ThresholdPair Get(ThresholdMetric m) => m switch
+    {
+        ThresholdMetric.Cpu => new(CpuWarn, CpuCritical),
+        ThresholdMetric.Mem => new(MemWarn, MemCritical),
+        ThresholdMetric.Disk => new(DiskWarn, DiskCritical),
+        ThresholdMetric.Procs => new(ProcsWarn, ProcsCritical),
+        ThresholdMetric.Zombies => new(ZombiesWarn, ZombiesCritical),
+        ThresholdMetric.Pids => HealthOrDefault.Pids,
+        ThresholdMetric.Files => HealthOrDefault.Files,
+        ThresholdMetric.Inodes => HealthOrDefault.Inodes,
+        ThresholdMetric.MemPressure => HealthOrDefault.MemPressure,
+        _ => HealthOrDefault.IoPressure,
+    };
+
+    /// <summary>Copy with the pair of one metric replaced. Critical stays at or above warn.</summary>
+    public MetricThresholds With(ThresholdMetric m, ThresholdPair pair)
+    {
+        pair = pair.Clamped();
+        var h = HealthOrDefault;
+        return m switch
+        {
+            ThresholdMetric.Cpu => this with { CpuWarn = pair.Warn, CpuCritical = pair.Critical },
+            ThresholdMetric.Mem => this with { MemWarn = pair.Warn, MemCritical = pair.Critical },
+            ThresholdMetric.Disk => this with { DiskWarn = pair.Warn, DiskCritical = pair.Critical },
+            ThresholdMetric.Procs => WithHealth((int)Math.Round(pair.Warn), (int)Math.Round(pair.Critical), ZombiesWarn, ZombiesCritical),
+            ThresholdMetric.Zombies => WithHealth(ProcsWarn, ProcsCritical, (int)Math.Round(pair.Warn), (int)Math.Round(pair.Critical)),
+            ThresholdMetric.Pids => this with { Health = h with { Pids = pair } },
+            ThresholdMetric.Files => this with { Health = h with { Files = pair } },
+            ThresholdMetric.Inodes => this with { Health = h with { Inodes = pair } },
+            ThresholdMetric.MemPressure => this with { Health = h with { MemPressure = pair } },
+            _ => this with { Health = h with { IoPressure = pair } },
+        };
+    }
+
+    /// <summary>Thresholds that apply to one host: each overridden metric replaces the global pair.</summary>
+    public static MetricThresholds Effective(MetricThresholds global, ThresholdOverrides? overrides)
+        => overrides?.Applied(global) ?? global;
 
     public static MetricThresholds Defaults => new(
         CpuWarn: 0.75, CpuCritical: 0.90,

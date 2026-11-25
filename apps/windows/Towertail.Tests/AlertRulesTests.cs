@@ -105,7 +105,7 @@ public sealed class AlertRulesTests
             settings.Alerts.Disk.Should().Be(new AlertRule(45, AlertNotify.All));
 
             var node = SettingsPersistence.Load(path).Nodes[0];
-            node.CustomThresholds!.CpuWarn.Should().Be(0.5);
+            node.ThresholdOverrides!.Cpu.Should().Be(new ThresholdPair(0.5, 0.6));
             node.CustomAlerts.Should().BeNull();
             node.EffectiveAlerts(settings.Alerts).Should().Be(settings.Alerts);
         }

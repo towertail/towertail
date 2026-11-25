@@ -74,6 +74,24 @@ public sealed class ServerStoreTests : IAsyncLifetime
         _servers.AggregateLevel.Should().Be(HealthLevel.Critical);
     }
 
+    [Fact]
+    public void EffectiveThresholdsKeepOrgCpuWhenHostSetsMemOnly()
+    {
+        var settings = new ServerSettings(_settings)
+        {
+            Thresholds = MetricThresholds.Defaults with { CpuWarn = 0.3, CpuCritical = 0.4 },
+        };
+        var servers = new ServerStore(_nodes, settings, _store);
+        var n = _nodes.Nodes[0] with { ThresholdOverrides = new ThresholdOverrides(Mem: new ThresholdPair(0.2, 0.3), MemPressure: new ThresholdPair(50, 60)) };
+        _nodes.Update(n);
+
+        servers.Ingest(n.Id, Make(n, diskPct: 10));
+        var vm = servers.Find(n.Id)!;
+        (vm.Thresholds.CpuWarn, vm.Thresholds.CpuCritical).Should().Be((0.3, 0.4));
+        (vm.Thresholds.MemWarn, vm.Thresholds.MemCritical).Should().Be((0.2, 0.3));
+        vm.MemPressureOverridden.Should().BeTrue();
+    }
+
     private static LiveSummary Summary(double cpu) => new(DateTime.UtcNow, cpu, 0.1, 0.1, 0, 0, 0);
 
     [Fact]

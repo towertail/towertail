@@ -145,7 +145,8 @@ public sealed class RemoteBackend : IBackend, IDiskScanUpdates
             s.Thresholds.CpuWarn, s.Thresholds.CpuCritical,
             s.Thresholds.MemWarn, s.Thresholds.MemCritical,
             s.Thresholds.DiskWarn, s.Thresholds.DiskCritical)
-            .WithHealth(cur.ProcsWarn, cur.ProcsCritical, cur.ZombiesWarn, cur.ZombiesCritical);
+            .WithHealth(cur.ProcsWarn, cur.ProcsCritical, cur.ZombiesWarn, cur.ZombiesCritical)
+            with { Health = cur.Health };
         ServerSettings.LocalPollingIntervalSeconds = s.LocalPollingIntervalSeconds;
         ServerSettings.SshPollingIntervalSeconds = s.SshPollingIntervalSeconds;
         ServerSettings.NotificationsEnabled = s.NotificationsEnabled;

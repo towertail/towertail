@@ -3,6 +3,7 @@ using Microsoft.Windows.AppLifecycle;
 using Towertail.WinUI.Bootstrap;
 using Towertail.WinUI.MenuBar;
 using Towertail.WinUI.Preferences;
+using Towertail.WinUI.State;
 
 namespace Towertail.WinUI;
 
@@ -104,7 +105,7 @@ public partial class App : Application
         if (start) await Environment.Move.StartAsync();
     }
 
-    /// <summary>Opens a window at launch, for renders: <c>TOWERTAIL_DEBUG_OPEN</c> is <c>account</c>, <c>servers</c> or <c>popover</c>. <c>TOWERTAIL_DEBUG_EMAIL</c> asks for a sign-in code.</summary>
+    /// <summary>Opens a window at launch, for renders: <c>TOWERTAIL_DEBUG_OPEN</c> is <c>account</c>, <c>servers</c>, <c>thresholds</c>, <c>serveredit</c> or <c>popover</c>. <c>TOWERTAIL_DEBUG_EMAIL</c> asks for a sign-in code.</summary>
     private void OpenForDebug()
     {
         if (System.Environment.GetEnvironmentVariable("TOWERTAIL_DEBUG_EMAIL") is { Length: > 0 } email)
@@ -113,9 +114,18 @@ public partial class App : Application
         {
             case "account":
             case "servers":
+            case "thresholds":
                 _debugPrefs = new PreferencesWindow();
                 _debugPrefs.SelectPane(System.Environment.GetEnvironmentVariable("TOWERTAIL_DEBUG_OPEN")!);
                 _debugPrefs.Activate();
+                break;
+            case "serveredit":
+                var edit = new ServerEditWindow();
+                edit.Bind(Environment.Nodes.Nodes[0] with
+                {
+                    ThresholdOverrides = new ThresholdOverrides(Mem: new ThresholdPair(0.6, 0.8), Zombies: new ThresholdPair(50, 500), MemPressure: new ThresholdPair(30, 50)),
+                }, _ => { });
+                edit.Activate();
                 break;
             case "popover":
                 TestPinPopover = true;

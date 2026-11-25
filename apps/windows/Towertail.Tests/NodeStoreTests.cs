@@ -70,4 +70,26 @@ public sealed class NodeStoreTests
         }
         finally { File.Delete(path); }
     }
+
+    [Fact]
+    public void ReadsLegacyCustomThresholdsAsOverrides()
+    {
+        var path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(path, """
+            {"nodes":[{"id":"6f1c0d1e-0000-4000-8000-000000000001","displayName":"n","kind":"ssh",
+              "customThresholds":{"cpuWarn":0.5,"cpuCritical":0.6,"memWarn":0.55,"memCritical":0.65,"diskWarn":0.7,"diskCritical":0.8}}]}
+            """);
+            var node = new NodeStore(path).Nodes[0];
+            node.ThresholdOverrides.Should().Be(new ThresholdOverrides(
+                Cpu: new ThresholdPair(0.5, 0.6), Mem: new ThresholdPair(0.55, 0.65), Disk: new ThresholdPair(0.7, 0.8)));
+
+            new NodeStore(path).Update(node);
+            var text = File.ReadAllText(path);
+            text.Should().Contain("\"thresholdOverrides\"").And.NotContain("customThresholds");
+            new NodeStore(path).Nodes[0].ThresholdOverrides.Should().Be(node.ThresholdOverrides);
+        }
+        finally { File.Delete(path); }
+    }
 }

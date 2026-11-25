@@ -114,7 +114,7 @@
             </Border>
 
             <TextBlock Text="Host health" Style="{StaticResource SettingsSectionHeaderTextBlockStyle}" Margin="1,24,0,6" />
-            <TextBlock Text="Counts of processes and zombie processes on the host."
+            <TextBlock Text="Limits of the host health checks. Warn colors a card yellow; Critical colors it red."
                        Style="{ThemeResource CaptionTextBlockStyle}"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                        TextWrapping="Wrap" Margin="1,0,0,8" />
@@ -159,7 +159,8 @@
                                   Checked="OnMuteToggled" Unchecked="OnMuteToggled" />
                 </Grid>
             </Border>
-            <TextBlock Text="Also checked: PID use 70/90%, open files 80/95%, inodes 85/95%, memory pressure 10/20% (Linux PSI) and 80/90% in use (macOS), I/O pressure 20/40%."
+            <StackPanel x:Name="HealthLimitRows" Spacing="4" Margin="0,4,0,0" />
+            <TextBlock Text="Limits in percent. PID use, open files and inodes are the share of the limit. Memory pressure is PSI on Linux and the share of memory in use on macOS."
                        Style="{ThemeResource CaptionTextBlockStyle}"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                        TextWrapping="Wrap" Margin="1,8,0,0" />

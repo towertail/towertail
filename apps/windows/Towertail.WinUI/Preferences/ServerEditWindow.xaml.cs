@@ -19,7 +19,7 @@ public sealed partial class ServerEditWindow : Window
     private AuthMethod _originalAuthMethod = AuthMethod.Key;
     private string? _knownHostFingerprint;
 
-    private Slider[] _thresholdSliders = Array.Empty<Slider>();
+    private readonly List<ThresholdOverrideRow> _thresholdRows = new();
     private readonly List<(CheckBox Box, AlertSignal Signal)> _mutes = new();
 
     private static readonly (AlertSignal Signal, string Title)[] MuteTitles =
@@ -36,19 +36,15 @@ public sealed partial class ServerEditWindow : Window
         InitializeComponent();
         Title = "Server";
         ResizeInitial(560, 860);
-        _thresholdSliders = new[]
-        {
-            CpuWarnSlider, CpuCriticalSlider,
-            MemWarnSlider, MemCriticalSlider,
-            DiskWarnSlider, DiskCriticalSlider,
-        };
-        SetThresholdsEnabled(false);
-        HookSliders();
+        foreach (var m in ThresholdMetrics.Usage) AddThresholdRow(ThresholdRows, m);
+        foreach (var m in ThresholdMetrics.Health) AddThresholdRow(HealthRows, m);
     }
 
-    private void SetThresholdsEnabled(bool enabled)
+    private void AddThresholdRow(StackPanel panel, ThresholdMetric m)
     {
-        foreach (var s in _thresholdSliders) s.IsEnabled = enabled;
+        var row = new ThresholdOverrideRow(m);
+        _thresholdRows.Add(row);
+        panel.Children.Add(row);
     }
 
     /// <summary>A globally muted signal shows checked and disabled.</summary>
@@ -128,43 +124,15 @@ public sealed partial class ServerEditWindow : Window
         NotifyWarnCheck.IsChecked = n?.NotifyOnWarn ?? true;
         NotifyCriticalCheck.IsChecked = n?.NotifyOnCritical ?? true;
 
-        var t = n?.CustomThresholds ?? _env.ServerSettings.Thresholds;
-        SetSliderPct(CpuWarnSlider, CpuWarnValue, t.CpuWarn);
-        SetSliderPct(CpuCriticalSlider, CpuCriticalValue, t.CpuCritical);
-        SetSliderPct(MemWarnSlider, MemWarnValue, t.MemWarn);
-        SetSliderPct(MemCriticalSlider, MemCriticalValue, t.MemCritical);
-        SetSliderPct(DiskWarnSlider, DiskWarnValue, t.DiskWarn);
-        SetSliderPct(DiskCriticalSlider, DiskCriticalValue, t.DiskCritical);
+        var global = _env.ServerSettings.Thresholds;
+        foreach (var row in _thresholdRows)
+            row.Bind(global.Get(row.Metric), n?.ThresholdOverrides?.Get(row.Metric));
 
         AlertsEditor.Rules = n?.CustomAlerts ?? _env.ServerSettings.Alerts;
         CustomAlertsCheck.IsChecked = n?.CustomAlerts != null;
         AlertsEditor.IsEnabled = CustomAlertsCheck.IsChecked == true;
 
-        CustomThresholdsCheck.IsChecked = n?.CustomThresholds != null;
-        SetThresholdsEnabled(CustomThresholdsCheck.IsChecked == true);
         UpdateSshGroupVisibility();
-    }
-
-    private void HookSliders()
-    {
-        (Slider s, TextBlock lbl)[] pairs =
-        {
-            (CpuWarnSlider, CpuWarnValue),
-            (CpuCriticalSlider, CpuCriticalValue),
-            (MemWarnSlider, MemWarnValue),
-            (MemCriticalSlider, MemCriticalValue),
-            (DiskWarnSlider, DiskWarnValue),
-            (DiskCriticalSlider, DiskCriticalValue),
-        };
-        foreach (var (s, lbl) in pairs)
-            s.ValueChanged += (_, e) => lbl.Text = $"{(int)Math.Round(e.NewValue)}%";
-    }
-
-    private static void SetSliderPct(Slider s, TextBlock lbl, double frac)
-    {
-        var pct = Math.Clamp(frac * 100.0, s.Minimum, s.Maximum);
-        s.Value = pct;
-        lbl.Text = $"{(int)Math.Round(pct)}%";
     }
 
     private void OnKindChanged(object sender, SelectionChangedEventArgs e) => UpdateSshGroupVisibility();
@@ -209,9 +177,6 @@ public sealed partial class ServerEditWindow : Window
         }
     }
 
-    private void OnCustomToggled(object sender, RoutedEventArgs e)
-        => SetThresholdsEnabled(CustomThresholdsCheck.IsChecked == true);
-
     private void OnCustomAlertsToggled(object sender, RoutedEventArgs e)
         => AlertsEditor.IsEnabled = CustomAlertsCheck.IsChecked == true;
 
@@ -226,22 +191,7 @@ public sealed partial class ServerEditWindow : Window
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .ToList();
 
-        MetricThresholds? custom = null;
-        if (CustomThresholdsCheck.IsChecked == true)
-        {
-            double cpuW = CpuWarnSlider.Value / 100.0, cpuC = CpuCriticalSlider.Value / 100.0;
-            double memW = MemWarnSlider.Value / 100.0, memC = MemCriticalSlider.Value / 100.0;
-            double dW = DiskWarnSlider.Value / 100.0, dC = DiskCriticalSlider.Value / 100.0;
-            // No per-node health UI: carry the counts over from the existing
-            // override, else from the global settings.
-            var baseT = _existing?.CustomThresholds
-                ?? Towertail.WinUI.App.Current.Environment.ServerSettings.Thresholds;
-            custom = new MetricThresholds(
-                Math.Min(cpuW, cpuC), Math.Max(cpuW, cpuC),
-                Math.Min(memW, memC), Math.Max(memW, memC),
-                Math.Min(dW, dC), Math.Max(dW, dC))
-                .WithHealth(baseT.ProcsWarn, baseT.ProcsCritical, baseT.ZombiesWarn, baseT.ZombiesCritical);
-        }
+        var overrides = _thresholdRows.Aggregate(new ThresholdOverrides(), (o, row) => o.With(row.Metric, row.Value));
 
         int? port = null;
         if (kind == NodeKind.Ssh && !double.IsNaN(PortBox.Value))
@@ -272,7 +222,7 @@ public sealed partial class ServerEditWindow : Window
             IconOnCritical = IconCriticalCheck.IsChecked == true,
             NotifyOnWarn = NotifyWarnCheck.IsChecked == true,
             NotifyOnCritical = NotifyCriticalCheck.IsChecked == true,
-            CustomThresholds = custom,
+            ThresholdOverrides = overrides.IsEmpty ? null : overrides,
             CustomAlerts = CustomAlertsCheck.IsChecked == true ? AlertsEditor.Rules : null,
             Favorite = _existing?.Favorite ?? false,
             SnoozedUntil = _existing?.SnoozedUntil,

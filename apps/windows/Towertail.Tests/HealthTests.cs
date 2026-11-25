@@ -107,7 +107,7 @@ public sealed class HealthTests
     public void EffectiveTakesHealthFromGlobal()
     {
         var global = T.WithHealth(10, 20, 30, 40);
-        var custom = T with { CpuWarn = 0.1 };
+        var custom = new ThresholdOverrides(Cpu: new ThresholdPair(0.1, 0.2));
         var e = MetricThresholds.Effective(global, custom);
         e.CpuWarn.Should().Be(0.1);
         (e.ProcsWarn, e.ProcsCritical, e.ZombiesWarn, e.ZombiesCritical).Should().Be((10, 20, 30, 40));
@@ -120,6 +120,33 @@ public sealed class HealthTests
         => new(procs, zombies, parents, pidsUsed, pidsMax, filesUsed, filesMax, psi, memPressure, memPressurePct);
 
     private static HealthStatus Eval(HealthInfo? h, params DiskSample[] disks) => HealthStatus.Evaluate(h, disks, T);
+
+    [Fact]
+    public void UsesHealthLimitsFromThresholds()
+    {
+        var h = H(pidsUsed: 60, pidsMax: 100);
+        Eval(h).Level.Should().Be(HealthLevel.Nominal);
+        var t = T with { Health = HealthLimits.Defaults with { Pids = new ThresholdPair(0.5, 0.9) } };
+        HealthStatus.Evaluate(h, null, t).Level.Should().Be(HealthLevel.Warn);
+    }
+
+    [Fact]
+    public void KernelLevel2DoesNotWarnWithMemPressureOverride()
+    {
+        var h = H(memPressure: 2);
+        HealthStatus.Evaluate(h, null, T).Level.Should().Be(HealthLevel.Warn);
+        HealthStatus.Evaluate(h, null, T, kernelCriticalOnly: true).Level.Should().Be(HealthLevel.Nominal);
+        HealthStatus.Evaluate(H(memPressure: 4), null, T, kernelCriticalOnly: true).Level.Should().Be(HealthLevel.Critical);
+    }
+
+    [Fact]
+    public void InodeLevelUsesThresholds()
+    {
+        HealthStatus.InodeLevel(0.6, HealthLimits.Defaults.Inodes).Should().Be(HealthLevel.Nominal);
+        HealthStatus.InodeLevel(0.6, new ThresholdPair(0.5, 0.9)).Should().Be(HealthLevel.Warn);
+        var t = T with { Health = HealthLimits.Defaults with { Inodes = new ThresholdPair(0.5, 0.9) } };
+        HealthStatus.Evaluate(null, new[] { new DiskSample("/", "ext4", 1, 2, 60, 100) }, t).Level.Should().Be(HealthLevel.Warn);
+    }
 
     [Fact]
     public void NominalWhenNoHealth()

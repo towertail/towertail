@@ -10,8 +10,8 @@ public sealed record HealthReason(HealthSignal Signal, HealthLevel Level, string
 
 /// <summary>
 /// Host health verdict for one sample: the worst level across all rules plus one reason per
-/// rule that tripped, critical first. Mirrors the Mac HealthStatus. Process and zombie limits
-/// come from <see cref="MetricThresholds"/>; the other limits are fixed.
+/// rule that tripped, critical first. Mirrors the Mac HealthStatus. All limits come from
+/// <see cref="MetricThresholds"/>.
 /// </summary>
 public sealed record HealthStatus(
     HealthLevel Level,
@@ -19,13 +19,6 @@ public sealed record HealthStatus(
     HealthInfo? Info,
     IReadOnlyList<DiskSample>? Disks = null)
 {
-    public const double PidsWarn = 0.70, PidsCritical = 0.90;
-    public const double FilesWarn = 0.80, FilesCritical = 0.95;
-    public const double InodesWarn = 0.85, InodesCritical = 0.95;
-    public const double MemPsiWarn = 10, MemPsiCritical = 20;
-    public const double IoPsiWarn = 20, IoPsiCritical = 40;
-    public const double MacMemPressureWarn = 80, MacMemPressureCritical = 90;
-
     public static readonly HealthStatus Nominal = new(HealthLevel.Nominal, Array.Empty<HealthReason>(), null);
 
     /// <summary>First reason plus "+N more", or null when nominal.</summary>
@@ -61,8 +54,10 @@ public sealed record HealthStatus(
     public string BodyExcept(MutedSignals muted) => string.Join(" · ", Unmuted(muted).Select(r => r.Text));
 
     public static HealthStatus Evaluate(HealthInfo? h, IReadOnlyList<DiskSample>? disks, MetricThresholds t,
-        IReadOnlyList<LongProc>? longProcs = null, DateTime? now = null)
+        IReadOnlyList<LongProc>? longProcs = null, DateTime? now = null,
+        bool kernelCriticalOnly = false)
     {
+        var limits = t.HealthOrDefault;
         var reasons = new List<HealthReason>();
 
         if (h is not null)
@@ -76,28 +71,28 @@ public sealed record HealthStatus(
             }
 
             if (Frac(h.PidsUsed, h.PidsMax) is double pf)
-                Add(reasons, HealthSignal.Pids, Ratio(pf, PidsWarn, PidsCritical), $"PIDs {Pct(pf)} of limit");
+                Add(reasons, HealthSignal.Pids, Ratio(pf, limits.Pids), $"PIDs {Pct(pf)} of limit");
 
             if (Frac(h.FilesUsed, h.FilesMax) is double ff)
-                Add(reasons, HealthSignal.Files, Ratio(ff, FilesWarn, FilesCritical), $"Open files {Pct(ff)} of limit");
+                Add(reasons, HealthSignal.Files, Ratio(ff, limits.Files), $"Open files {Pct(ff)} of limit");
 
             // macOS number first, then Linux PSI, then the macOS kernel level of old samplers.
             if (h.MemPressurePct is int mp)
-                Add(reasons, HealthSignal.MemPressure, Ratio(mp, MacMemPressureWarn, MacMemPressureCritical), $"Memory pressure {mp}%");
+                Add(reasons, HealthSignal.MemPressure, Ratio(mp, limits.MacMemPressure), $"Memory pressure {mp}%");
             else if (h.Psi is { } mpsi)
             {
-                if (mpsi.MemFull >= MemPsiCritical)
+                if (mpsi.MemFull >= limits.MemPressure.Critical)
                     Add(reasons, HealthSignal.MemPressure, HealthLevel.Critical, $"Memory pressure {mpsi.MemFull:0}%");
-                else if (mpsi.MemSome >= MemPsiWarn)
+                else if (mpsi.MemSome >= limits.MemPressure.Warn)
                     Add(reasons, HealthSignal.MemPressure, HealthLevel.Warn, $"Memory pressure {mpsi.MemSome:0}%");
             }
             else if (h.MemPressure is 4)
                 Add(reasons, HealthSignal.MemPressure, HealthLevel.Critical, "Memory pressure critical");
-            else if (h.MemPressure is 2)
+            else if (h.MemPressure is 2 && !kernelCriticalOnly)
                 Add(reasons, HealthSignal.MemPressure, HealthLevel.Warn, "Memory pressure high");
 
             if (h.Psi is { } psi)
-                Add(reasons, HealthSignal.IoPressure, Ratio(psi.IoFull, IoPsiWarn, IoPsiCritical), $"I/O pressure {psi.IoFull:0}%");
+                Add(reasons, HealthSignal.IoPressure, Ratio(psi.IoFull, limits.IoPressure), $"I/O pressure {psi.IoFull:0}%");
         }
 
         if (disks is not null)
@@ -105,7 +100,7 @@ public sealed record HealthStatus(
             foreach (var d in disks)
             {
                 if (Frac(d.InodesUsed, d.InodesTotal) is double f)
-                    Add(reasons, HealthSignal.Inodes, InodeLevel(f), $"Inodes {Pct(f)} on {d.Mount}");
+                    Add(reasons, HealthSignal.Inodes, InodeLevel(f, limits.Inodes), $"Inodes {Pct(f)} on {d.Mount}");
             }
         }
 
@@ -123,7 +118,7 @@ public sealed record HealthStatus(
         => $"{p.ShortName} {Math.Round(p.CpuPct):0}% for {ShortDuration.Text(p.HighFor(now))}";
 
     /// <summary>Level for one disk's inode use (fraction 0–1).</summary>
-    public static HealthLevel InodeLevel(double frac) => Ratio(frac, InodesWarn, InodesCritical);
+    public static HealthLevel InodeLevel(double frac, ThresholdPair limits) => Ratio(frac, limits);
 
     private static void Add(List<HealthReason> list, HealthSignal signal, HealthLevel level, string text)
     {
@@ -133,8 +128,8 @@ public sealed record HealthStatus(
     private static HealthLevel Count(int v, int warn, int critical)
         => v >= critical ? HealthLevel.Critical : v >= warn ? HealthLevel.Warn : HealthLevel.Nominal;
 
-    private static HealthLevel Ratio(double v, double warn, double critical)
-        => v >= critical ? HealthLevel.Critical : v >= warn ? HealthLevel.Warn : HealthLevel.Nominal;
+    private static HealthLevel Ratio(double v, ThresholdPair p)
+        => v >= p.Critical ? HealthLevel.Critical : v >= p.Warn ? HealthLevel.Warn : HealthLevel.Nominal;
 
     private static double? Frac(long? used, long? max)
         => used is long u && max is long m && m > 0 ? (double)u / m : null;
