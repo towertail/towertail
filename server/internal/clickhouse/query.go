@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -309,6 +311,10 @@ var rawExprs = map[string]string{
 	"mem_pressure": "toFloat64(mem_pressure_pct)",
 }
 
+// MetricNames gives the sorted names that the history queries accept. It
+// includes the alias load.
+func MetricNames() []string { return slices.Sorted(maps.Keys(rawExprs)) }
+
 // metricFamily gives the family of the table that has the metric in the
 // tier. The raw tier has one table for all the metrics.
 func metricFamily(t tier, metric string) (string, error) {
@@ -419,6 +425,33 @@ func (c *Client) LatestByNode(ctx context.Context, orgID uuid.UUID, since time.T
 		out = append(out, n)
 	}
 	return out, rows.Err()
+}
+
+// HostFacts are the static facts of a host from its newest sample.
+type HostFacts struct {
+	SeenAt            time.Time
+	OS, Arch, Kernel  string
+	Sampler           string
+	Cores             uint16
+	MemTotal, UptimeS uint64
+}
+
+// HostFacts gives the newest facts of a node in samples_raw since the
+// time. The bool is false when the node has no sample since then.
+func (c *Client) HostFacts(ctx context.Context, orgID, nodeID uuid.UUID, since time.Time) (HostFacts, bool, error) {
+	var (
+		f HostFacts
+		n uint64
+	)
+	err := c.conn.QueryRow(ctx,
+		"SELECT max(ts), argMax(host_os, ts), argMax(host_arch, ts), argMax(host_kernel, ts), argMax(host_sampler, ts), "+
+			"argMax(cpu_cores, ts), argMax(mem_total, ts), argMax(host_uptime_s, ts), count() "+
+			"FROM "+c.table("samples_raw")+" WHERE org_id = ? AND node_id = ? AND ts >= ?", orgID, nodeID, since).
+		Scan(&f.SeenAt, &f.OS, &f.Arch, &f.Kernel, &f.Sampler, &f.Cores, &f.MemTotal, &f.UptimeS, &n)
+	if err != nil || n == 0 {
+		return HostFacts{}, false, err
+	}
+	return f, true, nil
 }
 
 // StatsQuery is a metric over a range. A NodeID of uuid.Nil means all

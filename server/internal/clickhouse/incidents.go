@@ -2,6 +2,8 @@ package clickhouse
 
 import (
 	"context"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -178,4 +180,74 @@ func (c *Client) AlertLines(ctx context.Context, orgID, alertID uuid.UUID) ([]Al
 		out = append(out, l)
 	}
 	return out, rows.Err()
+}
+
+// NotifiedQuery selects the notifications that went out in [From, To).
+// NodeIDs limits the nodes when it is not empty.
+type NotifiedQuery struct {
+	OrgID    uuid.UUID
+	From, To time.Time
+	NodeIDs  []uuid.UUID
+}
+
+// NotifiedRow counts the sends of one alert. Sends counts each channel of
+// each notification. Failed counts the sends that failed. Channels counts
+// the sends of each channel name.
+type NotifiedRow struct {
+	AlertID, NodeID uuid.UUID
+	Sends, Failed   int
+	Channels        map[string]int
+}
+
+const failedSuffix = " (failed)"
+
+// NotifiedCounts counts the notifications of the alerts in the range. A
+// notified line of the alert log holds the channel names joined with ", ".
+// A failed send has the suffix " (failed)". The rows come in the order of
+// the alert id.
+func (c *Client) NotifiedCounts(ctx context.Context, q NotifiedQuery) ([]NotifiedRow, error) {
+	sql := "SELECT alert_id, node_id, text FROM " + c.table("alert_log") +
+		" WHERE org_id = ? AND kind = 'notified' AND ts >= ? AND ts < ?"
+	args := []any{q.OrgID, q.From, q.To}
+	if len(q.NodeIDs) > 0 {
+		sql += " AND node_id IN ?"
+		args = append(args, q.NodeIDs)
+	}
+	res, err := c.conn.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Close()
+	byAlert := map[uuid.UUID]*NotifiedRow{}
+	for res.Next() {
+		var (
+			alert, node uuid.UUID
+			text        string
+		)
+		if err := res.Scan(&alert, &node, &text); err != nil {
+			return nil, err
+		}
+		row := byAlert[alert]
+		if row == nil {
+			row = &NotifiedRow{AlertID: alert, NodeID: node, Channels: map[string]int{}}
+			byAlert[alert] = row
+		}
+		for _, name := range strings.Split(text, ", ") {
+			name, failed := strings.CutSuffix(name, failedSuffix)
+			row.Sends++
+			row.Channels[name]++
+			if failed {
+				row.Failed++
+			}
+		}
+	}
+	if err := res.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]NotifiedRow, 0, len(byAlert))
+	for _, r := range byAlert {
+		out = append(out, *r)
+	}
+	slices.SortFunc(out, func(a, b NotifiedRow) int { return strings.Compare(a.AlertID.String(), b.AlertID.String()) })
+	return out, nil
 }

@@ -78,6 +78,9 @@ type Deps struct {
 	Hub     *hub.Hub
 	Alerter *alerter.Engine
 	Scans   *scan.Manager
+	// OrgInfo gives the org name and the plan to the MCP server. Nil gives
+	// the self-hosted facts.
+	OrgInfo mcp.OrgInfo
 	// Limits gives the plan limits. Nil means no limits.
 	Limits Limits
 	// Channels checks and tests alert channels. Nil turns off the
@@ -185,11 +188,16 @@ func New(d Deps) *Server {
 		roles:         d.Roles,
 		ranks:         newRankCache(),
 		netRates:      newNetRates(),
-		query:         query.NewService(reader, d.Store, d.Limits, peaks),
+		query:         query.NewService(reader, d.Store, d.Limits, peaks, query.WithConfig(d.Store)),
 		apiKeyRates:   newKeyLimiters(d.Config.HTTP.APIKeyRateLimitRPS, d.Config.HTTP.APIKeyRateLimitBurst),
 	}
 	if d.Config.MCP.Enabled {
-		s.mcp = mcp.New(s.query, mcp.Options{Version: version.Version, Log: d.Log, Settings: d.Store})
+		o := mcp.Options{Version: version.Version, Log: d.Log, Settings: d.Store, OrgInfo: d.OrgInfo, AppURL: d.Config.MCP.AppURL}
+		// A nil *scan.Manager in the interface would not be nil.
+		if d.Scans != nil {
+			o.Scans = d.Scans
+		}
+		s.mcp = mcp.New(s.query, o)
 	}
 	if d.Config.Stream.Compression == "no_context_takeover" {
 		s.streamCompression = websocket.CompressionNoContextTakeover

@@ -1,11 +1,14 @@
 package app
 
 import (
+	"context"
 	"log/slog"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/towertail/towertail/server/internal/api"
+	"github.com/towertail/towertail/server/internal/mcp"
 	"github.com/towertail/towertail/server/notify"
 	"github.com/towertail/towertail/server/runtime"
 	"github.com/towertail/towertail/server/store"
@@ -13,6 +16,27 @@ import (
 
 // Limits gives the plan limits of an org.
 type Limits = api.Limits
+
+// OrgFacts are the facts of an org for the MCP server. MaxHosts is 0 when
+// the plan has no host limit.
+type OrgFacts struct {
+	Name, Plan  string
+	HistoryDays int
+	MaxHosts    int
+}
+
+// OrgInfo gives the facts of an org. The cloud sets it.
+type OrgInfo interface {
+	OrgFacts(ctx context.Context, orgID uuid.UUID) (OrgFacts, error)
+}
+
+// orgInfoAdapter gives an OrgInfo as an mcp.OrgInfo.
+type orgInfoAdapter struct{ info OrgInfo }
+
+func (a orgInfoAdapter) OrgFacts(ctx context.Context, orgID uuid.UUID) (mcp.OrgFacts, error) {
+	f, err := a.info.OrgFacts(ctx, orgID)
+	return mcp.OrgFacts(f), err
+}
 
 // ChannelLimits tells if the plan of an org permits a channel kind. When
 // the Limits value of WithLimits also implements it, the server uses it.
@@ -42,6 +66,7 @@ type builder struct {
 	middleware []echo.MiddlewareFunc
 	components []runtime.Component
 	limits     Limits
+	orgInfo    OrgInfo
 	mailer     notify.Mailer
 	roles      Roles
 }
@@ -81,6 +106,10 @@ func WithComponent(c runtime.Component) Option {
 // the history days of the org. A value that implements ChannelLimits also
 // gates the alert channel kinds.
 func WithLimits(l Limits) Option { return func(b *builder) { b.limits = l } }
+
+// WithOrgInfo sets the source of the org name and the plan for the MCP
+// tool whoami. With no source, the server gives the self-hosted facts.
+func WithOrgInfo(o OrgInfo) Option { return func(b *builder) { b.orgInfo = o } }
 
 // WithRoles sets the source of the roles. With no source, each user token
 // has the owner role.

@@ -12,6 +12,7 @@ import (
 
 	"github.com/towertail/towertail/server/internal/clickhouse"
 	"github.com/towertail/towertail/server/internal/query"
+	"github.com/towertail/towertail/server/wire"
 )
 
 // Limits of the tool replies.
@@ -49,60 +50,6 @@ func checkMetric(m string) error {
 		return badf("metric must be one of %s", strings.Join(metricNames, ", "))
 	}
 	return nil
-}
-
-// ListHostsIn is the input of list_hosts.
-type ListHostsIn struct {
-	Sort  string `json:"sort,omitempty" jsonschema:"order of the hosts, highest first: cpu, mem, disk or net. Default cpu."`
-	Limit int    `json:"limit,omitempty" jsonschema:"most hosts to return, 1 to 200. Default 50."`
-}
-
-// Host is one host with its latest values.
-type Host struct {
-	ID       string   `json:"id"`
-	Name     string   `json:"name"`
-	Tags     []string `json:"tags,omitempty"`
-	Online   bool     `json:"online"`
-	LastSeen string   `json:"last_seen,omitempty"`
-	CPUPct   *float64 `json:"cpu_pct,omitempty"`
-	MemRatio *float64 `json:"mem_ratio,omitempty"`
-	// DiskRatio is the use of the fullest mount.
-	DiskRatio *float64 `json:"disk_ratio,omitempty"`
-	Load1     *float64 `json:"load1,omitempty"`
-	NetRxBps  *uint64  `json:"net_rx_bps,omitempty"`
-	NetTxBps  *uint64  `json:"net_tx_bps,omitempty"`
-}
-
-// ListHostsOut is the output of list_hosts.
-type ListHostsOut struct {
-	Hosts []Host `json:"hosts"`
-}
-
-func (s *Server) listHosts(ctx context.Context, _ *sdk.CallToolRequest, in ListHostsIn) (*sdk.CallToolResult, ListHostsOut, error) {
-	orgID, err := org(ctx)
-	if err != nil {
-		return nil, ListHostsOut{}, err
-	}
-	sort, err := query.ParseHostSort(in.Sort)
-	if err != nil {
-		return nil, ListHostsOut{}, s.toolError("list_hosts", err)
-	}
-	limit := in.Limit
-	if limit <= 0 {
-		limit = defaultHosts
-	}
-	res, err := s.q.Hosts(ctx, orgID, sort, min(limit, maxHosts))
-	if err != nil {
-		return nil, ListHostsOut{}, s.toolError("list_hosts", err)
-	}
-	out := ListHostsOut{Hosts: make([]Host, 0, len(res.Hosts))}
-	for _, h := range res.Hosts {
-		out.Hosts = append(out.Hosts, Host{
-			ID: h.NodeID.String(), Name: h.Name, Tags: h.Tags, Online: h.Online, LastSeen: tsPtr(h.LastSeen),
-			CPUPct: h.CPU, MemRatio: h.Mem, DiskRatio: h.Disk, Load1: h.Load1, NetRxBps: h.NetRx, NetTxBps: h.NetTx,
-		})
-	}
-	return nil, out, nil
 }
 
 // HostMetricsIn is the input of host_metrics.
@@ -169,10 +116,11 @@ func resolutionText(d time.Duration) string {
 }
 
 func (s *Server) hostMetrics(ctx context.Context, _ *sdk.CallToolRequest, in HostMetricsIn) (*sdk.CallToolResult, HostMetricsOut, error) {
-	orgID, err := org(ctx)
+	c, err := callerOf(ctx)
 	if err != nil {
 		return nil, HostMetricsOut{}, err
 	}
+	orgID := c.Token.OrgID
 	metrics := in.Metrics
 	if len(metrics) == 0 {
 		metrics = []string{"cpu"}
@@ -276,10 +224,11 @@ type TopProcessesOut struct {
 }
 
 func (s *Server) topProcesses(ctx context.Context, _ *sdk.CallToolRequest, in TopProcessesIn) (*sdk.CallToolResult, TopProcessesOut, error) {
-	orgID, err := org(ctx)
+	c, err := callerOf(ctx)
 	if err != nil {
 		return nil, TopProcessesOut{}, err
 	}
+	orgID := c.Token.OrgID
 	by, err := query.ParseProcOrder(in.By)
 	if err != nil {
 		return nil, TopProcessesOut{}, s.toolError("top_processes", err)
@@ -329,6 +278,18 @@ type AlertItem struct {
 	SnoozedUntil string  `json:"snoozed_until,omitempty"`
 }
 
+// newAlertItem converts an alert of the query service.
+func newAlertItem(a wire.Alert, host string) AlertItem {
+	item := AlertItem{
+		ID: a.ID.String(), Host: host, HostID: a.NodeID.String(), Kind: a.Kind, Metric: a.Metric,
+		Tint: string(a.Tint), Value: a.Value, Start: ts(a.TS), AckedAt: tsPtr(a.AckedAt), SnoozedUntil: tsPtr(a.SnoozedUntil),
+	}
+	if a.AckedBy != nil {
+		item.AckedBy = a.AckedBy.String()
+	}
+	return item
+}
+
 // AlertsOut is the output of alerts.
 type AlertsOut struct {
 	// Clamped is true when the plan history limit moved the start later.
@@ -337,10 +298,11 @@ type AlertsOut struct {
 }
 
 func (s *Server) alerts(ctx context.Context, _ *sdk.CallToolRequest, in AlertsIn) (*sdk.CallToolResult, AlertsOut, error) {
-	orgID, err := org(ctx)
+	c, err := callerOf(ctx)
 	if err != nil {
 		return nil, AlertsOut{}, err
 	}
+	orgID := c.Token.OrgID
 	var open bool
 	switch in.State {
 	case "", "open":
@@ -363,14 +325,7 @@ func (s *Server) alerts(ctx context.Context, _ *sdk.CallToolRequest, in AlertsIn
 	}
 	out := AlertsOut{Clamped: res.Clamped, Alerts: make([]AlertItem, 0, len(res.Alerts))}
 	for _, a := range res.Alerts {
-		item := AlertItem{
-			ID: a.ID.String(), Host: names[a.NodeID], HostID: a.NodeID.String(), Kind: a.Kind, Metric: a.Metric,
-			Tint: string(a.Tint), Value: a.Value, Start: ts(a.TS), AckedAt: tsPtr(a.AckedAt), SnoozedUntil: tsPtr(a.SnoozedUntil),
-		}
-		if a.AckedBy != nil {
-			item.AckedBy = a.AckedBy.String()
-		}
-		out.Alerts = append(out.Alerts, item)
+		out.Alerts = append(out.Alerts, newAlertItem(a, names[a.NodeID]))
 	}
 	return nil, out, nil
 }
@@ -403,10 +358,11 @@ type DisksOut struct {
 }
 
 func (s *Server) disks(ctx context.Context, _ *sdk.CallToolRequest, in DisksIn) (*sdk.CallToolResult, DisksOut, error) {
-	orgID, err := org(ctx)
+	c, err := callerOf(ctx)
 	if err != nil {
 		return nil, DisksOut{}, err
 	}
+	orgID := c.Token.OrgID
 	from, to, err := parseRange(cmp.Or(in.Range, "24h"), "", "", s.now().UTC())
 	if err != nil {
 		return nil, DisksOut{}, err
@@ -484,10 +440,11 @@ type CompareOut struct {
 }
 
 func (s *Server) compare(ctx context.Context, _ *sdk.CallToolRequest, in CompareIn) (*sdk.CallToolResult, CompareOut, error) {
-	orgID, err := org(ctx)
+	c, err := callerOf(ctx)
 	if err != nil {
 		return nil, CompareOut{}, err
 	}
+	orgID := c.Token.OrgID
 	metric := cmp.Or(in.Metric, "cpu")
 	if err := checkMetric(metric); err != nil {
 		return nil, CompareOut{}, err

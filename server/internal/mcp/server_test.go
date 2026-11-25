@@ -39,6 +39,9 @@ type fakeQueries struct {
 	gotProc query.ProcQuery
 	gotAlrt query.AlertsRequest
 	gotCmp  query.CompareQuery
+	days    int
+	detail  *query.HostDetail
+	summary query.FleetSummary
 }
 
 func (f *fakeQueries) seen(org uuid.UUID) { f.orgs = append(f.orgs, org) }
@@ -119,6 +122,29 @@ func (f *fakeQueries) Compare(_ context.Context, q query.CompareQuery) (wire.Com
 	}, nil
 }
 
+func (f *fakeQueries) HistoryDays(_ context.Context, org uuid.UUID) int {
+	f.seen(org)
+	return f.days
+}
+
+func (f *fakeQueries) HostDetail(_ context.Context, org, id uuid.UUID) (query.HostDetail, error) {
+	f.seen(org)
+	if f.detail != nil {
+		return *f.detail, nil
+	}
+	for _, n := range f.nodes {
+		if n.ID == id {
+			return query.HostDetail{Node: n, Effective: store.DefaultServerSettings().Rules().For(n.Rules())}, nil
+		}
+	}
+	return query.HostDetail{}, store.ErrNotFound
+}
+
+func (f *fakeQueries) FleetSummary(_ context.Context, org uuid.UUID) (query.FleetSummary, error) {
+	f.seen(org)
+	return f.summary, nil
+}
+
 func newFake() *fakeQueries {
 	return &fakeQueries{nodes: []store.Node{{ID: uuid.New(), DisplayName: "web-1"}, {ID: uuid.New(), DisplayName: "db-1"}}}
 }
@@ -128,6 +154,16 @@ func newFake() *fakeQueries {
 func connect(t *testing.T, q Queries, token *store.Token) *sdk.ClientSession {
 	t.Helper()
 	return connectSet(t, newServer(q), ToolSetLatest, token)
+}
+
+// connectOpts is connect with the options of the server.
+func connectOpts(t *testing.T, q Queries, token *store.Token, mod func(*Options)) *sdk.ClientSession {
+	t.Helper()
+	o := Options{Version: "test", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	mod(&o)
+	s := New(q, o)
+	s.now = func() time.Time { return now }
+	return connectSet(t, s, ToolSetLatest, token)
 }
 
 func newServer(q Queries) *Server {
@@ -140,7 +176,7 @@ func connectSet(t *testing.T, s *Server, set ToolSet, token *store.Token) *sdk.C
 	t.Helper()
 	ctx := context.Background()
 	if token != nil {
-		ctx = authctx.WithToken(ctx, *token)
+		ctx = authctx.WithRole(authctx.WithToken(ctx, *token), store.RoleViewer)
 	}
 	serverT, clientT := sdk.NewInMemoryTransports()
 	ss, err := s.sets[set].srv.Connect(ctx, serverT, nil)
@@ -214,7 +250,7 @@ func TestTools(t *testing.T) {
 		}
 	}
 	slices.Sort(names)
-	want := []string{"alerts", "compare", "disks", "host_metrics", "list_hosts", "top_processes"}
+	want := []string{"alerts", "compare", "disks", "fleet_summary", "get_host", "host_metrics", "list_hosts", "reference", "top_processes", "whoami"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("tools = %v, want %v", names, want)
 	}
@@ -310,6 +346,9 @@ func TestToolInputErrors(t *testing.T) {
 		{"state", "alerts", map[string]any{"state": "closed"}, "state must be"},
 		{"window", "compare", map[string]any{"window": "soon"}, "bad duration"},
 		{"compare metric", "compare", map[string]any{"metric": "procs"}, "metric must be one of"},
+		{"get_host no host", "get_host", map[string]any{"host": ""}, "host is required"},
+		{"get_host unknown host", "get_host", map[string]any{"host": "ghost"}, "host not found"},
+		{"reference topic", "reference", map[string]any{"topic": "bogus"}, "topic must be one of"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			res := call(t, cs, tc.tool, tc.args)
@@ -361,6 +400,23 @@ func TestMCPOrgScope(t *testing.T) {
 		decode[ListHostsOut](t, call(t, cs, "list_hosts", nil))
 		if len(f.orgs) != 1 || f.orgs[0] != org {
 			t.Fatalf("orgs = %v, want only %s", f.orgs, org)
+		}
+		for _, tc := range []struct {
+			tool string
+			args map[string]any
+		}{
+			{"fleet_summary", nil},
+			{"get_host", map[string]any{"host": "web-1"}},
+			{"whoami", nil},
+			{"reference", map[string]any{"topic": "plan"}},
+		} {
+			f.orgs = nil
+			if res := call(t, cs, tc.tool, tc.args); res.IsError {
+				t.Fatalf("%s: %s", tc.tool, text(res))
+			}
+			if len(f.orgs) == 0 || slices.ContainsFunc(f.orgs, func(o uuid.UUID) bool { return o != org }) {
+				t.Fatalf("%s: orgs = %v, want only %s", tc.tool, f.orgs, org)
+			}
 		}
 	}
 }
@@ -434,7 +490,7 @@ func TestToolsRegistrationOrder(t *testing.T) {
 	for _, tl := range newServer(newFake()).Tools(ToolSetV1) {
 		names = append(names, tl.Name)
 	}
-	want := []string{"list_hosts", "host_metrics", "top_processes", "alerts", "disks", "compare"}
+	want := []string{"fleet_summary", "list_hosts", "get_host", "host_metrics", "top_processes", "alerts", "disks", "compare", "reference", "whoami"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("names = %v, want %v", names, want)
 	}
@@ -477,6 +533,10 @@ func TestToolResultHasJSONText(t *testing.T) {
 		{"alerts", nil},
 		{"disks", map[string]any{"host": "web-1"}},
 		{"compare", nil},
+		{"fleet_summary", nil},
+		{"get_host", map[string]any{"host": "web-1"}},
+		{"reference", map[string]any{"topic": "metrics"}},
+		{"whoami", nil},
 	} {
 		t.Run(tc.tool, func(t *testing.T) {
 			res := call(t, cs, tc.tool, tc.args)

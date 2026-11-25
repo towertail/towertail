@@ -47,6 +47,9 @@ type MCPConfig struct {
 	AuthorizationServer string `koanf:"authorization_server"`
 	// DocsURL is the documentation page that the resource metadata names.
 	DocsURL string `koanf:"docs_url"`
+	// AppURL is the base URL of the dashboard. The MCP tools search and
+	// fetch use it for the url of a result. Empty means no url.
+	AppURL string `koanf:"app_url"`
 }
 
 // OAuth tells if the MCP server accepts OAuth tokens.

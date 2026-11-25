@@ -18,20 +18,66 @@ import (
 	"github.com/towertail/towertail/server/authctx"
 	"github.com/towertail/towertail/server/internal/clickhouse"
 	"github.com/towertail/towertail/server/internal/query"
+	"github.com/towertail/towertail/server/internal/scan"
 	"github.com/towertail/towertail/server/store"
 	"github.com/towertail/towertail/server/wire"
 )
 
-// Queries is the part of the query service that the tools read.
-type Queries interface {
+// FleetQueries are the host reads.
+type FleetQueries interface {
+	HistoryDays(ctx context.Context, orgID uuid.UUID) int
 	Hosts(ctx context.Context, orgID uuid.UUID, sort query.HostSort, limit int) (wire.FleetHosts, error)
 	HostNames(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID]string, error)
 	ResolveHost(ctx context.Context, orgID uuid.UUID, ref string) (store.Node, error)
+	HostDetail(ctx context.Context, orgID, nodeID uuid.UUID) (query.HostDetail, error)
+	FleetSummary(ctx context.Context, orgID uuid.UUID) (query.FleetSummary, error)
+}
+
+// HistoryQueries are the metric and disk reads.
+type HistoryQueries interface {
 	History(ctx context.Context, r query.HistoryRequest) ([]clickhouse.HistoryPoint, time.Duration, bool, error)
-	TopProcesses(ctx context.Context, q query.ProcQuery) (wire.FleetProcesses, error)
-	Alerts(ctx context.Context, r query.AlertsRequest) (wire.AlertList, error)
 	Disks(ctx context.Context, orgID, nodeID uuid.UUID, from, to time.Time) (query.DiskResult, error)
 	Compare(ctx context.Context, q query.CompareQuery) (wire.Compare, error)
+}
+
+// ProcessQueries are the process reads.
+type ProcessQueries interface {
+	TopProcesses(ctx context.Context, q query.ProcQuery) (wire.FleetProcesses, error)
+}
+
+// AlertQueries are the alert reads.
+type AlertQueries interface {
+	Alerts(ctx context.Context, r query.AlertsRequest) (wire.AlertList, error)
+}
+
+// Queries is the part of the query service that the tools read. A test
+// fake can embed one group and stub the rest.
+type Queries interface {
+	FleetQueries
+	HistoryQueries
+	ProcessQueries
+	AlertQueries
+}
+
+// Scans reads the disk scans of a node.
+type Scans interface {
+	List(ctx context.Context, orgID, nodeID uuid.UUID) ([]scan.Job, error)
+	Get(ctx context.Context, id uuid.UUID) (scan.Job, error)
+	Result(ctx context.Context, id uuid.UUID) ([]byte, error)
+}
+
+// OrgFacts are the facts of an org that the queries do not hold. Plan is
+// the plan name. MaxHosts is 0 when the plan has no host limit.
+type OrgFacts struct {
+	Name, Plan  string
+	HistoryDays int
+	MaxHosts    int
+}
+
+// OrgInfo gives the org facts. The cloud sets it. A nil OrgInfo gives the
+// self-hosted facts.
+type OrgInfo interface {
+	OrgFacts(ctx context.Context, orgID uuid.UUID) (OrgFacts, error)
 }
 
 // ToolSet names one set of tools. Each set has its own MCP server and its
@@ -58,6 +104,13 @@ type Options struct {
 	Version  string
 	Log      *slog.Logger
 	Settings SettingsReader
+	// Scans is nil when disk scans are off.
+	Scans Scans
+	// OrgInfo is nil on a self-hosted server.
+	OrgInfo OrgInfo
+	// AppURL is the base URL of the dashboard. Empty means no url in
+	// search and fetch.
+	AppURL string
 }
 
 // setServer is the MCP server of one tool set.
@@ -68,19 +121,29 @@ type setServer struct {
 
 // Server holds the MCP servers of the tool sets and their tools.
 type Server struct {
-	q    Queries
-	sets map[ToolSet]*setServer
-	log  *slog.Logger
-	now  func() time.Time
+	q       Queries
+	scans   Scans
+	orgInfo OrgInfo
+	appURL  string
+	version string
+	ref     Reference
+	sets    map[ToolSet]*setServer
+	log     *slog.Logger
+	now     func() time.Time
 }
 
 // New makes the server with its tools.
 func New(q Queries, o Options) *Server {
 	s := &Server{
-		q:    q,
-		sets: make(map[ToolSet]*setServer, len(toolSets)),
-		log:  o.Log,
-		now:  time.Now,
+		q:       q,
+		scans:   o.Scans,
+		orgInfo: o.OrgInfo,
+		appURL:  o.AppURL,
+		version: o.Version,
+		ref:     NewReference(),
+		sets:    make(map[ToolSet]*setServer, len(toolSets)),
+		log:     o.Log,
+		now:     time.Now,
 	}
 	for _, set := range toolSets {
 		s.sets[set] = &setServer{srv: sdk.NewServer(
@@ -90,12 +153,16 @@ func New(q Queries, o Options) *Server {
 	}
 	// A handler returns a nil result, or leaves Content nil. Then the SDK
 	// adds the JSON text block of the output. Google reads only that block.
+	addTool(s, readTool("fleet_summary", "Fleet summary", "Get the state of the fleet at a glance: host counts, open alerts, hosts over a limit, the top 5 hosts by CPU, memory and disk, and the alerts and notifications of the last 24 hours."), s.fleetSummary)
 	addTool(s, readTool("list_hosts", "List hosts", "List the hosts of the fleet with the latest CPU (percent), memory and disk (ratio 0 to 1), load and network (bytes each second). Offline hosts have no values."), s.listHosts)
+	addTool(s, readTool("get_host", "Get host", "Get one host: its latest values, facts (OS, kernel, cores, memory, uptime), open alerts and the effective limits with their source (org or host)."), s.getHost)
 	addTool(s, readTool("host_metrics", "Host metrics", "Get the history of metrics of one host: min, avg, max, last, and at most 300 points for each metric. The plan can shorten the range (clamped)."), s.hostMetrics)
 	addTool(s, readTool("top_processes", "Top processes", "Get the top processes of one host, or of the fleet, by CPU or memory over a range."), s.topProcesses)
 	addTool(s, readTool("alerts", "Alerts", "List the open alerts, or the recent alerts, of the fleet or of one host."), s.alerts)
 	addTool(s, readTool("disks", "Disk usage", "Get the use of each disk mount of one host and the change over a range."), s.disks)
 	addTool(s, readTool("compare", "Compare hosts", "Compare a metric of each host in the last window with the window before it."), s.compare)
+	addTool(s, readTool("reference", "Reference facts", "Get the facts behind a metric, a rule or a plan limit. Topics: metrics, thresholds, alerts, long_process, history and plan."), s.reference)
+	addTool(s, readTool("whoami", "Who am I", "Get the organization, the plan, the history limit and the sign-in (token kind and role) of this connection."), s.whoami)
 	return s
 }
 
@@ -185,13 +252,24 @@ func badf(format string, args ...any) error {
 	return &inputError{msg: fmt.Sprintf(format, args...)}
 }
 
-// org gives the org of the token on the context.
-func org(ctx context.Context) (uuid.UUID, error) {
+// caller is the token and the role of a tool call.
+type caller struct {
+	Token store.Token
+	Role  store.Role
+}
+
+// callerOf gives the token and the role on the context. A call with no
+// role has the viewer role.
+func callerOf(ctx context.Context) (caller, error) {
 	t, ok := authctx.FromContext(ctx)
 	if !ok {
-		return uuid.Nil, errors.New("no token")
+		return caller{}, errors.New("no token")
 	}
-	return t.OrgID, nil
+	role, ok := authctx.RoleFromContext(ctx)
+	if !ok {
+		role = store.RoleViewer
+	}
+	return caller{Token: t, Role: role}, nil
 }
 
 // toolError gives the text of an error that a model can read. It hides
@@ -209,6 +287,11 @@ func (s *Server) toolError(tool string, err error) error {
 		errors.Is(err, clickhouse.ErrUnknownMetric),
 		errors.Is(err, clickhouse.ErrNoRollup):
 		return err
+	case errors.Is(err, store.ErrNotFound):
+		if tool == "get_alert" {
+			return errors.New("alert not found")
+		}
+		return errors.New("host not found")
 	case errors.Is(err, query.ErrBadSort):
 		return errors.New("sort must be cpu, mem, disk or net")
 	}

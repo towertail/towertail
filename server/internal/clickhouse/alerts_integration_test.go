@@ -435,3 +435,80 @@ func TestAlertsByIDAndEvents(t *testing.T) {
 		t.Fatalf("lines of an unknown alert = %+v", lines)
 	}
 }
+
+func TestNotifiedCounts(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	org, other, node := uuid.New(), uuid.New(), uuid.New()
+	a1, a2 := uuid.New(), uuid.New()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	line := func(org, alert uuid.UUID, kind, text string, at time.Time) AlertLine {
+		return AlertLine{TS: at, OrgID: org, NodeID: node, AlertID: alert, Kind: kind, Text: text}
+	}
+	err := client.WriteAlertLines(ctx, []AlertLine{
+		line(org, a1, "notified", "Email ops, Slack (failed)", now.Add(-time.Hour)),
+		line(org, a1, "notified", "Email ops", now.Add(-30*time.Minute)),
+		line(org, a2, "notified", "Slack", now.Add(-20*time.Minute)),
+		line(org, a2, "acked", "", now.Add(-10*time.Minute)),
+		line(org, a2, "notified", "Slack", now.Add(-48*time.Hour)),
+		line(other, a1, "notified", "Email ops", now.Add(-time.Hour)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := client.NotifiedCounts(ctx, NotifiedQuery{OrgID: org, From: now.Add(-24 * time.Hour), To: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := map[uuid.UUID]NotifiedRow{}
+	for _, r := range rows {
+		by[r.AlertID] = r
+	}
+	r1 := by[a1]
+	if len(rows) != 2 || r1.Sends != 3 || r1.Failed != 1 || r1.Channels["Email ops"] != 2 || r1.Channels["Slack"] != 1 || len(r1.Channels) != 2 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if r2 := by[a2]; r2.Sends != 1 || r2.Failed != 0 || r2.Channels["Slack"] != 1 {
+		t.Fatalf("a2 = %+v", r2)
+	}
+	none, err := client.NotifiedCounts(ctx, NotifiedQuery{OrgID: org, From: now.Add(-24 * time.Hour), To: now, NodeIDs: []uuid.UUID{uuid.New()}})
+	if err != nil || len(none) != 0 {
+		t.Fatalf("other node: rows = %+v, err = %v", none, err)
+	}
+}
+
+func TestHostFacts(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	org, node := uuid.New(), uuid.New()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	sample := func(at time.Time, kernel string, uptime uint64) IngestBundle {
+		return IngestBundle{Sample: SampleRow{
+			TS: at, OrgID: org, NodeID: node, SchemaV: 1, HostOS: "linux", HostArch: "arm64", HostKernel: kernel,
+			HostSampler: "1.2.3+abc", HostUptimeS: uptime, CPUCores: 8, MemTotal: 16 << 30, Errors: []string{},
+		}}
+	}
+	if err := client.insert(ctx, []IngestBundle{
+		sample(now.Add(-2*time.Hour), "6.1.0", 100),
+		sample(now.Add(-time.Minute), "6.8.0", 7200),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f, ok, err := client.HostFacts(ctx, org, node, now.Add(-24*time.Hour))
+	if err != nil || !ok {
+		t.Fatalf("HostFacts = %+v, %v, %v", f, ok, err)
+	}
+	if f.Kernel != "6.8.0" || f.OS != "linux" || f.Arch != "arm64" || f.Sampler != "1.2.3+abc" || f.Cores != 8 || f.MemTotal != 16<<30 || f.UptimeS != 7200 {
+		t.Fatalf("facts = %+v", f)
+	}
+	if _, ok, err := client.HostFacts(ctx, org, uuid.New(), now.Add(-24*time.Hour)); err != nil || ok {
+		t.Fatalf("unknown node: ok = %v, err = %v", ok, err)
+	}
+	if _, ok, err := client.HostFacts(ctx, org, node, now); err != nil || ok {
+		t.Fatalf("no sample since: ok = %v, err = %v", ok, err)
+	}
+}

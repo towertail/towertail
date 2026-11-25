@@ -50,6 +50,10 @@ type fakeReader struct {
 	byID      map[uuid.UUID]clickhouse.AlertRow
 	events    []clickhouse.EventRow
 	lines     []clickhouse.AlertLine
+
+	facts    *clickhouse.HostFacts
+	notified []clickhouse.NotifiedRow
+	gotNote  clickhouse.NotifiedQuery
 }
 
 func (f *fakeReader) LatestByNode(_ context.Context, _ uuid.UUID, since time.Time) ([]clickhouse.NodeLatest, error) {
@@ -115,6 +119,18 @@ func (f *fakeReader) AlertEvents(context.Context, uuid.UUID, uuid.UUID) ([]click
 
 func (f *fakeReader) AlertLines(context.Context, uuid.UUID, uuid.UUID) ([]clickhouse.AlertLine, error) {
 	return f.lines, nil
+}
+
+func (f *fakeReader) HostFacts(context.Context, uuid.UUID, uuid.UUID, time.Time) (clickhouse.HostFacts, bool, error) {
+	if f.facts == nil {
+		return clickhouse.HostFacts{}, false, nil
+	}
+	return *f.facts, true, nil
+}
+
+func (f *fakeReader) NotifiedCounts(_ context.Context, q clickhouse.NotifiedQuery) ([]clickhouse.NotifiedRow, error) {
+	f.gotNote = q
+	return f.notified, nil
 }
 
 var now = time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)

@@ -71,6 +71,8 @@ type Reader interface {
 	AlertsByID(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]clickhouse.AlertRow, error)
 	AlertEvents(ctx context.Context, orgID, alertID uuid.UUID) ([]clickhouse.EventRow, error)
 	AlertLines(ctx context.Context, orgID, alertID uuid.UUID) ([]clickhouse.AlertLine, error)
+	HostFacts(ctx context.Context, orgID, nodeID uuid.UUID, since time.Time) (clickhouse.HostFacts, bool, error)
+	NotifiedCounts(ctx context.Context, q clickhouse.NotifiedQuery) ([]clickhouse.NotifiedRow, error)
 }
 
 // Peaks gives the highest value of each open alert of an org, by alert id.
@@ -91,27 +93,51 @@ type Limits interface {
 	HistoryDays(ctx context.Context, orgID uuid.UUID) int
 }
 
+// Config reads the node and the settings of an org.
+type Config interface {
+	GetNode(ctx context.Context, orgID, id uuid.UUID) (store.Node, error)
+	GetSettings(ctx context.Context, orgID uuid.UUID) (store.ServerSettings, error)
+}
+
 // Service reads the fleet of an org. A nil Reader gives ErrNoHistory on
 // each read. A nil Limits gives no clamp. A nil Peaks gives no live peak.
+// A nil Config gives the default settings.
 type Service struct {
 	ch     Reader
 	nodes  Nodes
 	limits Limits
 	peaks  Peaks
+	config Config
 	now    func() time.Time
 }
 
-func NewService(ch Reader, nodes Nodes, limits Limits, peaks Peaks) *Service {
-	return &Service{ch: ch, nodes: nodes, limits: limits, peaks: peaks, now: time.Now}
+// ServiceOption sets an optional dependency of the service.
+type ServiceOption func(*Service)
+
+// WithConfig sets the source of the node and the settings.
+func WithConfig(c Config) ServiceOption { return func(s *Service) { s.config = c } }
+
+func NewService(ch Reader, nodes Nodes, limits Limits, peaks Peaks, opts ...ServiceOption) *Service {
+	s := &Service{ch: ch, nodes: nodes, limits: limits, peaks: peaks, now: time.Now}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
+}
+
+// HistoryDays gives the days of history that the plan of the org allows.
+// 0 means no limit.
+func (s *Service) HistoryDays(ctx context.Context, orgID uuid.UUID) int {
+	if s.limits == nil {
+		return 0
+	}
+	return s.limits.HistoryDays(ctx, orgID)
 }
 
 // Clamp moves from to the oldest time that the plan of the org allows.
 // It reports whether it moved from.
 func (s *Service) Clamp(ctx context.Context, orgID uuid.UUID, from, now time.Time) (time.Time, bool) {
-	if s.limits == nil {
-		return from, false
-	}
-	days := s.limits.HistoryDays(ctx, orgID)
+	days := s.HistoryDays(ctx, orgID)
 	if days <= 0 {
 		return from, false
 	}

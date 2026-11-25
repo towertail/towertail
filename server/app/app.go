@@ -21,6 +21,7 @@ import (
 	"github.com/towertail/towertail/server/internal/channels"
 	"github.com/towertail/towertail/server/internal/clickhouse"
 	"github.com/towertail/towertail/server/internal/hub"
+	"github.com/towertail/towertail/server/internal/mcp"
 	"github.com/towertail/towertail/server/internal/scan"
 	"github.com/towertail/towertail/server/notify"
 	"github.com/towertail/towertail/server/runtime"
@@ -129,6 +130,10 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 	for _, f := range b.routes {
 		routes = append(routes, func(s *api.Server) { f(s) })
 	}
+	var orgInfo mcp.OrgInfo
+	if b.orgInfo != nil {
+		orgInfo = orgInfoAdapter{b.orgInfo}
+	}
 	a.api = api.New(api.Deps{
 		Config:        a.cfg,
 		Log:           a.log,
@@ -140,6 +145,7 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 		Hub:           a.hub,
 		Alerter:       a.alerter,
 		Scans:         a.scans,
+		OrgInfo:       orgInfo,
 		Limits:        b.limits,
 		ChannelLimits: gate,
 		Leases:        a.hub,

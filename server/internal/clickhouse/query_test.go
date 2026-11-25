@@ -1,6 +1,7 @@
 package clickhouse
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -171,6 +172,24 @@ func TestMetricFamily(t *testing.T) {
 	for m := range rawExprs {
 		if _, ok := rollupCols[m]; !ok {
 			t.Errorf("metric %s has no rollup", m)
+		}
+	}
+}
+
+func TestMetricNames(t *testing.T) {
+	got := MetricNames()
+	want := []string{
+		"cpu", "mem", "net_rx", "net_tx", "disk_read", "disk_write", "load_1", "procs", "disk", "inodes", "zombies",
+		"pids", "files", "psi_cpu", "psi_mem", "psi_mem_full", "psi_io", "psi_io_full", "mem_pressure",
+	}
+	want = append(want, "load")
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("MetricNames = %v, want %v", got, want)
+	}
+	for _, m := range got {
+		if _, ok := rollupCols[m]; !ok {
+			t.Errorf("%s has no rollup column", m)
 		}
 	}
 }

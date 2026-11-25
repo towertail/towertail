@@ -5,6 +5,340 @@
       "idempotentHint": true,
       "openWorldHint": false,
       "readOnlyHint": true,
+      "title": "Fleet summary"
+    },
+    "description": "Get the state of the fleet at a glance: host counts, open alerts, hosts over a limit, the top 5 hosts by CPU, memory and disk, and the alerts and notifications of the last 24 hours.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "name": "fleet_summary",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "alerts_24h": {
+          "type": "integer"
+        },
+        "hosts": {
+          "type": "integer"
+        },
+        "notifications_24h": {
+          "type": "integer"
+        },
+        "offline": {
+          "type": "integer"
+        },
+        "online": {
+          "type": "integer"
+        },
+        "open_alerts": {
+          "additionalProperties": false,
+          "properties": {
+            "critical": {
+              "type": "integer"
+            },
+            "warn": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "critical",
+            "warn"
+          ],
+          "type": "object"
+        },
+        "over": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "host": {
+                "type": "string"
+              },
+              "host_id": {
+                "type": "string"
+              },
+              "metric": {
+                "type": "string"
+              },
+              "tint": {
+                "type": "string"
+              },
+              "value": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "host",
+              "host_id",
+              "metric",
+              "value",
+              "tint"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "tags": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "top_cpu": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "cpu_pct": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "disk_ratio": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "last_seen": {
+                "type": "string"
+              },
+              "load1": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "mem_ratio": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "net_rx_bps": {
+                "minimum": 0,
+                "type": [
+                  "null",
+                  "integer"
+                ]
+              },
+              "net_tx_bps": {
+                "minimum": 0,
+                "type": [
+                  "null",
+                  "integer"
+                ]
+              },
+              "online": {
+                "type": "boolean"
+              },
+              "tags": {
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "online"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "top_disk": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "cpu_pct": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "disk_ratio": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "last_seen": {
+                "type": "string"
+              },
+              "load1": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "mem_ratio": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "net_rx_bps": {
+                "minimum": 0,
+                "type": [
+                  "null",
+                  "integer"
+                ]
+              },
+              "net_tx_bps": {
+                "minimum": 0,
+                "type": [
+                  "null",
+                  "integer"
+                ]
+              },
+              "online": {
+                "type": "boolean"
+              },
+              "tags": {
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "online"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "top_mem": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "cpu_pct": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "disk_ratio": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "last_seen": {
+                "type": "string"
+              },
+              "load1": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "mem_ratio": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "net_rx_bps": {
+                "minimum": 0,
+                "type": [
+                  "null",
+                  "integer"
+                ]
+              },
+              "net_tx_bps": {
+                "minimum": 0,
+                "type": [
+                  "null",
+                  "integer"
+                ]
+              },
+              "online": {
+                "type": "boolean"
+              },
+              "tags": {
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "online"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        }
+      },
+      "required": [
+        "hosts",
+        "online",
+        "offline",
+        "open_alerts",
+        "over",
+        "top_cpu",
+        "top_mem",
+        "top_disk",
+        "alerts_24h",
+        "notifications_24h",
+        "tags"
+      ],
+      "type": "object"
+    },
+    "title": "Fleet summary"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
       "title": "List hosts"
     },
     "description": "List the hosts of the fleet with the latest CPU (percent), memory and disk (ratio 0 to 1), load and network (bytes each second). Offline hosts have no values.",
@@ -109,6 +443,237 @@
       "type": "object"
     },
     "title": "List hosts"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "title": "Get host"
+    },
+    "description": "Get one host: its latest values, facts (OS, kernel, cores, memory, uptime), open alerts and the effective limits with their source (org or host).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "description": "host ID or name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host"
+      ],
+      "type": "object"
+    },
+    "name": "get_host",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "cpu_pct": {
+          "type": [
+            "null",
+            "number"
+          ]
+        },
+        "disk_ratio": {
+          "type": [
+            "null",
+            "number"
+          ]
+        },
+        "effective_limits": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "critical": {
+                "type": "number"
+              },
+              "source": {
+                "type": "string"
+              },
+              "unit": {
+                "type": "string"
+              },
+              "warn": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "warn",
+              "critical",
+              "unit",
+              "source"
+            ],
+            "type": "object"
+          },
+          "type": "object"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "facts": {
+          "additionalProperties": false,
+          "properties": {
+            "arch": {
+              "type": "string"
+            },
+            "cores": {
+              "type": "integer"
+            },
+            "kernel": {
+              "type": "string"
+            },
+            "mem_total_bytes": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "os": {
+              "type": "string"
+            },
+            "sampler": {
+              "type": "string"
+            },
+            "uptime_s": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "os",
+            "arch",
+            "kernel",
+            "cores",
+            "mem_total_bytes",
+            "uptime_s",
+            "sampler"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "last_seen": {
+          "type": "string"
+        },
+        "load1": {
+          "type": [
+            "null",
+            "number"
+          ]
+        },
+        "mem_ratio": {
+          "type": [
+            "null",
+            "number"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "net_rx_bps": {
+          "minimum": 0,
+          "type": [
+            "null",
+            "integer"
+          ]
+        },
+        "net_tx_bps": {
+          "minimum": 0,
+          "type": [
+            "null",
+            "integer"
+          ]
+        },
+        "online": {
+          "type": "boolean"
+        },
+        "open_alerts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "acked_at": {
+                "type": "string"
+              },
+              "acked_by": {
+                "type": "string"
+              },
+              "host": {
+                "type": "string"
+              },
+              "host_id": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "metric": {
+                "type": "string"
+              },
+              "snoozed_until": {
+                "type": "string"
+              },
+              "start": {
+                "type": "string"
+              },
+              "tint": {
+                "type": "string"
+              },
+              "value": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "id",
+              "host",
+              "host_id",
+              "kind",
+              "metric",
+              "tint",
+              "value",
+              "start"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "snoozed_until": {
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "online",
+        "kind",
+        "enabled",
+        "open_alerts",
+        "effective_limits"
+      ],
+      "type": "object"
+    },
+    "title": "Get host"
   },
   {
     "annotations": {
@@ -710,5 +1275,131 @@
       "type": "object"
     },
     "title": "Compare hosts"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "title": "Reference facts"
+    },
+    "description": "Get the facts behind a metric, a rule or a plan limit. Topics: metrics, thresholds, alerts, long_process, history and plan.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "topic": {
+          "description": "one of: metrics, thresholds, alerts, long_process, history, plan",
+          "type": "string"
+        }
+      },
+      "required": [
+        "topic"
+      ],
+      "type": "object"
+    },
+    "name": "reference",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "facts": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "unit": {
+                "type": "string"
+              },
+              "value": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              }
+            },
+            "required": [
+              "name",
+              "text"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "topic": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "topic",
+        "facts"
+      ],
+      "type": "object"
+    },
+    "title": "Reference facts"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "title": "Who am I"
+    },
+    "description": "Get the organization, the plan, the history limit and the sign-in (token kind and role) of this connection.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "name": "whoami",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "history_days": {
+          "type": "integer"
+        },
+        "max_hosts": {
+          "type": "integer"
+        },
+        "org_id": {
+          "type": "string"
+        },
+        "org_name": {
+          "type": "string"
+        },
+        "plan": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "server_version": {
+          "type": "string"
+        },
+        "token_kind": {
+          "type": "string"
+        },
+        "user_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "org_id",
+        "plan",
+        "history_days",
+        "token_kind",
+        "role",
+        "server_version"
+      ],
+      "type": "object"
+    },
+    "title": "Who am I"
   }
 ]

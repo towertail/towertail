@@ -14,4 +14,12 @@ Plan limit: the plan of the organization sets how far back history goes. When th
 
 Offline hosts have no current values. A count of 0 means no data in the range.
 
+Process cpu uses the top convention: 100 is one full core. Rule limits use the units of the rules: call reference with topic "thresholds".
+whoami gives the plan and the history limit.
+For the meaning of a metric, a rule or a plan limit, call reference.
+To find why alerts came, use alert_stats, then get_alert and host_rules.
+To find why a metric changed, use explain_change.
+To test new limits, use suggest_thresholds. It replays stored data and gives the number of alerts that each limit would make.
+To find how long a process runs, use top_processes or process_history. started_at is exact. first_seen is the oldest stored time.
+
 Write tools, where they exist, need a scope that the sign-in granted and a role of the user that allows the change. A tool that the caller cannot use gives a tool error when called.`
