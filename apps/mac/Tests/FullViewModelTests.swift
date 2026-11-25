@@ -83,6 +83,14 @@ final class FullViewModelTests: XCTestCase {
         XCTAssertTrue(m.isLive)
     }
 
+    func testCompareOpensProcessesTab() {
+        let m = model()
+        let ref = ProcessRef(key: "k", pid: 1, name: "n", cmd: "")
+        m.compare(ref)
+        XCTAssertEqual(m.tab, .processes)
+        XCTAssertEqual(m.offenderSelected, ref)
+    }
+
     func testSpacePinsNewestThenReturnsToLive() {
         let m = model()
         m.pinLatest(t0)

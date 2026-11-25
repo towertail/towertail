@@ -69,6 +69,7 @@ struct WorkbenchTabBar: View {
         func body(content: Content) -> some View {
             content
                 .font(.system(size: 12.5, design: .monospaced))
+                .lineLimit(1).fixedSize()
                 .foregroundStyle(color)
                 .padding(.horizontal, 10).padding(.vertical, 4)
                 .background(WB.surface, in: Capsule())

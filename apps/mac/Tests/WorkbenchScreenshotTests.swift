@@ -119,4 +119,43 @@ final class WorkbenchScreenshotTests: XCTestCase {
             .environment(SamplerUpdateCoordinator(manifest: nil))
         try render(light, size: CGSize(width: 1180, height: 760), name: "workbench-overview-light", dark: false)
     }
+
+    private func window(
+        _ node: Node, vm: ServerViewModel, tab: HostTab = .overview, prepare: @escaping (FullViewModel) -> Void
+    ) -> some View {
+        let store = ServerStore()
+        store.register(vm)
+        return FullViewWindow(context: FullViewContext(hostId: node.id, metric: .cpu), initialTab: tab, prepare: prepare)
+            .environment(store)
+            .environment(ServerSettings(url: settingsURL))
+            .environment(ClientSettings(url: settingsURL))
+            .environment(NodeStore(nodes: [node], url: settingsURL))
+            .environment(SamplerUpdateCoordinator(manifest: nil))
+    }
+
+    func testProcessPanelRenders() throws {
+        let node = Node.localMac()
+        let vm = filledVM(node: node)
+        let size = CGSize(width: 1180, height: 760)
+        let nodeRef = ProcessRef(
+            key: ProcessRef.key(name: "node", cmd: "node vitest"), pid: 4410, name: "node", cmd: "node vitest"
+        )
+        let orb = ProcessRef(
+            key: ProcessRef.key(name: "OrbStack Helper", cmd: "OrbStack Helper --vm"), pid: 812,
+            name: "OrbStack Helper", cmd: "OrbStack Helper --vm"
+        )
+        let gone = ProcessRef(key: ProcessRef.key(name: "ffmpeg", cmd: "ffmpeg -i in.mov"), pid: 99, name: "ffmpeg", cmd: "ffmpeg -i in.mov")
+        try render(window(node, vm: vm) { $0.openProcess = nodeRef }, size: size, name: "panel-live")
+        try render(window(node, vm: vm) { $0.openProcess = orb }, size: size, name: "panel-live-light", dark: false)
+        try render(window(node, vm: vm) { $0.openProcess = nodeRef }, size: CGSize(width: 1180, height: 1250), name: "panel-full")
+        try render(window(node, vm: vm) {
+            $0.openProcess = nodeRef
+            $0.pin(at: Date().addingTimeInterval(-50 * 60))
+        }, size: size, name: "panel-pinned")
+        try render(window(node, vm: vm) { $0.openProcess = gone }, size: size, name: "panel-not-running")
+        try render(window(node, vm: vm, tab: .processes) { $0.openProcess = orb; $0.offenderSelected = orb }, size: size, name: "panel-processes-tab")
+        try render(window(node, vm: vm, tab: .health) { $0.openProcess = nodeRef }, size: size, name: "panel-health-tab")
+        try render(window(node, vm: vm) { _ in }, size: CGSize(width: 980, height: 640), name: "workbench-overview-narrow")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("panel-live.png").path))
+    }
 }

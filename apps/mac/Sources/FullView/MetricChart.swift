@@ -24,6 +24,7 @@ struct MetricChart: View {
     var yAxisLabel: (Double) -> String = { v in "\(Int(v * 100))%" }
     /// Formats the values of the tooltip.
     var valueFormat: (Double) -> String = { v in "\(Int((v * 100).rounded()))%" }
+    var showsTooltip = true
     /// Live drag selection (start, end dates) — not necessarily ordered.
     /// Drawn as a translucent rectangle for the span that a drag zooms to.
     var selectionRange: ClosedRange<Date>? = nil
@@ -78,7 +79,14 @@ struct MetricChart: View {
         .chartXScale(domain: xDomain)
         .chartYScale(domain: effectiveYDomain)
         .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: 5))
+            AxisMarks(values: .automatic(desiredCount: 5)) { value in
+                AxisGridLine()
+                AxisTick()
+                // A label near the right edge would be cut off.
+                if let d = value.as(Date.self), keepsLabel(d) {
+                    AxisValueLabel()
+                }
+            }
         }
         .chartYAxis {
             AxisMarks(values: .automatic(desiredCount: 4)) { value in
@@ -235,7 +243,7 @@ struct MetricChart: View {
 
     @ViewBuilder
     private func tooltipOverlay(proxy: ChartProxy, geo: GeometryProxy) -> some View {
-        if let hoverAt, let plot = proxy.plotFrame.map({ geo[$0] }), let x = proxy.position(forX: hoverAt) {
+        if showsTooltip, let hoverAt, let plot = proxy.plotFrame.map({ geo[$0] }), let x = proxy.position(forX: hoverAt) {
             let rows = series.compactMap { s in Self.nearest(in: s.points, to: hoverAt).map { (s, $0) } }
             if !rows.isEmpty {
                 let flip = x > plot.width * 0.6
@@ -259,6 +267,13 @@ struct MetricChart: View {
                 .offset(x: plot.origin.x + x, y: plot.origin.y + 4)
             }
         }
+    }
+
+    /// False for a tick so near the end of the window that its label does not fit.
+    private func keepsLabel(_ t: Date) -> Bool {
+        let span = xDomain.upperBound.timeIntervalSince(xDomain.lowerBound)
+        return t.timeIntervalSince(xDomain.lowerBound) >= span * 0.03
+            && xDomain.upperBound.timeIntervalSince(t) >= span * 0.12
     }
 
     /// The point of a sorted series that is nearest to `t`.

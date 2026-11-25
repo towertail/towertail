@@ -49,10 +49,11 @@ struct FullViewWindow: View {
     private static let olderPoints = 300
     private static let olderRefresh: TimeInterval = 30
 
-    init(context: FullViewContext, initialTab: HostTab? = nil) {
+    init(context: FullViewContext, initialTab: HostTab? = nil, prepare: ((FullViewModel) -> Void)? = nil) {
         self.context = context
         let model = FullViewModel(context: context, source: .poll)
         if let initialTab { model.tab = initialTab }
+        prepare?(model)
         _model = State(initialValue: model)
         _activeHostId = State(initialValue: context.hostId)
     }
@@ -96,8 +97,20 @@ struct FullViewWindow: View {
                     model: model, lastSample: frame.latest ?? vm.cpu.latest?.t,
                     oldest: [frame.oldest, storeOldest].compactMap { $0 }.min()
                 )
-                tabBody(vm: vm)
-                    .overlay(alignment: .top) { historyOverlay }
+                HStack(alignment: .top, spacing: 0) {
+                    tabBody(vm: vm)
+                        .overlay(alignment: .top) { historyOverlay }
+                    if let ref = model.openProcess, model.tab != .alerts {
+                        ProcessPanelHost(
+                            vm: vm, model: model, ref: ref, frame: frame,
+                            node: nodeStore.node(withId: activeHostId), onIgnore: ignoreProc
+                        )
+                        .id(ref)
+                        .padding(.trailing, 14).padding(.bottom, 12)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                    }
+                }
+                .animation(.easeOut(duration: 0.16), value: model.openProcess)
             } else {
                 ContentUnavailableView("No data", systemImage: "questionmark.circle")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -100,6 +100,7 @@ struct WBSegments<T: Hashable & Identifiable>: View {
                     Text(uppercase ? label(item).uppercased() : label(item))
                         .font(.system(size: 12, weight: .medium, design: .monospaced))
                         .tracking(uppercase ? 0.7 : 0)
+                        .lineLimit(1).fixedSize()
                         .foregroundStyle(on ? Color.primary : WB.muted)
                         .padding(.horizontal, uppercase ? 12 : 10).padding(.vertical, 4)
                         .background(on ? WB.border : .clear, in: RoundedRectangle(cornerRadius: 6))

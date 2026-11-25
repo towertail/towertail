@@ -54,7 +54,13 @@ struct TopProcessPanel: View {
     var node: Node? = nil
     var longProcs: [LongProc] = []
     var onIgnore: ((String, LongProcIgnore.Scope) -> Void)? = nil
+    /// Fewer columns, for a narrow panel (the process panel is open).
+    var compact = false
 
+    /// Below this width the full table would clip its last column.
+    private static let fullTableWidth: CGFloat = 760
+
+    @State private var width: CGFloat = 1_000
     @State private var selection: Set<String> = []
     @State private var killTarget: KillTarget?
 
@@ -75,6 +81,7 @@ struct TopProcessPanel: View {
         }
         .wbCard(fill: WB.sidebar)
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .processKillFlow(node: node, target: $killTarget)
     }
 
@@ -153,37 +160,63 @@ struct TopProcessPanel: View {
     }
 
     private var rawTable: some View {
+        compact || width < Self.fullTableWidth ? AnyView(compactTable) : AnyView(fullTable)
+    }
+
+    private var compactTable: some View {
         Table(rows, selection: $selection) {
-            TableColumn("PID") { r in
-                if let pid = r.ref.pid {
-                    PIDCell(pid: pid, name: r.ref.name, canKill: node != nil && node?.kind != .cloud) {
-                        killTarget = KillTarget(pid: pid, name: r.ref.name)
-                    }
-                }
-            }
-            .width(min: 84, ideal: 96)
+            pidColumn
             TableColumn("Process") { r in nameCell(r) }
-                .width(min: 140, ideal: 260)
+                .width(min: 100)
+            cpuColumn
+            memoryColumn
+        }
+    }
+
+    private var fullTable: some View {
+        Table(rows, selection: $selection) {
+            pidColumn
+            TableColumn("Process") { r in nameCell(r) }
+                .width(min: 120)
             TableColumn("User") { r in Text(r.user ?? "—").lineLimit(1).foregroundStyle(.secondary) }
-                .width(min: 50, ideal: 80)
-            TableColumn("CPU %") { r in cpuCell(r.cpuPct, "%.1f") }
-                .width(min: 70, ideal: 90)
-            TableColumn("Memory") { r in Text(ProcessTable.formatBytes(r.rss)).monospacedDigit() }
-                .width(min: 60, ideal: 80)
+                .width(min: 50, ideal: 76, max: 96)
+            cpuColumn
+            memoryColumn
             TableColumn("I/O") { r in
                 Text(r.ioBps.map(ProcessTable.formatIORate) ?? "—").monospacedDigit().foregroundStyle(.secondary)
             }
-            .width(min: 70, ideal: 90)
+            .width(min: 56, ideal: 72, max: 90)
             TableColumn("Threads") { r in
                 Text(r.threads.map(String.init) ?? "—").monospacedDigit().foregroundStyle(.secondary)
             }
-            .width(min: 50, ideal: 60)
+            .width(min: 48, ideal: 56, max: 64)
             TableColumn("Started") { r in
                 Text(r.started.map { ShortDuration.age(Date().timeIntervalSince($0)) + " ago" } ?? "—")
-                    .foregroundStyle(.secondary)
+                    .lineLimit(1).foregroundStyle(.secondary)
             }
-            .width(min: 60, ideal: 80)
+            .width(min: 64, ideal: 76, max: 96)
         }
+    }
+
+    private var pidColumn: some TableColumnContent<ProcessSnapshotRow, Never> {
+        TableColumn("PID") { r in
+            if let pid = r.ref.pid {
+                PIDCell(pid: pid, name: r.ref.name, canKill: node != nil && node?.kind != .cloud) {
+                    killTarget = KillTarget(pid: pid, name: r.ref.name)
+                }
+            }
+        }
+        .width(min: 84, ideal: 92, max: 110)
+    }
+
+    private var cpuColumn: some TableColumnContent<ProcessSnapshotRow, Never> {
+        TableColumn("CPU %") { r in cpuCell(r.cpuPct, "%.1f") }
+            .width(min: 64, ideal: 80, max: 96)
+    }
+
+    private var memoryColumn: some TableColumnContent<ProcessSnapshotRow, Never> {
+        TableColumn("Memory") { r in Text(ProcessTable.formatBytes(r.rss)).monospacedDigit() }
+            .width(min: 60, ideal: 76, max: 90)
     }
 
     private var aggregateTable: some View {

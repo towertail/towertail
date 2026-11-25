@@ -39,7 +39,8 @@ struct OverviewTab: View {
                         sort: Binding(get: { model.procSort }, set: { model.procSortOverride = $0 }),
                         onOpen: { model.openProcess = $0 },
                         placeholder: placeholder, total: snapshot.total, node: node,
-                        longProcs: vm.longProcs, onIgnore: onIgnore
+                        longProcs: vm.longProcs, onIgnore: onIgnore,
+                        compact: model.openProcess != nil
                     )
                 }
             }

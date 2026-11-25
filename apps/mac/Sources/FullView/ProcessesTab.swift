@@ -128,7 +128,11 @@ struct ProcessesTab: View {
             } else {
                 Table(offenders, selection: Binding(
                     get: { model.offenderSelected?.key },
-                    set: { key in model.offenderSelected = offenders.first { $0.id == key }?.ref }
+                    set: { key in
+                        let ref = offenders.first { $0.id == key }?.ref
+                        model.offenderSelected = ref
+                        if let ref { model.openProcess = ref }
+                    }
                 )) {
                     TableColumn("#") { o in Text("\(ranks[o.id] ?? 0)").foregroundStyle(.secondary).monospacedDigit() }
                         .width(28)
@@ -141,7 +145,7 @@ struct ProcessesTab: View {
                             }
                         }
                     }
-                    .width(min: 160, ideal: 280)
+                    .width(min: 120)
                     TableColumn("Avg") { o in
                         HStack(spacing: 6) {
                             RoundedRectangle(cornerRadius: 2).fill(WB.cpu.opacity(0.55))
@@ -149,19 +153,19 @@ struct ProcessesTab: View {
                             Text(String(format: "%.1f%%", o.avg)).monospacedDigit()
                         }
                     }
-                    .width(min: 80, ideal: 100)
+                    .width(min: 80, ideal: 96, max: 110)
                     TableColumn("Peak") { o in
                         Text(String(format: "%.1f%%", o.peak)).monospacedDigit().foregroundStyle(.secondary)
                     }
-                    .width(min: 60, ideal: 70)
+                    .width(min: 56, ideal: 68, max: 80)
                     TableColumn("Memory peak") { o in Text(ProcessTable.formatBytes(o.rssMax)).monospacedDigit() }
-                        .width(min: 80, ideal: 100)
+                        .width(min: 76, ideal: 90, max: 100)
                     TableColumn("Time ≥ 50% CPU") { o in
                         Text(o.highFor > 0 ? ShortDuration.long(o.highFor) : "—").monospacedDigit().foregroundStyle(.secondary)
                     }
-                    .width(min: 90, ideal: 120)
+                    .width(min: 76, ideal: 100, max: 120)
                     TableColumn("Over the window") { o in sparkline(o) }
-                        .width(min: 90, ideal: 130)
+                        .width(min: 70, ideal: 100, max: 140)
                     TableColumn("") { o in rowMenu(o) }
                         .width(34)
                 }
@@ -186,7 +190,7 @@ struct ProcessesTab: View {
 
     private func rowMenu(_ o: Offender) -> some View {
         Menu {
-            Button("Show over time") { model.offenderSelected = o.ref }
+            Button("Open process") { model.offenderSelected = o.ref; model.openProcess = o.ref }
             if !o.ref.cmd.isEmpty { Button("Copy command") { Pasteboard.copy(o.ref.cmd) } }
             if let onIgnore {
                 Divider()
