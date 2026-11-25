@@ -133,4 +133,34 @@ public sealed class CloudSessionTests : IAsyncLifetime
         _nodes.ById(plain.Id).Should().NotBeNull();
         _session.Released.Ids.Should().BeEquivalentTo([linked.Id]);
     }
+
+    [Fact]
+    public async Task TagForFollowsSignInAndFeed()
+    {
+        var ssh = new Node { DisplayName = "db", Kind = NodeKind.Ssh, SshUser = "u", SshHost = "h" };
+        _session.TagFor(ssh).Should().BeNull();
+
+        _vault.Tokens[TokenKey] = "tok-1";
+        await _session.StartAsync();
+
+        _session.TagFor(ssh).Should().Be(HostTag.SshOnly);
+        await WaitUntil(() => _session.Feed!.IsConnected);
+        _session.TagFor(Node.CloudOnly(Guid.NewGuid(), "web")).Should().Be(HostTag.Cloud);
+    }
+
+    [Fact]
+    public async Task StateChangedFiresOnSignInAndSignOut()
+    {
+        var count = 0;
+        _session.StateChanged += () => Interlocked.Increment(ref count);
+
+        await _session.Account.SendCodeAsync("a@b.co");
+        await _session.Account.VerifyAsync("123456");
+        await WaitUntil(() => _session.Feed!.IsConnected);
+        var afterSignIn = count;
+        await _session.SignOutAsync();
+
+        afterSignIn.Should().BeGreaterThan(0);
+        count.Should().BeGreaterThan(afterSignIn);
+    }
 }

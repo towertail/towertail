@@ -62,6 +62,9 @@ public sealed class CloudAccount
     public CloudBilling? Billing { get; private set; }
     public string? Token { get; private set; }
 
+    /// <summary>The email of the last sign-in. The pane shows it in the email field.</summary>
+    public string? SavedEmail => _prefs.Email;
+
     /// <summary>The email that got the last code. The code field is for this email.</summary>
     public string? PendingEmail { get; private set; }
 

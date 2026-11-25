@@ -46,6 +46,19 @@ public sealed class CloudSession : IDiskScanUpdates
 
     public event Action<Guid, DiskScanJob>? DiskScanUpdated;
 
+    /// <summary>
+    /// Raised when the sign-in, the feed or the feed state (connected, alerted hosts) changes.
+    /// It can run on any thread. A view marshals it.
+    /// </summary>
+    public event Action? StateChanged;
+
+    /// <summary>The tag of a host for the cards and the server list. See <see cref="HostTags.For"/>.</summary>
+    public HostTag? TagFor(Node node)
+    {
+        var feed = Feed;
+        return HostTags.For(node, Account.IsSignedIn, feed?.IsConnected ?? false, feed?.Alerted.Contains(node.Id) ?? false);
+    }
+
     /// <summary>Restores the sign-in. When the user is signed in, the feed starts.</summary>
     public async Task StartAsync()
     {
@@ -67,6 +80,7 @@ public sealed class CloudSession : IDiskScanUpdates
             var client = new RemoteClient(_prefs.Endpoint, token);
             feed = new CloudFeed(client, _nodes, Servers, Released, Lease, Account.HandleUnauthorized, _marshal, _log);
             feed.DiskScanUpdated += OnDiskScanUpdated;
+            feed.StateChanged += OnFeedStateChanged;
             Client = client;
             Feed = feed;
             _feedToken = token;
@@ -74,6 +88,7 @@ public sealed class CloudSession : IDiskScanUpdates
         if (old is not null || oldClient is not null) _ = Retire(old, oldClient);
         _log?.Info("cloud: start feed");
         feed.Start();
+        StateChanged?.Invoke();
     }
 
     public async Task StopFeedAsync()
@@ -89,6 +104,7 @@ public sealed class CloudSession : IDiskScanUpdates
             _feedToken = null;
         }
         await Retire(feed, client).ConfigureAwait(false);
+        StateChanged?.Invoke();
     }
 
     /// <summary>
@@ -109,6 +125,7 @@ public sealed class CloudSession : IDiskScanUpdates
             if (feed is not null)
             {
                 feed.DiskScanUpdated -= OnDiskScanUpdated;
+                feed.StateChanged -= OnFeedStateChanged;
                 await feed.StopAsync().ConfigureAwait(false);
             }
             if (client is not null) await client.DisposeAsync().ConfigureAwait(false);
@@ -118,8 +135,11 @@ public sealed class CloudSession : IDiskScanUpdates
 
     private void OnDiskScanUpdated(Guid node, DiskScanJob job) => DiskScanUpdated?.Invoke(node, job);
 
+    private void OnFeedStateChanged() => StateChanged?.Invoke();
+
     private void OnStatusChanged(CloudStatus status)
     {
+        StateChanged?.Invoke();
         switch (status)
         {
             case CloudStatus.SignedIn: StartFeed(); break;
