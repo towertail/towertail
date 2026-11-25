@@ -51,7 +51,9 @@ type ProcessQueries interface {
 
 // AlertQueries are the alert reads.
 type AlertQueries interface {
-	Alerts(ctx context.Context, r query.AlertsRequest) (wire.AlertList, error)
+	ListAlerts(ctx context.Context, q query.AlertQuery) (wire.AlertPage, error)
+	AlertDetail(ctx context.Context, orgID, id uuid.UUID) (wire.AlertDetail, error)
+	Rules(ctx context.Context, orgID, nodeID uuid.UUID) (query.RulesResult, error)
 }
 
 // Queries is the part of the query service that the tools read. A test
@@ -163,8 +165,11 @@ func New(q Queries, o Options) *Server {
 	addTool(s, readTool("host_metrics", "Host metrics", "Get the history of metrics of one host, of many hosts or of a tag: min, avg, max, last and a capped list of points for each metric. Any history metric works (see reference). With compare, each metric also has the window before the range and the change of the average. The plan can shorten the range (clamped)."), s.hostMetrics)
 	addTool(s, readTool("top_processes", "Top processes", "Get the top processes of one host, or of the fleet, by CPU, memory or disk I/O over a range. With at and a host, get the processes at one time, with PID, user and state. Each process has its start time and run time where known."), s.topProcesses)
 	addTool(s, readTool("process_history", "Process history", "Get the history of one process of a host: CPU, memory and disk I/O points, the stats of the range, the facts (PID, user, ports) and the start time. The process is a key from top_processes or a name."), s.processHistory)
-	addTool(s, readTool("alerts", "Alerts", "List the open alerts, or the recent alerts, of the fleet or of one host."), s.alerts)
-	addTool(s, readTool("disks", "Disk usage", "Get the use of each disk mount of one host and the change over a range."), s.disks)
+	addTool(s, readTool("alerts", "List alerts", "List the alerts of the fleet or of one host: the open alerts by default, or the alerts of a range. Filter by state, kind, severity and text. Each alert has its severity, state, value, peak, start and end. The result also has the counts of each state."), s.alerts)
+	addTool(s, readTool("get_alert", "Get alert", "Get one alert: its timeline (opened, changed, notified, acked, snoozed, recovered), the limits that it had, the rule that applies to its host now and the number of notifications."), s.getAlert)
+	addTool(s, readTool("host_rules", "Host rules", "Get the alert rules of the organization, or of one host: limits, sustain times, notify levels, muted metrics, the long-process rule and the notification switches. For a host, also the overrides and the effective rules with the source (org or host) of each."), s.hostRules)
+	addTool(s, readTool("disks", "Disk use", "Get the use of each disk mount of one host and the change over a range."), s.disks)
+	addTool(s, readTool("disk_scans", "Disk scans", "Get the disk scans of one host: the newest 5 jobs and, for the newest finished scan or a job_id, the file system, the 20 largest entries and the cleanup recommendations."), s.diskScans)
 	addTool(s, readTool("reference", "Reference facts", "Get the facts behind a metric, a rule or a plan limit. Topics: metrics, thresholds, alerts, long_process, history and plan."), s.reference)
 	addTool(s, readTool("whoami", "Who am I", "Get the organization, the plan, the history limit and the sign-in (token kind and role) of this connection."), s.whoami)
 	return s
@@ -289,6 +294,7 @@ func (s *Server) toolError(tool string, err error) error {
 		errors.Is(err, query.ErrHostNotFound),
 		errors.Is(err, query.ErrHostAmbiguous),
 		errors.Is(err, query.ErrProcessAmbiguous),
+		errors.Is(err, query.ErrBadAlertQuery),
 		errors.Is(err, clickhouse.ErrUnknownMetric),
 		errors.Is(err, clickhouse.ErrNoRollup):
 		return err
@@ -297,6 +303,8 @@ func (s *Server) toolError(tool string, err error) error {
 			return errors.New("alert not found")
 		}
 		return errors.New("host not found")
+	case errors.Is(err, clickhouse.ErrNoAlert):
+		return errors.New("alert not found")
 	case errors.Is(err, query.ErrProcessNotFound):
 		return errors.New("process not found")
 	case errors.Is(err, query.ErrBadSort):

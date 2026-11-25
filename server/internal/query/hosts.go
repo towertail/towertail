@@ -223,3 +223,58 @@ func (s *Service) settings(ctx context.Context, orgID uuid.UUID) (store.ServerSe
 	}
 	return s.config.GetSettings(ctx, orgID)
 }
+
+// defaultCooldown is the cooldown of the alerter when the settings have none.
+const defaultCooldown = 10 * time.Minute
+
+// NotifyFlags are the switches that a notification passes. The Host fields
+// are nil for the org rules.
+type NotifyFlags struct {
+	Enabled, Warn, Critical bool
+	HostWarn, HostCritical  *bool
+	HostSnoozedUntil        *time.Time
+}
+
+// RulesResult holds the rules of the org and, for a host, the rules of the
+// host and the rules that apply to it. Host and Effective are nil when
+// NodeID is uuid.Nil.
+type RulesResult struct {
+	Org                store.OrgRules
+	NodeID             uuid.UUID
+	Host               *store.HostRules
+	Effective          *store.EffectiveRules
+	Cooldown, Debounce time.Duration
+	Notify             NotifyFlags
+}
+
+// Rules gives the rules of the org. With a node, it also gives the rules of
+// the node and the effective rules. It returns store.ErrNotFound for a node
+// that the org does not have.
+func (s *Service) Rules(ctx context.Context, orgID, nodeID uuid.UUID) (RulesResult, error) {
+	settings, err := s.settings(ctx, orgID)
+	if err != nil {
+		return RulesResult{}, err
+	}
+	out := RulesResult{
+		Org:      settings.Rules(),
+		NodeID:   nodeID,
+		Cooldown: time.Duration(settings.NotifyCooldownSeconds) * time.Second,
+		Debounce: time.Duration(settings.NotifyDebounceSeconds) * time.Second,
+		Notify:   NotifyFlags{Enabled: settings.NotificationsEnabled, Warn: settings.NotifyWarn, Critical: settings.NotifyCritical},
+	}
+	if out.Cooldown <= 0 {
+		out.Cooldown = defaultCooldown
+	}
+	if nodeID == uuid.Nil {
+		return out, nil
+	}
+	node, err := s.node(ctx, orgID, nodeID)
+	if err != nil {
+		return RulesResult{}, err
+	}
+	host := node.Rules()
+	eff := out.Org.For(host)
+	out.Host, out.Effective = &host, &eff
+	out.Notify.HostWarn, out.Notify.HostCritical, out.Notify.HostSnoozedUntil = &node.NotifyOnWarn, &node.NotifyOnCritical, node.SnoozedUntil
+	return out, nil
+}

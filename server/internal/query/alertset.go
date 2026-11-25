@@ -39,12 +39,13 @@ const (
 	alertResolved = "resolved"
 )
 
+// The values that an alert query accepts.
 var (
-	validStates = []string{"open", "action", "resolved", "all"}
-	validTints  = []string{"critical", "warn"}
-	validKinds  = []string{"cpu", "mem", "disk", "health", "long", "nodata"}
+	AlertStates = []string{"open", "action", "resolved", "all"}
+	AlertTints  = []string{"critical", "warn"}
+	AlertKinds  = []string{"cpu", "mem", "disk", "health", "long", "nodata"}
+	AlertSorts  = []string{"sev", "title", "host", "kind", "peak", "start", "duration", "state"}
 	validFacets = []string{"state", "tint", "kind", "host"}
-	validSorts  = []string{"sev", "title", "host", "kind", "peak", "start", "duration", "state"}
 )
 
 // AlertQuery is a request for the alerts page. State is one of open (not
@@ -82,11 +83,11 @@ func (q *AlertQuery) Validate() (clamped bool, err error) {
 		got   []string
 		ok    []string
 	}{
-		{"state", []string{q.State}, validStates},
-		{"tint", q.Tints, validTints},
-		{"kind", q.Kinds, validKinds},
+		{"state", []string{q.State}, AlertStates},
+		{"tint", q.Tints, AlertTints},
+		{"kind", q.Kinds, AlertKinds},
 		{"facets", q.Facets, validFacets},
-		{"sort", []string{q.Sort}, validSorts},
+		{"sort", []string{q.Sort}, AlertSorts},
 	} {
 		for _, v := range c.got {
 			if !slices.Contains(c.ok, v) {

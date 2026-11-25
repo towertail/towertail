@@ -206,7 +206,7 @@ func (s *Server) getHost(ctx context.Context, _ *sdk.CallToolRequest, in GetHost
 		}
 	}
 	for _, a := range d.OpenAlerts {
-		out.OpenAlerts = append(out.OpenAlerts, newAlertItem(a, d.Node.DisplayName))
+		out.OpenAlerts = append(out.OpenAlerts, newAlertItem(a, d.Node.DisplayName, s.now().UTC()))
 	}
 	for _, m := range slices.Concat(store.UsageMetrics, store.HealthMetrics) {
 		p := d.Effective.Thresholds.Pair(m)

@@ -598,10 +598,10 @@
           "items": {
             "additionalProperties": false,
             "properties": {
-              "acked_at": {
+              "acked_by": {
                 "type": "string"
               },
-              "acked_by": {
+              "end": {
                 "type": "string"
               },
               "host": {
@@ -619,13 +619,70 @@
               "metric": {
                 "type": "string"
               },
+              "peak": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "proc": {
+                "additionalProperties": false,
+                "properties": {
+                  "command": {
+                    "type": "string"
+                  },
+                  "cpu_pct": {
+                    "type": "number"
+                  },
+                  "cwd": {
+                    "type": "string"
+                  },
+                  "high_since": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "parent": {
+                    "type": "string"
+                  },
+                  "pid": {
+                    "maximum": 2147483647,
+                    "minimum": -2147483648,
+                    "type": "integer"
+                  },
+                  "repo": {
+                    "type": "string"
+                  },
+                  "started_at": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "key",
+                  "pid",
+                  "name",
+                  "command",
+                  "cpu_pct"
+                ],
+                "type": [
+                  "null",
+                  "object"
+                ]
+              },
+              "severity": {
+                "type": "string"
+              },
               "snoozed_until": {
                 "type": "string"
               },
               "start": {
                 "type": "string"
               },
-              "tint": {
+              "state": {
                 "type": "string"
               },
               "value": {
@@ -638,7 +695,8 @@
               "host_id",
               "kind",
               "metric",
-              "tint",
+              "severity",
+              "state",
               "value",
               "start"
             ],
@@ -1281,22 +1339,62 @@
       "idempotentHint": true,
       "openWorldHint": false,
       "readOnlyHint": true,
-      "title": "Alerts"
+      "title": "List alerts"
     },
-    "description": "List the open alerts, or the recent alerts, of the fleet or of one host.",
+    "description": "List the alerts of the fleet or of one host: the open alerts by default, or the alerts of a range. Filter by state, kind, severity and text. Each alert has its severity, state, value, peak, start and end. The result also has the counts of each state.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
-        "days": {
-          "description": "for recent alerts: how many days back, 1 to 90. Default 7.",
-          "type": "integer"
+        "from": {
+          "description": "start of the range in RFC 3339. Use it with to, instead of range.",
+          "type": "string"
         },
         "host": {
           "description": "host ID or name. Empty means the whole fleet.",
           "type": "string"
         },
+        "kind": {
+          "description": "keep these kinds: cpu, mem, disk, health, long (long-running process) or nodata",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "limit": {
+          "description": "most alerts to return, 1 to 100. Default 50.",
+          "type": "integer"
+        },
+        "q": {
+          "description": "text to find in the host name, the metric and the process name or command",
+          "type": "string"
+        },
+        "range": {
+          "description": "span up to now, for example 24h or 7d. Alerts that overlap the range count. At most 90d. Default 7d. Do not use with from.",
+          "type": "string"
+        },
+        "sort": {
+          "description": "sev (default), start, peak, duration, title, host, kind or state. The number sorts give the highest first. The text sorts give A to Z.",
+          "type": "string"
+        },
         "state": {
-          "description": "open (default) or recent. Recent alerts also include the changes back to ok.",
+          "description": "open (not resolved, default), action (open, not acked, not snoozed), resolved or all",
+          "type": "string"
+        },
+        "tint": {
+          "description": "keep these severities (the worst level of the alert): critical or warn",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "to": {
+          "description": "end of the range in RFC 3339. Default now.",
           "type": "string"
         }
       },
@@ -1310,10 +1408,10 @@
           "items": {
             "additionalProperties": false,
             "properties": {
-              "acked_at": {
+              "acked_by": {
                 "type": "string"
               },
-              "acked_by": {
+              "end": {
                 "type": "string"
               },
               "host": {
@@ -1331,13 +1429,70 @@
               "metric": {
                 "type": "string"
               },
+              "peak": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "proc": {
+                "additionalProperties": false,
+                "properties": {
+                  "command": {
+                    "type": "string"
+                  },
+                  "cpu_pct": {
+                    "type": "number"
+                  },
+                  "cwd": {
+                    "type": "string"
+                  },
+                  "high_since": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "parent": {
+                    "type": "string"
+                  },
+                  "pid": {
+                    "maximum": 2147483647,
+                    "minimum": -2147483648,
+                    "type": "integer"
+                  },
+                  "repo": {
+                    "type": "string"
+                  },
+                  "started_at": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "key",
+                  "pid",
+                  "name",
+                  "command",
+                  "cpu_pct"
+                ],
+                "type": [
+                  "null",
+                  "object"
+                ]
+              },
+              "severity": {
+                "type": "string"
+              },
               "snoozed_until": {
                 "type": "string"
               },
               "start": {
                 "type": "string"
               },
-              "tint": {
+              "state": {
                 "type": "string"
               },
               "value": {
@@ -1350,7 +1505,8 @@
               "host_id",
               "kind",
               "metric",
-              "tint",
+              "severity",
+              "state",
               "value",
               "start"
             ],
@@ -1363,14 +1519,54 @@
         },
         "clamped": {
           "type": "boolean"
+        },
+        "counts": {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "type": "integer"
+            },
+            "all": {
+              "type": "integer"
+            },
+            "open": {
+              "type": "integer"
+            },
+            "resolved": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "open",
+            "action",
+            "resolved",
+            "all"
+          ],
+          "type": "object"
+        },
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "total": {
+          "type": "integer"
+        },
+        "truncated": {
+          "type": "boolean"
         }
       },
       "required": [
+        "from",
+        "to",
+        "total",
+        "counts",
         "alerts"
       ],
       "type": "object"
     },
-    "title": "Alerts"
+    "title": "List alerts"
   },
   {
     "annotations": {
@@ -1378,7 +1574,881 @@
       "idempotentHint": true,
       "openWorldHint": false,
       "readOnlyHint": true,
-      "title": "Disk usage"
+      "title": "Get alert"
+    },
+    "description": "Get one alert: its timeline (opened, changed, notified, acked, snoozed, recovered), the limits that it had, the rule that applies to its host now and the number of notifications.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "alert_id": {
+          "description": "alert ID, from the alerts tool",
+          "type": "string"
+        }
+      },
+      "required": [
+        "alert_id"
+      ],
+      "type": "object"
+    },
+    "name": "get_alert",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "alert": {
+          "additionalProperties": false,
+          "properties": {
+            "acked_by": {
+              "type": "string"
+            },
+            "end": {
+              "type": "string"
+            },
+            "host": {
+              "type": "string"
+            },
+            "host_id": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "metric": {
+              "type": "string"
+            },
+            "peak": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "proc": {
+              "additionalProperties": false,
+              "properties": {
+                "command": {
+                  "type": "string"
+                },
+                "cpu_pct": {
+                  "type": "number"
+                },
+                "cwd": {
+                  "type": "string"
+                },
+                "high_since": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "parent": {
+                  "type": "string"
+                },
+                "pid": {
+                  "maximum": 2147483647,
+                  "minimum": -2147483648,
+                  "type": "integer"
+                },
+                "repo": {
+                  "type": "string"
+                },
+                "started_at": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key",
+                "pid",
+                "name",
+                "command",
+                "cpu_pct"
+              ],
+              "type": [
+                "null",
+                "object"
+              ]
+            },
+            "severity": {
+              "type": "string"
+            },
+            "snoozed_until": {
+              "type": "string"
+            },
+            "start": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "value": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "id",
+            "host",
+            "host_id",
+            "kind",
+            "metric",
+            "severity",
+            "state",
+            "value",
+            "start"
+          ],
+          "type": "object"
+        },
+        "limits": {
+          "additionalProperties": false,
+          "properties": {
+            "critical": {
+              "type": "number"
+            },
+            "unit": {
+              "type": "string"
+            },
+            "warn": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "warn",
+            "critical"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "notifications": {
+          "type": "integer"
+        },
+        "rule_now": {
+          "additionalProperties": false,
+          "properties": {
+            "cpu_pct": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "critical": {
+              "type": [
+                "null",
+                "number"
+              ]
+            },
+            "kind": {
+              "type": "string"
+            },
+            "muted": {
+              "type": "boolean"
+            },
+            "notify": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "sustain_seconds": {
+              "type": "integer"
+            },
+            "unit": {
+              "type": "string"
+            },
+            "warn": {
+              "type": [
+                "null",
+                "number"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "sustain_seconds",
+            "notify",
+            "source"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "timeline": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "tint": {
+                "type": "string"
+              },
+              "ts": {
+                "type": "string"
+              },
+              "until": {
+                "type": "string"
+              },
+              "user": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "ts",
+              "kind"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        }
+      },
+      "required": [
+        "alert",
+        "notifications",
+        "timeline"
+      ],
+      "type": "object"
+    },
+    "title": "Get alert"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "title": "Host rules"
+    },
+    "description": "Get the alert rules of the organization, or of one host: limits, sustain times, notify levels, muted metrics, the long-process rule and the notification switches. For a host, also the overrides and the effective rules with the source (org or host) of each.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "description": "host ID or name. Empty gives the rules of the organization only.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "host_rules",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "effective": {
+          "additionalProperties": false,
+          "properties": {
+            "alerts": {
+              "additionalProperties": false,
+              "properties": {
+                "cpu": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "notify": {
+                      "type": "string"
+                    },
+                    "sustain_seconds": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "sustain_seconds",
+                    "notify"
+                  ],
+                  "type": "object"
+                },
+                "disk": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "notify": {
+                      "type": "string"
+                    },
+                    "sustain_seconds": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "sustain_seconds",
+                    "notify"
+                  ],
+                  "type": "object"
+                },
+                "health": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "notify": {
+                      "type": "string"
+                    },
+                    "sustain_seconds": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "sustain_seconds",
+                    "notify"
+                  ],
+                  "type": "object"
+                },
+                "mem": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "notify": {
+                      "type": "string"
+                    },
+                    "sustain_seconds": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "sustain_seconds",
+                    "notify"
+                  ],
+                  "type": "object"
+                },
+                "tolerance": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "cpu",
+                "mem",
+                "disk",
+                "health",
+                "tolerance"
+              ],
+              "type": "object"
+            },
+            "ignore": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "long_proc": {
+              "additionalProperties": false,
+              "properties": {
+                "cpu_pct": {
+                  "type": "number"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "ignore": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                },
+                "notify": {
+                  "type": "string"
+                },
+                "sustain_seconds": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "enabled",
+                "cpu_pct",
+                "sustain_seconds",
+                "notify",
+                "ignore"
+              ],
+              "type": "object"
+            },
+            "muted": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "sources": {
+              "additionalProperties": false,
+              "properties": {
+                "alerts": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "long_proc": {
+                  "type": "string"
+                },
+                "muted": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "thresholds": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                }
+              },
+              "required": [
+                "thresholds",
+                "alerts",
+                "muted",
+                "long_proc"
+              ],
+              "type": "object"
+            },
+            "thresholds": {
+              "additionalProperties": {
+                "additionalProperties": false,
+                "properties": {
+                  "critical": {
+                    "type": "number"
+                  },
+                  "warn": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "warn",
+                  "critical"
+                ],
+                "type": "object"
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "thresholds",
+            "alerts",
+            "muted",
+            "long_proc",
+            "ignore",
+            "sources"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "host": {
+          "additionalProperties": false,
+          "properties": {
+            "notify_critical": {
+              "type": "boolean"
+            },
+            "notify_warn": {
+              "type": "boolean"
+            },
+            "overrides": {
+              "additionalProperties": false,
+              "properties": {
+                "alerts": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "cpu": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "notify": {
+                          "type": "string"
+                        },
+                        "sustain_seconds": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "sustain_seconds",
+                        "notify"
+                      ],
+                      "type": [
+                        "null",
+                        "object"
+                      ]
+                    },
+                    "disk": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "notify": {
+                          "type": "string"
+                        },
+                        "sustain_seconds": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "sustain_seconds",
+                        "notify"
+                      ],
+                      "type": [
+                        "null",
+                        "object"
+                      ]
+                    },
+                    "health": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "notify": {
+                          "type": "string"
+                        },
+                        "sustain_seconds": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "sustain_seconds",
+                        "notify"
+                      ],
+                      "type": [
+                        "null",
+                        "object"
+                      ]
+                    },
+                    "mem": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "notify": {
+                          "type": "string"
+                        },
+                        "sustain_seconds": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "sustain_seconds",
+                        "notify"
+                      ],
+                      "type": [
+                        "null",
+                        "object"
+                      ]
+                    },
+                    "tolerance": {
+                      "type": [
+                        "null",
+                        "number"
+                      ]
+                    }
+                  },
+                  "type": [
+                    "null",
+                    "object"
+                  ]
+                },
+                "ignored_procs": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                },
+                "long_proc": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "cpu_pct": {
+                      "type": "number"
+                    },
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "ignore": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": [
+                        "null",
+                        "array"
+                      ]
+                    },
+                    "notify": {
+                      "type": "string"
+                    },
+                    "sustain_seconds": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "enabled",
+                    "cpu_pct",
+                    "sustain_seconds",
+                    "notify",
+                    "ignore"
+                  ],
+                  "type": [
+                    "null",
+                    "object"
+                  ]
+                },
+                "muted": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                },
+                "thresholds": {
+                  "additionalProperties": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "critical": {
+                        "type": "number"
+                      },
+                      "warn": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "warn",
+                      "critical"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "object"
+                }
+              },
+              "required": [
+                "thresholds",
+                "muted",
+                "ignored_procs"
+              ],
+              "type": "object"
+            },
+            "snoozed_until": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "overrides",
+            "notify_warn",
+            "notify_critical"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        },
+        "org": {
+          "additionalProperties": false,
+          "properties": {
+            "alerts": {
+              "additionalProperties": false,
+              "properties": {
+                "cpu": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "notify": {
+                      "type": "string"
+                    },
+                    "sustain_seconds": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "sustain_seconds",
+                    "notify"
+                  ],
+                  "type": "object"
+                },
+                "disk": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "notify": {
+                      "type": "string"
+                    },
+                    "sustain_seconds": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "sustain_seconds",
+                    "notify"
+                  ],
+                  "type": "object"
+                },
+                "health": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "notify": {
+                      "type": "string"
+                    },
+                    "sustain_seconds": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "sustain_seconds",
+                    "notify"
+                  ],
+                  "type": "object"
+                },
+                "mem": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "notify": {
+                      "type": "string"
+                    },
+                    "sustain_seconds": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "sustain_seconds",
+                    "notify"
+                  ],
+                  "type": "object"
+                },
+                "tolerance": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "cpu",
+                "mem",
+                "disk",
+                "health",
+                "tolerance"
+              ],
+              "type": "object"
+            },
+            "cooldown_seconds": {
+              "type": "integer"
+            },
+            "debounce_seconds": {
+              "type": "integer"
+            },
+            "long_proc": {
+              "additionalProperties": false,
+              "properties": {
+                "cpu_pct": {
+                  "type": "number"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "ignore": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                },
+                "notify": {
+                  "type": "string"
+                },
+                "sustain_seconds": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "enabled",
+                "cpu_pct",
+                "sustain_seconds",
+                "notify",
+                "ignore"
+              ],
+              "type": "object"
+            },
+            "muted": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "notify_flags": {
+              "additionalProperties": false,
+              "properties": {
+                "critical": {
+                  "type": "boolean"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "warn": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "enabled",
+                "warn",
+                "critical"
+              ],
+              "type": "object"
+            },
+            "thresholds": {
+              "additionalProperties": {
+                "additionalProperties": false,
+                "properties": {
+                  "critical": {
+                    "type": "number"
+                  },
+                  "warn": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "warn",
+                  "critical"
+                ],
+                "type": "object"
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "thresholds",
+            "alerts",
+            "muted",
+            "long_proc",
+            "cooldown_seconds",
+            "debounce_seconds",
+            "notify_flags"
+          ],
+          "type": "object"
+        },
+        "units": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "org",
+        "units"
+      ],
+      "type": "object"
+    },
+    "title": "Host rules"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "title": "Disk use"
     },
     "description": "Get the use of each disk mount of one host and the change over a range.",
     "inputSchema": {
@@ -1467,7 +2537,200 @@
       ],
       "type": "object"
     },
-    "title": "Disk usage"
+    "title": "Disk use"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true,
+      "title": "Disk scans"
+    },
+    "description": "Get the disk scans of one host: the newest 5 jobs and, for the newest finished scan or a job_id, the file system, the 20 largest entries and the cleanup recommendations.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "description": "host ID or name",
+          "type": "string"
+        },
+        "job_id": {
+          "description": "scan job ID, from an earlier call. Default: the newest finished scan.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "host"
+      ],
+      "type": "object"
+    },
+    "name": "disk_scans",
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "host_id": {
+          "type": "string"
+        },
+        "jobs": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "created": {
+                "type": "string"
+              },
+              "error": {
+                "type": "string"
+              },
+              "finished": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "result_bytes": {
+                "type": "integer"
+              },
+              "root": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "state",
+              "root",
+              "created",
+              "result_bytes"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "null",
+            "array"
+          ]
+        },
+        "result": {
+          "additionalProperties": false,
+          "properties": {
+            "fs": {
+              "additionalProperties": false,
+              "properties": {
+                "free": {
+                  "type": "integer"
+                },
+                "mount": {
+                  "type": "string"
+                },
+                "total": {
+                  "type": "integer"
+                },
+                "used": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "mount",
+                "total",
+                "used",
+                "free"
+              ],
+              "type": [
+                "null",
+                "object"
+              ]
+            },
+            "job_id": {
+              "type": "string"
+            },
+            "recs": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "bytes": {
+                    "type": "integer"
+                  },
+                  "elevated": {
+                    "type": "boolean"
+                  },
+                  "group": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "group",
+                  "label",
+                  "path",
+                  "bytes"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "root": {
+              "type": "string"
+            },
+            "scanned_bytes": {
+              "type": "integer"
+            },
+            "top": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "bytes": {
+                    "type": "integer"
+                  },
+                  "path": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path",
+                  "bytes"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            }
+          },
+          "required": [
+            "job_id",
+            "root",
+            "scanned_bytes",
+            "top",
+            "recs"
+          ],
+          "type": [
+            "null",
+            "object"
+          ]
+        }
+      },
+      "required": [
+        "host",
+        "host_id",
+        "jobs"
+      ],
+      "type": "object"
+    },
+    "title": "Disk scans"
   },
   {
     "annotations": {

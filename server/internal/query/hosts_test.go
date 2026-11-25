@@ -165,3 +165,49 @@ func TestHistoryDays(t *testing.T) {
 		t.Errorf("HistoryDays with no limits = %d, want 0", got)
 	}
 }
+
+func TestRules(t *testing.T) {
+	id := uuid.New()
+	snooze := now.Add(time.Hour)
+	node := store.Node{
+		ID: id, DisplayName: "web", NotifyOnWarn: true, SnoozedUntil: &snooze,
+		ThresholdOverrides: &store.ThresholdOverrides{CPU: &store.ThresholdPair{Warn: 0.5, Critical: 0.6}},
+	}
+	settings := store.DefaultServerSettings()
+	settings.NotifyCooldownSeconds = 0
+	cfg := fakeConfig{nodes: []store.Node{node}, settings: settings}
+	s := newService(&fakeReader{}, cfg.nodes, 0)
+	s.config = cfg
+
+	org, err := s.Rules(context.Background(), uuid.New(), uuid.Nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if org.Host != nil || org.Effective != nil || org.Notify.HostWarn != nil || org.Org.Thresholds.CPUWarn != 0.75 {
+		t.Errorf("org rules = %+v, want the org rules only", org)
+	}
+	if org.Cooldown != defaultCooldown || org.Debounce != time.Duration(settings.NotifyDebounceSeconds)*time.Second {
+		t.Errorf("cooldown = %v, debounce = %v", org.Cooldown, org.Debounce)
+	}
+	if org.Notify.Enabled != settings.NotificationsEnabled || org.Notify.Warn != settings.NotifyWarn {
+		t.Errorf("notify = %+v", org.Notify)
+	}
+
+	got, err := s.Rules(context.Background(), uuid.New(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Host == nil || got.Effective == nil || got.Effective.Thresholds.CPUWarn != 0.5 || got.Effective.Sources.Thresholds[store.MetricCPU] != store.SourceHost {
+		t.Fatalf("host rules = %+v", got)
+	}
+	if got.Org.Thresholds.CPUWarn != 0.75 {
+		t.Errorf("org cpu warn = %v, want 0.75", got.Org.Thresholds.CPUWarn)
+	}
+	n := got.Notify
+	if n.HostWarn == nil || !*n.HostWarn || n.HostCritical == nil || *n.HostCritical || n.HostSnoozedUntil == nil || !n.HostSnoozedUntil.Equal(snooze) {
+		t.Errorf("host notify flags = %+v", n)
+	}
+	if _, err := s.Rules(context.Background(), uuid.New(), uuid.New()); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("unknown node: err = %v, want ErrNotFound", err)
+	}
+}

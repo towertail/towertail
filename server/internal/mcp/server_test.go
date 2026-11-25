@@ -51,13 +51,20 @@ type fakeQueries struct {
 	// prevOutside gives an empty previous window, as when the plan cuts it.
 	prevOutside bool
 	// hostPoints overrides points for one host.
-	hostPoints map[uuid.UUID][]clickhouse.HistoryPoint
-	gotHist    query.HistoryMultiRequest
-	gotProc    query.ProcQuery
-	gotAlrt    query.AlertsRequest
-	days       int
-	detail     *query.HostDetail
-	summary    query.FleetSummary
+	hostPoints  map[uuid.UUID][]clickhouse.HistoryPoint
+	gotHist     query.HistoryMultiRequest
+	gotProc     query.ProcQuery
+	alertPage   wire.AlertPage
+	gotAlertQ   query.AlertQuery
+	alertDetail wire.AlertDetail
+	alertErr    error
+	gotAlertID  uuid.UUID
+	rules       *query.RulesResult
+	rulesErr    error
+	gotRulesFor uuid.UUID
+	days        int
+	detail      *query.HostDetail
+	summary     query.FleetSummary
 }
 
 func (f *fakeQueries) seen(org uuid.UUID) { f.orgs = append(f.orgs, org) }
@@ -165,12 +172,53 @@ func (f *fakeQueries) ProcessHistory(_ context.Context, r query.ProcessHistoryRe
 	return f.procHist, f.procHistErr
 }
 
-func (f *fakeQueries) Alerts(_ context.Context, r query.AlertsRequest) (wire.AlertList, error) {
-	f.seen(r.OrgID)
-	f.gotAlrt = r
-	return wire.AlertList{Alerts: []wire.Alert{
-		{ID: uuid.New(), NodeID: f.nodes[0].ID, Kind: "threshold", Metric: "cpu", Tint: wire.Tint("crit"), TS: now, Value: 97},
-	}}, nil
+func (f *fakeQueries) ListAlerts(_ context.Context, q query.AlertQuery) (wire.AlertPage, error) {
+	f.seen(q.OrgID)
+	f.gotAlertQ = q
+	page := f.alertPage
+	if page.Alerts == nil {
+		start := now.Add(-time.Hour)
+		peak := 0.99
+		page = wire.AlertPage{
+			Total: 1, Counts: wire.AlertCounts{Open: 1, Action: 1, All: 3}, From: q.From, To: q.To, Clamped: true,
+			Alerts: []wire.Alert{{
+				ID: uuid.New(), NodeID: f.nodes[0].ID, NodeName: f.nodes[0].DisplayName, Kind: "threshold_crossed", Metric: "cpu",
+				Tint: wire.TintCritical, Severity: wire.TintCritical, State: "open", TS: now, Start: &start, Value: 0.97, Peak: &peak,
+			}},
+		}
+	}
+	return page, nil
+}
+
+func (f *fakeQueries) AlertDetail(_ context.Context, org, id uuid.UUID) (wire.AlertDetail, error) {
+	f.seen(org)
+	f.gotAlertID = id
+	return f.alertDetail, f.alertErr
+}
+
+func (f *fakeQueries) Rules(_ context.Context, org, node uuid.UUID) (query.RulesResult, error) {
+	f.seen(org)
+	f.gotRulesFor = node
+	if f.rules != nil || f.rulesErr != nil {
+		if f.rules == nil {
+			return query.RulesResult{}, f.rulesErr
+		}
+		return *f.rules, f.rulesErr
+	}
+	settings := store.DefaultServerSettings()
+	res := query.RulesResult{
+		Org: settings.Rules(), NodeID: node, Cooldown: 10 * time.Minute, Debounce: time.Duration(settings.NotifyDebounceSeconds) * time.Second,
+		Notify: query.NotifyFlags{Enabled: settings.NotificationsEnabled, Warn: settings.NotifyWarn, Critical: settings.NotifyCritical},
+	}
+	for _, n := range f.nodes {
+		if n.ID == node {
+			h := n.Rules()
+			eff := res.Org.For(h)
+			res.Host, res.Effective = &h, &eff
+			res.Notify.HostWarn, res.Notify.HostCritical, res.Notify.HostSnoozedUntil = &n.NotifyOnWarn, &n.NotifyOnCritical, n.SnoozedUntil
+		}
+	}
+	return res, nil
 }
 
 func (f *fakeQueries) Disks(_ context.Context, org, node uuid.UUID, from, to time.Time) (query.DiskResult, error) {
@@ -311,7 +359,7 @@ func TestTools(t *testing.T) {
 		}
 	}
 	slices.Sort(names)
-	want := []string{"alerts", "disks", "fleet_summary", "get_host", "host_metrics", "list_hosts", "process_history", "reference", "top_processes", "whoami"}
+	want := []string{"alerts", "disk_scans", "disks", "fleet_summary", "get_alert", "get_host", "host_metrics", "host_rules", "list_hosts", "process_history", "reference", "top_processes", "whoami"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("tools = %v, want %v", names, want)
 	}
@@ -350,16 +398,12 @@ func TestTools(t *testing.T) {
 		}
 	})
 	t.Run("alerts", func(t *testing.T) {
-		out := decode[AlertsOut](t, call(t, cs, "alerts", map[string]any{"state": "recent", "days": 3, "host": "web-1"}))
-		if len(out.Alerts) != 1 || out.Alerts[0].Host != "web-1" || out.Alerts[0].Tint != "crit" || out.Alerts[0].Start != "2026-11-20T12:00:00Z" {
+		out := decode[AlertsOut](t, call(t, cs, "alerts", map[string]any{"state": "action", "host": "web-1"}))
+		if len(out.Alerts) != 1 || out.Alerts[0].Host != "web-1" || out.Alerts[0].Severity != "critical" || out.Alerts[0].Start != "2026-11-20T11:00:00Z" {
 			t.Fatalf("out = %+v", out)
 		}
-		if f.gotAlrt.Open || f.gotAlrt.Days != 3 || f.gotAlrt.NodeID != f.nodes[0].ID || f.gotAlrt.OrgID != orgA {
-			t.Fatalf("request = %+v", f.gotAlrt)
-		}
-		decode[AlertsOut](t, call(t, cs, "alerts", nil))
-		if !f.gotAlrt.Open {
-			t.Fatal("default state is not open")
+		if f.gotAlertQ.State != "action" || f.gotAlertQ.OrgID != orgA || len(f.gotAlertQ.Hosts) != 1 || f.gotAlertQ.Hosts[0] != f.nodes[0].ID {
+			t.Fatalf("request = %+v", f.gotAlertQ)
 		}
 	})
 	t.Run("disks", func(t *testing.T) {
@@ -400,7 +444,7 @@ func TestToolInputErrors(t *testing.T) {
 		{"resolution", "host_metrics", map[string]any{"host": "web-1", "resolution": "2m"}, "resolution must be"},
 		{"sort", "list_hosts", map[string]any{"sort": "bogus"}, "sort must be"},
 		{"order", "top_processes", map[string]any{"by": "disk"}, "by must be cpu, mem or io"},
-		{"state", "alerts", map[string]any{"state": "closed"}, "state must be"},
+		{"state", "alerts", map[string]any{"state": "closed"}, "state must be one of"},
 		{"at without host", "top_processes", map[string]any{"at": "now-1h"}, "at needs host"},
 		{"bad at", "top_processes", map[string]any{"host": "web-1", "at": "soon"}, "at must be"},
 		{"at and range", "top_processes", map[string]any{"host": "web-1", "at": "now", "range": "1h"}, "not together"},
@@ -473,6 +517,9 @@ func TestMCPOrgScope(t *testing.T) {
 			{"host_metrics", map[string]any{"tag": "web", "compare": true}},
 			{"top_processes", map[string]any{"host": "web-1", "at": "now-2h"}},
 			{"process_history", map[string]any{"host": "web-1", "process": "api"}},
+			{"alerts", map[string]any{"host": "web-1"}},
+			{"host_rules", map[string]any{"host": "web-1"}},
+			{"disks", map[string]any{"host": "web-1"}},
 		} {
 			f.orgs = nil
 			if res := call(t, cs, tc.tool, tc.args); res.IsError {
@@ -554,7 +601,7 @@ func TestToolsRegistrationOrder(t *testing.T) {
 	for _, tl := range newServer(newFake()).Tools(ToolSetV1) {
 		names = append(names, tl.Name)
 	}
-	want := []string{"fleet_summary", "list_hosts", "get_host", "host_metrics", "top_processes", "process_history", "alerts", "disks", "reference", "whoami"}
+	want := []string{"fleet_summary", "list_hosts", "get_host", "host_metrics", "top_processes", "process_history", "alerts", "get_alert", "host_rules", "disks", "disk_scans", "reference", "whoami"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("names = %v, want %v", names, want)
 	}
