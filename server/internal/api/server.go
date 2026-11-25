@@ -62,6 +62,7 @@ type Server struct {
 	leases        LeaseIndex
 	roles         Roles
 	ranks         *rankCache
+	netRates      *netRates
 	query         *query.Service
 	apiKeyRates   *keyLimiters
 	mcp           *mcp.Server
@@ -175,6 +176,7 @@ func New(d Deps) *Server {
 		leases:        d.Leases,
 		roles:         d.Roles,
 		ranks:         newRankCache(),
+		netRates:      newNetRates(),
 		query:         query.NewService(reader, d.Store, d.Limits),
 		apiKeyRates:   newKeyLimiters(d.Config.HTTP.APIKeyRateLimitRPS, d.Config.HTTP.APIKeyRateLimitBurst),
 	}

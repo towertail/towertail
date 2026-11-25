@@ -84,6 +84,7 @@ func (s *Server) handleIngest(c echo.Context) error {
 			}
 			continue
 		}
+		s.netRates.apply(*t.NodeID, &bundle, &sample)
 		bundles = append(bundles, bundle)
 		samples = append(samples, sample)
 		lines = append(lines, append([]byte(nil), line...))

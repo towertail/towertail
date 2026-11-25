@@ -127,6 +127,8 @@ Base path `/v1`. Authed unless otherwise marked.
 
 A sampler token can use the disk-scan endpoints only for jobs of its own node. Other jobs give 403.
 
+The sampler sends `net.rx_bps` and `net.tx_bps` as 0, with the counters `rx_cum` and `tx_cum`. At ingest, the server sets the two rates from the counter delta to the last sample of the node. The first sample after a server start, a gap over 5 minutes and a counter reset give 0. The stored row and the stream frames have the rates.
+
 ### 3.0 Ingest reply (orders for the sampler)
 
 The server sends its orders for a sampler in the reply to `POST /v1/ingest/samples`. The sampler needs no WebSocket and no extra poll. The server checks the node of the token before it reads the body.
