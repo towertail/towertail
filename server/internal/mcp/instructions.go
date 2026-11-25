@@ -23,3 +23,8 @@ To test new limits, use suggest_thresholds. It replays stored data and gives the
 To find how long a process runs, use top_processes or process_history. started_at is exact. first_seen is the oldest stored time.
 
 Write tools change alerts or rules. They need a write scope, a role and the org setting Changes by AI. A tool that the caller cannot use gives a tool error. set_thresholds, ignore_process and an org mute_metric save a rules backup. The result gives change.backup_id. undo_rules_change restores it.`
+
+// Instructions gives the facts text of the MCP initialize result. The
+// embedded assistant uses it too, so it has the same facts as external
+// clients.
+func Instructions() string { return instructions }
