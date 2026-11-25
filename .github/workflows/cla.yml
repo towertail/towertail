@@ -18,6 +18,8 @@ permissions:
 
 jobs:
   CLAAssistant:
+    # Dependabot runs get no repository secrets, so CLA_PAT is empty.
+    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: CLA Assistant

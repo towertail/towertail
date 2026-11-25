@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 # Build context is server/ (see server/docker/docker-compose.yaml).
 # The build stage runs on the host arch and cross-compiles (no emulation).
-FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
