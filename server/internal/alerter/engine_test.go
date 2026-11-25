@@ -14,6 +14,15 @@ import (
 	"github.com/towertail/towertail/server/wire"
 )
 
+// instantSettings are the default settings with no sustain time and a
+// notify level of all, so a test sees each change at once.
+func instantSettings() store.ServerSettings {
+	s := store.DefaultServerSettings()
+	rule := store.AlertRule{Notify: store.NotifyAll}
+	s.Alerts.CPU, s.Alerts.Mem, s.Alerts.Disk, s.Alerts.Health = rule, rule, rule, rule
+	return s
+}
+
 type testClock struct {
 	mu sync.Mutex
 	t  time.Time
@@ -99,21 +108,21 @@ func (f *fakeConfig) GetNode(_ context.Context, _, id uuid.UUID) (store.Node, er
 func TestAlerter_EscalatesImmediately(t *testing.T) {
 	clock := &testClock{t: time.Unix(1700000000, 0).UTC()}
 	sink := &capturingSink{}
-	cfg := store.DefaultServerSettings()
+	cfg := instantSettings()
 	cfg.NotifyDebounceSeconds = 60
 
 	e := New(nil, clock, sink, nopStore{}, newFakeConfig(cfg))
 	org, node := uuid.New(), uuid.New()
 
 	// Baseline OK sample.
-	e.Evaluate(context.Background(), org, node, nil, 0.10, 0.20, 0.30)
+	e.Evaluate(context.Background(), org, node, nil, Reading{CPU: 0.10, Mem: 0.20, Disk: 0.30})
 	if len(sink.snapshot()) != 0 {
 		t.Fatalf("expected no events on baseline, got %d", len(sink.snapshot()))
 	}
 
 	// Cross into critical directly — escalations fire without debounce.
 	clock.advance(10 * time.Second)
-	e.Evaluate(context.Background(), org, node, nil, 0.95, 0.10, 0.10)
+	e.Evaluate(context.Background(), org, node, nil, Reading{CPU: 0.95, Mem: 0.10, Disk: 0.10})
 	got := sink.snapshot()
 	if len(got) != 1 {
 		t.Fatalf("expected 1 event, got %d (%+v)", len(got), got)
@@ -126,28 +135,28 @@ func TestAlerter_EscalatesImmediately(t *testing.T) {
 func TestAlerter_DebouncesReturnToOK(t *testing.T) {
 	clock := &testClock{t: time.Unix(1700000000, 0).UTC()}
 	sink := &capturingSink{}
-	cfg := store.DefaultServerSettings()
+	cfg := instantSettings()
 	cfg.NotifyDebounceSeconds = 60
 	e := New(nil, clock, sink, nopStore{}, newFakeConfig(cfg))
 	org, node := uuid.New(), uuid.New()
 
 	// warn → critical transitions are immediate.
-	e.Evaluate(context.Background(), org, node, nil, 0.10, 0.10, 0.10)
-	e.Evaluate(context.Background(), org, node, nil, 0.95, 0.10, 0.10)
+	e.Evaluate(context.Background(), org, node, nil, Reading{CPU: 0.10, Mem: 0.10, Disk: 0.10})
+	e.Evaluate(context.Background(), org, node, nil, Reading{CPU: 0.95, Mem: 0.10, Disk: 0.10})
 	if len(sink.snapshot()) != 1 {
 		t.Fatalf("expected critical event first")
 	}
 
 	// Quick drop back to OK should be debounced.
 	clock.advance(5 * time.Second)
-	e.Evaluate(context.Background(), org, node, nil, 0.10, 0.10, 0.10)
+	e.Evaluate(context.Background(), org, node, nil, Reading{CPU: 0.10, Mem: 0.10, Disk: 0.10})
 	if len(sink.snapshot()) != 1 {
 		t.Errorf("expected debounce to suppress OK transition, got %d", len(sink.snapshot()))
 	}
 
 	// After debounce window, OK fires.
 	clock.advance(61 * time.Second)
-	e.Evaluate(context.Background(), org, node, nil, 0.10, 0.10, 0.10)
+	e.Evaluate(context.Background(), org, node, nil, Reading{CPU: 0.10, Mem: 0.10, Disk: 0.10})
 	events := sink.snapshot()
 	if len(events) != 2 {
 		t.Fatalf("expected 2 events after debounce, got %d", len(events))
@@ -160,7 +169,7 @@ func TestAlerter_DebouncesReturnToOK(t *testing.T) {
 func TestAlerter_PerNodeThresholdsOverrideGlobal(t *testing.T) {
 	clock := &testClock{t: time.Unix(1700000000, 0).UTC()}
 	sink := &capturingSink{}
-	cfg := store.DefaultServerSettings()
+	cfg := instantSettings()
 	cfg.NotifyDebounceSeconds = 60
 	e := New(nil, clock, sink, nopStore{}, newFakeConfig(cfg))
 	org, nodeID := uuid.New(), uuid.New()
@@ -172,8 +181,8 @@ func TestAlerter_PerNodeThresholdsOverrideGlobal(t *testing.T) {
 	}}
 
 	// 0.35 is OK under defaults (warn 0.75) but warn under stricter (warn 0.30).
-	e.Evaluate(context.Background(), org, nodeID, node, 0.10, 0.10, 0.10)
-	e.Evaluate(context.Background(), org, nodeID, node, 0.35, 0.10, 0.10)
+	e.Evaluate(context.Background(), org, nodeID, node, Reading{CPU: 0.10, Mem: 0.10, Disk: 0.10})
+	e.Evaluate(context.Background(), org, nodeID, node, Reading{CPU: 0.35, Mem: 0.10, Disk: 0.10})
 	events := sink.snapshot()
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
@@ -197,7 +206,7 @@ func TestAlerter_LongProcEvents(t *testing.T) {
 	clock := newClock()
 	sink := &capturingSink{}
 	st := &recordingStore{}
-	e := New(nil, clock, sink, st, newFakeConfig(store.DefaultServerSettings()))
+	e := New(nil, clock, sink, st, newFakeConfig(instantSettings()))
 	org, id := uuid.New(), uuid.New()
 	high := func(int) []clickhouse.ProcRow { return []clickhouse.ProcRow{orb(85)} }
 
@@ -229,7 +238,7 @@ func TestAlerter_LongProcEvents(t *testing.T) {
 }
 
 func TestAlerter_LongProcNodeRuleAndIgnoreLists(t *testing.T) {
-	cfg := store.DefaultServerSettings()
+	cfg := instantSettings()
 	cfg.LongProc.Ignore = []string{"postgres"}
 	clock := newClock()
 	sink := &capturingSink{}

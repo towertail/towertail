@@ -194,17 +194,31 @@ func (e *Engine) Expect(ctx context.Context, orgID, nodeID uuid.UUID, at time.Ti
 	}
 }
 
+// Reading is the part of one sample that the rules look at. CPU, Mem and
+// Disk are ratios from 0 to 1. At is the sample time (the server clock
+// when zero). Health is nil when the sample has no health part.
+type Reading struct {
+	At             time.Time
+	CPU, Mem, Disk float64
+	Health         *wire.HealthBrief
+}
+
 // Evaluate looks at one sample and emits events if tints change. Node
-// is optional: nil means the org thresholds and no node flags.
-func (e *Engine) Evaluate(ctx context.Context, orgID, nodeID uuid.UUID, node *store.Node, cpuPct, memRatio, maxDiskRatio float64) {
+// is optional: nil means the org rules and no node flags.
+func (e *Engine) Evaluate(ctx context.Context, orgID, nodeID uuid.UUID, node *store.Node, r Reading) {
 	cfg := e.settings(ctx, orgID)
-	thresholds := cfg.Thresholds
-	if node != nil && node.ThresholdOverrides != nil {
-		thresholds = node.ThresholdOverrides.Applied(thresholds)
+	var host store.HostRules
+	if node != nil {
+		host = node.Rules()
 	}
+	rules := cfg.Rules().For(host)
 	now := e.clock.Now()
+	at := r.At
+	if at.IsZero() {
+		at = now
+	}
 	debounce := time.Duration(cfg.NotifyDebounceSeconds) * time.Second
-	muted := cfg.MutedSet(node)
+	tolerance := rules.Alerts.Tolerance
 
 	var changes []change
 	e.stateMu.Lock()
@@ -212,22 +226,31 @@ func (e *Engine) Evaluate(ctx context.Context, orgID, nodeID uuid.UUID, node *st
 		changes = append(changes, ch)
 	}
 	for _, m := range []struct {
-		metric         string
-		value          float64
-		warn, critical float64
+		metric store.ThresholdMetric
+		value  float64
 	}{
-		{"cpu", cpuPct, thresholds.CPUWarn, thresholds.CPUCritical},
-		{"mem", memRatio, thresholds.MemWarn, thresholds.MemCritical},
-		{"disk", maxDiskRatio, thresholds.DiskWarn, thresholds.DiskCritical},
+		{store.MetricCPU, r.CPU},
+		{store.MetricMem, r.Mem},
+		{store.MetricDisk, r.Disk},
 	} {
-		k := stateKey{org: orgID, node: nodeID, metric: m.metric}
-		if muted.Has(store.ThresholdMetric(m.metric)) {
-			if ch, ok := e.muteMetric(k, now); ok {
+		k := stateKey{org: orgID, node: nodeID, metric: string(m.metric)}
+		if rules.Muted.Has(m.metric) {
+			if ch, ok := e.muteMetric(k, at); ok {
 				changes = append(changes, ch)
 			}
 			continue
 		}
-		if ch, ok := e.evalMetric(k, m.value, m.warn, m.critical, now, debounce); ok {
+		rule, _ := rules.Alerts.For(string(m.metric))
+		raw := rawTint(m.value, rules.Thresholds.Pair(m.metric))
+		if ch, ok := e.evalMetric(k, m.value, raw, rule, tolerance, at, debounce); ok {
+			changes = append(changes, ch)
+		}
+	}
+	if r.Health != nil {
+		k := stateKey{org: orgID, node: nodeID, metric: metricHealth}
+		kernelOnly := host.Thresholds != nil && host.Thresholds.MemPressure != nil
+		checks := rules.Thresholds.HealthChecks(*r.Health, rules.Muted, kernelOnly)
+		if ch, ok := e.evalHealth(k, checks, healthMuteSig(rules.Muted), rules.Alerts.Health, tolerance, at, debounce); ok {
 			changes = append(changes, ch)
 		}
 	}
@@ -236,6 +259,16 @@ func (e *Engine) Evaluate(ctx context.Context, orgID, nodeID uuid.UUID, node *st
 	for _, ch := range changes {
 		e.emit(ctx, cfg, node, ch)
 	}
+}
+
+func rawTint(value float64, p store.ThresholdPair) Tint {
+	switch {
+	case value >= p.Critical:
+		return TintCritical
+	case value >= p.Warn:
+		return TintWarn
+	}
+	return TintOK
 }
 
 // EvaluateProcs follows the processes of one sample and emits a
@@ -321,29 +354,111 @@ func (e *Engine) muteMetric(k stateKey, now time.Time) (change, bool) {
 	return c, true
 }
 
-// evalMetric runs under stateMu.
-func (e *Engine) evalMetric(k stateKey, value, warn, critical float64, now time.Time, debounce time.Duration) (change, bool) {
-	newTint := TintOK
-	switch {
-	case value >= critical:
-		newTint = TintCritical
-	case value >= warn:
-		newTint = TintWarn
-	}
+// evalMetric runs under stateMu. The tint of the state follows the
+// sustained level of the raw tint. With a sustain time of 0 the first sample
+// sets the state and no event comes. With a longer sustain time the state
+// starts at ok and the first event comes when the window is full.
+func (e *Engine) evalMetric(k stateKey, value float64, raw Tint, rule store.AlertRule, tolerance float64, now time.Time, debounce time.Duration) (change, bool) {
+	sustain := time.Duration(rule.SustainSeconds) * time.Second
 	st, ok := e.states[k]
 	if !ok {
-		e.states[k] = &metricState{tint: newTint, changed: now}
+		st = &metricState{tint: TintOK, changed: now}
+		e.states[k] = st
+		if sustain == 0 {
+			st.tint = raw
+			return change{}, false
+		}
+	}
+	st.window.record(raw, now, sustain)
+	newTint, ready := st.window.level(sustain, tolerance)
+	if !ready || newTint == st.tint {
 		return change{}, false
 	}
-	if newTint == st.tint {
-		return change{}, false
-	}
-	// Debounce: require a sustained observation before flipping back to
-	// OK; escalations fire immediately.
-	if newTint == TintOK && debounce > 0 && now.Sub(st.changed) < debounce {
+	if e.debounced(st, newTint, now, debounce) {
 		return change{}, false
 	}
 	return st.set(k, newTint, value, now), true
+}
+
+// debounced requires a sustained observation before the state flips back
+// to ok. Escalations fire at once.
+func (e *Engine) debounced(st *metricState, to Tint, now time.Time, debounce time.Duration) bool {
+	return to == TintOK && debounce > 0 && now.Sub(st.changed) < debounce
+}
+
+// healthMuteSig names the muted health checks, so a change of the list is
+// easy to see.
+func healthMuteSig(m store.MutedSignals) string {
+	var names []string
+	for _, h := range store.HealthMetrics {
+		if m.Has(h) {
+			names = append(names, string(h))
+		}
+	}
+	return strings.Join(names, ",")
+}
+
+// evalHealth runs under stateMu. The checks are the unmuted checks over
+// their limits. The target is the worst of the sustained level of all
+// checks but inodes, and the level of the inode check at once. A window that
+// is not full lets only an inode escalation act. A change of the muted checks
+// clears the window. It closes an open alert quietly when no check is over its
+// limit any more.
+func (e *Engine) evalHealth(k stateKey, checks []store.HealthCheck, muteSig string, rule store.AlertRule, tolerance float64, now time.Time, debounce time.Duration) (change, bool) {
+	rest, inode := TintOK, TintOK
+	for _, c := range checks {
+		if c.Metric == store.MetricInodes {
+			inode = maxTint(inode, c.Tint)
+		} else {
+			rest = maxTint(rest, c.Tint)
+		}
+	}
+	sustain := time.Duration(rule.SustainSeconds) * time.Second
+	st, ok := e.states[k]
+	if !ok {
+		st = &metricState{tint: TintOK, changed: now, muteSig: muteSig}
+		e.states[k] = st
+		if sustain == 0 {
+			st.tint = maxTint(rest, inode)
+			return change{}, false
+		}
+	}
+	if st.muteSig != muteSig {
+		st.muteSig = muteSig
+		st.window = sustainWindow{}
+		if st.tint != TintOK && maxTint(rest, inode) == TintOK {
+			c := st.set(k, TintOK, 0, now)
+			c.quiet, c.reason, c.detail = true, reasonMuted, healthOKText
+			return c, true
+		}
+	}
+	st.window.record(rest, now, sustain)
+	target := inode
+	if level, ready := st.window.level(sustain, tolerance); ready {
+		target = maxTint(level, inode)
+	} else if tintRank(inode) <= tintRank(st.tint) {
+		return change{}, false
+	}
+	if target == st.tint || e.debounced(st, target, now, debounce) {
+		return change{}, false
+	}
+	c := st.set(k, target, float64(len(checks)), now)
+	c.detail = healthOKText
+	if target != TintOK {
+		c.detail = healthDetail(checks)
+	}
+	return c, true
+}
+
+const healthOKText = "All health checks are back to normal."
+
+// healthDetail joins the texts of the checks, critical first.
+func healthDetail(checks []store.HealthCheck) string {
+	texts := make([]string, len(checks))
+	for i, c := range checks {
+		texts[i] = c.Text
+	}
+	return strings.Join(texts, " · ")
 }
 
 // change is one tint change, ready to emit outside the lock.
@@ -467,8 +582,9 @@ func (e *Engine) track(c change, eventID uuid.UUID) uuid.UUID {
 	return o.id
 }
 
-// shouldNotify applies the org flags, the node flags, the node snooze,
-// the ack and the snooze of the alert, and the cooldown. A change to ok
+// shouldNotify applies the notify level of the metric, the org flags, the
+// node flags, the node snooze, the ack and the snooze of the alert, and the
+// cooldown. A change to ok
 // uses the flags of the tint that it ends. An ack stops all changes except
 // the change to ok. A snooze stops all changes until its time.
 func (e *Engine) shouldNotify(cfg store.ServerSettings, node *store.Node, c change) bool {
@@ -479,7 +595,7 @@ func (e *Engine) shouldNotify(cfg store.ServerSettings, node *store.Node, c chan
 	if tint == TintOK {
 		tint = c.from
 	}
-	if !e.flagsAllow(cfg, node, tint, c.at) {
+	if !e.flagsAllow(cfg, node, c.metric(), tint, c.at) {
 		return false
 	}
 	cooldown := time.Duration(cfg.NotifyCooldownSeconds) * time.Second
@@ -505,10 +621,13 @@ func (e *Engine) shouldNotify(cfg store.ServerSettings, node *store.Node, c chan
 	return true
 }
 
-// flagsAllow applies the org flags, the node flags and the node snooze to
-// a notification of the tint.
-func (e *Engine) flagsAllow(cfg store.ServerSettings, node *store.Node, tint Tint, at time.Time) bool {
+// flagsAllow applies the notify level of the metric, the org flags, the
+// node flags and the node snooze to a notification of the tint.
+func (e *Engine) flagsAllow(cfg store.ServerSettings, node *store.Node, metric string, tint Tint, at time.Time) bool {
 	if len(e.notifiers) == 0 || !cfg.NotificationsEnabled {
+		return false
+	}
+	if !notifyLevelAllows(cfg, node, metric, tint) {
 		return false
 	}
 	switch tint {
@@ -524,6 +643,17 @@ func (e *Engine) flagsAllow(cfg store.ServerSettings, node *store.Node, tint Tin
 		return false
 	}
 	return node == nil || node.SnoozedUntil == nil || !node.SnoozedUntil.After(at)
+}
+
+// notifyLevelAllows applies the notify level of cpu, mem, disk and health.
+// Other metrics have no level.
+func notifyLevelAllows(cfg store.ServerSettings, node *store.Node, metric string, tint Tint) bool {
+	var host store.HostRules
+	if node != nil {
+		host = node.Rules()
+	}
+	rule, ok := cfg.Rules().For(host).Alerts.For(metric)
+	return !ok || rule.Notify.Allows(tint)
 }
 
 // notify calls each notifier in its own goroutine with a timeout.
@@ -630,7 +760,7 @@ func (e *Engine) wakeSnoozed(ctx context.Context, now time.Time) {
 		} else if errors.Is(err, store.ErrNotFound) {
 			continue
 		}
-		if !e.flagsAllow(e.settings(ctx, org), node, o.tint, now) {
+		if !e.flagsAllow(e.settings(ctx, org), node, c.metric(), o.tint, now) {
 			continue
 		}
 		c.at = now

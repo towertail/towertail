@@ -16,6 +16,7 @@ import (
 	"github.com/towertail/sampler/pkg/schema"
 
 	"github.com/towertail/towertail/server/authctx"
+	"github.com/towertail/towertail/server/internal/alerter"
 	"github.com/towertail/towertail/server/internal/clickhouse"
 	"github.com/towertail/towertail/server/store"
 	"github.com/towertail/towertail/server/wire"
@@ -119,7 +120,7 @@ func (s *Server) handleIngest(c echo.Context) error {
 		if s.hub != nil {
 			s.hub.PublishSample(t.OrgID, *t.NodeID, samples[i], lines[i])
 		}
-		s.evalAlerter(c.Request().Context(), t.OrgID, *t.NodeID, &gate.node, bundle)
+		s.evalAlerter(c.Request().Context(), t.OrgID, *t.NodeID, &gate.node, bundle, samples[i])
 	}
 	ingestRequests.WithLabelValues("202").Inc()
 	ingestLines.WithLabelValues("accepted").Add(float64(len(bundles)))
@@ -363,7 +364,7 @@ func echoErrorf(status int, format string, args ...any) error {
 }
 
 // evalAlerter drives the in-memory threshold engine on a per-sample basis.
-func (s *Server) evalAlerter(ctx context.Context, orgID, nodeID uuid.UUID, n *store.Node, b clickhouse.IngestBundle) {
+func (s *Server) evalAlerter(ctx context.Context, orgID, nodeID uuid.UUID, n *store.Node, b clickhouse.IngestBundle, smp wire.Sample) {
 	if s.alerter == nil {
 		return
 	}
@@ -381,7 +382,9 @@ func (s *Server) evalAlerter(ctx context.Context, orgID, nodeID uuid.UUID, n *st
 			}
 		}
 	}
-	s.alerter.Evaluate(ctx, orgID, nodeID, n, cpu, mem, maxDisk)
+	s.alerter.Evaluate(ctx, orgID, nodeID, n, alerter.Reading{
+		At: b.Sample.TS, CPU: cpu, Mem: mem, Disk: maxDisk, Health: smp.Summary().Health,
+	})
 	if len(b.Procs) > 0 {
 		s.alerter.EvaluateProcs(ctx, orgID, nodeID, n, b.Procs, b.Sample.TS)
 	}

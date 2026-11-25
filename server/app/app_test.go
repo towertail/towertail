@@ -240,6 +240,11 @@ func TestWithNotifier(t *testing.T) {
 	if err := a.store.PutNode(ctx, store.ZeroOrg, node); err != nil {
 		t.Fatal(err)
 	}
+	settings := store.DefaultServerSettings()
+	settings.Alerts.CPU = store.AlertRule{Notify: store.NotifyAll}
+	if err := a.store.PutSettings(ctx, store.ZeroOrg, settings); err != nil {
+		t.Fatal(err)
+	}
 	raw, _, err := auth.NewIssuer(a.store).Issue(ctx, store.ZeroOrg, store.TokenKindSampler, "test", &node.ID, nil)
 	if err != nil {
 		t.Fatal(err)

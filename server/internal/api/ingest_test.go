@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/towertail/towertail/server/config"
+	"github.com/towertail/towertail/server/internal/alerter"
 	"github.com/towertail/towertail/server/internal/auth"
 	"github.com/towertail/towertail/server/internal/hub"
 	"github.com/towertail/towertail/server/store"
@@ -466,5 +467,35 @@ func TestDecodeSample_RejectsUnknownVersion(t *testing.T) {
 	line := []byte(`{"v":99,"ts":"2026-04-23T10:00:00Z","host":{"name":"x"},"cpu":{},"mem":{"used":1,"total":100},"swap":{"used":0,"total":0},"errors":[]}`)
 	if _, _, err := decodeSample(line, uuid.New(), uuid.New()); err == nil {
 		t.Error("expected error")
+	}
+}
+
+func TestIngestPassesHealthToAlerter(t *testing.T) {
+	e := newIngestEnv(t, config.Config{}, nil, nil)
+	rs := &registeredStore{}
+	e.srv.alerter = alerter.New(nil, nil, nil, rs, e.st)
+	s := store.DefaultServerSettings()
+	s.Alerts.Health = store.AlertRule{Notify: store.NotifyAll}
+	if err := e.st.PutSettings(context.Background(), store.ZeroOrg, s); err != nil {
+		t.Fatal(err)
+	}
+	_, tok := e.node(nil)
+
+	withHealth := func(ts, health string) string {
+		line := strings.Replace(sampleLine, "2026-04-23T10:00:00.000Z", ts, 1)
+		return strings.Replace(line, `"errors":[]`, `"errors":[],"health":`+health, 1)
+	}
+	body := withHealth("2026-04-23T10:00:00.000Z", `{"procs":10,"zombies":0}`) + "\n" +
+		withHealth("2026-04-23T10:00:05.000Z", `{"procs":10,"zombies":5000}`) + "\n"
+	wantCode(t, e.post(tok, []byte(body)), http.StatusAccepted)
+
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if len(rs.events) != 1 {
+		t.Fatalf("events = %+v", rs.events)
+	}
+	ev := rs.events[0]
+	if ev.Metric != "health" || ev.Tint != "critical" {
+		t.Fatalf("event = %+v", ev)
 	}
 }

@@ -2,6 +2,7 @@ package alerter
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 
 const (
 	metricReachability = "reachability"
+	metricHealth       = "health"
 	// restoreWindow is how far back Load reads the state.
 	restoreWindow = 24 * time.Hour
 	// defaultInterval is the sample interval until a node sends two
@@ -38,6 +40,94 @@ type sentKey struct {
 type metricState struct {
 	tint    Tint
 	changed time.Time
+	window  sustainWindow
+	// muteSig is the list of muted health checks of the last sample.
+	muteSig string
+}
+
+// sustainWindow holds the recent raw levels of one metric. Each point
+// holds its level until the next point.
+type sustainWindow struct{ points []levelPoint }
+
+type levelPoint struct {
+	at   time.Time
+	tint Tint
+}
+
+func tintRank(t Tint) int {
+	switch t {
+	case TintWarn:
+		return 1
+	case TintCritical:
+		return 2
+	}
+	return 0
+}
+
+func maxTint(a, b Tint) Tint {
+	if tintRank(b) > tintRank(a) {
+		return b
+	}
+	return a
+}
+
+// record adds a level and drops the points that the last "keep" does not
+// need. One point before the cutoff stays, so the start of the window is
+// covered. A time that goes back clears the window first.
+func (w *sustainWindow) record(t Tint, at time.Time, keep time.Duration) {
+	if n := len(w.points); n > 0 && at.Before(w.points[n-1].at) {
+		w.points = w.points[:0]
+	}
+	w.points = append(w.points, levelPoint{at: at, tint: t})
+	cutoff := at.Add(-keep)
+	for len(w.points) > 1 && !w.points[1].at.After(cutoff) {
+		w.points = slices.Delete(w.points, 0, 1)
+	}
+}
+
+// level gives the highest level that holds for at least tolerance of the
+// last sustain time. It gives false when the points do not cover that time.
+// A zero sustain time gives the last level.
+func (w *sustainWindow) level(sustain time.Duration, tolerance float64) (Tint, bool) {
+	if len(w.points) == 0 {
+		return TintOK, false
+	}
+	last := w.points[len(w.points)-1]
+	if sustain <= 0 {
+		return last.tint, true
+	}
+	start := last.at.Add(-sustain)
+	if w.points[0].at.After(start) {
+		return TintOK, false
+	}
+	var warn, critical time.Duration
+	for i := 0; i+1 < len(w.points); i++ {
+		a, b := w.points[i], w.points[i+1]
+		d := b.at.Sub(maxTime(a.at, start))
+		if d <= 0 {
+			continue
+		}
+		if tintRank(a.tint) >= 1 {
+			warn += d
+		}
+		if a.tint == TintCritical {
+			critical += d
+		}
+	}
+	switch {
+	case float64(critical)/float64(sustain) >= tolerance:
+		return TintCritical, true
+	case float64(warn)/float64(sustain) >= tolerance:
+		return TintWarn, true
+	}
+	return TintOK, true
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if b.After(a) {
+		return b
+	}
+	return a
 }
 
 func (s *metricState) set(k stateKey, to Tint, value float64, now time.Time) change {

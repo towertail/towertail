@@ -77,6 +77,7 @@ var metricLabels = map[string]string{
 	"cpu":          "CPU",
 	"mem":          "Memory",
 	"disk":         "Disk",
+	"health":       "Health",
 	"reachability": "Reachability",
 	"long_proc":    "Long-running process",
 }

@@ -28,7 +28,7 @@ type ackEnv struct {
 
 func newAckEnv(t *testing.T) *ackEnv {
 	t.Helper()
-	s := store.DefaultServerSettings()
+	s := instantSettings()
 	s.NotifyDebounceSeconds = 0
 	s.NotifyCooldownSeconds = 1
 	env := &ackEnv{clock: newClock(), sink: &capturingSink{}, st: &recordingStore{}, n: newCountingNotifier(), cfg: newFakeConfig(s), org: uuid.New(), id: uuid.New()}
@@ -41,7 +41,7 @@ func newAckEnv(t *testing.T) *ackEnv {
 // cpu runs one sample with the CPU ratio after the clock moves.
 func (v *ackEnv) cpu(ratio float64) {
 	v.clock.advance(time.Minute)
-	v.e.Evaluate(context.Background(), v.org, v.id, &v.node, ratio, 0.10, 0.10)
+	v.e.Evaluate(context.Background(), v.org, v.id, &v.node, Reading{CPU: ratio, Mem: 0.10, Disk: 0.10})
 }
 
 func (v *ackEnv) ack(alert uuid.UUID, mod func(*notify.Ack)) {
@@ -207,11 +207,11 @@ func TestAlerter_LoadRestoresAck(t *testing.T) {
 	}
 	n := newCountingNotifier()
 	node := notifyNode(id)
-	e := New(nil, clock, nil, st, newFakeConfig(store.DefaultServerSettings()), n)
+	e := New(nil, clock, nil, st, newFakeConfig(instantSettings()), n)
 	if err := e.Load(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	e.Evaluate(context.Background(), org, id, &node, 0.95, 0.10, 0.10)
+	e.Evaluate(context.Background(), org, id, &node, Reading{CPU: 0.95, Mem: 0.10, Disk: 0.10})
 	if got := n.wait(0); len(got) != 0 {
 		t.Fatalf("an acked alert must stay quiet after a restart: %+v", got)
 	}
@@ -224,7 +224,7 @@ func TestAlerter_IgnoreClosesQuietly(t *testing.T) {
 	n := newCountingNotifier()
 	org, id := uuid.New(), uuid.New()
 	node := notifyNode(id)
-	e := New(nil, clock, sink, st, newFakeConfig(store.DefaultServerSettings()), n)
+	e := New(nil, clock, sink, st, newFakeConfig(instantSettings()), n)
 	high := func(int) []clickhouse.ProcRow { return []clickhouse.ProcRow{orb(85)} }
 
 	runProcs(e, clock, org, id, &node, 0, 32, high)
@@ -260,7 +260,7 @@ func TestAlerter_MuteClosesQuietly(t *testing.T) {
 			if scope == "host" {
 				v.node.MutedSignals = store.MutedSignals{store.MetricCPU}
 			} else {
-				s := store.DefaultServerSettings()
+				s := instantSettings()
 				s.NotifyDebounceSeconds = 0
 				s.Muted = store.MutedSignals{store.MetricCPU}
 				v.cfg.mu.Lock()

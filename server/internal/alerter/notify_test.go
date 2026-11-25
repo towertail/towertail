@@ -51,9 +51,9 @@ func notifyNode(id uuid.UUID) store.Node {
 }
 
 func TestAlerter_SettingsForEachOrg(t *testing.T) {
-	cfg := newFakeConfig(store.DefaultServerSettings())
+	cfg := newFakeConfig(instantSettings())
 	orgA, orgB := uuid.New(), uuid.New()
-	strict := store.DefaultServerSettings()
+	strict := instantSettings()
 	strict.Thresholds.CPUWarn = 0.30
 	cfg.settings[orgA] = strict
 	sink := &capturingSink{}
@@ -62,8 +62,8 @@ func TestAlerter_SettingsForEachOrg(t *testing.T) {
 
 	for _, org := range []uuid.UUID{orgA, orgB} {
 		node := uuid.New()
-		e.Evaluate(ctx, org, node, nil, 0.10, 0.10, 0.10)
-		e.Evaluate(ctx, org, node, nil, 0.40, 0.10, 0.10)
+		e.Evaluate(ctx, org, node, nil, Reading{CPU: 0.10, Mem: 0.10, Disk: 0.10})
+		e.Evaluate(ctx, org, node, nil, Reading{CPU: 0.40, Mem: 0.10, Disk: 0.10})
 	}
 	got := sink.snapshot()
 	if len(got) != 1 || got[0].Tint != string(TintWarn) {
@@ -72,25 +72,25 @@ func TestAlerter_SettingsForEachOrg(t *testing.T) {
 }
 
 func TestAlerter_InvalidateSettings(t *testing.T) {
-	cfg := newFakeConfig(store.DefaultServerSettings())
+	cfg := newFakeConfig(instantSettings())
 	org, node := uuid.New(), uuid.New()
 	sink := &capturingSink{}
 	e := New(nil, newClock(), sink, nopStore{}, cfg)
 	ctx := context.Background()
 
-	e.Evaluate(ctx, org, node, nil, 0.40, 0.10, 0.10)
-	strict := store.DefaultServerSettings()
+	e.Evaluate(ctx, org, node, nil, Reading{CPU: 0.40, Mem: 0.10, Disk: 0.10})
+	strict := instantSettings()
 	strict.Thresholds.CPUWarn = 0.30
 	cfg.mu.Lock()
 	cfg.settings[org] = strict
 	cfg.mu.Unlock()
 	// The cache keeps the old thresholds until the org is invalidated.
-	e.Evaluate(ctx, org, node, nil, 0.40, 0.10, 0.10)
+	e.Evaluate(ctx, org, node, nil, Reading{CPU: 0.40, Mem: 0.10, Disk: 0.10})
 	if n := len(sink.snapshot()); n != 0 {
 		t.Fatalf("cached settings: got %d events", n)
 	}
 	e.InvalidateSettings(org)
-	e.Evaluate(ctx, org, node, nil, 0.40, 0.10, 0.10)
+	e.Evaluate(ctx, org, node, nil, Reading{CPU: 0.40, Mem: 0.10, Disk: 0.10})
 	if n := len(sink.snapshot()); n != 1 {
 		t.Fatalf("after invalidate: got %d events, want 1", n)
 	}
@@ -111,7 +111,7 @@ func TestAlerter_NotifyRules(t *testing.T) {
 		{name: "node snoozed", node: func(n *store.Node) { n.SnoozedUntil = &future }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := store.DefaultServerSettings()
+			s := instantSettings()
 			if tc.settings != nil {
 				tc.settings(&s)
 			}
@@ -123,8 +123,8 @@ func TestAlerter_NotifyRules(t *testing.T) {
 			n := newCountingNotifier()
 			e := New(nil, newClock(), nil, nopStore{}, newFakeConfig(s), n)
 			ctx := context.Background()
-			e.Evaluate(ctx, org, id, &node, 0.10, 0.10, 0.10)
-			e.Evaluate(ctx, org, id, &node, 0.95, 0.10, 0.10)
+			e.Evaluate(ctx, org, id, &node, Reading{CPU: 0.10, Mem: 0.10, Disk: 0.10})
+			e.Evaluate(ctx, org, id, &node, Reading{CPU: 0.95, Mem: 0.10, Disk: 0.10})
 			got := n.wait(tc.want)
 			if len(got) != tc.want {
 				t.Fatalf("got %d alerts, want %d", len(got), tc.want)
@@ -142,7 +142,7 @@ func TestAlerter_NotifyRules(t *testing.T) {
 }
 
 func TestAlerter_Cooldown(t *testing.T) {
-	s := store.DefaultServerSettings()
+	s := instantSettings()
 	s.NotifyDebounceSeconds = 0
 	s.NotifyCooldownSeconds = 600
 	clock := newClock()
@@ -152,12 +152,12 @@ func TestAlerter_Cooldown(t *testing.T) {
 	node := notifyNode(id)
 	ctx := context.Background()
 
-	e.Evaluate(ctx, org, id, &node, 0.10, 0.10, 0.10)
+	e.Evaluate(ctx, org, id, &node, Reading{CPU: 0.10, Mem: 0.10, Disk: 0.10})
 	flap := func() {
 		clock.advance(time.Minute)
-		e.Evaluate(ctx, org, id, &node, 0.95, 0.10, 0.10)
+		e.Evaluate(ctx, org, id, &node, Reading{CPU: 0.95, Mem: 0.10, Disk: 0.10})
 		clock.advance(time.Minute)
-		e.Evaluate(ctx, org, id, &node, 0.10, 0.10, 0.10)
+		e.Evaluate(ctx, org, id, &node, Reading{CPU: 0.10, Mem: 0.10, Disk: 0.10})
 	}
 	flap()
 	// critical and the recovery.
@@ -205,11 +205,11 @@ func TestAlerter_RestartSendsNoDuplicate(t *testing.T) {
 	sink := &capturingSink{}
 	n := newCountingNotifier()
 	node := notifyNode(id)
-	e := New(nil, clock, sink, st, newFakeConfig(store.DefaultServerSettings()), n)
+	e := New(nil, clock, sink, st, newFakeConfig(instantSettings()), n)
 	if err := e.Load(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	e.Evaluate(context.Background(), org, id, &node, 0.95, 0.10, 0.10)
+	e.Evaluate(context.Background(), org, id, &node, Reading{CPU: 0.95, Mem: 0.10, Disk: 0.10})
 	if got := sink.snapshot(); len(got) != 0 {
 		t.Fatalf("got events after restart: %+v", got)
 	}
@@ -218,7 +218,7 @@ func TestAlerter_RestartSendsNoDuplicate(t *testing.T) {
 	}
 	// The restored state is still live: a drop to ok is a change.
 	clock.advance(2 * time.Minute)
-	e.Evaluate(context.Background(), org, id, &node, 0.10, 0.10, 0.10)
+	e.Evaluate(context.Background(), org, id, &node, Reading{CPU: 0.10, Mem: 0.10, Disk: 0.10})
 	if got := sink.snapshot(); len(got) != 1 || got[0].Tint != string(TintOK) {
 		t.Fatalf("want one ok event, got %+v", got)
 	}
@@ -240,7 +240,7 @@ func (s *recordingStore) WriteEvent(_ context.Context, e clickhouse.EventRow) er
 
 func TestAlerter_ReachabilitySweep(t *testing.T) {
 	clock := newClock()
-	cfg := newFakeConfig(store.DefaultServerSettings())
+	cfg := newFakeConfig(instantSettings())
 	org, id := uuid.New(), uuid.New()
 	cfg.nodes[id] = notifyNode(id)
 	node := cfg.nodes[id]
@@ -249,9 +249,9 @@ func TestAlerter_ReachabilitySweep(t *testing.T) {
 	e := New(nil, clock, nil, st, cfg, n)
 	ctx := context.Background()
 
-	e.Evaluate(ctx, org, id, &node, 0.10, 0.10, 0.10)
+	e.Evaluate(ctx, org, id, &node, Reading{CPU: 0.10, Mem: 0.10, Disk: 0.10})
 	clock.advance(10 * time.Second)
-	e.Evaluate(ctx, org, id, &node, 0.10, 0.10, 0.10)
+	e.Evaluate(ctx, org, id, &node, Reading{CPU: 0.10, Mem: 0.10, Disk: 0.10})
 
 	clock.advance(25 * time.Second)
 	e.Sweep(ctx)
@@ -268,7 +268,7 @@ func TestAlerter_ReachabilitySweep(t *testing.T) {
 	}
 
 	clock.advance(time.Second)
-	e.Evaluate(ctx, org, id, &node, 0.10, 0.10, 0.10)
+	e.Evaluate(ctx, org, id, &node, Reading{CPU: 0.10, Mem: 0.10, Disk: 0.10})
 	got = n.wait(1)
 	if len(got) != 1 || got[0].Metric != "reachability" || got[0].To != TintOK {
 		t.Fatalf("want one reachability ok alert, got %+v", got)
@@ -283,7 +283,7 @@ func TestAlerter_ReachabilitySweep(t *testing.T) {
 
 func TestAlerter_SweepSkipsDeletedAndDisabledNodes(t *testing.T) {
 	clock := newClock()
-	cfg := newFakeConfig(store.DefaultServerSettings())
+	cfg := newFakeConfig(instantSettings())
 	org, deleted, disabled := uuid.New(), uuid.New(), uuid.New()
 	off := notifyNode(disabled)
 	off.Enabled = false
@@ -292,8 +292,8 @@ func TestAlerter_SweepSkipsDeletedAndDisabledNodes(t *testing.T) {
 	e := New(nil, clock, nil, nopStore{}, cfg, n)
 	ctx := context.Background()
 
-	e.Evaluate(ctx, org, deleted, nil, 0.10, 0.10, 0.10)
-	e.Evaluate(ctx, org, disabled, &off, 0.10, 0.10, 0.10)
+	e.Evaluate(ctx, org, deleted, nil, Reading{CPU: 0.10, Mem: 0.10, Disk: 0.10})
+	e.Evaluate(ctx, org, disabled, &off, Reading{CPU: 0.10, Mem: 0.10, Disk: 0.10})
 	clock.advance(time.Minute)
 	e.Sweep(ctx)
 	if got := n.wait(0); len(got) != 0 {
@@ -303,7 +303,7 @@ func TestAlerter_SweepSkipsDeletedAndDisabledNodes(t *testing.T) {
 
 func TestAlerter_LongProcNotify(t *testing.T) {
 	clock := newClock()
-	cfg := newFakeConfig(store.DefaultServerSettings())
+	cfg := newFakeConfig(instantSettings())
 	org, id := uuid.New(), uuid.New()
 	node := notifyNode(id)
 	n := newCountingNotifier()
@@ -352,7 +352,7 @@ func TestAlerter_LongProcNotify(t *testing.T) {
 
 func TestAlerter_LongProcNotifyOff(t *testing.T) {
 	clock := newClock()
-	s := store.DefaultServerSettings()
+	s := instantSettings()
 	s.LongProc.Notify = "off"
 	sink := &capturingSink{}
 	org, id := uuid.New(), uuid.New()
@@ -370,7 +370,7 @@ func TestAlerter_LongProcNotifyOff(t *testing.T) {
 
 func TestAlerter_SweepDropsProcTracker(t *testing.T) {
 	clock := newClock()
-	cfg := newFakeConfig(store.DefaultServerSettings())
+	cfg := newFakeConfig(instantSettings())
 	org, id := uuid.New(), uuid.New()
 	cfg.nodes[id] = notifyNode(id)
 	node := cfg.nodes[id]
@@ -383,7 +383,7 @@ func TestAlerter_SweepDropsProcTracker(t *testing.T) {
 		clock.mu.Lock()
 		clock.t = lpAt(m)
 		clock.mu.Unlock()
-		e.Evaluate(ctx, org, id, &node, 0.1, 0.1, 0.1)
+		e.Evaluate(ctx, org, id, &node, Reading{CPU: 0.1, Mem: 0.1, Disk: 0.1})
 		e.EvaluateProcs(ctx, org, id, &node, []clickhouse.ProcRow{orb(85)}, lpAt(m))
 	}
 	if got := n.wait(1); len(got) != 1 || got[0].Metric != "long_proc" {
@@ -409,7 +409,7 @@ func TestAlerter_SweepDropsProcTracker(t *testing.T) {
 func neverEnv(t *testing.T, st Store) (*Engine, *testClock, *countingNotifier, uuid.UUID, uuid.UUID, store.Node) {
 	t.Helper()
 	clock := newClock()
-	cfg := newFakeConfig(store.DefaultServerSettings())
+	cfg := newFakeConfig(instantSettings())
 	org, id := uuid.New(), uuid.New()
 	cfg.nodes[id] = notifyNode(id)
 	n := newCountingNotifier()
@@ -453,7 +453,7 @@ func TestAlerter_NeverReportedClearedBySample(t *testing.T) {
 	e.Expect(ctx, org, id, clock.Now())
 	clock.advance(2 * time.Minute)
 	for range 18 {
-		e.Evaluate(ctx, org, id, &node, 0.10, 0.10, 0.10)
+		e.Evaluate(ctx, org, id, &node, Reading{CPU: 0.10, Mem: 0.10, Disk: 0.10})
 		clock.advance(30 * time.Second)
 	}
 	e.Sweep(ctx)
@@ -474,7 +474,7 @@ func TestAlerter_NeverReportedThenFirstSample(t *testing.T) {
 		t.Fatalf("want the never-reported alert, got %+v", got)
 	}
 	clock.advance(2 * time.Minute)
-	e.Evaluate(ctx, org, id, &node, 0.10, 0.10, 0.10)
+	e.Evaluate(ctx, org, id, &node, Reading{CPU: 0.10, Mem: 0.10, Disk: 0.10})
 	got := n.wait(1)
 	if len(got) != 1 || got[0].To != TintOK || got[0].Value != 13*60 || !got[0].Since.Equal(t0) {
 		t.Fatalf("want one reports-again alert with 780 s, got %+v", got)
@@ -490,7 +490,7 @@ func TestAlerter_RecoveryCarriesDownTime(t *testing.T) {
 
 	var last time.Time
 	for range 4 {
-		e.Evaluate(ctx, org, id, &node, 0.10, 0.10, 0.10)
+		e.Evaluate(ctx, org, id, &node, Reading{CPU: 0.10, Mem: 0.10, Disk: 0.10})
 		last = clock.Now()
 		clock.advance(30 * time.Second)
 	}
@@ -501,7 +501,7 @@ func TestAlerter_RecoveryCarriesDownTime(t *testing.T) {
 	if len(got) != 1 || got[0].Reason != "stopped_reporting" || !got[0].Since.Equal(last) {
 		t.Fatalf("want one stopped_reporting alert, got %+v", got)
 	}
-	e.Evaluate(ctx, org, id, &node, 0.10, 0.10, 0.10)
+	e.Evaluate(ctx, org, id, &node, Reading{CPU: 0.10, Mem: 0.10, Disk: 0.10})
 	got = n.wait(1)
 	if len(got) != 1 || got[0].To != TintOK || got[0].Value != 760 || !got[0].Since.Equal(last) {
 		t.Fatalf("want one ok alert with 760 s, got %+v", got)
@@ -510,7 +510,7 @@ func TestAlerter_RecoveryCarriesDownTime(t *testing.T) {
 
 func TestAlerter_NeverReportedSkipsDeletedAndDisabled(t *testing.T) {
 	clock := newClock()
-	cfg := newFakeConfig(store.DefaultServerSettings())
+	cfg := newFakeConfig(instantSettings())
 	org, deleted, disabled := uuid.New(), uuid.New(), uuid.New()
 	off := notifyNode(disabled)
 	off.Enabled = false
@@ -535,7 +535,7 @@ func TestAlerter_NeverReportedSkipsDeletedAndDisabled(t *testing.T) {
 
 func TestAlerter_LoadRestoresRegistrations(t *testing.T) {
 	clock := newClock()
-	cfg := newFakeConfig(store.DefaultServerSettings())
+	cfg := newFakeConfig(instantSettings())
 	org, id := uuid.New(), uuid.New()
 	cfg.nodes[id] = notifyNode(id)
 	st := restoreStore{regs: []clickhouse.NodeSeen{{OrgID: org, NodeID: id, TS: clock.Now()}}}
@@ -554,7 +554,7 @@ func TestAlerter_LoadRestoresRegistrations(t *testing.T) {
 
 func TestAlerter_LoadSkipsAlertedRegistration(t *testing.T) {
 	clock := newClock()
-	cfg := newFakeConfig(store.DefaultServerSettings())
+	cfg := newFakeConfig(instantSettings())
 	org, id := uuid.New(), uuid.New()
 	cfg.nodes[id] = notifyNode(id)
 	reg := clock.Now()
@@ -576,7 +576,7 @@ func TestAlerter_LoadSkipsAlertedRegistration(t *testing.T) {
 	}
 	// The first sample still reports the down time from the registration.
 	clock.advance(time.Minute)
-	e.Evaluate(ctx, org, id, &node, 0.10, 0.10, 0.10)
+	e.Evaluate(ctx, org, id, &node, Reading{CPU: 0.10, Mem: 0.10, Disk: 0.10})
 	got := n.wait(1)
 	if len(got) != 1 || got[0].To != TintOK || got[0].Value != 661 || !got[0].Since.Equal(reg) {
 		t.Fatalf("got %+v", got)
@@ -597,7 +597,7 @@ func (n *ackNotifier) AlertAcked(_ context.Context, a notify.Ack) error {
 func TestAlerter_Acked(t *testing.T) {
 	plain := newCountingNotifier()
 	obs := &ackNotifier{countingNotifier: newCountingNotifier(), acks: make(chan notify.Ack, 1)}
-	e := New(nil, newClock(), &capturingSink{}, nopStore{}, newFakeConfig(store.DefaultServerSettings()), plain, obs)
+	e := New(nil, newClock(), &capturingSink{}, nopStore{}, newFakeConfig(instantSettings()), plain, obs)
 
 	want := notify.Ack{OrgID: uuid.New(), NodeID: uuid.New(), Metric: "cpu", By: uuid.New(), Snooze: true}
 	e.Acked(context.Background(), want)
@@ -611,5 +611,50 @@ func TestAlerter_Acked(t *testing.T) {
 	}
 	if n := len(plain.ch); n != 0 {
 		t.Errorf("plain notifier got %d alerts", n)
+	}
+}
+
+func TestAlerter_NotifyCriticalOnlySkipsWarn(t *testing.T) {
+	s := instantSettings()
+	s.NotifyDebounceSeconds = 0
+	s.Alerts.CPU.Notify = store.NotifyCritical
+	v := newRulesEnv(s)
+	v.feed(quiet(), time.Second, 1)
+	v.feed(Reading{CPU: 0.80, Mem: 0.1, Disk: 0.1}, time.Second, 2)
+	if got := v.n.wait(0); len(got) != 0 {
+		t.Fatalf("warn sent: %+v", got)
+	}
+	if got := v.events("cpu"); len(got) != 1 || got[0].Tint != "warn" || got[0].Notify {
+		t.Fatalf("warn event: %+v", got)
+	}
+	v.feed(Reading{CPU: 0.95, Mem: 0.1, Disk: 0.1}, time.Second, 2)
+	if got := v.n.wait(1); len(got) != 1 || got[0].To != TintCritical {
+		t.Fatalf("critical not sent: %+v", got)
+	}
+}
+
+func TestAlerter_NotifyOffSendsNothing(t *testing.T) {
+	s := instantSettings()
+	s.Alerts.Mem.Notify = store.NotifyOff
+	v := newRulesEnv(s)
+	v.feed(quiet(), time.Second, 1)
+	v.feed(Reading{CPU: 0.1, Mem: 0.95, Disk: 0.1}, time.Second, 2)
+	if got := v.n.wait(0); len(got) != 0 {
+		t.Fatalf("sent: %+v", got)
+	}
+	if got := v.events("mem"); len(got) != 1 || got[0].Notify {
+		t.Fatalf("mem events: %+v", got)
+	}
+}
+
+func TestAlerter_NotifyHostAlertOverrideWins(t *testing.T) {
+	s := instantSettings()
+	s.Alerts.CPU.Notify = store.NotifyCritical
+	v := newRulesEnv(s)
+	v.node.AlertOverrides = &store.AlertOverrides{CPU: &store.AlertRule{Notify: store.NotifyAll}}
+	v.feed(quiet(), time.Second, 1)
+	v.feed(Reading{CPU: 0.80, Mem: 0.1, Disk: 0.1}, time.Second, 2)
+	if got := v.n.wait(1); len(got) != 1 || got[0].To != TintWarn {
+		t.Fatalf("warn not sent: %+v", got)
 	}
 }
