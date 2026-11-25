@@ -410,6 +410,21 @@ type Alert struct {
 	AckedBy      *uuid.UUID `json:"acked_by,omitempty"`
 	AckedAt      *time.Time `json:"acked_at,omitempty"`
 	SnoozedUntil *time.Time `json:"snoozed_until,omitempty"`
+	Proc         *AlertProc `json:"proc,omitempty"`
+}
+
+// AlertProc is the process of a long_process alert, from the event
+// payload. StartTS is nil when the sampler did not send a start time.
+type AlertProc struct {
+	PID       int32      `json:"pid"`
+	Name      string     `json:"name"`
+	Cmd       string     `json:"cmd"`
+	StartTS   *time.Time `json:"start_ts,omitempty"`
+	HighSince *time.Time `json:"high_since,omitempty"`
+	CPUPct    float64    `json:"cpu_pct"`
+	Cwd       string     `json:"cwd,omitempty"`
+	Repo      string     `json:"repo,omitempty"`
+	Parent    string     `json:"parent,omitempty"`
 }
 
 // AlertList is the body of GET /v1/alerts.

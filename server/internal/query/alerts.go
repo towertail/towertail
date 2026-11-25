@@ -56,13 +56,45 @@ func (s *Service) Alerts(ctx context.Context, r AlertsRequest) (wire.AlertList, 
 	return out, nil
 }
 
+// alertPayload holds the keys of the stored event payload that the
+// alert list uses (docs/wire.md, Alert).
+type alertPayload struct {
+	Value     float64    `json:"value"`
+	PID       int32      `json:"pid"`
+	Name      string     `json:"name"`
+	Cmd       string     `json:"cmd"`
+	StartTS   *time.Time `json:"start_ts"`
+	HighSince *time.Time `json:"high_since"`
+	CPUPct    float64    `json:"cpu_pct"`
+	Cwd       string     `json:"cwd"`
+	Repo      string     `json:"repo"`
+	Parent    string     `json:"parent"`
+}
+
+// proc gives the process of a long_process payload, or nil when the
+// payload has none.
+func (p alertPayload) proc() *wire.AlertProc {
+	if p.Name == "" && p.PID == 0 {
+		return nil
+	}
+	return &wire.AlertProc{
+		PID:       p.PID,
+		Name:      p.Name,
+		Cmd:       p.Cmd,
+		StartTS:   p.StartTS,
+		HighSince: p.HighSince,
+		CPUPct:    p.CPUPct,
+		Cwd:       p.Cwd,
+		Repo:      p.Repo,
+		Parent:    p.Parent,
+	}
+}
+
 // AlertFromRow converts an alert row to its wire form.
 func AlertFromRow(r clickhouse.AlertRow) wire.Alert {
-	var p struct {
-		Value float64 `json:"value"`
-	}
+	var p alertPayload
 	_ = json.Unmarshal([]byte(r.Payload), &p)
-	return wire.Alert{
+	a := wire.Alert{
 		ID:           r.EventID,
 		NodeID:       r.NodeID,
 		Kind:         r.Kind,
@@ -74,4 +106,8 @@ func AlertFromRow(r clickhouse.AlertRow) wire.Alert {
 		AckedAt:      r.AckedAt,
 		SnoozedUntil: r.SnoozedUntil,
 	}
+	if r.Kind == "long_process" {
+		a.Proc = p.proc()
+	}
+	return a
 }

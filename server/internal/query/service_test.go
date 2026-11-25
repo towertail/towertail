@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -401,5 +402,65 @@ func TestServiceAlerts(t *testing.T) {
 	empty, err := NewService(nil, fakeNodes(nil), nil).Alerts(ctx, AlertsRequest{Open: true})
 	if err != nil || empty.Alerts == nil || len(empty.Alerts) != 0 {
 		t.Fatalf("no ClickHouse = %+v, %v; want an empty list", empty, err)
+	}
+}
+
+func TestAlertFromRowLongProc(t *testing.T) {
+	start := time.Date(2026, 10, 18, 11, 0, 0, 0, time.UTC)
+	high := start.Add(90 * time.Minute)
+	payload, err := json.Marshal(map[string]any{
+		"metric":     "long_proc/812/1799000000",
+		"previous":   "ok",
+		"value":      95,
+		"pid":        812,
+		"name":       "python3",
+		"cmd":        "python3 etl/backfill.py",
+		"cpu_pct":    95,
+		"high_since": high,
+		"start_ts":   start,
+		"cwd":        "/srv/etl",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := AlertFromRow(clickhouse.AlertRow{Kind: "long_process", Metric: "long_proc/812/1799000000", Tint: "warn", Payload: string(payload)})
+	p := a.Proc
+	if a.Value != 95 || a.Metric != "long_proc/812/1799000000" || p == nil {
+		t.Fatalf("alert = %+v", a)
+	}
+	if p.PID != 812 || p.Name != "python3" || p.Cmd != "python3 etl/backfill.py" || p.CPUPct != 95 || p.Cwd != "/srv/etl" {
+		t.Fatalf("proc = %+v", p)
+	}
+	if p.StartTS == nil || !p.StartTS.Equal(start) || p.HighSince == nil || !p.HighSince.Equal(high) {
+		t.Fatalf("times = %v, %v", p.StartTS, p.HighSince)
+	}
+}
+
+func TestAlertFromRowLongProcNoStart(t *testing.T) {
+	payload := `{"value":95,"pid":812,"name":"python3","cmd":"python3","cpu_pct":95,"start_ts":null}`
+	a := AlertFromRow(clickhouse.AlertRow{Kind: "long_process", Payload: payload})
+	if a.Proc == nil || a.Proc.StartTS != nil {
+		t.Fatalf("proc = %+v", a.Proc)
+	}
+}
+
+func TestAlertFromRowThreshold(t *testing.T) {
+	a := AlertFromRow(clickhouse.AlertRow{Kind: "threshold_crossed", Metric: "cpu", Payload: `{"metric":"cpu","value":0.92}`})
+	if a.Value != 0.92 || a.Proc != nil {
+		t.Fatalf("alert = %+v", a)
+	}
+	b, err := json.Marshal(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), `"proc"`) {
+		t.Fatalf("json has proc: %s", b)
+	}
+}
+
+func TestAlertFromRowBadPayload(t *testing.T) {
+	a := AlertFromRow(clickhouse.AlertRow{Kind: "long_process", Payload: ""})
+	if a.Value != 0 || a.Proc != nil {
+		t.Fatalf("alert = %+v", a)
 	}
 }
