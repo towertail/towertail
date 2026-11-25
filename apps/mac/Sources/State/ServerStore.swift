@@ -89,7 +89,7 @@ final class ServerStore {
                 devices: io.devices
             )
         }
-        if let notifier, let node = nodeLookup?(id) {
+        if let notifier, let node = nodeLookup?(id), !node.isCloud {
             notifier.evaluate(vm: vm, node: node)
             notifier.evaluateLongProcs(vm: vm, node: node)
         }
@@ -174,7 +174,7 @@ final class ServerStore {
         }
         if let notifier {
             for (id, vm) in lastVMByID {
-                if let node = nodeLookup?(id) {
+                if let node = nodeLookup?(id), !node.isCloud {
                     notifier.evaluate(vm: vm, node: node)
                     notifier.evaluateLongProcs(vm: vm, node: node)
                 }
@@ -209,7 +209,7 @@ final class ServerStore {
             let node = nodeLookup?(vm.id)
             if node?.enabled == false { continue }
             vm.checkStale(now: now, limit: Self.staleLimit(pollSeconds: pollSeconds(vm.kind)))
-            if let notifier, let node { notifier.evaluateNoData(vm: vm, node: node) }
+            if let notifier, let node, !node.isCloud { notifier.evaluateNoData(vm: vm, node: node) }
         }
         logAggregateIfChanged()
     }

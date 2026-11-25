@@ -20,4 +20,18 @@ final class ServerStoreTests: XCTestCase {
         store.checkStale(now: Date().addingTimeInterval(3600), pollSeconds: { _ in 10 })
         XCTAssertNil(vm.noDataSince)
     }
+
+    func testCloudHostSkipsLocalRules() {
+        let cloud = Node(displayName: "c", kind: .cloud)
+        let ssh = Node(displayName: "s", kind: .ssh, sshUser: "u", sshHost: "s")
+        let store = ServerStore(nodeLookup: { $0 == cloud.id ? cloud : ssh })
+        let notifier = ThresholdNotifier(settings: ServerSettings())
+        store.notifier = notifier
+        for node in [cloud, ssh] {
+            store.register(ServerViewModel(id: node.id, hostname: node.displayName, dnsName: node.displayName, osArch: "x", kind: node.kind))
+            store.ingest(makeSample(cpuPct: 99, memFrac: 0.1, diskFrac: 0.1), for: node.id)
+        }
+        XCTAssertFalse(notifier.lastTint.keys.contains { $0.hostId == cloud.id })
+        XCTAssertTrue(notifier.lastTint.keys.contains { $0.hostId == ssh.id })
+    }
 }
