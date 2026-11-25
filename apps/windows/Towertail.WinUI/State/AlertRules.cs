@@ -7,9 +7,15 @@ namespace Towertail.WinUI.State;
 
 public enum AlertMetric { Cpu, Mem, Disk, Health }
 
+public static class AlertMetrics
+{
+    public static readonly IReadOnlyList<AlertMetric> All = Enum.GetValues<AlertMetric>();
+}
+
 /// <summary>Which levels of one metric send a notification. Wire values match the Mac.</summary>
 public enum AlertNotify { Off, Critical, All }
 
+[JsonConverter(typeof(AlertRuleJsonConverter))]
 public sealed record AlertRule(int SustainSeconds, AlertNotify Notify)
 {
     public const int MaxSustainSeconds = 3600;
@@ -71,6 +77,26 @@ public sealed record AlertRules(AlertRule Cpu, AlertRule Mem, AlertRule Disk, Al
             => samples is > 1 ? (d with { SustainSeconds = samples.Value * sshPollSeconds }).Clamped() : d;
         var d = Defaults;
         return d with { Cpu = Conv(d.Cpu, cpuSamples), Mem = Conv(d.Mem, memSamples), Disk = Conv(d.Disk, diskSamples) };
+    }
+}
+
+/// <summary>One rule as <c>{ sustainSeconds, notify }</c>. A missing or bad key gets the default of an all-notify rule at 0 s.</summary>
+public sealed class AlertRuleJsonConverter : JsonConverter<AlertRule>
+{
+    public override AlertRule Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        var obj = JsonNode.Parse(ref reader) as JsonObject ?? throw new JsonException("an alert rule must be an object");
+        return new AlertRule(
+            AlertRulesJsonConverter.TryInt(obj["sustainSeconds"]) ?? 0,
+            AlertRulesJsonConverter.ParseNotify(AlertRulesJsonConverter.TryString(obj["notify"])) ?? AlertNotify.All).Clamped();
+    }
+
+    public override void Write(Utf8JsonWriter writer, AlertRule value, JsonSerializerOptions options)
+    {
+        writer.WriteStartObject();
+        writer.WriteNumber("sustainSeconds", value.SustainSeconds);
+        writer.WriteString("notify", AlertRulesJsonConverter.NotifyName(value.Notify));
+        writer.WriteEndObject();
     }
 }
 
@@ -263,7 +289,8 @@ public sealed class SustainWindow
 }
 
 /// <summary>A signal that the user can mute. Wire names match ThresholdMetric on the Mac.</summary>
-public enum AlertSignal { Cpu, Mem, Disk, Procs, Zombies, Pids, Files, Inodes, MemPressure, IoPressure }
+/// <remarks><c>Long</c> is the long-running process alert. Only a cloud rule set holds it.</remarks>
+public enum AlertSignal { Cpu, Mem, Disk, Procs, Zombies, Pids, Files, Inodes, MemPressure, IoPressure, Long }
 
 /// <summary>
 /// Signals that send no notification and do not tint the tray icon

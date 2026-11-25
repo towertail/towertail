@@ -6,7 +6,7 @@
     xmlns:local="using:Towertail.WinUI.Preferences">
     <Grid RowDefinitions="*,Auto">
         <ScrollViewer Grid.Row="0" Padding="20,16,20,12" VerticalScrollBarVisibility="Auto">
-            <StackPanel Spacing="10" MaxWidth="520" HorizontalAlignment="Stretch">
+            <StackPanel x:Name="FormPanel" Spacing="10" MaxWidth="520" HorizontalAlignment="Stretch">
                 <TextBlock x:Name="TitleText" Text="New Server" FontSize="18" FontWeight="SemiBold" />
                 <TextBox x:Name="DisplayNameBox" Header="Name" PlaceholderText="my-server" />
                 <ComboBox x:Name="KindBox" Header="Kind" HorizontalAlignment="Stretch" SelectionChanged="OnKindChanged">
@@ -47,31 +47,34 @@
                 <TextBlock Text="Notifications" FontWeight="SemiBold" Margin="0,4,0,0" />
                 <CheckBox x:Name="NotifyWarnCheck" Content="Notify at warn threshold" />
                 <CheckBox x:Name="NotifyCriticalCheck" Content="Notify at critical threshold" />
-                <TextBlock x:Name="MuteHeader" Text="Mute notifications for" FontSize="12" Opacity="0.7" Margin="0,4,0,0" />
-                <VariableSizedWrapGrid x:Name="MuteGrid" Orientation="Horizontal" ItemWidth="160" ItemHeight="32" />
+                <StackPanel x:Name="LocalRules" Spacing="10">
+                    <TextBlock x:Name="MuteHeader" Text="Mute notifications for" FontSize="12" Opacity="0.7" Margin="0,4,0,0" />
+                    <VariableSizedWrapGrid x:Name="MuteGrid" Orientation="Horizontal" ItemWidth="160" ItemHeight="32" />
 
-                <TextBlock Text="Thresholds" FontWeight="SemiBold" Margin="0,4,0,0" />
-                <TextBlock Text="Turn off Use global to set a value for this server only."
-                           FontSize="12" Opacity="0.7" TextWrapping="Wrap" />
-                <Grid ColumnSpacing="8">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="120" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="112" />
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="1" Text="Warn" FontSize="12" Opacity="0.7" />
-                    <TextBlock Grid.Column="2" Text="Critical" FontSize="12" Opacity="0.7" />
-                </Grid>
-                <StackPanel x:Name="ThresholdRows" Spacing="6" />
-                <TextBlock Text="Health checks" FontSize="12" Opacity="0.7" Margin="0,6,0,0" />
-                <StackPanel x:Name="HealthRows" Spacing="6" />
+                    <TextBlock Text="Thresholds" FontWeight="SemiBold" Margin="0,4,0,0" />
+                    <TextBlock Text="Turn off Use global to set a value for this server only."
+                               FontSize="12" Opacity="0.7" TextWrapping="Wrap" />
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="120" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="112" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="1" Text="Warn" FontSize="12" Opacity="0.7" />
+                        <TextBlock Grid.Column="2" Text="Critical" FontSize="12" Opacity="0.7" />
+                    </Grid>
+                    <StackPanel x:Name="ThresholdRows" Spacing="6" />
+                    <TextBlock Text="Health checks" FontSize="12" Opacity="0.7" Margin="0,6,0,0" />
+                    <StackPanel x:Name="HealthRows" Spacing="6" />
 
-                <TextBlock Text="Alerting" FontWeight="SemiBold" Margin="0,4,0,0" />
-                <CheckBox x:Name="CustomAlertsCheck" Content="Customize alerting for this server"
-                          Checked="OnCustomAlertsToggled" Unchecked="OnCustomAlertsToggled"
-                          ToolTipService.ToolTip="When off, this server uses the global alerting rules from the Thresholds tab." />
-                <local:AlertRulesEditor x:Name="AlertsEditor" IsEnabled="False" />
+                    <TextBlock Text="Alerting" FontWeight="SemiBold" Margin="0,4,0,0" />
+                    <CheckBox x:Name="CustomAlertsCheck" Content="Customize alerting for this server"
+                              Checked="OnCustomAlertsToggled" Unchecked="OnCustomAlertsToggled"
+                              ToolTipService.ToolTip="When off, this server uses the global alerting rules from the Thresholds tab." />
+                    <local:AlertRulesEditor x:Name="AlertsEditor" IsEnabled="False" />
+                </StackPanel>
+                <StackPanel x:Name="CloudRulesHost" Visibility="Collapsed" />
             </StackPanel>
         </ScrollViewer>
 

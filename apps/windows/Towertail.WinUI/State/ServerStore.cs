@@ -5,6 +5,12 @@ using Towertail.WinUI.SystemServices;
 
 namespace Towertail.WinUI.State;
 
+/// <summary>The effective rules of the cloud for one host. Null while the cloud gives none.</summary>
+public interface ICloudRulesSource
+{
+    RemoteEffectiveRules? Effective(Guid nodeId);
+}
+
 /// <summary>
 /// Fan-out hub: samples land here from the collector, land in the right per-host
 /// <see cref="ServerViewModel"/>, and are persisted into <see cref="HistoryStore"/>.
@@ -65,6 +71,16 @@ public sealed partial class ServerStore : ObservableObject
             }
             UpdateAggregateLevel();
         };
+    }
+
+    /// <summary>Where cloud hosts get their rules. Null uses the local rules.</summary>
+    public ICloudRulesSource? CloudRulesSource { get; set; }
+
+    /// <summary>Pushes the cloud rules to all cloud hosts at once, without waiting for a sample.</summary>
+    public void RefreshCloudRules()
+    {
+        foreach (var vm in Servers.Where(v => v.Node.IsCloud)) ApplyEffectiveSettings(vm);
+        UpdateAggregateLevel();
     }
 
     public void AttachNotifier(ThresholdNotifier notifier) => _notifier = notifier;
@@ -153,6 +169,12 @@ public sealed partial class ServerStore : ObservableObject
 
     private void ApplyEffectiveSettings(ServerViewModel vm)
     {
+        // A cloud host uses the rules of the cloud, once it has them.
+        if (vm.Node.IsCloud && CloudRulesSource?.Effective(vm.Node.Id) is { } cloud)
+        {
+            vm.ApplyCloudRules(cloud);
+            return;
+        }
         vm.Thresholds = MetricThresholds.Effective(_settings.Thresholds, vm.Node.ThresholdOverrides);
         vm.MemPressureOverridden = vm.Node.ThresholdOverrides?.MemPressure is not null;
         vm.AlertRules = vm.Node.EffectiveAlerts(_settings.Alerts);

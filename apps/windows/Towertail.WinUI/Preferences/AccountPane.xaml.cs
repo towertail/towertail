@@ -120,6 +120,7 @@ public sealed partial class AccountPane : UserControl
         HostsKey.Visibility = HostsRow.Visibility = showHosts ? Visibility.Visible : Visibility.Collapsed;
         if (Account.Billing is { } billing) HostsValue.Text = AccountText.HostsText(billing);
         MoveBtn.Visibility = _env.Move.CanMove ? Visibility.Visible : Visibility.Collapsed;
+        RulesKey.Visibility = RulesMoveBtn.Visibility = _env.RulesMove.CanMove ? Visibility.Visible : Visibility.Collapsed;
         SshValue.Text = AccountText.SshHostsText(_env.Nodes.Nodes.Count(n => n.Kind == NodeKind.Ssh && n.Cloud is null));
         SignOutBtn.IsEnabled = DeleteBtn.IsEnabled = !_leaving;
         LeavingRing.IsActive = _leaving;
@@ -158,8 +159,17 @@ public sealed partial class AccountPane : UserControl
         _busy = false;
         Refresh();
         if (Account.Status is CloudStatus.Failed) Code.Clear();
-        else await _env.Move.OfferOnceAsync();
+        else await OfferAsync();
     }
+
+    /// <summary>The rules window comes after the host window.</summary>
+    private async Task OfferAsync()
+    {
+        await _env.Move.OfferOnceAsync();
+        if (!_env.Move.IsPresented) await _env.RulesMove.OfferOnceAsync();
+    }
+
+    private async void OnRulesMoveClick(object sender, RoutedEventArgs e) => await _env.RulesMove.OpenAsync();
 
     private async void OnMoveClick(object sender, RoutedEventArgs e) => await _env.Move.OpenAsync();
 

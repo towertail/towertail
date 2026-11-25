@@ -10,7 +10,7 @@ namespace Towertail.WinUI.Cloud;
 /// and the feed of cloud host data. The app keeps its local backend. Mirrors the Mac <c>CloudSession</c>.
 /// Implements <see cref="IDiskScanUpdates"/> for the current feed, so a scanner can hold it across sign-ins.
 /// </summary>
-public sealed class CloudSession : IDiskScanUpdates
+public sealed class CloudSession : IDiskScanUpdates, ICloudRulesSource
 {
     private readonly NodeStore _nodes;
     private readonly CloudPrefs _prefs;
@@ -19,12 +19,13 @@ public sealed class CloudSession : IDiskScanUpdates
     private readonly ICloudAlertPoster? _poster;
     private readonly Func<DateTimeOffset> _now;
     private readonly object _gate = new();
+    private readonly string? _rulesCachePath;
     private string? _feedToken;
 
     public CloudSession(
         CloudAccount account, NodeStore nodes, ServerStore servers, CloudPrefs prefs,
         Func<Action, Task>? marshal, Logger? log,
-        ICloudAlertPoster? poster = null, Func<DateTimeOffset>? now = null)
+        ICloudAlertPoster? poster = null, Func<DateTimeOffset>? now = null, string? rulesCachePath = null)
     {
         Account = account;
         _nodes = nodes;
@@ -34,6 +35,8 @@ public sealed class CloudSession : IDiskScanUpdates
         _log = log;
         _poster = poster;
         _now = now ?? (() => DateTimeOffset.UtcNow);
+        _rulesCachePath = rulesCachePath;
+        servers.CloudRulesSource = this;
         Released = new ReleasedHosts(prefs);
         // The lease outlives the feed, so a sign-in while the popover is open sends the view.
         Lease = new ViewLeaseController(view => Feed?.SendAsync(view) ?? Task.CompletedTask);
@@ -49,6 +52,14 @@ public sealed class CloudSession : IDiskScanUpdates
     /// <summary>Not null while the user is signed in.</summary>
     public RemoteClient? Client { get; private set; }
     public CloudFeed? Feed { get; private set; }
+
+    /// <summary>The rules of the cloud. Not null while the user is signed in.</summary>
+    public CloudRules? Rules { get; private set; }
+
+    /// <summary>Raised after the rules of the cloud change. It can run on any thread.</summary>
+    public event Action? RulesChanged;
+
+    public RemoteEffectiveRules? Effective(Guid nodeId) => Rules?.Effective(nodeId);
 
     public event Action<Guid, DiskScanJob>? DiskScanUpdated;
 
@@ -85,19 +96,32 @@ public sealed class CloudSession : IDiskScanUpdates
         CloudFeed? old;
         CloudFeed feed;
         RemoteClient? oldClient;
+        CloudRules? oldRules;
+        CloudRules rules;
         lock (_gate)
         {
             if (Feed is not null && _feedToken == token) return;
             old = Feed;
             oldClient = Client;
+            oldRules = Rules;
             var client = new RemoteClient(_prefs.Endpoint, token);
             feed = new CloudFeed(client, _nodes, Servers, Released, Lease, Account.HandleUnauthorized, _marshal, _log, _poster);
             feed.DiskScanUpdated += OnDiskScanUpdated;
             feed.StateChanged += OnFeedStateChanged;
+            // Rules of another account must not stay.
+            if (oldRules is not null) { oldRules.Stop(); oldRules.ClearCache(); }
+            rules = new CloudRules(client, Environment.MachineName,
+                _rulesCachePath is null ? null : new CloudRulesCache(_rulesCachePath), log: _log);
+            rules.Changed += OnRulesChanged;
+            feed.Connected += () => _ = rules.RefreshAsync();
+            feed.NodeUpdated += _ => rules.RefreshSoon();
+            feed.SettingsUpdated += rules.RefreshSoon;
             Client = client;
             Feed = feed;
+            Rules = rules;
             _feedToken = token;
         }
+        if (oldRules is not null) oldRules.Changed -= OnRulesChanged;
         if (old is not null || oldClient is not null) _ = Retire(old, oldClient);
         _log?.Info("cloud: start feed");
         feed.Start();
@@ -125,15 +149,25 @@ public sealed class CloudSession : IDiskScanUpdates
     {
         CloudFeed? feed;
         RemoteClient? client;
+        CloudRules? rules;
         lock (_gate)
         {
             feed = Feed;
             client = Client;
+            rules = Rules;
             Feed = null;
             Client = null;
+            Rules = null;
             _feedToken = null;
         }
+        if (rules is not null)
+        {
+            rules.Changed -= OnRulesChanged;
+            rules.Stop();
+            rules.ClearCache();
+        }
         await Retire(feed, client).ConfigureAwait(false);
+        OnRulesChanged();
         StateChanged?.Invoke();
     }
 
@@ -166,6 +200,18 @@ public sealed class CloudSession : IDiskScanUpdates
     private void OnDiskScanUpdated(Guid node, DiskScanJob job) => DiskScanUpdated?.Invoke(node, job);
 
     private void OnFeedStateChanged() => StateChanged?.Invoke();
+
+    /// <summary>Gives the new rules to the cloud hosts at once, on the UI thread.</summary>
+    private void OnRulesChanged()
+    {
+        void Apply()
+        {
+            try { Servers.RefreshCloudRules(); }
+            catch (Exception ex) { _log?.Warning($"cloud: apply rules failed: {ex.Message}"); }
+            RulesChanged?.Invoke();
+        }
+        if (_marshal is null) Apply(); else _ = _marshal(Apply);
+    }
 
     private void OnStatusChanged(CloudStatus status)
     {

@@ -45,6 +45,69 @@ public sealed partial class ThresholdsPane : UserControl
         }
         if (remote) MuteNote.Text = "Mute: Not supported by this server.";
         Show(env.ServerSettings.Thresholds, env.ServerSettings.Alerts);
+        BuildOrgSummary();
+        Action rebuild = () => DispatcherQueue.TryEnqueue(BuildOrgSummary);
+        env.Cloud.RulesChanged += rebuild;
+        Unloaded += (_, _) => env.Cloud.RulesChanged -= rebuild;
+    }
+
+    /// <summary>The org rules of the cloud, read only. The web edits them.</summary>
+    private void BuildOrgSummary()
+    {
+        OrgSummary.Children.Clear();
+        if (_env.Cloud.Rules?.Org is not { } org)
+        {
+            OrgSummary.Visibility = Visibility.Collapsed;
+            return;
+        }
+        OrgSummary.Visibility = Visibility.Visible;
+        OrgSummary.Children.Add(new TextBlock
+        {
+            Text = "Org rules in the cloud",
+            Style = (Style)Application.Current.Resources["SettingsSectionHeaderTextBlockStyle"],
+            Margin = new Thickness(1, 0, 0, 6),
+        });
+        var rows = new StackPanel { Spacing = 8 };
+        foreach (var m in ThresholdMetrics.Usage)
+        {
+            var rule = org.Alerts.For(m == ThresholdMetric.Cpu ? AlertMetric.Cpu : m == ThresholdMetric.Mem ? AlertMetric.Mem : AlertMetric.Disk);
+            rows.Children.Add(SummaryRow(m.Title(), $"{AlertText.Pair(m, org.Thresholds.Get(m))} · after {AlertText.Sustain(rule.SustainSeconds).ToLowerInvariant()}"));
+        }
+        var lp = org.LongProc;
+        rows.Children.Add(SummaryRow("Long-running", lp.Enabled ? $"{(int)lp.CpuPct}% for {AlertText.Sustain(lp.SustainSeconds)}" : "Off"));
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(0, 4, 0, 0) };
+        var web = new HyperlinkButton { Content = "Edit on the web", Padding = new Thickness(0) };
+        web.Click += async (_, _) =>
+        {
+            try { await Windows.System.Launcher.LaunchUriAsync(await _env.Cloud.Account.OpenDashboardUriAsync("settings")); }
+            catch { }
+        };
+        actions.Children.Add(web);
+        if (_env.RulesMove.CanMove)
+        {
+            var move = new HyperlinkButton { Content = "Move rules to cloud…", Padding = new Thickness(0) };
+            move.Click += async (_, _) => await _env.RulesMove.OpenAsync();
+            actions.Children.Add(move);
+        }
+        rows.Children.Add(actions);
+        OrgSummary.Children.Add(new Border { Style = (Style)Resources["SettingsRowBorder"], Padding = new Thickness(16, 12, 16, 12), Child = rows });
+        OrgSummary.Children.Add(new TextBlock
+        {
+            Text = "A Cloud host uses these values until it has its own value for a metric.",
+            Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"],
+            Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+            Margin = new Thickness(1, 6, 0, 0),
+        });
+    }
+
+    private static Grid SummaryRow(string name, string value)
+    {
+        var grid = new Grid { ColumnSpacing = 16 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.Children.Add(new TextBlock { Text = name });
+        grid.Children.Add(Placed(new TextBlock { Text = value, Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"] }, 1));
+        return grid;
     }
 
     private void AddLimitRow(string title, string glyph, double scale,

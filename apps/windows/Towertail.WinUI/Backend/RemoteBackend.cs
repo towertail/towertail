@@ -110,7 +110,10 @@ public sealed class RemoteBackend : IBackend, IDiskScanUpdates
             Thresholds: new RemoteThresholds(
                 ServerSettings.Thresholds.CpuWarn, ServerSettings.Thresholds.CpuCritical,
                 ServerSettings.Thresholds.MemWarn, ServerSettings.Thresholds.MemCritical,
-                ServerSettings.Thresholds.DiskWarn, ServerSettings.Thresholds.DiskCritical),
+                ServerSettings.Thresholds.DiskWarn, ServerSettings.Thresholds.DiskCritical,
+                ServerSettings.Thresholds.ProcsWarn, ServerSettings.Thresholds.ProcsCritical,
+                ServerSettings.Thresholds.ZombiesWarn, ServerSettings.Thresholds.ZombiesCritical,
+                ServerSettings.Thresholds.HealthOrDefault),
             LocalPollingIntervalSeconds: ServerSettings.LocalPollingIntervalSeconds,
             SshPollingIntervalSeconds: ServerSettings.SshPollingIntervalSeconds,
             NotificationsEnabled: ServerSettings.NotificationsEnabled,
@@ -119,7 +122,9 @@ public sealed class RemoteBackend : IBackend, IDiskScanUpdates
             NotifyDebounceSeconds: ServerSettings.NotifyDebounceSeconds,
             AutoUpdateSamplersEnabled: ServerSettings.AutoUpdateSamplersEnabled,
             PostWakeGraceSeconds: ServerSettings.PostWakeGraceSeconds,
-            LongProc: ServerSettings.LongProc);
+            LongProc: ServerSettings.LongProc,
+            Alerts: ServerSettings.Alerts,
+            Muted: ServerSettings.MutedSignals);
         var applied = await _client.PutSettingsAsync(wire, ct).ConfigureAwait(false);
         ApplyServerSettings(applied);
     }
@@ -139,14 +144,16 @@ public sealed class RemoteBackend : IBackend, IDiskScanUpdates
 
     private void ApplyServerSettings(RemoteServerSettings s)
     {
-        // The remote wire has no health counts yet; keep the local ones.
+        // A key that the server leaves out keeps the local value.
         var cur = ServerSettings.Thresholds;
+        var t = s.Thresholds;
         ServerSettings.Thresholds = new MetricThresholds(
-            s.Thresholds.CpuWarn, s.Thresholds.CpuCritical,
-            s.Thresholds.MemWarn, s.Thresholds.MemCritical,
-            s.Thresholds.DiskWarn, s.Thresholds.DiskCritical)
-            .WithHealth(cur.ProcsWarn, cur.ProcsCritical, cur.ZombiesWarn, cur.ZombiesCritical)
-            with { Health = cur.Health };
+            t.CpuWarn, t.CpuCritical, t.MemWarn, t.MemCritical, t.DiskWarn, t.DiskCritical)
+            .WithHealth(t.ProcsWarn ?? cur.ProcsWarn, t.ProcsCritical ?? cur.ProcsCritical,
+                        t.ZombiesWarn ?? cur.ZombiesWarn, t.ZombiesCritical ?? cur.ZombiesCritical)
+            with { Health = t.Health ?? cur.Health };
+        if (s.Alerts is { } alerts) ServerSettings.Alerts = alerts;
+        if (s.Muted is { } muted) ServerSettings.MutedSignals = muted;
         ServerSettings.LocalPollingIntervalSeconds = s.LocalPollingIntervalSeconds;
         ServerSettings.SshPollingIntervalSeconds = s.SshPollingIntervalSeconds;
         ServerSettings.NotificationsEnabled = s.NotificationsEnabled;
@@ -181,6 +188,8 @@ public sealed class RemoteBackend : IBackend, IDiskScanUpdates
         Favorite = rn.Favorite,
         CustomLongProc = rn.CustomLongProc,
         IgnoredProcs = rn.IgnoredProcs ?? Array.Empty<string>(),
+        ThresholdOverrides = rn.ThresholdOverrides,
+        MutedSignals = rn.MutedSignals ?? MutedSignals.None,
     };
 
     private RemoteNode ToRemote(Node n) => new(
@@ -199,7 +208,9 @@ public sealed class RemoteBackend : IBackend, IDiskScanUpdates
         Favorite: n.Favorite,
         AllowDiskScan: AllowsDiskScan(n.Id),
         CustomLongProc: n.CustomLongProc,
-        IgnoredProcs: n.IgnoredProcs);
+        IgnoredProcs: n.IgnoredProcs,
+        ThresholdOverrides: n.ThresholdOverrides,
+        MutedSignals: n.MutedSignals);
 
     public async ValueTask DisposeAsync()
     {

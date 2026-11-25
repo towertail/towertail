@@ -28,6 +28,7 @@ public sealed class AppEnvironment
     public required CloudSession Cloud { get; init; }
     public required CloudInstaller Installer { get; init; }
     public required CloudMove Move { get; init; }
+    public required CloudRulesMove RulesMove { get; init; }
     public required CloudExit Exit { get; init; }
     public required SamplerKeeper Keeper { get; init; }
 
@@ -39,6 +40,7 @@ public sealed class AppEnvironment
     public Action<Guid, string>? OnHostKeyTrust { get; init; }
 
     public const string CloudFileName = "cloud.json";
+    public const string CloudRulesFileName = "cloud-rules.json";
 
     public static AppEnvironment Bootstrap()
     {
@@ -116,7 +118,8 @@ public sealed class AppEnvironment
             new CloudAuthClient(cloudPrefs.Endpoint),
             cloudPrefs, log: logger);
         var toasts = new AppNotifier(logger);
-        var cloud = new CloudSession(account, nodes, servers, cloudPrefs, collector.UiMarshaller, logger, toasts);
+        var cloud = new CloudSession(account, nodes, servers, cloudPrefs, collector.UiMarshaller, logger, toasts,
+            rulesCachePath: TowertailApp.AppDataPath(CloudRulesFileName));
         NotificationTapRouter.ActionHandler = cloud.PerformAsync;
         try
         {
@@ -143,6 +146,7 @@ public sealed class AppEnvironment
             billing: () => account.RefreshAsync(),
             planName: () => account.Me?.Org.Plan);
         var move = new CloudMove(cloud, installer, cloudPrefs);
+        var rulesMove = new CloudRulesMove(cloud, serverSettings, nodes, cloudPrefs);
         var exit = new CloudExit(cloud, installer, nodes);
         var keeper = new SamplerKeeper(nodes, SamplerManifest.LoadFromBundle(), connect, samplerBinary, marshal: collector.UiMarshaller, log: logger);
         cloud.StateChanged += () => _ = keeper.HandleAsync(cloud.Feed?.Alerted ?? new HashSet<Guid>());
@@ -188,6 +192,7 @@ public sealed class AppEnvironment
             Cloud = cloud,
             Installer = installer,
             Move = move,
+            RulesMove = rulesMove,
             Exit = exit,
             Keeper = keeper,
             Reachability = reachability,

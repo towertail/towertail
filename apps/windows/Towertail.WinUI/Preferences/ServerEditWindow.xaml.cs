@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Towertail.WinUI.Backend;
 using Towertail.WinUI.Bootstrap;
+using Towertail.WinUI.Cloud;
 using Towertail.WinUI.State;
 using Towertail.WinUI.SystemServices;
 using Windows.Graphics;
@@ -113,6 +114,7 @@ public sealed partial class ServerEditWindow : Window
             if (!string.IsNullOrEmpty(pw)) PasswordBoxField.Password = pw;
         }
 
+        BindCloudRules(n);
         BindMutes(n?.MutedSignals ?? MutedSignals.None);
         UpdatePasswordVisibility();
         UpdateHostKeyPanel();
@@ -134,6 +136,34 @@ public sealed partial class ServerEditWindow : Window
 
         UpdateSshGroupVisibility();
     }
+
+    /// <summary>A Cloud host takes its rules from the cloud. The local rule boxes give way to the cloud rules view.</summary>
+    private void BindCloudRules(Node? n)
+    {
+        CloudRulesHost.Children.Clear();
+        var cloud = n is { IsCloud: true };
+        LocalRules.Visibility = cloud ? Visibility.Collapsed : Visibility.Visible;
+        CloudRulesHost.Visibility = cloud ? Visibility.Visible : Visibility.Collapsed;
+        FormPanel.MaxWidth = cloud ? 760 : 520;
+        if (!cloud) return;
+        if (_env.Cloud.Rules is { } rules)
+        {
+            var model = new CloudHostRulesModel(rules, n!.Id, () => _env.Cloud.Account.Me, () => _env.Servers.Find(n.Id)?.HostOs);
+            Action reload = () => DispatcherQueue.TryEnqueue(model.Reload);
+            rules.Changed += reload;
+            Closed += (_, _) => rules.Changed -= reload;
+            CloudRulesHost.Children.Add(new CloudHostRulesView(model));
+        }
+        else
+        {
+            CloudRulesHost.Children.Add(new TextBlock { Text = "Sign in to Cloud to see the rules of this host.", Opacity = 0.7 });
+        }
+        ResizeInitial(800, 860);
+    }
+
+    /// <summary>Scrolls the form to the cloud rules. The debug renders use it.</summary>
+    public void ScrollToCloudRules()
+        => CloudRulesHost.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false, VerticalAlignmentRatio = 0 });
 
     private void OnKindChanged(object sender, SelectionChangedEventArgs e) => UpdateSshGroupVisibility();
 
@@ -191,7 +221,10 @@ public sealed partial class ServerEditWindow : Window
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .ToList();
 
-        var overrides = _thresholdRows.Aggregate(new ThresholdOverrides(), (o, row) => o.With(row.Metric, row.Value));
+        var cloudHost = _existing is { IsCloud: true };
+        var overrides = cloudHost
+            ? _existing!.ThresholdOverrides ?? new ThresholdOverrides()
+            : _thresholdRows.Aggregate(new ThresholdOverrides(), (o, row) => o.With(row.Metric, row.Value));
 
         int? port = null;
         if (kind == NodeKind.Ssh && !double.IsNaN(PortBox.Value))
@@ -223,12 +256,12 @@ public sealed partial class ServerEditWindow : Window
             NotifyOnWarn = NotifyWarnCheck.IsChecked == true,
             NotifyOnCritical = NotifyCriticalCheck.IsChecked == true,
             ThresholdOverrides = overrides.IsEmpty ? null : overrides,
-            CustomAlerts = CustomAlertsCheck.IsChecked == true ? AlertsEditor.Rules : null,
+            CustomAlerts = cloudHost ? _existing!.CustomAlerts : CustomAlertsCheck.IsChecked == true ? AlertsEditor.Rules : null,
             Favorite = _existing?.Favorite ?? false,
             SnoozedUntil = _existing?.SnoozedUntil,
             CustomLongProc = _existing?.CustomLongProc,
             IgnoredProcs = _existing?.IgnoredProcs ?? Array.Empty<string>(),
-            MutedSignals = SelectedMutes(),
+            MutedSignals = cloudHost ? _existing!.MutedSignals : SelectedMutes(),
         };
 
         // DPAPI handling: store on password auth, delete on password → key (or away from SSH).

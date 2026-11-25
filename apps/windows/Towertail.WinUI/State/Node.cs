@@ -116,6 +116,7 @@ public sealed record Node
         => new() { Id = id, DisplayName = displayName, Kind = NodeKind.Cloud };
 }
 
+[JsonConverter(typeof(MetricThresholdsJsonConverter))]
 public sealed record MetricThresholds(
     double CpuWarn,
     double CpuCritical,

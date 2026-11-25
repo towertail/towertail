@@ -341,7 +341,12 @@ public sealed partial class ServerViewModel : ObservableObject
     public bool ApplyLongProc(Node node, LongProcRule global)
     {
         var rule = node.CustomLongProc ?? global;
-        var ignored = rule.IgnoreSet(global.Ignore, node.IgnoredProcs);
+        return ApplyLongProc(rule, rule.IgnoreSet(global.Ignore, node.IgnoredProcs));
+    }
+
+    /// <summary>Push a long-running rule and its lowercase ignore set. Returns true on a change.</summary>
+    public bool ApplyLongProc(LongProcRule rule, IReadOnlySet<string> ignored)
+    {
         if (rule == LongProcRule && ignored.SetEquals(IgnoredProcs)) return false;
         LongProcRule = rule;
         IgnoredProcs = ignored;
@@ -350,6 +355,20 @@ public sealed partial class ServerViewModel : ObservableObject
             ? LongProcs.Where(p => !ignored.Contains(p.Name.ToLowerInvariant())).ToList()
             : Array.Empty<LongProc>();
         return true;
+    }
+
+    /// <summary>
+    /// Takes all rules from the cloud: thresholds, timing, mutes and the long-running rule.
+    /// A muted long-running alert stops the tint only.
+    /// </summary>
+    public void ApplyCloudRules(RemoteEffectiveRules r)
+    {
+        Thresholds = r.Thresholds;
+        AlertRules = r.Alerts;
+        MemPressureOverridden = r.IsHostPair(ThresholdMetric.MemPressure);
+        Muted = r.Muted;
+        var rule = r.Muted.Contains(AlertSignal.Long) ? r.LongProc with { Notify = AlertNotify.Off } : r.LongProc;
+        ApplyLongProc(rule, rule.IgnoreSet(r.Ignore));
     }
 
     /// <summary>Load stored process history and replay it, so a restart does not wait the sustain time again.</summary>

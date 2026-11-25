@@ -1,0 +1,73 @@
+{
+  "org": {
+    "thresholds": {
+      "cpuWarn": 0.8, "cpuCritical": 0.9, "memWarn": 0.8, "memCritical": 0.9,
+      "diskWarn": 0.85, "diskCritical": 0.95,
+      "procsWarn": 5000, "procsCritical": 20000, "zombiesWarn": 200, "zombiesCritical": 2000,
+      "health": {
+        "pids": {"warn": 0.7, "critical": 0.9}, "files": {"warn": 0.8, "critical": 0.95},
+        "inodes": {"warn": 0.85, "critical": 0.95}, "memPressure": {"warn": 10, "critical": 20},
+        "ioPressure": {"warn": 20, "critical": 40}, "macMemPressure": {"warn": 80, "critical": 90}
+      }
+    },
+    "alerts": {
+      "cpu": {"sustainSeconds": 300, "notify": "critical"}, "mem": {"sustainSeconds": 120, "notify": "all"},
+      "disk": {"sustainSeconds": 0, "notify": "all"}, "health": {"sustainSeconds": 300, "notify": "all"},
+      "tolerance": 0.8
+    },
+    "muted": ["disk"],
+    "longProc": {"enabled": true, "cpuPct": 50, "sustainSeconds": 1800, "notify": "all", "ignore": ["backup"]},
+    "origin": {"client": "web", "userId": "11111111-1111-1111-1111-111111111111", "at": "2026-11-25T09:30:00.123456Z"}
+  },
+  "hosts": [
+    {
+      "nodeId": "22222222-2222-2222-2222-222222222222",
+      "host": {
+        "thresholds": {"mem": {"warn": 0.85, "critical": 0.95}},
+        "alerts": {"cpu": {"sustainSeconds": 60, "notify": "all"}},
+        "muted": ["long"],
+        "ignoredProcs": ["pg_dump"],
+        "origin": {"client": "mac", "device": "fritz-mbp", "userId": "11111111-1111-1111-1111-111111111111", "at": "2026-11-25T10:00:00.5Z"}
+      },
+      "effective": {
+        "thresholds": {
+          "cpuWarn": 0.8, "cpuCritical": 0.9, "memWarn": 0.85, "memCritical": 0.95,
+          "diskWarn": 0.85, "diskCritical": 0.95
+        },
+        "alerts": {
+          "cpu": {"sustainSeconds": 60, "notify": "all"}, "mem": {"sustainSeconds": 120, "notify": "all"},
+          "disk": {"sustainSeconds": 0, "notify": "all"}, "health": {"sustainSeconds": 300, "notify": "all"},
+          "tolerance": 0.8
+        },
+        "muted": ["disk", "long"],
+        "longProc": {"enabled": true, "cpuPct": 50, "sustainSeconds": 1800, "notify": "all", "ignore": ["backup"]},
+        "ignore": null,
+        "sources": {
+          "thresholds": {"cpu": "org", "mem": "host", "memPressure": "org"},
+          "alerts": {"cpu": "host", "mem": "org", "tolerance": "org"},
+          "muted": {"disk": "org", "long": "host"},
+          "longProc": "org"
+        }
+      }
+    },
+    {
+      "nodeId": "33333333-3333-3333-3333-333333333333",
+      "host": {"muted": []},
+      "effective": {
+        "thresholds": {
+          "cpuWarn": 0.8, "cpuCritical": 0.9, "memWarn": 0.8, "memCritical": 0.9,
+          "diskWarn": 0.85, "diskCritical": 0.95
+        },
+        "alerts": {
+          "cpu": {"sustainSeconds": 300, "notify": "critical"}, "mem": {"sustainSeconds": 120, "notify": "all"},
+          "disk": {"sustainSeconds": 0, "notify": "all"}, "health": {"sustainSeconds": 300, "notify": "all"},
+          "tolerance": 0.8
+        },
+        "muted": ["disk"],
+        "longProc": {"enabled": true, "cpuPct": 50, "sustainSeconds": 1800, "notify": "all", "ignore": ["backup"]},
+        "ignore": ["backup"],
+        "sources": {"thresholds": {}, "alerts": {}, "muted": {"disk": "org"}, "longProc": "org"}
+      }
+    }
+  ]
+}

@@ -73,6 +73,7 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
                             <TextBlock Grid.Row="0" Text="Email" Style="{StaticResource KeyText}" />
                             <TextBlock Grid.Row="0" Grid.Column="1" x:Name="EmailValue" IsTextSelectionEnabled="True" />
@@ -85,8 +86,11 @@
                                 <TextBlock x:Name="HostsValue" VerticalAlignment="Center" />
                                 <Button x:Name="MoveBtn" Content="Move hosts to Cloud…" Visibility="Collapsed" Click="OnMoveClick" />
                             </StackPanel>
-                            <TextBlock Grid.Row="4" Text="SSH hosts" Style="{StaticResource KeyText}" />
-                            <TextBlock Grid.Row="4" Grid.Column="1" x:Name="SshValue" />
+                            <TextBlock Grid.Row="4" x:Name="RulesKey" Text="Rules" Style="{StaticResource KeyText}" Visibility="Collapsed" />
+                            <Button Grid.Row="4" Grid.Column="1" x:Name="RulesMoveBtn" Content="Move rules to cloud…"
+                                    Visibility="Collapsed" Click="OnRulesMoveClick" />
+                            <TextBlock Grid.Row="5" Text="SSH hosts" Style="{StaticResource KeyText}" />
+                            <TextBlock Grid.Row="5" Grid.Column="1" x:Name="SshValue" />
                         </Grid>
                     </Grid>
                 </Border>

@@ -62,6 +62,7 @@ public partial class App : Application
 
         Environment = AppEnvironment.Bootstrap();
         Environment.Move.Changed += OpenMoveWindow;
+        Environment.RulesMove.Changed += OpenRulesMoveWindow;
 
         _tray = new TrayIconHost(Environment);
         _tray.Show();
@@ -87,6 +88,19 @@ public partial class App : Application
         });
     }
 
+    private bool _rulesWindowQueued;
+
+    private void OpenRulesMoveWindow()
+    {
+        if (_rulesWindowQueued || !Environment.RulesMove.IsPresented) return;
+        _rulesWindowQueued = true;
+        TowertailApp.MainDispatcher?.TryEnqueue(() =>
+        {
+            _rulesWindowQueued = false;
+            MoveRulesToCloudWindow.OpenWhenPresented(Environment);
+        });
+    }
+
 #if DEBUG
     private PreferencesWindow? _debugPrefs;
 
@@ -103,6 +117,27 @@ public partial class App : Application
         for (var i = 0; i < 100 && !Environment.Cloud.Account.IsSignedIn; i++) await Task.Delay(100);
         await Environment.Move.OpenAsync();
         if (start) await Environment.Move.StartAsync();
+    }
+
+    private async Task OpenCloudHostForDebugAsync()
+    {
+        for (var i = 0; i < 100 && Environment.Cloud.Rules?.Org is null; i++) await Task.Delay(100);
+        TowertailApp.MainDispatcher?.TryEnqueue(() =>
+        {
+            if (Environment.Nodes.Nodes.FirstOrDefault(n => n.IsCloud) is not { } node) return;
+            var edit = new ServerEditWindow();
+            edit.Bind(node, _ => { });
+            edit.Activate();
+            if (System.Environment.GetEnvironmentVariable("TOWERTAIL_DEBUG_MOVE") == "scroll")
+                _ = Task.Delay(1500).ContinueWith(_ => edit.DispatcherQueue.TryEnqueue(edit.ScrollToCloudRules));
+        });
+    }
+
+    private async Task OpenRulesMoveForDebugAsync(bool start)
+    {
+        for (var i = 0; i < 100 && !Environment.Cloud.Account.IsSignedIn; i++) await Task.Delay(100);
+        await Environment.RulesMove.OpenAsync();
+        if (start) await Environment.RulesMove.StartAsync();
     }
 
     /// <summary>Opens a window at launch, for renders: <c>TOWERTAIL_DEBUG_OPEN</c> is <c>account</c>, <c>servers</c>, <c>thresholds</c>, <c>serveredit</c> or <c>popover</c>. <c>TOWERTAIL_DEBUG_EMAIL</c> asks for a sign-in code.</summary>
@@ -127,9 +162,16 @@ public partial class App : Application
                 }, _ => { });
                 edit.Activate();
                 break;
+            case "cloudhost":
+                // A Cloud host from the nodes. Waits for the sign-in and the first rules.
+                _ = OpenCloudHostForDebugAsync();
+                break;
             case "popover":
                 TestPinPopover = true;
                 _tray?.ShowPopover();
+                break;
+            case "rulesmove":
+                _ = OpenRulesMoveForDebugAsync(System.Environment.GetEnvironmentVariable("TOWERTAIL_DEBUG_MOVE") == "send");
                 break;
             case "move":
                 // Waits for the sign-in, then opens the move window. "install" also starts the move.

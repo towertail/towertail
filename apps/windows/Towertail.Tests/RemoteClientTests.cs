@@ -2,6 +2,7 @@ using FluentAssertions;
 using System.Text.Json;
 using Towertail.Tests.Helpers;
 using Towertail.WinUI.Backend;
+using Towertail.WinUI.State;
 using Xunit;
 
 namespace Towertail.Tests;
@@ -132,5 +133,79 @@ public sealed class RemoteClientTests : IAsyncLifetime
         var act = async () => await _client.AckAlertAsync(Guid.NewGuid());
 
         await act.Should().ThrowAsync<RemoteException>().Where(e => e.Status == 403);
+    }
+
+    [Fact]
+    public async Task GetRulesAsyncDecodesRulesView()
+    {
+        var host = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        _server.Handlers["GET /v1/rules"] = ctx => LocalTestHttpServer.ReplyAsync(ctx, 200,
+            File.ReadAllText(Path.Combine("TestData", "rules-view.json")));
+
+        var view = await _client.GetRulesAsync();
+
+        _server.Requests.Single().Path.Should().Be("/v1/rules");
+        view.Org.Thresholds.CpuWarn.Should().Be(0.8);
+        view.Org.Muted.Set.Should().BeEquivalentTo([AlertSignal.Disk]);
+        view.Org.Origin!.Source.Should().Be("web");
+        view.Hosts.Should().HaveCount(2);
+        var first = view.Hosts.Single(h => h.NodeId == host);
+        first.Host.IgnoredProcs.Should().Equal("pg_dump");
+        first.Effective.Thresholds.MemWarn.Should().Be(0.85);
+        first.Effective.IsHostPair(ThresholdMetric.Mem).Should().BeTrue();
+        first.Effective.Muted.Contains(AlertSignal.Long).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ImportRulesAsyncSendsPickedChanges()
+    {
+        var backup = Guid.NewGuid();
+        _server.Handlers["POST /v1/rules/import"] = ctx => LocalTestHttpServer.ReplyAsync(ctx, 200,
+            $$"""{"backupId":"{{backup}}","hosts":1,"org":true}""");
+        var body = new RemoteRulesImport(
+            new RemoteOrgRules { Muted = new MutedSignals([AlertSignal.Disk]) },
+            [new RemoteRulesImportHost(Guid.Parse("22222222-2222-2222-2222-222222222222"), new RemoteHostRules { Muted = MutedSignals.None })],
+            "windows", "test-pc");
+
+        var result = await _client.ImportRulesAsync(body);
+
+        var req = _server.Requests.Single();
+        req.Method.Should().Be("POST");
+        req.Authorization.Should().Be("Bearer test-token");
+        var json = System.Text.Json.Nodes.JsonNode.Parse(req.Body)!;
+        json["client"]!.GetValue<string>().Should().Be("windows");
+        json["device"]!.GetValue<string>().Should().Be("test-pc");
+        json["org"]!["muted"]!.AsArray().Single()!.GetValue<string>().Should().Be("disk");
+        json["hosts"]!.AsArray().Single()!["nodeId"]!.GetValue<string>().Should().Be("22222222-2222-2222-2222-222222222222");
+        result.BackupId.Should().Be(backup);
+        result.Hosts.Should().Be(1);
+        result.Org.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task SetMuteAsyncSendsMetricAndNode()
+    {
+        var node = Guid.NewGuid();
+        _server.Handlers["PUT /v1/mutes"] = ctx => LocalTestHttpServer.ReplyAsync(ctx, 200);
+
+        await _client.SetMuteAsync(AlertSignal.Mem, node, true);
+
+        var req = _server.Requests.Single();
+        var json = System.Text.Json.Nodes.JsonNode.Parse(req.Body)!;
+        json["metric"]!.GetValue<string>().Should().Be("mem");
+        json["nodeId"]!.GetValue<string>().Should().Be(node.ToString());
+        json["muted"]!.GetValue<bool>().Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task RulesCallForbiddenGivesPlainMessage()
+    {
+        _server.Handlers["PUT /v1/nodes/"] = ctx => LocalTestHttpServer.ReplyAsync(ctx, 403, """{"error":{"message":"admin only"}}""");
+
+        var act = async () => await _client.PutHostRulesAsync(Guid.NewGuid(), new RemoteHostRules());
+
+        var ex = (await act.Should().ThrowAsync<RemoteException>()).Which;
+        ex.Status.Should().Be(403);
+        ex.UserMessage.Should().NotBeNullOrEmpty();
     }
 }

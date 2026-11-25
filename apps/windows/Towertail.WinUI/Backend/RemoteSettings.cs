@@ -27,7 +27,12 @@ public sealed record RemoteNode(
     [property: JsonPropertyName("customLongProc"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     Towertail.WinUI.State.LongProcRule? CustomLongProc = null,
     [property: JsonPropertyName("ignoredProcs"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    IReadOnlyList<string>? IgnoredProcs = null);
+    IReadOnlyList<string>? IgnoredProcs = null,
+    // The rules of the host. Null is not sent, so the server keeps its stored values.
+    [property: JsonPropertyName("thresholdOverrides"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    Towertail.WinUI.State.ThresholdOverrides? ThresholdOverrides = null,
+    [property: JsonPropertyName("mutedSignals"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    Towertail.WinUI.State.MutedSignals? MutedSignals = null);
 
 public sealed record RemoteServerSettings(
     [property: JsonPropertyName("thresholds")] RemoteThresholds Thresholds,
@@ -41,7 +46,12 @@ public sealed record RemoteServerSettings(
     [property: JsonPropertyName("postWakeGraceSeconds")] int PostWakeGraceSeconds,
     // Null when the server is older than long-running process alerts.
     [property: JsonPropertyName("longProc"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    Towertail.WinUI.State.LongProcRule? LongProc = null);
+    Towertail.WinUI.State.LongProcRule? LongProc = null,
+    // The org rules. Null is not sent, so the server keeps its stored values.
+    [property: JsonPropertyName("alerts"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    Towertail.WinUI.State.AlertRules? Alerts = null,
+    [property: JsonPropertyName("muted"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    Towertail.WinUI.State.MutedSignals? Muted = null);
 
 public sealed record RemoteThresholds(
     [property: JsonPropertyName("cpuWarn")] double CpuWarn,
@@ -49,7 +59,13 @@ public sealed record RemoteThresholds(
     [property: JsonPropertyName("memWarn")] double MemWarn,
     [property: JsonPropertyName("memCritical")] double MemCritical,
     [property: JsonPropertyName("diskWarn")] double DiskWarn,
-    [property: JsonPropertyName("diskCritical")] double DiskCritical);
+    [property: JsonPropertyName("diskCritical")] double DiskCritical,
+    // Health keys. Null is not sent, so the server keeps its stored values.
+    [property: JsonPropertyName("procsWarn"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? ProcsWarn = null,
+    [property: JsonPropertyName("procsCritical"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? ProcsCritical = null,
+    [property: JsonPropertyName("zombiesWarn"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? ZombiesWarn = null,
+    [property: JsonPropertyName("zombiesCritical"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? ZombiesCritical = null,
+    [property: JsonPropertyName("health"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Towertail.WinUI.State.HealthLimits? Health = null);
 
 public sealed record RemoteClientSettings(
     [property: JsonPropertyName("cardDensity")] string CardDensity);

@@ -22,6 +22,24 @@ public sealed partial class PreferencesWindow : Window
         ResizeInitial(980, 640);
         Nav.SelectedItem = Nav.MenuItems[0];
         ShowPane("servers");
+        _toastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(6) };
+        _toastTimer.Tick += (_, _) => { _toastTimer.Stop(); _env.RulesMove.ClearToast(); };
+        _env.RulesMove.Changed += OnRulesMoveChanged;
+        Closed += (_, _) => { _env.RulesMove.Changed -= OnRulesMoveChanged; _toastTimer.Stop(); };
+        ShowToast();
+    }
+
+    private readonly DispatcherTimer _toastTimer;
+
+    private void OnRulesMoveChanged() => DispatcherQueue.TryEnqueue(ShowToast);
+
+    private void ShowToast()
+    {
+        var text = _env.RulesMove.Toast;
+        Toast.Visibility = text is null ? Visibility.Collapsed : Visibility.Visible;
+        ToastText.Text = text ?? "";
+        _toastTimer.Stop();
+        if (text is not null) _toastTimer.Start();
     }
 
     private void ResizeInitial(int w, int h)

@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Towertail.WinUI.State;
 using Towertail.WinUI.SystemServices;
@@ -26,16 +27,19 @@ public sealed class RemoteClient : IEnroller, IAsyncDisposable
     private readonly string _token;
     private readonly JsonSerializerOptions _json;
 
+    /// <summary>The options of the wire. Explicit <c>JsonPropertyName</c> names, and no null keys.</summary>
+    public static readonly JsonSerializerOptions WireJson = new()
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        PropertyNamingPolicy = null,
+    };
+
     public RemoteClient(Uri baseUri, string token, HttpClient? http = null)
     {
         _baseUri = baseUri;
         _token = token;
         _http = http ?? new HttpClient();
-        _json = new JsonSerializerOptions
-        {
-            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-            PropertyNamingPolicy = null, // already using snake_case via JsonPropertyName
-        };
+        _json = WireJson;
     }
 
     public Uri BaseUri => _baseUri;
@@ -57,6 +61,47 @@ public sealed class RemoteClient : IEnroller, IAsyncDisposable
 
     public Task<RemoteServerSettings> PutSettingsAsync(RemoteServerSettings s, CancellationToken ct = default)
         => SendJsonAsync<RemoteServerSettings, RemoteServerSettings>(HttpMethod.Put, "/v1/settings", s, ct);
+
+    /// <summary>The org rules and the rules of each host.</summary>
+    public Task<RemoteRulesView> GetRulesAsync(CancellationToken ct = default)
+        => GetJsonAsync<RemoteRulesView>("/v1/rules", ct)!;
+
+    /// <summary>
+    /// Replaces all rule fields of a host and returns the rules that the server stored. A 403
+    /// gives a plain message in <see cref="RemoteException.UserMessage"/>.
+    /// </summary>
+    public async Task<RemoteHostRules> PutHostRulesAsync(Guid nodeId, RemoteHostRules rules, CancellationToken ct = default)
+    {
+        var text = await RulesCallAsync(HttpMethod.Put, $"/v1/nodes/{nodeId}/rules", rules, ct).ConfigureAwait(false);
+        return JsonNode.Parse(text) is JsonObject node ? RemoteHostRules.FromNode(node) : rules;
+    }
+
+    /// <summary>
+    /// Sets or clears a mute. A null <paramref name="nodeId"/> mutes for the org. The signal
+    /// <see cref="AlertSignal.Long"/> mutes long-running process alerts.
+    /// </summary>
+    public Task SetMuteAsync(AlertSignal metric, Guid? nodeId, bool muted, CancellationToken ct = default)
+        => RulesCallAsync(HttpMethod.Put, "/v1/mutes", new RemoteMuteRequest(MutedSignals.Name(metric), nodeId, muted), ct);
+
+    /// <summary>Replaces the org rules (when set) and the rules of the named hosts at once. Needs the admin role.</summary>
+    public async Task<RemoteRulesImportResult> ImportRulesAsync(RemoteRulesImport body, CancellationToken ct = default)
+    {
+        var text = await RulesCallAsync(HttpMethod.Post, "/v1/rules/import", body, ct).ConfigureAwait(false);
+        return JsonSerializer.Deserialize<RemoteRulesImportResult>(text, _json)
+               ?? throw new RemoteException(200, text, "The cloud sent no answer.");
+    }
+
+    /// <summary>A 403 means the role of the user is too low. Other errors carry the message of the server.</summary>
+    private async Task<string> RulesCallAsync<T>(HttpMethod method, string path, T body, CancellationToken ct)
+    {
+        using var req = Build(method, path);
+        req.Content = new StringContent(JsonSerializer.Serialize(body, _json), Encoding.UTF8, "application/json");
+        using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+        var text = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        if (resp.IsSuccessStatusCode) return text;
+        var status = (int)resp.StatusCode;
+        throw new RemoteException(status, text, status == 403 ? "Only an org admin can change this." : RemoteException.ErrorText(text));
+    }
 
     public Task<EnrollResponse> EnrollSamplerAsync(EnrollRequest req, CancellationToken ct = default)
         => SendJsonAsync<EnrollRequest, EnrollResponse>(HttpMethod.Post, "/v1/sampler/enroll", req, ct);
@@ -201,10 +246,25 @@ public sealed class RemoteException : Exception
     public int Status { get; }
     public string Body { get; }
 
-    public RemoteException(int status, string body)
+    /// <summary>A short text for the user. It is the message of the exception when nothing better exists.</summary>
+    public string UserMessage { get; }
+
+    public RemoteException(int status, string body, string? userMessage = null)
         : base($"remote error {status}: {body}")
     {
         Status = status;
         Body = body;
+        UserMessage = userMessage ?? Message;
+    }
+
+    /// <summary>The <c>error.message</c> of a server error body, or the body.</summary>
+    public static string ErrorText(string body)
+    {
+        try
+        {
+            if (System.Text.Json.Nodes.JsonNode.Parse(body)?["error"]?["message"]?.GetValue<string>() is { Length: > 0 } m) return m;
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException) { }
+        return body;
     }
 }
