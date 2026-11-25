@@ -22,3 +22,24 @@ func TestProcsSource(t *testing.T) {
 		}
 	}
 }
+
+func TestSeriesStep(t *testing.T) {
+	day := 24 * time.Hour
+	for _, tc := range []struct {
+		span, age time.Duration
+		n         int
+		want      time.Duration
+	}{
+		{time.Hour, 0, 120, 30 * time.Second},
+		{time.Minute, 0, 120, 10 * time.Second},
+		{time.Hour, 3 * time.Hour, 120, time.Minute},
+		{2 * time.Hour, 3 * time.Hour, 10, 12 * time.Minute},
+		{2 * day, 0, 120, 24 * time.Minute},
+		{30 * day, 0, 120, 6 * time.Hour},
+		{time.Hour, 8 * day, 60, time.Hour},
+	} {
+		if got := SeriesStep(tc.span, tc.age, tc.n); got != tc.want {
+			t.Errorf("SeriesStep(%v, %v, %d) = %v, want %v", tc.span, tc.age, tc.n, got, tc.want)
+		}
+	}
+}

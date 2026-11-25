@@ -15,6 +15,7 @@ import (
 const (
 	maxProcessLimit  = 50
 	defaultSnapLimit = 20
+	maxProcessSeries = 120
 )
 
 // handleProcesses returns the top processes of a node in a range.
@@ -40,6 +41,13 @@ func (s *Server) handleProcesses(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
+	var series int
+	if v := c.QueryParam("series"); v != "" {
+		series, err = strconv.Atoi(v)
+		if err != nil || series < 0 || series > maxProcessSeries {
+			return echo.NewHTTPError(http.StatusBadRequest, "bad series")
+		}
+	}
 	if err := s.requireCH(c); err != nil {
 		return err
 	}
@@ -61,7 +69,54 @@ func (s *Server) handleProcesses(c echo.Context) error {
 			CPUPctAvg: p.CPUPctAvg, CPUPctMax: p.CPUPctMax, RSSMax: p.RSSMax, IOBpsAvg: p.IOBpsAvg,
 		})
 	}
+	if series > 0 && len(procs) > 0 {
+		if err := s.addProcessSeries(c, &out, r.RangeQuery, series); err != nil {
+			return err
+		}
+	}
 	return c.JSON(http.StatusOK, out)
+}
+
+// addProcessSeries gives each row of out a series of about n points.
+func (s *Server) addProcessSeries(c echo.Context, out *wire.NodeProcessesResponse, r clickhouse.RangeQuery, n int) error {
+	span := r.To.Sub(r.From)
+	step := clickhouse.SeriesStep(span, time.Since(r.From), n)
+	keys := make([]wire.ProcessKey, len(out.Processes))
+	for i, p := range out.Processes {
+		keys[i] = p.Key
+	}
+	pts, err := s.ch.ProcessSeries(c.Request().Context(), clickhouse.ProcSeriesQuery{RangeQuery: r, Keys: keys, Step: step})
+	if err != nil {
+		return err
+	}
+	from := alignDown(r.From, step)
+	count := int(r.To.Sub(from)/step) + 1
+	out.SeriesFrom, out.SeriesStepS = &from, int(step/time.Second)
+	for i := range out.Processes {
+		out.Processes[i].Series = denseSeries(pts[out.Processes[i].Key], from, step, count)
+	}
+	return nil
+}
+
+// alignDown gives the last multiple of step, since the Unix epoch, that
+// is not after t.
+func alignDown(t time.Time, step time.Duration) time.Time {
+	s := int64(step / time.Second)
+	return time.Unix(t.Unix()/s*s, 0).UTC()
+}
+
+// denseSeries puts the points on n slots from "from", one for each step.
+// A slot with no point is 0.
+func denseSeries(pts []clickhouse.ProcPoint, from time.Time, step time.Duration, n int) *wire.ProcSeries {
+	out := &wire.ProcSeries{CPU: make([]float64, n), RSS: make([]uint64, n), IO: make([]float64, n)}
+	for _, p := range pts {
+		i := int(p.TS.Sub(from) / step)
+		if i < 0 || i >= n {
+			continue
+		}
+		out.CPU[i], out.RSS[i], out.IO[i] = p.CPUPct, p.RSS, p.IOBps
+	}
+	return out
 }
 
 // handleProcessesAt returns the top processes of a node at one time.

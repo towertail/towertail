@@ -263,25 +263,37 @@ type FleetHistoryResponse struct {
 
 // TopProcess is one process of a node over a range: a name and a cmd.
 type TopProcess struct {
-	Key       ProcessKey `json:"key"`
-	Name      string     `json:"name"`
-	Cmd       string     `json:"cmd"`
-	Repo      string     `json:"repo,omitempty"`
-	Cwd       string     `json:"cwd,omitempty"`
-	Parent    string     `json:"parent,omitempty"`
-	CPUPctAvg float64    `json:"cpu_pct_avg"`
-	CPUPctMax float64    `json:"cpu_pct_max"`
-	RSSMax    uint64     `json:"rss_max"`
-	IOBpsAvg  float64    `json:"io_bps_avg,omitempty"`
+	Key       ProcessKey  `json:"key"`
+	Name      string      `json:"name"`
+	Cmd       string      `json:"cmd"`
+	Repo      string      `json:"repo,omitempty"`
+	Cwd       string      `json:"cwd,omitempty"`
+	Parent    string      `json:"parent,omitempty"`
+	CPUPctAvg float64     `json:"cpu_pct_avg"`
+	CPUPctMax float64     `json:"cpu_pct_max"`
+	RSSMax    uint64      `json:"rss_max"`
+	IOBpsAvg  float64     `json:"io_bps_avg,omitempty"`
+	Series    *ProcSeries `json:"series,omitempty"`
+}
+
+// ProcSeries is the history of one process. Point i is at series_from +
+// i * series_step_s of the response. A bucket with no row is 0.
+type ProcSeries struct {
+	CPU []float64 `json:"cpu"`
+	RSS []uint64  `json:"rss"`
+	IO  []float64 `json:"io,omitempty"`
 }
 
 // NodeProcessesResponse is the top processes of a node, by average CPU.
+// SeriesFrom and SeriesStepS are set when the request has "series".
 type NodeProcessesResponse struct {
-	NodeID    uuid.UUID    `json:"node_id"`
-	From      time.Time    `json:"from"`
-	To        time.Time    `json:"to"`
-	Clamped   bool         `json:"clamped,omitempty"`
-	Processes []TopProcess `json:"processes"`
+	NodeID      uuid.UUID    `json:"node_id"`
+	From        time.Time    `json:"from"`
+	To          time.Time    `json:"to"`
+	Clamped     bool         `json:"clamped,omitempty"`
+	SeriesFrom  *time.Time   `json:"series_from,omitempty"`
+	SeriesStepS int          `json:"series_step_s,omitempty"`
+	Processes   []TopProcess `json:"processes"`
 }
 
 // ProcessSnapshot is the top processes of a node at one time.

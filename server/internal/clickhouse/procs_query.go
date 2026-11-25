@@ -5,9 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/towertail/towertail/server/wire"
 )
 
 // RangeQuery is a node and a time range.
@@ -106,6 +109,86 @@ func (c *Client) TopProcesses(ctx context.Context, q RangeQuery, by ProcOrder, l
 			return nil, err
 		}
 		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// ProcSeriesQuery asks for the points of some processes. Step is a
+// whole number of seconds. Use SeriesStep to get a step that fits the
+// table.
+type ProcSeriesQuery struct {
+	RangeQuery
+	Keys []wire.ProcessKey
+	Step time.Duration
+}
+
+// ProcPoint is one bucket of a process: the average CPU, the highest
+// memory and the average disk I/O. TS is the start of the bucket, on a
+// multiple of the step since the Unix epoch.
+type ProcPoint struct {
+	TS     time.Time
+	CPUPct float64
+	RSS    uint64
+	IOBps  float64
+}
+
+// SeriesStep gives the step for about n points over the range. It is not
+// less than the bucket of the table that the span and the age select.
+// It is a multiple of that bucket.
+func SeriesStep(span, age time.Duration, n int) time.Duration {
+	table, _ := procsSource(span, age)
+	bucket := 10 * time.Second
+	switch table {
+	case "procs_top_1m":
+		bucket = time.Minute
+	case "procs_top_1h":
+		bucket = time.Hour
+	}
+	step := (span + time.Duration(max(n, 1)) - 1) / time.Duration(max(n, 1))
+	return max(bucket, (step+bucket-1)/bucket*bucket)
+}
+
+// ProcessSeries gives the points of each key in the range. The span and
+// the age of the range select the table, as for TopProcesses. A bucket
+// with no row has no point.
+func (c *Client) ProcessSeries(ctx context.Context, q ProcSeriesQuery) (map[wire.ProcessKey][]ProcPoint, error) {
+	out := make(map[wire.ProcessKey][]ProcPoint, len(q.Keys))
+	if len(q.Keys) == 0 {
+		return out, nil
+	}
+	table, ts := procsSource(q.To.Sub(q.From), time.Since(q.From))
+	cpu, rss, hash, io, final := "cpu_pct", "rss", "cityHash64(cmd)", "coalesce(read_bps, 0) + coalesce(write_bps, 0)", ""
+	if table != "procs_topn" {
+		cpu, rss, hash, io, final = "cpu_pct_avg", "rss_max", "cmd_hash", "io_bps_avg", " FINAL"
+	}
+	step := max(int64(q.Step/time.Second), 1)
+	pairs := make([]string, len(q.Keys))
+	args := []any{q.OrgID, q.NodeID, q.From, q.To}
+	for i, k := range q.Keys {
+		pairs[i] = "(?, ?)"
+		args = append(args, k.Name, k.CmdHash)
+	}
+	stmt := fmt.Sprintf("SELECT name, %s AS p_hash, toInt64(intDiv(toUnixTimestamp(%s), %d) * %d) AS b, "+
+		"toFloat64(avg(%s)), max(%s), toFloat64(avg(%s)) FROM %s%s "+
+		"WHERE org_id = ? AND node_id = ? AND %s BETWEEN ? AND ? AND (name, %s) IN (%s) "+
+		"GROUP BY name, p_hash, b ORDER BY b",
+		hash, ts, step, step, cpu, rss, io, c.table(table), final, ts, hash, strings.Join(pairs, ", "))
+	rows, err := c.conn.Query(ctx, stmt, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			k wire.ProcessKey
+			b int64
+			p ProcPoint
+		)
+		if err := rows.Scan(&k.Name, &k.CmdHash, &b, &p.CPUPct, &p.RSS, &p.IOBps); err != nil {
+			return nil, err
+		}
+		p.TS = time.Unix(b, 0).UTC()
+		out[k] = append(out[k], p)
 	}
 	return out, rows.Err()
 }

@@ -6,8 +6,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -18,6 +20,7 @@ import (
 	"github.com/towertail/towertail/server/internal/query"
 	"github.com/towertail/towertail/server/runtime"
 	"github.com/towertail/towertail/server/store"
+	"github.com/towertail/towertail/server/wire"
 )
 
 func TestHandleProcessesAt(t *testing.T) {
@@ -74,3 +77,54 @@ func TestHandleProcessesAtClamped(t *testing.T) {
 }
 
 func jsonHas(b []byte, s string) bool { return strings.Contains(string(b), s) }
+
+func TestHandleProcessesSeriesParam(t *testing.T) {
+	e := newKeyEnv(t, config.HTTPConfig{})
+	user, _ := e.login(t, store.RoleViewer)
+	base := "/v1/nodes/" + uuid.NewString() + "/processes"
+	for _, tc := range []struct {
+		query string
+		want  int
+	}{
+		{"?series=121", http.StatusBadRequest},
+		{"?series=-1", http.StatusBadRequest},
+		{"?series=abc", http.StatusBadRequest},
+		// Valid values reach requireCH. The server has no ClickHouse.
+		{"?series=0", http.StatusServiceUnavailable},
+		{"?series=120", http.StatusServiceUnavailable},
+	} {
+		if rec := e.do(http.MethodGet, base+tc.query, user, ""); rec.Code != tc.want {
+			t.Errorf("GET %s: %d %s, want %d", tc.query, rec.Code, rec.Body, tc.want)
+		}
+	}
+}
+
+func TestDenseSeries(t *testing.T) {
+	from := time.Unix(6000, 0).UTC()
+	step := time.Minute
+	pts := []clickhouse.ProcPoint{
+		{TS: from.Add(step), CPUPct: 10, RSS: 5, IOBps: 2},
+		{TS: from.Add(3 * step), CPUPct: 30, RSS: 7},
+		{TS: from.Add(-step), CPUPct: 99},
+		{TS: from.Add(9 * step), CPUPct: 99},
+	}
+	got := denseSeries(pts, from, step, 5)
+	want := &wire.ProcSeries{
+		CPU: []float64{0, 10, 0, 30, 0},
+		RSS: []uint64{0, 5, 0, 7, 0},
+		IO:  []float64{0, 2, 0, 0, 0},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("series = %+v, want %+v", got, want)
+	}
+	if got := denseSeries(nil, from, step, 3); len(got.CPU) != 3 || len(got.RSS) != 3 {
+		t.Fatalf("empty series = %+v", got)
+	}
+}
+
+func TestAlignDown(t *testing.T) {
+	at := time.Unix(1_000_000_123, 456)
+	if got := alignDown(at, 7*time.Minute); got.Unix()%420 != 0 || at.Sub(got) >= 7*time.Minute || got.After(at) {
+		t.Fatalf("alignDown = %v", got)
+	}
+}

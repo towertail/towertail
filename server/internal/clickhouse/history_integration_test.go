@@ -978,3 +978,83 @@ func TestTopProcessesByIO(t *testing.T) {
 		})
 	}
 }
+
+// Two processes over 10 min of procs_topn, 1 min step.
+func TestProcessSeriesRaw(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	org, node := uuid.New(), uuid.New()
+	start := time.Now().UTC().Truncate(time.Minute).Add(-10 * time.Minute)
+	var procs []ProcRow
+	for ts := start; ts.Before(start.Add(10 * time.Minute)); ts = ts.Add(10 * time.Second) {
+		m := float32(ts.Sub(start) / time.Minute)
+		for i, name := range []string{"a", "b"} {
+			rd, wr := uint64(100*(i+1)), uint64(50)
+			procs = append(procs, ProcRow{
+				TS: ts, OrgID: org, NodeID: node, PID: int32(i + 1), Name: name, Cmd: "/bin/" + name,
+				CPUPct: m * float32(i+1), RSS: uint64(m+1) << 20, StartTS: start, ReadBps: &rd, WriteBps: &wr,
+			})
+		}
+	}
+	if err := client.insert(ctx, []IngestBundle{{Sample: SampleRow{TS: start, OrgID: org, NodeID: node, SchemaV: 1, Errors: []string{}}, Procs: procs}}); err != nil {
+		t.Fatal(err)
+	}
+	keyA, keyB := wire.NewProcessKey("a", "/bin/a"), wire.NewProcessKey("b", "/bin/b")
+	got, err := client.ProcessSeries(ctx, ProcSeriesQuery{
+		RangeQuery: RangeQuery{OrgID: org, NodeID: node, From: start, To: start.Add(10*time.Minute - time.Second)},
+		Keys:       []wire.ProcessKey{keyA, keyB, wire.NewProcessKey("c", "/bin/c")},
+		Step:       time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("keys = %d, want 2", len(got))
+	}
+	for key, mul := range map[wire.ProcessKey]float64{keyA: 1, keyB: 2} {
+		pts := got[key]
+		if len(pts) != 10 {
+			t.Fatalf("%s: %d points, want 10", key.Name, len(pts))
+		}
+		for i, p := range pts {
+			if !p.TS.Equal(start.Add(time.Duration(i)*time.Minute)) || p.CPUPct != float64(i)*mul ||
+				p.RSS != uint64(i+1)<<20 || p.IOBps != 100*mul+50 {
+				t.Errorf("%s[%d] = %+v", key.Name, i, p)
+			}
+		}
+	}
+}
+
+// procs_top_1m rows for 2 h, 3 h ago: the points are on the minute buckets.
+func TestProcessSeriesMinuteTier(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	org, node := uuid.New(), uuid.New()
+	start := time.Now().UTC().Truncate(time.Hour).Add(-4 * time.Hour)
+	for m := 0; m < 120; m++ {
+		insertTop(t, client, "procs_top_1m", "ts_minute", org, node, start.Add(time.Duration(m)*time.Minute), 2)
+	}
+	key := wire.NewProcessKey("p2", "/bin/p2")
+	// insertTop stores cmd_hash = i, so the key hash is 2.
+	key.CmdHash = 2
+	to := start.Add(2 * time.Hour)
+	for _, step := range []time.Duration{time.Minute, 10 * time.Minute} {
+		got, err := client.ProcessSeries(ctx, ProcSeriesQuery{RangeQuery: RangeQuery{OrgID: org, NodeID: node, From: start, To: to}, Keys: []wire.ProcessKey{key}, Step: step})
+		if err != nil {
+			t.Fatal(err)
+		}
+		pts := got[key]
+		if want := int(2 * time.Hour / step); len(pts) != want && len(pts) != want+1 {
+			t.Fatalf("step %v: %d points, want %d", step, len(pts), want)
+		}
+		for _, p := range pts {
+			if p.TS.Unix()%int64(step/time.Second) != 0 || p.CPUPct != 2 || p.RSS != 2<<20 || p.IOBps != 200 {
+				t.Fatalf("step %v: point %+v", step, p)
+			}
+		}
+	}
+}
