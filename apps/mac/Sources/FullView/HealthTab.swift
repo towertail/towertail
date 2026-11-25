@@ -268,7 +268,12 @@ struct HealthTab: View {
                 }
                 .padding(.horizontal, 14).padding(.vertical, 7)
                 .contentShape(Rectangle())
-                .onTapGesture { model.openProcess = ProcessRef(key: ProcessRef.key(name: p.name, cmd: p.cmd), pid: p.pid, name: p.name, cmd: p.cmd ?? "") }
+                .onTapGesture {
+                    // A Cloud row carries the key of the server.
+                    let live = vm.procs.latest?.items.first { $0.pid == p.pid && $0.name == p.name }
+                    model.openProcess = live.map(ProcessRef.local)
+                        ?? ProcessRef(key: ProcessRef.key(name: p.name, cmd: p.cmd), pid: p.pid, name: p.name, cmd: p.cmd ?? "")
+                }
             }
         }
         .wbCard()

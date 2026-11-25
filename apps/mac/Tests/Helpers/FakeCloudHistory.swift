@@ -99,6 +99,13 @@ final class FakeCloudLoader: CloudHistoryLoader {
     var detail: RemoteProcessDetail?
     var offenderBody: RemoteOffenders?
     var failWindow: Error?
+    /// Builds the points of a metric for a window. It wins over `windowSeries`.
+    var windowProvider: ((String, ClosedRange<Date>, Duration) -> [(Date, Double)])?
+    var snapshotProvider: ((ProcBucket) -> RemoteProcessSnapshot)?
+    var offendersProvider: ((ClosedRange<Date>) -> RemoteOffenders)?
+    var detailProvider: ((String, ClosedRange<Date>, Duration) -> RemoteProcessDetail)?
+    /// Snapshot requests wait for ever.
+    var hangsSnapshots = false
 
     static let node = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
 
@@ -121,7 +128,7 @@ final class FakeCloudLoader: CloudHistoryLoader {
         if let failWindow { throw failWindow }
         let f = ISO8601DateFormatter()
         let body = metrics.compactMap { m -> String? in
-            guard let pts = windowSeries[m] else { return nil }
+            guard let pts = windowProvider?(m, window, step) ?? windowSeries[m] else { return nil }
             let items = pts.map { #"{"ts":"\#(f.string(from: $0.0))","value":\#($0.1)}"# }.joined(separator: ",")
             return #""\#(m)":[\#(items)]"#
         }.joined(separator: ",")
@@ -137,8 +144,9 @@ final class FakeCloudLoader: CloudHistoryLoader {
 
     func processesAt(host: UUID, bucket: ProcBucket, by: ProcSort) async throws -> RemoteProcessSnapshot {
         snapshotCalls.append(bucket)
+        if hangsSnapshots { try await Task.sleep(for: .seconds(3600)) }
         if latency > .zero, let clock { try await clock.sleep(for: latency) }
-        return Self.snapshot(ts: bucket.start)
+        return snapshotProvider?(bucket) ?? Self.snapshot(ts: bucket.start)
     }
 
     func cachedProcessesAt(host: UUID, bucket: ProcBucket, by: ProcSort) async -> RemoteProcessSnapshot? {
@@ -147,12 +155,14 @@ final class FakeCloudLoader: CloudHistoryLoader {
 
     func offenders(host: UUID, window: ClosedRange<Date>, by: ProcSort) async throws -> RemoteOffenders {
         offenderCalls += 1
+        if let offendersProvider { return offendersProvider(window) }
         guard let offenderBody else { throw FakeCloudError.missing }
         return offenderBody
     }
 
     func process(host: UUID, key: String, window: ClosedRange<Date>, step: Duration) async throws -> RemoteProcessDetail {
         processCalls.append(key)
+        if let detailProvider { return detailProvider(key, window, step) }
         guard let detail else { throw FakeCloudError.missing }
         return detail
     }

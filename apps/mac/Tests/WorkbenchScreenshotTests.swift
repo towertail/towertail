@@ -158,4 +158,132 @@ final class WorkbenchScreenshotTests: XCTestCase {
         try render(window(node, vm: vm) { _ in }, size: CGSize(width: 980, height: 640), name: "workbench-overview-narrow")
         XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("panel-live.png").path))
     }
+
+    // MARK: - Cloud host
+
+    private static let iso = ISO8601DateFormatter()
+
+    private func cloudLoader() -> FakeCloudLoader {
+        let fake = FakeCloudLoader()
+        let mb = 1_048_576.0
+        fake.windowProvider = { name, window, step in
+            let secs = max(Double(step.components.seconds), 10)
+            let n = Int(window.upperBound.timeIntervalSince(window.lowerBound) / secs)
+            return (0...n).map { i in
+                let t = window.lowerBound.addingTimeInterval(Double(i) * secs)
+                let w = sin(Double(i) / 40)
+                let v: Double
+                switch name {
+                case "cpu": v = 40 + 30 * w + (i > n - 60 ? 12 : 0)
+                case "mem": v = 0.62 + 0.08 * w
+                case "load": v = 3 + 2 * w
+                case "disk": v = 0.41 + Double(i) / Double(n) * 0.03
+                case "net_rx": v = (3 + 2 * w) * mb
+                case "net_tx": v = (1 + w) * mb
+                case "disk_read": v = (20 + 18 * w) * mb
+                case "disk_write": v = (8 + 6 * w) * mb
+                case "procs": v = 640 + 20 * w
+                case "zombies": v = 0
+                case "pids": v = 0.12
+                case "files": v = 0.2
+                case "inodes": v = 0.05
+                case "mem_pressure": v = 1
+                default: v = 0
+                }
+                return (t, v)
+            }
+        }
+        let rows = [
+            #"{"key":"a1.b3JiU3RhY2s","pid":812,"user":"fritz","name":"OrbStack Helper","cmd":"OrbStack Helper --vm","cpu_pct":71.2,"rss":3300000000,"threads":40,"io_bps":3145728}"#,
+            #"{"key":"a2.bm9kZQ","pid":4410,"user":"fritz","name":"node","cmd":"node vitest","cpu_pct":62.4,"rss":412000000,"threads":12,"io_bps":4194304}"#,
+            #"{"key":"a3.V2luZG93U2VydmVy","pid":402,"user":"_windowserver","name":"WindowServer","cmd":"","cpu_pct":18.2,"rss":690000000,"threads":20}"#,
+            #"{"key":"a4.cG9zdGdyZXM","pid":311,"user":"fritz","name":"postgres","cmd":"postgres: main","cpu_pct":9.5,"rss":900000000,"threads":8,"io_bps":8388608}"#,
+        ]
+        fake.snapshotProvider = { b in
+            let snap = FakeCloudLoader.snapshot(ts: b.start.addingTimeInterval(b.tier == .raw ? 0 : 0), rows: rows)
+            return snap
+        }
+        fake.offendersProvider = { window in
+            let span = window.upperBound.timeIntervalSince(window.lowerBound)
+            let step = Int((span / 60).rounded(.up))
+            func series(_ base: Double, _ amp: Double) -> String {
+                (0..<60).map { String(format: "%.1f", max(0, base + amp * sin(Double($0) / 5))) }.joined(separator: ",")
+            }
+            func rss(_ v: Double) -> String { (0..<60).map { _ in String(Int(v)) }.joined(separator: ",") }
+            func one(_ key: String, _ name: String, _ cmd: String, _ avg: Double, _ max: Double, _ r: Double, repo: String? = nil) -> String {
+                let repoPart = repo.map { #","repo":"\#($0)""# } ?? ""
+                return #"{"key":"\#(key)","name":"\#(name)","cmd":"\#(cmd)"\#(repoPart),"cpu_pct_avg":\#(avg),"cpu_pct_max":\#(max),"rss_max":\#(Int(r)),"series":{"cpu":[\#(series(avg, avg / 2))],"rss":[\#(rss(r))],"io":[\#(series(2, 1))]}}"#
+            }
+            let list = [
+                one("a1.b3JiU3RhY2s", "OrbStack Helper", "OrbStack Helper --vm", 55, 96, 3_300_000_000),
+                one("a2.bm9kZQ", "node", "node vitest", 31, 88, 412_000_000, repo: "towertail"),
+                one("a4.cG9zdGdyZXM", "postgres", "postgres: main", 9, 40, 900_000_000),
+                one("a3.V2luZG93U2VydmVy", "WindowServer", "", 6, 22, 690_000_000),
+            ].joined(separator: ",")
+            let f = Self.iso
+            return FakeCloudLoader.decode("""
+            {"node_id":"\(FakeCloudLoader.node)","from":"\(f.string(from: window.lowerBound))","to":"\(f.string(from: window.upperBound))",
+             "series_from":"\(f.string(from: window.lowerBound))","series_step_s":\(step),"processes":[\(list)]}
+            """)
+        }
+        fake.detailProvider = { key, window, step in
+            let secs = max(Double(step.components.seconds), 10)
+            let n = min(Int(window.upperBound.timeIntervalSince(window.lowerBound) / secs), 400)
+            let f = Self.iso
+            let pts = (0...n).map { i -> String in
+                let t = window.lowerBound.addingTimeInterval(Double(i) * secs)
+                let cpu = 40 + 35 * sin(Double(i) / 12)
+                return #"{"ts":"\#(f.string(from: t))","cpu_pct":\#(cpu),"rss":\#(400_000_000 + i * 200_000),"io_bps":\#(2_000_000 + i * 1000)}"#
+            }.joined(separator: ",")
+            let seen = f.string(from: window.upperBound)
+            return FakeCloudLoader.decode("""
+            {"node_id":"\(FakeCloudLoader.node)","key":"\(key)","name":"node","cmd":"node vitest","repo":"towertail",
+             "from":"\(f.string(from: window.lowerBound))","to":"\(seen)","resolution":"\(secs)s","points":[\(pts)],
+             "facts":{"seen_at":"\(seen)","pid":4410,"ppid":311,"parent":"zsh","user":"fritz","cwd":"/Users/fritz/towertail",
+                      "state":"R","threads":12,"start_ts":"\(f.string(from: window.upperBound.addingTimeInterval(-5 * 3600)))",
+                      "listen_tcp":[5173],"listen_udp":[]}}
+            """)
+        }
+        return fake
+    }
+
+    private func cloudWindow(
+        _ node: Node, vm: ServerViewModel, tab: HostTab = .overview, loader: FakeCloudLoader,
+        prepare: @escaping (FullViewModel) -> Void = { _ in }
+    ) -> some View {
+        let store = ServerStore()
+        store.register(vm)
+        return FullViewWindow(
+            context: FullViewContext(hostId: node.id, metric: .cpu), initialTab: tab, cloudLoader: loader, prepare: prepare
+        )
+        .environment(store)
+        .environment(ServerSettings(url: settingsURL))
+        .environment(ClientSettings(url: settingsURL))
+        .environment(NodeStore(nodes: [node], url: settingsURL))
+        .environment(SamplerUpdateCoordinator(manifest: nil))
+    }
+
+    func testCloudHostRenders() throws {
+        let node = Node.localMac()
+        let vm = filledVM(node: node)
+        vm.liveSource = .cloud
+        let size = CGSize(width: 1180, height: 760)
+        let nodeRef = ProcessRef(key: "a2.bm9kZQ", pid: nil, name: "node", cmd: "node vitest")
+        try render(cloudWindow(node, vm: vm, loader: cloudLoader()), size: size, name: "cloud-overview")
+        try render(cloudWindow(node, vm: vm, tab: .processes, loader: cloudLoader()), size: size, name: "cloud-processes")
+        try render(cloudWindow(node, vm: vm, tab: .health, loader: cloudLoader()), size: size, name: "cloud-health")
+        try render(cloudWindow(node, vm: vm, tab: .disks, loader: cloudLoader()), size: size, name: "cloud-disks")
+        try render(cloudWindow(node, vm: vm, loader: cloudLoader()) { $0.openProcess = nodeRef }, size: size, name: "cloud-panel")
+        try render(cloudWindow(node, vm: vm, loader: cloudLoader()) {
+            $0.range = .h24
+            $0.pin(at: Date().addingTimeInterval(-3 * 3600))
+        }, size: size, name: "cloud-pinned")
+        let hang = cloudLoader()
+        hang.hangsSnapshots = true
+        try render(cloudWindow(node, vm: vm, loader: hang) {
+            $0.range = .h24
+            $0.pin(at: Date().addingTimeInterval(-3 * 3600))
+        }, size: size, name: "cloud-loading")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("cloud-overview.png").path))
+    }
 }
