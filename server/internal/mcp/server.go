@@ -135,29 +135,31 @@ type setServer struct {
 
 // Server holds the MCP servers of the tool sets and their tools.
 type Server struct {
-	q       Queries
-	scans   Scans
-	orgInfo OrgInfo
-	appURL  string
-	version string
-	ref     Reference
-	sets    map[ToolSet]*setServer
-	log     *slog.Logger
-	now     func() time.Time
+	q        Queries
+	scans    Scans
+	orgInfo  OrgInfo
+	settings SettingsReader
+	appURL   string
+	version  string
+	ref      Reference
+	sets     map[ToolSet]*setServer
+	log      *slog.Logger
+	now      func() time.Time
 }
 
 // New makes the server with its tools.
 func New(q Queries, o Options) *Server {
 	s := &Server{
-		q:       q,
-		scans:   o.Scans,
-		orgInfo: o.OrgInfo,
-		appURL:  o.AppURL,
-		version: o.Version,
-		ref:     NewReference(),
-		sets:    make(map[ToolSet]*setServer, len(toolSets)),
-		log:     o.Log,
-		now:     time.Now,
+		q:        q,
+		scans:    o.Scans,
+		orgInfo:  o.OrgInfo,
+		settings: o.Settings,
+		appURL:   o.AppURL,
+		version:  o.Version,
+		ref:      NewReference(),
+		sets:     make(map[ToolSet]*setServer, len(toolSets)),
+		log:      o.Log,
+		now:      time.Now,
 	}
 	for _, set := range toolSets {
 		s.sets[set] = &setServer{srv: sdk.NewServer(
@@ -298,8 +300,10 @@ func callerOf(ctx context.Context) (caller, error) {
 // the text of other errors, and logs them.
 func (s *Server) toolError(tool string, err error) error {
 	var in *inputError
+	var right *rightError
 	switch {
 	case errors.As(err, &in),
+		errors.As(err, &right),
 		errors.Is(err, query.ErrNoHistory),
 		errors.Is(err, query.ErrBadOrder),
 		errors.Is(err, query.ErrBadWindow),
