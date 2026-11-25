@@ -1,9 +1,11 @@
 package clickhouse
 
 import (
+	"math"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/towertail/sampler/pkg/schema"
 )
 
 // SampleRow is the denormalised wide row written into samples_raw.
@@ -40,6 +42,45 @@ type SampleRow struct {
 	ProcsVisible  uint32
 	ProcsRoot     uint8
 	Errors        []string
+
+	// Health values. They are nil when the sampler or the OS gives none.
+	Zombies                                *uint32
+	PidsUsed, PidsMax, FilesUsed, FilesMax *uint64
+	PSICPUSome, PSIMemSome, PSIMemFull     *float32
+	PSIIOSome, PSIIOFull                   *float32
+	MemPressurePct                         *uint8
+	DiskRatioMax, InodesRatioMax           *float32
+}
+
+// SetHealth copies the health values of a sample. A value that the sample
+// does not have stays nil.
+func (s *SampleRow) SetHealth(h *schema.HealthInfo) {
+	if h.Zombies != nil {
+		s.Zombies = ptr(uint32Positive(int64(*h.Zombies)))
+	}
+	s.PidsUsed, s.PidsMax = positive(h.PidsUsed), positive(h.PidsMax)
+	s.FilesUsed, s.FilesMax = positive(h.FilesUsed), positive(h.FilesMax)
+	if p := h.PSI; p != nil {
+		s.PSICPUSome, s.PSIMemSome, s.PSIMemFull = ptr(float32(p.CPUSome)), ptr(float32(p.MemSome)), ptr(float32(p.MemFull))
+		s.PSIIOSome, s.PSIIOFull = ptr(float32(p.IOSome)), ptr(float32(p.IOFull))
+	}
+	if h.MemPressurePct != nil {
+		s.MemPressurePct = ptr(uint8(min(max(*h.MemPressurePct, 0), 100)))
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
+
+func uint32Positive(v int64) uint32 {
+	return uint32(min(max(v, 0), math.MaxUint32))
+}
+
+// positive converts a count; a negative value is 0 and a nil stays nil.
+func positive(v *int64) *uint64 {
+	if v == nil {
+		return nil
+	}
+	return ptr(uint64(max(*v, 0)))
 }
 
 // DiskRow is one row per mount per sample.
@@ -51,6 +92,9 @@ type DiskRow struct {
 	FS     string
 	Used   uint64
 	Total  uint64
+	// InodesUsed and InodesTotal are nil when the filesystem has no inodes.
+	InodesUsed  *uint64
+	InodesTotal *uint64
 }
 
 // DiskIORow is one row per block device per sample.

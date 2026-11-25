@@ -134,6 +134,13 @@ func TestParseMetricListLimits(t *testing.T) {
 	if _, err := parseMetricList("a,b,c,d,e,f,g,h,i", 8); err == nil {
 		t.Error("9 names: want an error")
 	}
+	names := "a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p"
+	if got, err := parseMetricList(names, maxHistoryMetrics); err != nil || len(got) != 16 {
+		t.Errorf("16 names: %v, %v", got, err)
+	}
+	if _, err := parseMetricList(names+",q", maxHistoryMetrics); err == nil {
+		t.Error("17 names: want an error")
+	}
 	if got, err := parseMetricList("cpu, mem,cpu,", 8); err != nil || len(got) != 2 || got[0] != "cpu" || got[1] != "mem" {
 		t.Errorf("list = %v, %v, want [cpu mem]", got, err)
 	}

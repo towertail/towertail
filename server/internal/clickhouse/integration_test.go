@@ -249,7 +249,7 @@ func TestMigrationsCreateExpectedTables(t *testing.T) {
 		seen[name] = true
 	}
 	want := []string{"samples_raw", "disks", "disk_io_devices", "procs_topn", "events",
-		"samples_1m", "samples_5m", "samples_1h", "procs_top_1m", "procs_top_1h", "proc_ports"}
+		"samples_1m", "samples_5m", "samples_1h", "procs_top_1m", "procs_top_1h", "proc_ports", "health_1m", "health_5m", "health_1h"}
 	for _, tbl := range want {
 		if !seen[tbl] {
 			t.Errorf("expected table %q missing; got %v", tbl, seen)
@@ -284,9 +284,12 @@ func TestBatcherFlushesAndRoundtripsSamples(t *testing.T) {
 			ProcsTotal:  10,
 			ProcsRoot:   0,
 			Errors:      []string{},
+			Zombies:     u32(3), PidsUsed: u64(40), PidsMax: u64(80), FilesUsed: u64(5), FilesMax: u64(50),
+			PSICPUSome: f32(1.5), PSIMemSome: f32(2.5), PSIMemFull: f32(3.5), PSIIOSome: f32(4.5), PSIIOFull: f32(5.5),
+			MemPressurePct: u8(30), DiskRatioMax: f32(0.1), InodesRatioMax: f32(0.2),
 		},
 		Disks: []DiskRow{
-			{TS: ts, OrgID: orgID, NodeID: nodeID, Mount: "/", FS: "ext4", Used: 100, Total: 1000},
+			{TS: ts, OrgID: orgID, NodeID: nodeID, Mount: "/", FS: "ext4", Used: 100, Total: 1000, InodesUsed: u64(7), InodesTotal: u64(70)},
 		},
 	})
 	if err != nil {
@@ -321,6 +324,28 @@ func TestBatcherFlushesAndRoundtripsSamples(t *testing.T) {
 	}
 	if diskCount != 1 {
 		t.Fatalf("expected 1 disk row, got %d", diskCount)
+	}
+
+	var (
+		zombies                    *uint32
+		pidsUsed, pidsMax          *uint64
+		psiCPU, psiIOFull, diskMax *float32
+		pressure                   *uint8
+		inodesUsed, inodesTotal    *uint64
+	)
+	ctx := context.Background()
+	if err := client.conn.QueryRow(ctx, "SELECT zombies, pids_used, pids_max, psi_cpu_some, psi_io_full, mem_pressure_pct, disk_ratio_max FROM towertail.samples_raw WHERE node_id = ?", nodeID).
+		Scan(&zombies, &pidsUsed, &pidsMax, &psiCPU, &psiIOFull, &pressure, &diskMax); err != nil {
+		t.Fatal(err)
+	}
+	if zombies == nil || *zombies != 3 || *pidsUsed != 40 || *pidsMax != 80 || *psiCPU != 1.5 || *psiIOFull != 5.5 || *pressure != 30 || *diskMax != 0.1 {
+		t.Errorf("health row = %v %v %v %v %v %v %v", zombies, pidsUsed, pidsMax, psiCPU, psiIOFull, pressure, diskMax)
+	}
+	if err := client.conn.QueryRow(ctx, "SELECT inodes_used, inodes_total FROM towertail.disks WHERE node_id = ?", nodeID).Scan(&inodesUsed, &inodesTotal); err != nil {
+		t.Fatal(err)
+	}
+	if inodesUsed == nil || *inodesUsed != 7 || *inodesTotal != 70 {
+		t.Errorf("inodes = %v %v", inodesUsed, inodesTotal)
 	}
 }
 

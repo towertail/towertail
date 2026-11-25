@@ -201,8 +201,12 @@ func decodeSample(line []byte, orgID, nodeID uuid.UUID) (clickhouse.IngestBundle
 		b.Sample.NetTxCum = uint64Positive(s.Net.TxCum)
 	}
 	if s.Disks != nil {
+		var (
+			diskMax, inodeMax float32
+			hasInodes         bool
+		)
 		for _, d := range *s.Disks {
-			b.Disks = append(b.Disks, clickhouse.DiskRow{
+			row := clickhouse.DiskRow{
 				TS:     ts,
 				OrgID:  orgID,
 				NodeID: nodeID,
@@ -210,8 +214,25 @@ func decodeSample(line []byte, orgID, nodeID uuid.UUID) (clickhouse.IngestBundle
 				FS:     d.Fs,
 				Used:   uint64Positive(d.Used),
 				Total:  uint64Positive(d.Total),
-			})
+			}
+			diskMax = max(diskMax, usedRatio(d.Used, d.Total))
+			if d.InodesTotal > 0 {
+				iu, it := uint64Positive(d.InodesUsed), uint64Positive(d.InodesTotal)
+				row.InodesUsed, row.InodesTotal = &iu, &it
+				inodeMax = max(inodeMax, usedRatio(d.InodesUsed, d.InodesTotal))
+				hasInodes = true
+			}
+			b.Disks = append(b.Disks, row)
 		}
+		if len(b.Disks) > 0 {
+			b.Sample.DiskRatioMax = &diskMax
+		}
+		if hasInodes {
+			b.Sample.InodesRatioMax = &inodeMax
+		}
+	}
+	if s.Health != nil {
+		b.Sample.SetHealth(s.Health)
 	}
 	if s.Procs != nil {
 		b.Sample.ProcsTotal = uint32Positive(s.Procs.Total)
@@ -301,6 +322,14 @@ func ports16(in []uint32) []uint16 {
 		}
 	}
 	return out
+}
+
+// usedRatio is used/total, or 0 when total is not positive.
+func usedRatio(used, total int64) float32 {
+	if total <= 0 {
+		return 0
+	}
+	return float32(float64(used) / float64(total))
 }
 
 func uint64Positive(v int64) uint64 {

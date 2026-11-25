@@ -88,7 +88,8 @@ func (s *Server) requireCH(c echo.Context) error {
 
 // Limits of the multi-metric and fleet history requests.
 const (
-	maxHistoryMetrics  = 8
+	maxHistoryMetrics  = 16
+	maxFleetMetrics    = 8
 	maxFleetNodes      = 200
 	maxFleetRange      = 24 * time.Hour
 	defaultFleetRange  = 30 * time.Minute
@@ -272,7 +273,7 @@ func (s *Server) handleFleetHistory(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "bad nodes: "+err.Error())
 	}
-	metrics, err := parseMetricList(c.QueryParam("metrics"), maxHistoryMetrics)
+	metrics, err := parseMetricList(c.QueryParam("metrics"), maxFleetMetrics)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "bad metrics: "+err.Error())
 	}

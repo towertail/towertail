@@ -464,13 +464,16 @@ func (c *Client) LatestDiskRatio(ctx context.Context, orgID uuid.UUID, since tim
 	return out, rows.Err()
 }
 
-// DiskPoint is the use of one mount at the end of one bucket.
+// DiskPoint is the use of one mount at the end of one bucket. The inode
+// counts are 0 when the filesystem or the row has none.
 type DiskPoint struct {
-	Mount string
-	FS    string
-	TS    time.Time
-	Used  uint64
-	Total uint64
+	Mount       string
+	FS          string
+	TS          time.Time
+	Used        uint64
+	Total       uint64
+	InodesUsed  uint64
+	InodesTotal uint64
 }
 
 // diskBucket gives about 240 points for each mount, 1 minute at least.
@@ -483,7 +486,7 @@ func diskBucket(span time.Duration) time.Duration {
 func (c *Client) DiskHistory(ctx context.Context, q RangeQuery) ([]DiskPoint, time.Duration, error) {
 	bucket := diskBucket(q.To.Sub(q.From))
 	sql := fmt.Sprintf("SELECT mount, argMax(fs, ts), toStartOfInterval(ts, INTERVAL %d SECOND) AS t, "+
-		"argMax(used, ts), argMax(total, ts) FROM %s "+
+		"argMax(used, ts), argMax(total, ts), toUInt64(ifNull(max(inodes_used), 0)), toUInt64(ifNull(max(inodes_total), 0)) FROM %s "+
 		"WHERE org_id = ? AND node_id = ? AND ts BETWEEN ? AND ? "+
 		"GROUP BY mount, t ORDER BY mount, t", int64(bucket/time.Second), c.table("disks"))
 	rows, err := c.conn.Query(ctx, sql, q.OrgID, q.NodeID, q.From, q.To)
@@ -494,7 +497,7 @@ func (c *Client) DiskHistory(ctx context.Context, q RangeQuery) ([]DiskPoint, ti
 	var out []DiskPoint
 	for rows.Next() {
 		var p DiskPoint
-		if err := rows.Scan(&p.Mount, &p.FS, &p.TS, &p.Used, &p.Total); err != nil {
+		if err := rows.Scan(&p.Mount, &p.FS, &p.TS, &p.Used, &p.Total, &p.InodesUsed, &p.InodesTotal); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, p)

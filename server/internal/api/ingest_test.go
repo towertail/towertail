@@ -406,6 +406,62 @@ func TestDecodeSample_Ports(t *testing.T) {
 	}
 }
 
+func TestDecodeSample_Health(t *testing.T) {
+	head := `{"v":1,"ts":"2026-04-23T10:00:00.000Z",
+		"host":{"name":"x","os":"linux","arch":"amd64","kernel":"6.6","uptime_s":1,"sampler":"1.5.0"},
+		"cpu":{"pct":1,"load_1":0,"load_5":0,"load_15":0,"cores":2},
+		"mem":{"used":1,"total":100},"swap":{"used":0,"total":0},`
+	org, node := uuid.New(), uuid.New()
+
+	b, _, err := decodeSample([]byte(head+`"disks":[
+			{"mount":"/","fs":"ext4","used":50,"total":100,"inodes_used":10,"inodes_total":100},
+			{"mount":"/data","fs":"xfs","used":90,"total":100,"inodes_used":60,"inodes_total":80},
+			{"mount":"/boot","fs":"btrfs","used":1,"total":100}],
+		"health":{"procs":200,"zombies":2,"pids_used":50,"pids_max":100,"files_used":7,"files_max":70,
+			"psi":{"cpu_some":1.5,"mem_some":2.5,"mem_full":3.5,"io_some":4.5,"io_full":5.5},"mem_pressure_pct":0},
+		"errors":[]}`), org, node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := b.Sample
+	if s.Zombies == nil || *s.Zombies != 2 || *s.PidsUsed != 50 || *s.PidsMax != 100 || *s.FilesUsed != 7 || *s.FilesMax != 70 {
+		t.Errorf("counts = %v %v %v %v %v", s.Zombies, s.PidsUsed, s.PidsMax, s.FilesUsed, s.FilesMax)
+	}
+	if s.PSICPUSome == nil || *s.PSICPUSome != 1.5 || *s.PSIMemSome != 2.5 || *s.PSIMemFull != 3.5 || *s.PSIIOSome != 4.5 || *s.PSIIOFull != 5.5 {
+		t.Errorf("psi = %v %v %v %v %v", s.PSICPUSome, s.PSIMemSome, s.PSIMemFull, s.PSIIOSome, s.PSIIOFull)
+	}
+	if s.MemPressurePct == nil || *s.MemPressurePct != 0 {
+		t.Errorf("mem pressure = %v, want 0 (not nil)", s.MemPressurePct)
+	}
+	if s.DiskRatioMax == nil || *s.DiskRatioMax != 0.9 || s.InodesRatioMax == nil || *s.InodesRatioMax != 0.75 {
+		t.Errorf("worst mount = %v %v, want 0.9 and 0.75", s.DiskRatioMax, s.InodesRatioMax)
+	}
+	if len(b.Disks) != 3 || b.Disks[0].InodesUsed == nil || *b.Disks[0].InodesUsed != 10 || *b.Disks[0].InodesTotal != 100 || b.Disks[2].InodesUsed != nil || b.Disks[2].InodesTotal != nil {
+		t.Errorf("disk inodes = %+v", b.Disks)
+	}
+
+	// A Mac sample has a pressure and no PSI. No disks gives no ratios.
+	b, _, err = decodeSample([]byte(head+`"health":{"procs":300,"mem_pressure_pct":42},"errors":[]}`), org, node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s = b.Sample
+	if s.MemPressurePct == nil || *s.MemPressurePct != 42 || s.PSICPUSome != nil || s.PSIIOFull != nil || s.Zombies != nil || s.PidsUsed != nil ||
+		s.DiskRatioMax != nil || s.InodesRatioMax != nil {
+		t.Errorf("mac sample = %+v", s)
+	}
+
+	// A sample with no health, and disks with no inodes.
+	b, _, err = decodeSample([]byte(head+`"disks":[{"mount":"/","fs":"ntfs","used":25,"total":100}],"errors":[]}`), org, node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s = b.Sample
+	if s.Zombies != nil || s.MemPressurePct != nil || s.InodesRatioMax != nil || s.DiskRatioMax == nil || *s.DiskRatioMax != 0.25 {
+		t.Errorf("no health = %+v", s)
+	}
+}
+
 func TestDecodeSample_RejectsUnknownVersion(t *testing.T) {
 	line := []byte(`{"v":99,"ts":"2026-04-23T10:00:00Z","host":{"name":"x"},"cpu":{},"mem":{"used":1,"total":100},"swap":{"used":0,"total":0},"errors":[]}`)
 	if _, _, err := decodeSample(line, uuid.New(), uuid.New()); err == nil {

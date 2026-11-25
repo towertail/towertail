@@ -473,11 +473,14 @@ type APIKeyRequest struct {
 	Label string `json:"label" validate:"required,max=80"`
 }
 
-// DiskPoint is the use of a mount at the end of one bucket.
+// DiskPoint is the use of a mount at the end of one bucket. The inode
+// counts are left out for a filesystem with no inodes and for old rows.
 type DiskPoint struct {
-	TS    time.Time `json:"ts"`
-	Used  uint64    `json:"used"`
-	Total uint64    `json:"total"`
+	TS          time.Time `json:"ts"`
+	Used        uint64    `json:"used"`
+	Total       uint64    `json:"total"`
+	InodesUsed  uint64    `json:"inodes_used,omitempty"`
+	InodesTotal uint64    `json:"inodes_total,omitempty"`
 }
 
 // DiskSeries is the use of one mount over a range.

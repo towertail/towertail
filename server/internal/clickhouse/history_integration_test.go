@@ -266,7 +266,7 @@ func TestQueryHistoryMultiMatchesSingle(t *testing.T) {
 			bundles = append(bundles, IngestBundle{Sample: SampleRow{
 				TS: ts, OrgID: org, NodeID: n, SchemaV: 1, CPUPct: float32(i % 100), MemUsed: uint64(1 + i%3), MemTotal: 4,
 				NetRxBps: uint64(i), NetTxBps: uint64(2 * i), DiskReadBps: uint64(3 * i), DiskWriteBps: uint64(4 * i),
-				ProcsTotal: uint32(100 + i%7), Errors: []string{},
+				ProcsTotal: uint32(100 + i%7), CPULoad1: float32(i%5) / 2, Errors: []string{},
 			}})
 		}
 	}
@@ -274,15 +274,15 @@ func TestQueryHistoryMultiMatchesSingle(t *testing.T) {
 		t.Fatalf("insert: %v", err)
 	}
 
-	all := []string{"cpu", "mem", "net_rx", "net_tx", "disk_read", "disk_write"}
+	all := []string{"cpu", "mem", "net_rx", "net_tx", "disk_read", "disk_write", "procs", "load_1"}
 	for _, tc := range []struct {
 		name    string
 		from    time.Time
 		step    time.Duration
 		metrics []string
 	}{
-		{"raw", end.Add(-time.Hour), 0, append([]string{"procs"}, all...)},
-		{"raw by step", end.Add(-time.Hour), 5 * time.Minute, append([]string{"procs"}, all...)},
+		{"raw", end.Add(-time.Hour), 0, all},
+		{"raw by step", end.Add(-time.Hour), 5 * time.Minute, all},
 		{"1m", end.Add(-2 * 24 * time.Hour), time.Minute, all},
 		{"5m", end.Add(-10 * 24 * time.Hour), 0, all},
 	} {
@@ -320,8 +320,14 @@ func TestQueryHistoryMultiMatchesSingle(t *testing.T) {
 	_, _, err := client.QueryHistoryMulti(ctx, HistoryMultiQuery{
 		OrgID: org, NodeIDs: []uuid.UUID{node}, Metrics: []string{"procs"}, From: end.Add(-2 * 24 * time.Hour), To: end, Step: time.Minute,
 	})
-	if err != ErrNoRollup {
-		t.Fatalf("procs on 1m tier: err = %v, want ErrNoRollup", err)
+	if err != nil {
+		t.Fatalf("procs on 1m tier: %v", err)
+	}
+	_, _, err = client.QueryHistoryMulti(ctx, HistoryMultiQuery{
+		OrgID: org, NodeIDs: []uuid.UUID{node}, Metrics: []string{"cpu", "nope"}, From: end.Add(-2 * 24 * time.Hour), To: end, Step: time.Minute,
+	})
+	if !errors.Is(err, ErrUnknownMetric) {
+		t.Fatalf("unknown metric: err = %v, want ErrUnknownMetric", err)
 	}
 }
 
@@ -1144,5 +1150,207 @@ func TestProcessInfoRollup(t *testing.T) {
 	cmd, _, err := client.ProcessInfo(context.Background(), org, node, key, minute, minute.Add(time.Minute))
 	if err != nil || cmd != "/bin/p2" {
 		t.Fatalf("info = %q %v", cmd, err)
+	}
+}
+
+func f32(v float32) *float32 { return &v }
+func u32(v uint32) *uint32   { return &v }
+func u64(v uint64) *uint64   { return &v }
+func u8(v uint8) *uint8      { return &v }
+
+// Two hours of samples each 10 s, ending at the start of the hour. The
+// linux node has zombies (0, 1, 2 in turn), PSI, and 50 of 100 PIDs. The
+// mac node has only a memory pressure.
+func insertHealthSamples(t *testing.T, client *Client, org, linux, mac uuid.UUID, end time.Time) {
+	t.Helper()
+	var bundles []IngestBundle
+	for i, ts := 0, end.Add(-2*time.Hour); ts.Before(end); i, ts = i+1, ts.Add(10*time.Second) {
+		bundles = append(bundles,
+			IngestBundle{Sample: SampleRow{
+				TS: ts, OrgID: org, NodeID: linux, SchemaV: 1, CPUPct: 20, CPULoad1: 1.5, ProcsTotal: 200, MemUsed: 1, MemTotal: 4, Errors: []string{},
+				Zombies: u32(uint32(i % 3)), PidsUsed: u64(50), PidsMax: u64(100), FilesUsed: u64(10), FilesMax: u64(0),
+				PSICPUSome: f32(5), PSIMemSome: f32(6), PSIMemFull: f32(7), PSIIOSome: f32(8), PSIIOFull: f32(9),
+				DiskRatioMax: f32(0.75), InodesRatioMax: f32(0.25),
+			}},
+			IngestBundle{Sample: SampleRow{
+				TS: ts, OrgID: org, NodeID: mac, SchemaV: 1, CPUPct: 10, CPULoad1: 0.5, ProcsTotal: 300, MemUsed: 1, MemTotal: 4, Errors: []string{},
+				MemPressurePct: u8(40),
+			}})
+	}
+	if err := client.insert(context.Background(), bundles); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+}
+
+func near(a, b float64) bool { return math.Abs(a-b) < 1e-4 }
+
+func TestHealthHistoryTiers(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	org, linux, mac := uuid.New(), uuid.New(), uuid.New()
+	end := time.Now().UTC().Truncate(time.Hour)
+	insertHealthSamples(t, client, org, linux, mac, end)
+
+	metrics := []string{"zombies", "psi_cpu", "psi_mem", "psi_mem_full", "psi_io", "psi_io_full", "pids", "files", "disk", "inodes", "mem_pressure", "load", "procs"}
+	for _, tc := range []struct {
+		name string
+		from time.Time
+		step time.Duration
+		raw  bool
+	}{
+		{"raw", end.Add(-time.Hour), 0, true},
+		{"1m", end.Add(-2 * 24 * time.Hour), time.Minute, false},
+		{"5m", end.Add(-10 * 24 * time.Hour), 0, false},
+		{"1h", end.Add(-60 * 24 * time.Hour), 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _, err := client.QueryHistoryMulti(ctx, HistoryMultiQuery{
+				OrgID: org, NodeIDs: []uuid.UUID{linux, mac}, Metrics: metrics, From: tc.from, To: end.Add(-time.Millisecond), Step: tc.step,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := map[string]float64{
+				"psi_cpu": 5, "psi_mem": 6, "psi_mem_full": 7, "psi_io": 8, "psi_io_full": 9,
+				"pids": 0.5, "disk": 0.75, "inodes": 0.25, "load": 1.5, "procs": 200,
+			}
+			for m, v := range want {
+				pts := got[linux][m]
+				if len(pts) == 0 {
+					t.Errorf("linux %s: no points", m)
+				}
+				for _, p := range pts {
+					if !near(p.Value, v) || !near(p.Max, v) {
+						t.Errorf("linux %s: %+v, want %v", m, p, v)
+						break
+					}
+				}
+			}
+			z := got[linux]["zombies"]
+			if len(z) == 0 {
+				t.Fatal("linux zombies: no points")
+			}
+			if tc.raw {
+				if z[0].Value != 0 || z[1].Value != 1 || z[2].Value != 2 {
+					t.Errorf("raw zombies = %+v", z[:3])
+				}
+			} else if !near(z[0].Value, 1) || !near(z[0].Max, 2) {
+				t.Errorf("zombies = %+v, want avg 1, max 2", z[0])
+			}
+			// A metric with no value has no points: files has a zero max,
+			// and the mac node has no PSI.
+			if n := len(got[linux]["files"]); n != 0 {
+				t.Errorf("linux files: %d points, want 0", n)
+			}
+			for _, m := range []string{"psi_cpu", "psi_io_full", "zombies", "pids", "disk", "inodes"} {
+				if n := len(got[mac][m]); n != 0 {
+					t.Errorf("mac %s: %d points, want 0", m, n)
+				}
+			}
+			if pts := got[mac]["mem_pressure"]; len(pts) == 0 || !near(pts[0].Value, 40) {
+				t.Errorf("mac mem_pressure = %+v", pts)
+			}
+			if pts := got[linux]["mem_pressure"]; len(pts) != 0 {
+				t.Errorf("linux mem_pressure: %d points, want 0", len(pts))
+			}
+			if pts := got[mac]["procs"]; len(pts) == 0 || !near(pts[0].Value, 300) {
+				t.Errorf("mac procs = %+v", pts)
+			}
+		})
+	}
+}
+
+// The metrics of two families come from two tables on a rollup tier.
+func TestQueryHistoryMultiFamilies(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	org, linux, mac := uuid.New(), uuid.New(), uuid.New()
+	end := time.Now().UTC().Truncate(time.Hour)
+	insertHealthSamples(t, client, org, linux, mac, end)
+
+	got, res, err := client.QueryHistoryMulti(ctx, HistoryMultiQuery{
+		OrgID: org, NodeIDs: []uuid.UUID{linux}, Metrics: []string{"cpu", "zombies", "load"},
+		From: end.Add(-2 * 24 * time.Hour), To: end.Add(-time.Millisecond), Step: time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != time.Minute {
+		t.Errorf("resolution = %v", res)
+	}
+	for m, v := range map[string]float64{"cpu": 20, "zombies": 1, "load": 1.5} {
+		pts := got[linux][m]
+		if len(pts) != 120 || !near(pts[0].Value, v) {
+			t.Errorf("%s: %d points, first %+v, want 120 points of %v", m, len(pts), pts, v)
+		}
+	}
+	// The single metric query reads the same table.
+	one, _, err := client.QueryHistory(ctx, HistoryQuery{OrgID: org, NodeID: linux, Metric: "zombies", From: end.Add(-2 * 24 * time.Hour), To: end.Add(-time.Millisecond), Step: time.Minute})
+	if err != nil || len(one) != 120 {
+		t.Errorf("single zombies: %d points, %v", len(one), err)
+	}
+	// The mac node has no zombies: no points and no error.
+	one, _, err = client.QueryHistory(ctx, HistoryQuery{OrgID: org, NodeID: mac, Metric: "zombies", From: end.Add(-2 * 24 * time.Hour), To: end.Add(-time.Millisecond), Step: time.Minute})
+	if err != nil || len(one) != 0 {
+		t.Errorf("mac zombies: %d points, %v", len(one), err)
+	}
+}
+
+func TestDiskHistoryInodes(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	org, node := uuid.New(), uuid.New()
+	ts := time.Now().UTC().Truncate(time.Minute).Add(-10 * time.Minute)
+	err := client.insert(ctx, []IngestBundle{
+		{Sample: SampleRow{TS: ts, OrgID: org, NodeID: node, SchemaV: 1, Errors: []string{}}, Disks: []DiskRow{
+			{TS: ts, OrgID: org, NodeID: node, Mount: "/", FS: "ext4", Used: 5, Total: 10, InodesUsed: u64(100), InodesTotal: u64(1000)},
+			{TS: ts, OrgID: org, NodeID: node, Mount: "/data", FS: "btrfs", Used: 6, Total: 10},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A row from before the migration has null inodes.
+	if err := client.conn.Exec(ctx, "INSERT INTO "+client.table("disks")+" (ts, org_id, node_id, mount, fs, used, total) VALUES (?, ?, ?, '/old', 'xfs', 1, 2)",
+		ts, org, node); err != nil {
+		t.Fatal(err)
+	}
+	pts, _, err := client.DiskHistory(ctx, RangeQuery{OrgID: org, NodeID: node, From: ts.Add(-time.Minute), To: ts.Add(time.Minute)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]DiskPoint{}
+	for _, p := range pts {
+		got[p.Mount] = p
+	}
+	if len(got) != 3 || got["/"].InodesUsed != 100 || got["/"].InodesTotal != 1000 || got["/data"].InodesTotal != 0 || got["/old"].InodesUsed != 0 || got["/old"].Used != 1 {
+		t.Fatalf("points = %+v", pts)
+	}
+}
+
+func TestHealthColumns(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+	for table, cols := range map[string][]string{
+		"samples_raw": {"zombies", "pids_used", "pids_max", "files_used", "files_max", "psi_cpu_some", "psi_mem_some", "psi_mem_full",
+			"psi_io_some", "psi_io_full", "mem_pressure_pct", "disk_ratio_max", "inodes_ratio_max"},
+		"disks":     {"inodes_used", "inodes_total"},
+		"health_1m": {"ts_minute", "avg_load_1", "max_psi_io_full", "avg_pids"},
+		"health_5m": {"ts_5m", "avg_procs", "max_mem_pressure"},
+		"health_1h": {"ts_hour", "avg_inodes", "max_disk"},
+	} {
+		for _, col := range cols {
+			var n uint64
+			if err := client.conn.QueryRow(ctx, "SELECT count() FROM system.columns WHERE database = ? AND table = ? AND name = ?", client.db, table, col).Scan(&n); err != nil || n != 1 {
+				t.Errorf("column %s.%s: count %d, err %v", table, col, n, err)
+			}
+		}
 	}
 }

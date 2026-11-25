@@ -40,7 +40,7 @@ func (s *Server) handleDisks(c echo.Context) error {
 		}
 		m := &out.Mounts[len(out.Mounts)-1]
 		m.FS = p.FS
-		m.Points = append(m.Points, wire.DiskPoint{TS: p.TS, Used: p.Used, Total: p.Total})
+		m.Points = append(m.Points, wire.DiskPoint{TS: p.TS, Used: p.Used, Total: p.Total, InodesUsed: p.InodesUsed, InodesTotal: p.InodesTotal})
 	}
 	return c.JSON(http.StatusOK, out)
 }

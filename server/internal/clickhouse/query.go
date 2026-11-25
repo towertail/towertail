@@ -47,6 +47,15 @@ var (
 	tier1h  = tier{"samples_1h", "ts_hour", time.Hour}
 )
 
+// tableOf gives the table of the metric family in the tier. The raw tier
+// has one table for all the families.
+func (t tier) tableOf(family string) string {
+	if t == tierRaw {
+		return t.table
+	}
+	return family + strings.TrimPrefix(t.table, "samples")
+}
+
 // rank orders the tiers from the finest (0) to the coarsest (3).
 func (t tier) rank() int {
 	switch t {
@@ -97,7 +106,11 @@ func historyTier(span, age time.Duration) tier {
 // comes from the range, and the step groups the points of the tier.
 func (c *Client) QueryHistory(ctx context.Context, q HistoryQuery) ([]HistoryPoint, time.Duration, error) {
 	t := historyTier(q.To.Sub(q.From), time.Since(q.From))
-	sql, err := c.historySQL(t, []string{q.Metric}, q.Step, false)
+	family, err := metricFamily(t, q.Metric)
+	if err != nil {
+		return nil, 0, err
+	}
+	sql, err := c.historySQL(t, family, []string{q.Metric}, q.Step, false)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -109,9 +122,19 @@ func (c *Client) QueryHistory(ctx context.Context, q HistoryQuery) ([]HistoryPoi
 
 	var out []HistoryPoint
 	for rows.Next() {
-		var p HistoryPoint
-		if err := rows.Scan(&p.TS, &p.Value, &p.Max); err != nil {
+		var (
+			ts   time.Time
+			v, m *float64
+		)
+		if err := rows.Scan(&ts, &v, &m); err != nil {
 			return nil, 0, err
+		}
+		if v == nil {
+			continue
+		}
+		p := HistoryPoint{TS: ts, Value: *v, Max: *v}
+		if m != nil {
+			p.Max = *m
 		}
 		out = append(out, p)
 	}
@@ -133,25 +156,50 @@ var ErrNoRollup = errors.New("clickhouse: metric has no rollup for this range")
 
 // QueryHistoryMulti returns the points of each metric of each node in
 // the range, and the bucket of the points. A node of another org, or a
-// node with no points, has no entry. The tier rules are the same as in
-// QueryHistory.
+// node with no points, has no entry. A bucket with no value of a metric
+// has no point of that metric. The tier rules are the same as in
+// QueryHistory. On a rollup tier, the metrics of each family come from
+// their own table, so the query runs once for each family.
 func (c *Client) QueryHistoryMulti(ctx context.Context, q HistoryMultiQuery) (map[uuid.UUID]map[string][]HistoryPoint, time.Duration, error) {
 	t := historyTier(q.To.Sub(q.From), time.Since(q.From))
+	out := map[uuid.UUID]map[string][]HistoryPoint{}
 	if len(q.Metrics) == 0 || len(q.NodeIDs) == 0 {
-		return map[uuid.UUID]map[string][]HistoryPoint{}, t.resolution(q.Step), nil
+		return out, t.resolution(q.Step), nil
 	}
-	sql, err := c.historySQL(t, q.Metrics, q.Step, true)
+	var families []string
+	byFamily := map[string][]string{}
+	for _, m := range q.Metrics {
+		f, err := metricFamily(t, m)
+		if err != nil {
+			return nil, 0, err
+		}
+		if _, ok := byFamily[f]; !ok {
+			families = append(families, f)
+		}
+		byFamily[f] = append(byFamily[f], m)
+	}
+	for _, f := range families {
+		if err := c.queryFamily(ctx, t, f, byFamily[f], q, out); err != nil {
+			return nil, 0, err
+		}
+	}
+	return out, t.resolution(q.Step), nil
+}
+
+// queryFamily runs the query of the metrics of one family and adds the
+// points to out.
+func (c *Client) queryFamily(ctx context.Context, t tier, family string, metrics []string, q HistoryMultiQuery, out map[uuid.UUID]map[string][]HistoryPoint) error {
+	sql, err := c.historySQL(t, family, metrics, q.Step, true)
 	if err != nil {
-		return nil, 0, err
+		return err
 	}
 	rows, err := c.conn.Query(ctx, sql, q.OrgID, q.NodeIDs, q.From, q.To)
 	if err != nil {
-		return nil, 0, err
+		return err
 	}
 	defer rows.Close()
 
-	out := map[uuid.UUID]map[string][]HistoryPoint{}
-	vals := make([]float64, 2*len(q.Metrics))
+	vals := make([]*float64, 2*len(metrics))
 	for rows.Next() {
 		var (
 			id uuid.UUID
@@ -162,18 +210,26 @@ func (c *Client) QueryHistoryMulti(ctx context.Context, q HistoryMultiQuery) (ma
 			dest = append(dest, &vals[i])
 		}
 		if err := rows.Scan(dest...); err != nil {
-			return nil, 0, err
+			return err
 		}
-		series := out[id]
-		if series == nil {
-			series = make(map[string][]HistoryPoint, len(q.Metrics))
-			out[id] = series
-		}
-		for i, m := range q.Metrics {
-			series[m] = append(series[m], HistoryPoint{TS: ts, Value: vals[2*i], Max: vals[2*i+1]})
+		for i, m := range metrics {
+			v := vals[2*i]
+			if v == nil {
+				continue
+			}
+			p := HistoryPoint{TS: ts, Value: *v, Max: *v}
+			if mx := vals[2*i+1]; mx != nil {
+				p.Max = *mx
+			}
+			series := out[id]
+			if series == nil {
+				series = make(map[string][]HistoryPoint, len(q.Metrics))
+				out[id] = series
+			}
+			series[m] = append(series[m], p)
 		}
 	}
-	return out, t.resolution(q.Step), rows.Err()
+	return rows.Err()
 }
 
 // resolution is the bucket of the points for the step.
@@ -184,59 +240,121 @@ func (t tier) resolution(step time.Duration) time.Duration {
 	return t.bucket
 }
 
-// rollupCols are the avg and max state columns of each metric.
-var rollupCols = map[string][2]string{
-	"cpu":        {"cpu_pct_avg", "cpu_pct_max"},
-	"mem":        {"mem_ratio_avg", ""},
-	"net_rx":     {"net_rx_avg", ""},
-	"net_tx":     {"net_tx_avg", ""},
-	"disk_read":  {"disk_read_avg", ""},
-	"disk_write": {"disk_write_avg", ""},
+// rollupCol is the state columns of a metric in the rollup tables of its
+// family. The table is <family>_<tier>. The max column is empty for a
+// metric with no max state.
+type rollupCol struct {
+	family   string
+	avg, max string
 }
 
-// rawExprs are the samples_raw expressions of each metric.
+// Rollup families.
+const (
+	familySamples = "samples"
+	familyHealth  = "health"
+)
+
+func health(name string) rollupCol { return rollupCol{familyHealth, "avg_" + name, "max_" + name} }
+
+var rollupCols = map[string]rollupCol{
+	"cpu":          {familySamples, "cpu_pct_avg", "cpu_pct_max"},
+	"mem":          {familySamples, "mem_ratio_avg", ""},
+	"net_rx":       {familySamples, "net_rx_avg", ""},
+	"net_tx":       {familySamples, "net_tx_avg", ""},
+	"disk_read":    {familySamples, "disk_read_avg", ""},
+	"disk_write":   {familySamples, "disk_write_avg", ""},
+	"load":         health("load_1"),
+	"load_1":       health("load_1"),
+	"procs":        health("procs"),
+	"disk":         health("disk"),
+	"inodes":       health("inodes"),
+	"zombies":      health("zombies"),
+	"pids":         health("pids"),
+	"files":        health("files"),
+	"psi_cpu":      health("psi_cpu"),
+	"psi_mem":      health("psi_mem"),
+	"psi_mem_full": health("psi_mem_full"),
+	"psi_io":       health("psi_io"),
+	"psi_io_full":  health("psi_io_full"),
+	"mem_pressure": health("mem_pressure"),
+}
+
+// ratioOf is the expression of used/max, or null when max is not positive.
+func ratioOf(used, mx string) string {
+	return fmt.Sprintf("if(%[2]s > 0, toFloat64(%[1]s) / toFloat64(%[2]s), NULL)", used, mx)
+}
+
+// rawExprs are the samples_raw expressions of each metric. A health
+// metric is null when the sample has no value.
 var rawExprs = map[string]string{
-	"cpu":        "toFloat64(cpu_pct)",
-	"mem":        "toFloat64(mem_used) / greatest(toFloat64(mem_total), 1)",
-	"net_rx":     "toFloat64(net_rx_bps)",
-	"net_tx":     "toFloat64(net_tx_bps)",
-	"disk_read":  "toFloat64(disk_read_bps)",
-	"disk_write": "toFloat64(disk_write_bps)",
-	"procs":      "toFloat64(procs_total)",
+	"cpu":          "toFloat64(cpu_pct)",
+	"mem":          "toFloat64(mem_used) / greatest(toFloat64(mem_total), 1)",
+	"net_rx":       "toFloat64(net_rx_bps)",
+	"net_tx":       "toFloat64(net_tx_bps)",
+	"disk_read":    "toFloat64(disk_read_bps)",
+	"disk_write":   "toFloat64(disk_write_bps)",
+	"load":         "toFloat64(cpu_load_1)",
+	"load_1":       "toFloat64(cpu_load_1)",
+	"procs":        "toFloat64(procs_total)",
+	"disk":         "toFloat64(disk_ratio_max)",
+	"inodes":       "toFloat64(inodes_ratio_max)",
+	"zombies":      "toFloat64(zombies)",
+	"pids":         ratioOf("pids_used", "pids_max"),
+	"files":        ratioOf("files_used", "files_max"),
+	"psi_cpu":      "toFloat64(psi_cpu_some)",
+	"psi_mem":      "toFloat64(psi_mem_some)",
+	"psi_mem_full": "toFloat64(psi_mem_full)",
+	"psi_io":       "toFloat64(psi_io_some)",
+	"psi_io_full":  "toFloat64(psi_io_full)",
+	"mem_pressure": "toFloat64(mem_pressure_pct)",
+}
+
+// metricFamily gives the family of the table that has the metric in the
+// tier. The raw tier has one table for all the metrics.
+func metricFamily(t tier, metric string) (string, error) {
+	if t == tierRaw {
+		if _, ok := rawExprs[metric]; !ok {
+			return "", ErrUnknownMetric
+		}
+		return familySamples, nil
+	}
+	rc, ok := rollupCols[metric]
+	if !ok {
+		if _, raw := rawExprs[metric]; raw {
+			return "", ErrNoRollup
+		}
+		return "", ErrUnknownMetric
+	}
+	return rc.family, nil
 }
 
 // metricExprs gives the value and max expressions of a metric in a tier.
 // On the raw tier, group wraps them in avg and max.
 func metricExprs(t tier, metric string, group bool) (v, m string, err error) {
+	if _, err := metricFamily(t, metric); err != nil {
+		return "", "", err
+	}
 	if t == tierRaw {
-		e, ok := rawExprs[metric]
-		if !ok {
-			return "", "", ErrUnknownMetric
-		}
+		e := rawExprs[metric]
 		if group {
 			return "avg(" + e + ")", "max(" + e + ")", nil
 		}
 		return e, e, nil
 	}
-	rc, ok := rollupCols[metric]
-	if !ok {
-		if _, raw := rawExprs[metric]; raw {
-			return "", "", ErrNoRollup
-		}
-		return "", "", ErrUnknownMetric
-	}
-	v = "avgMerge(" + rc[0] + ")"
+	rc := rollupCols[metric]
+	v = "avgMerge(" + rc.avg + ")"
 	m = v
-	if rc[1] != "" {
-		m = "maxMerge(" + rc[1] + ")"
+	if rc.max != "" {
+		m = "maxMerge(" + rc.max + ")"
 	}
 	return v, m, nil
 }
 
-// historySQL builds the query of the metrics. Each metric gives a value
-// and a max column (v0, m0, v1, ...). With multiNode, the rows also have
-// the node_id and the node_id filter is a list.
-func (c *Client) historySQL(t tier, metrics []string, step time.Duration, multiNode bool) (string, error) {
+// historySQL builds the query of the metrics of one family. Each metric
+// gives a value and a max column (v0, m0, v1, ...). Both can be null. With
+// multiNode, the rows also have the node_id and the node_id filter is a
+// list.
+func (c *Client) historySQL(t tier, family string, metrics []string, step time.Duration, multiNode bool) (string, error) {
 	ts := t.ts
 	res := t.resolution(step)
 	group := res > t.bucket
@@ -252,14 +370,17 @@ func (c *Client) historySQL(t tier, metrics []string, step time.Duration, multiN
 		if err != nil {
 			return "", err
 		}
-		cols = append(cols, fmt.Sprintf("toFloat64(%s) AS v%d, toFloat64(%s) AS m%d", v, i, m, i))
+		if t != tierRaw && rollupCols[metric].family != family {
+			return "", fmt.Errorf("clickhouse: metric %s is not in the %s family", metric, family)
+		}
+		cols = append(cols, fmt.Sprintf("toNullable(toFloat64(%s)) AS v%d, toNullable(toFloat64(%s)) AS m%d", v, i, m, i))
 	}
 	sel, where, groupBy, orderBy := "", "node_id = ?", "t", "t"
 	if multiNode {
 		sel, where, groupBy, orderBy = "node_id, ", "node_id IN ?", "node_id, t", "node_id, t"
 	}
 	sql := fmt.Sprintf("SELECT %s%s AS t, %s FROM %s WHERE org_id = ? AND %s AND %s BETWEEN ? AND ?",
-		sel, ts, strings.Join(cols, ", "), c.table(t.table), where, t.ts)
+		sel, ts, strings.Join(cols, ", "), c.table(t.tableOf(family)), where, t.ts)
 	if group {
 		sql += " GROUP BY " + groupBy
 	}
@@ -321,7 +442,11 @@ type NodeStat struct {
 // each node in the range. The tier comes from the range. On a rollup
 // tier, Avg is the mean of the bucket averages, and Max is the highest
 // bucket max (the highest bucket average for a metric with no max state).
+// Only the metrics of the samples family are valid (they have no nulls).
 func (c *Client) WindowStats(ctx context.Context, q StatsQuery) ([]NodeStat, error) {
+	if rollupCols[q.Metric].family != familySamples {
+		return nil, ErrUnknownMetric
+	}
 	t := historyTier(q.To.Sub(q.From), time.Since(q.From))
 	v, m, err := metricExprs(t, q.Metric, true)
 	if err != nil {

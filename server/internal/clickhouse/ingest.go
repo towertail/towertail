@@ -242,7 +242,10 @@ func (c *Client) flush(ctx context.Context, samples []SampleRow, disks []DiskRow
 			disk_read_bps, disk_write_bps, disk_read_cum, disk_write_cum,
 			net_rx_bps, net_tx_bps, net_rx_cum, net_tx_cum,
 			procs_total, procs_visible, procs_root,
-			errors
+			errors,
+			zombies, pids_used, pids_max, files_used, files_max,
+			psi_cpu_some, psi_mem_some, psi_mem_full, psi_io_some, psi_io_full,
+			mem_pressure_pct, disk_ratio_max, inodes_ratio_max
 		)`
 		batch, err := c.conn.PrepareBatch(ctx, insertSamples)
 		if err != nil {
@@ -258,6 +261,9 @@ func (c *Client) flush(ctx context.Context, samples []SampleRow, disks []DiskRow
 				s.NetRxBps, s.NetTxBps, s.NetRxCum, s.NetTxCum,
 				s.ProcsTotal, s.ProcsVisible, s.ProcsRoot,
 				s.Errors,
+				s.Zombies, s.PidsUsed, s.PidsMax, s.FilesUsed, s.FilesMax,
+				s.PSICPUSome, s.PSIMemSome, s.PSIMemFull, s.PSIIOSome, s.PSIIOFull,
+				s.MemPressurePct, s.DiskRatioMax, s.InodesRatioMax,
 			); err != nil {
 				return err
 			}
@@ -272,7 +278,7 @@ func (c *Client) flush(ctx context.Context, samples []SampleRow, disks []DiskRow
 			return err
 		}
 		for _, d := range disks {
-			if err := batch.Append(d.TS, d.OrgID, d.NodeID, d.Mount, d.FS, d.Used, d.Total); err != nil {
+			if err := batch.Append(d.TS, d.OrgID, d.NodeID, d.Mount, d.FS, d.Used, d.Total, d.InodesUsed, d.InodesTotal); err != nil {
 				return err
 			}
 		}
