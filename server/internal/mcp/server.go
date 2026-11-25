@@ -12,6 +12,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/google/uuid"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -147,6 +148,8 @@ type Server struct {
 	version  string
 	ref      Reference
 	sets     map[ToolSet]*setServer
+	tools    map[string]*toolEntry
+	names    []string // sorted
 	log      *slog.Logger
 	now      func() time.Time
 }
@@ -163,6 +166,7 @@ func New(q Queries, o Options) *Server {
 		version:  o.Version,
 		ref:      NewReference(),
 		sets:     make(map[ToolSet]*setServer, len(toolSets)),
+		tools:    make(map[string]*toolEntry),
 		log:      o.Log,
 		now:      time.Now,
 	}
@@ -202,13 +206,28 @@ func New(q Queries, o Options) *Server {
 	return s
 }
 
-// addTool registers the tool on the server of each tool set.
+// addTool registers the tool on the server of each tool set and in the
+// registry of ToolSetLatest. The sets and the registry share one input
+// schema. A schema that the tool already has stays.
 func addTool[In, Out any](s *Server, t *sdk.Tool, h sdk.ToolHandlerFor[In, Out]) {
+	schema, _ := t.InputSchema.(*jsonschema.Schema)
+	if schema == nil {
+		var err error
+		if schema, err = jsonschema.For[In](&jsonschema.ForOptions{}); err != nil {
+			panic(fmt.Sprintf("mcp: tool %q: input schema: %v", t.Name, err))
+		}
+		t.InputSchema = schema
+	}
+	resolved, err := schema.Resolve(&jsonschema.ResolveOptions{ValidateDefaults: true})
+	if err != nil {
+		panic(fmt.Sprintf("mcp: tool %q: input schema: %v", t.Name, err))
+	}
 	for _, set := range toolSets {
 		ss := s.sets[set]
 		sdk.AddTool(ss.srv, t, h)
 		ss.order = append(ss.order, t.Name)
 	}
+	s.register(newToolEntry(t, schema, resolved, h))
 }
 
 // readTool defines a tool that reads and changes nothing.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -28,9 +29,6 @@ type Actions interface {
 	Restore(ctx context.Context, a actions.Actor, backupID uuid.UUID, mode actions.RestoreMode) (actions.RulesResult, error)
 	RestoreEdit(ctx context.Context, a actions.Actor, backupID uuid.UUID) (actions.RulesEdit, error)
 }
-
-// ErrUnknownTool means that the tool is not a write tool with a rules edit.
-var ErrUnknownTool = errors.New("mcp: not a rules write tool")
 
 // Limits of a snooze.
 const (
@@ -996,7 +994,7 @@ func (s *Server) RulesEditFor(ctx context.Context, tool string, args json.RawMes
 		}
 		return s.actions.RestoreEdit(ctx, actorOf(c), id)
 	}
-	return actions.RulesEdit{}, ErrUnknownTool
+	return actions.RulesEdit{}, fmt.Errorf("%w: %s is not a rules write tool", ErrUnknownTool, tool)
 }
 
 func decodeArgs[T any](args json.RawMessage) (T, error) {
