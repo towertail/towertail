@@ -140,49 +140,6 @@ final class ServerStore {
         }
     }
 
-    /// Bulk-ingest pre-generated samples. Used by MockCollector to
-    /// backfill 2h of demo data in one main-actor hop instead of ~2,000
-    /// individual hops (which pegged the main thread for ~10s at launch).
-    /// Notifier evaluation and aggregate logging happen only once at the
-    /// end, not per sample. When `skipPersistence` is true we bypass
-    /// SQLite entirely — backfilled demo data is regenerated on every
-    /// launch so writing it out just to read it back would be wasted work.
-    func ingestBatch(_ items: [(UUID, Sample)], skipPersistence: Bool = false) {
-        var lastVMByID: [UUID: ServerViewModel] = [:]
-        for (id, sample) in items {
-            guard let vm = serverVMs.first(where: { $0.id == id }) else { continue }
-            let point = vm.ingest(sample)
-            lastVMByID[id] = vm
-            if !skipPersistence {
-                history?.append(nodeID: id, point: point)
-                if let history, let ps = sample.procs {
-                    history.appendProcs(
-                        nodeID: id, t: sample.ts, root: ps.root, items: ps.items
-                    )
-                }
-                if let history, let disks = sample.disks, !disks.isEmpty {
-                    history.appendDiskCapacity(nodeID: id, t: sample.ts, mounts: disks)
-                }
-                if let history, let io = sample.diskIO {
-                    history.appendDiskIO(
-                        nodeID: id, t: sample.ts,
-                        totalReadBps: io.readBps, totalWriteBps: io.writeBps,
-                        devices: io.devices
-                    )
-                }
-            }
-        }
-        if let notifier {
-            for (id, vm) in lastVMByID {
-                if let node = nodeLookup?(id), !node.isCloud {
-                    notifier.evaluate(vm: vm, node: node)
-                    notifier.evaluateLongProcs(vm: vm, node: node)
-                }
-            }
-        }
-        logAggregateIfChanged()
-    }
-
     /// No-data limit: three missed polls, but not less than 30 s.
     static func staleLimit(pollSeconds: Int) -> TimeInterval {
         max(3 * TimeInterval(pollSeconds), 30)

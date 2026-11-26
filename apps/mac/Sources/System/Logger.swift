@@ -67,8 +67,6 @@ final class Logger {
         qos: .utility
     )
     @ObservationIgnored
-    private var currentFileURL: URL?
-    @ObservationIgnored
     private var currentDayKey: String = ""
     @ObservationIgnored
     private lazy var iso: ISO8601DateFormatter = {

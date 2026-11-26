@@ -1,8 +1,6 @@
 import Foundation
 
 struct LocalSamplerInvoker: SamplerInvoker {
-    static let relativeBundledPath = "samplers/\(LocalSamplerInvoker.hostTripleDefault)/towertail-sampler"
-
     static var hostTripleDefault: String {
         #if arch(arm64)
         return "darwin-arm64"

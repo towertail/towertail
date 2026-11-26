@@ -1,15 +1,15 @@
 import SwiftUI
 
 /// Canvas-based sparkline used by the popover cards. Mirrors the visual
-/// output of `Sparkline` (Swift Charts) but without the Charts dependency
+/// output of a Swift Charts sparkline but without the Charts dependency
 /// — each popover card renders 4 of these, and Charts' per-instance
 /// construction cost dominated first-open and scroll in a 10+ server
 /// fleet. A plain `Canvas` draw is roughly an order of magnitude cheaper
 /// to instantiate.
 ///
-/// Deliberately stripped down vs. `Sparkline`:
+/// Deliberately stripped down vs. Swift Charts:
 /// - No hover overlay (popover cards don't consume hover; the full-view
-///   charts still use `Sparkline`/`Chart` and keep hover there).
+///   charts still use Swift Charts and keep hover there).
 /// - No x/y axes, no chart proxy, no plot frame.
 struct CanvasSparkline: View {
     let samples: [MetricPoint]
@@ -72,7 +72,7 @@ struct CanvasSparkline: View {
 
         // Area fill — close the line path down to the bottom edge and
         // fill with a top-to-bottom tint gradient (matches Chart's
-        // AreaMark styling in Sparkline.swift).
+        // AreaMark styling).
         if showsArea {
             var areaPath = linePath
             areaPath.addLine(to: CGPoint(x: pts.last!.x, y: size.height))

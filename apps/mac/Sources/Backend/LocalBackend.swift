@@ -17,10 +17,10 @@ final class LocalBackend: Backend {
     let history: HistoryStore
     /// Gives the history loader of Cloud hosts while signed in.
     weak var cloud: CloudSession? {
-        didSet { (collector as? RealCollector)?.cloudRules = cloud }
+        didSet { collector.cloudRules = cloud }
     }
     var cloudHistory: (any CloudHistoryLoader)? { cloud?.history }
-    let collector: any Collector
+    let collector: RealCollector
     let notifier: ThresholdNotifier
     let reachability: SystemReachabilityMonitor
 

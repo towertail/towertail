@@ -6,15 +6,15 @@ protocol CloudRulesSource: AnyObject {
     func effective(for nodeID: UUID) -> RemoteEffectiveRules?
 }
 
-final class RealCollector: Collector {
+final class RealCollector: Sendable {
     let nodeStore: NodeStore
     let settings: ServerSettings
     let history: HistoryStore?
     let invokerFactory: @Sendable (Node) -> SamplerInvoker
     let samplerUpdater: SamplerUpdateCoordinator?
     /// Gates polling on Mac sleep / local network state. Optional so tests
-    /// and the Mock collector path don't need to construct one — when nil,
-    /// the pacer polls unconditionally (the old behavior).
+    /// don't need to construct one — when nil, the pacer polls
+    /// unconditionally (the old behavior).
     let reachability: SystemReachabilityMonitor?
     /// Node ids the supervisor should drop and re-spawn on its next tick.
     /// Written from the main actor (Preferences UI after a successful
@@ -42,6 +42,11 @@ final class RealCollector: Collector {
         self.invokerFactory = invokerFactory
     }
 
+    /// Drops the cached pacer entry for a node so the next supervisor
+    /// tick spawns a fresh one. Used by the Preferences "Test" button to
+    /// resume polling after the user fixes a host that previously halted
+    /// (auth fix, sampler push, etc.) without forcing them to disable
+    /// and re-enable the node.
     func respawnPacer(id: UUID) {
         respawnLock.lock()
         pendingRespawns.insert(id)

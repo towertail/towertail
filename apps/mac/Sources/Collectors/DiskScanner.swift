@@ -53,8 +53,6 @@ final class DiskScanLineFeed: @unchecked Sendable {
         self.continuation = continuation
     }
 
-    var isDone: Bool { lock.withLock { done } }
-
     func feed(_ data: Data) {
         lock.lock()
         defer { lock.unlock() }

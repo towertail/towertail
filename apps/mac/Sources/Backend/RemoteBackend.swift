@@ -129,7 +129,7 @@ final class RemoteBackend: Backend {
             if event.kind == "reachability_changed" {
                 servers.apply(reachability: event)
             } else {
-                // Phase H: thread BackendEvents into the notifier once the
+                // Phase H: thread these events into the notifier once the
                 // remote dispatcher lands. For now log and move on.
                 Logger.shared.info("remote: event", category: "alerts", kv: ["raw": raw])
             }

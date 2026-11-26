@@ -42,9 +42,9 @@ Source tree:
 Sources/
 ├── App/              TowertailApp entry, AppEnvironment, Info.plist, entitlements
 ├── MenuBar/          MenuBarIcon, PopoverRoot, PopoverHeader
-├── Cards/            ServerCardView + MetricCell, Sparkline, DiskBars, CardChrome
+├── Cards/            ServerCardView + MetricCell, CanvasSparkline, DiskBars, CardChrome
 ├── FullView/         per-host detail window (charts, process table)
-├── Collectors/       SamplerInvoker protocol + SSH/Local/Mock impls, bootstrap, manifest
+├── Collectors/       SamplerInvoker protocol + SSH/Local impls, bootstrap, manifest
 ├── State/            @Observable stores: Node, Sample, HistoryStore, MetricSeries, etc.
 ├── Preferences/      PreferencesWindow + panes (Servers, Thresholds, Notifications, …)
 ├── System/           Tailscale API client, SSH terminal launcher, threshold notifier,
@@ -55,7 +55,7 @@ Sources/
 Key contracts:
 
 - **`Sources/State/Sample.swift`** mirrors the sampler [wire format](https://github.com/towertail/sampler/blob/main/docs/wire-format.md) §4 byte-for-byte. Keys are snake_case via `CodingKeys`. If you change the schema, bump `v` and update both sides — it's a wire contract.
-- `Collectors/Collector.swift` defines the collector protocol; `RealCollector` wraps `SSHSamplerInvoker` + `SamplerUpdateCoordinator`. After each good sample, the coordinator compares `host.sampler` with `<version>+<sha>` from the bundled manifest. If they differ, it uploads the bundled binary to `~/.towertail/` (cooldown 15 s after success, 300 s after failure). Windows uses the same rule. A host gets a new sampler only through an app update. `MockCollector` is for previews and tests.
+- `Collectors/RealCollector.swift` wraps `SSHSamplerInvoker` + `SamplerUpdateCoordinator`. After each good sample, the coordinator compares `host.sampler` with `<version>+<sha>` from the bundled manifest. If they differ, it uploads the bundled binary to `~/.towertail/` (cooldown 15 s after success, 300 s after failure). Windows uses the same rule. A host gets a new sampler only through an app update.
 - Samples are decimated into rolling series (`MetricSeries`, `DiskSeries`, `ProcSeries`) and persisted via `HistoryStore` (7-day retention).
 - Sampler binaries are bundled as app resources under `Contents/Resources/samplers/<triple>/` — a `preBuildScript` in `project.yml` rsyncs `dist/samplers/` into the bundle at build time.
 

@@ -15,7 +15,6 @@ packages:
 settings:
   base:
     SWIFT_VERSION: "5.9"
-    MACOSX_DEPLOYMENT_TARGET: "14.0"
     ARCHS: "arm64 x86_64"
     ONLY_ACTIVE_ARCH: YES
     CODE_SIGN_STYLE: Automatic
@@ -28,7 +27,6 @@ targets:
   Towertail:
     type: application
     platform: macOS
-    deploymentTarget: "14.0"
     sources:
       - path: Sources
         excludes:
@@ -52,7 +50,7 @@ targets:
       path: Sources/App/Info.plist
       properties:
         LSUIElement: true
-        LSMinimumSystemVersion: "14.0"
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         CFBundleName: Towertail
         CFBundleDisplayName: Towertail
         CFBundleShortVersionString: $(MARKETING_VERSION)
@@ -80,7 +78,6 @@ targets:
   TowertailTests:
     type: bundle.unit-test
     platform: macOS
-    deploymentTarget: "14.0"
     sources:
       - path: Tests
     dependencies:

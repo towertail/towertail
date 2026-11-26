@@ -3,7 +3,7 @@ import Foundation
 /// Minimal HTTP + WebSocket client for the Towertail server. Owned by
 /// `RemoteBackend`. Not a generic SDK — it only covers the endpoints
 /// the Mac client needs. All calls are async and throw; callers route
-/// failures to the UI via `BackendError`.
+/// failures to the UI.
 @MainActor
 final class RemoteClient {
     struct Config {
@@ -143,10 +143,6 @@ final class RemoteClient {
     func snoozeAlert(id: UUID, until: Date) async throws -> RemoteAlert {
         let stamp = ISO8601DateFormatter().string(from: until)
         return try await send("POST", "/v1/alerts/\(id.uuidString)/snooze?until=\(stamp)", body: EmptyBody())
-    }
-
-    func killProcess(nodeID: UUID, pid: Int32) async throws {
-        _ = try await raw("POST", "/v1/nodes/\(nodeID.uuidString)/kill-process?pid=\(pid)")
     }
 
     // MARK: - History (docs/wire.md §3.1)
