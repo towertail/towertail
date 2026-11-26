@@ -110,6 +110,11 @@ Base path `/v1`. Authed unless otherwise marked.
 | GET | `/v1/api-keys` | — | `[APIKey]`: an admin or owner sees all keys of the org. Other roles see their own keys. | viewer |
 | POST | `/v1/api-keys` | `APIKeyRequest` | `APIKeyCreated` (201). The `token` shows only this one time. 409 when the user has 20 keys. An `api` token gets 403. | viewer |
 | DELETE | `/v1/api-keys/{id}` | — | 204. 404 for an unknown ID or a token of another kind. 403 when a non-admin revokes the key of another user. | viewer |
+| GET | `/v1/ai/calls?range=7d&client=&tool=&status=all&cursor=&limit=50` | — | `AICallPage` (see §3.3). 400 for a bad parameter, 503 when ClickHouse is off. An `api` token gets 403. | viewer |
+| GET | `/v1/ai/calls/stats?range=7d&client=&tool=&status=all` | — | `AICallStats`. The filters are the same as for the list. | viewer |
+| GET | `/v1/ai/calls/{id}` | — | `AICallDetail`: the call with the full input and the `change`. 404 for an unknown call, or for the call of another user when the caller is not an admin. | viewer |
+| GET | `/v1/ai/usage?days=7` | — | `[AIUsage]`: the calls of each connected assistant (`grantId`) and of each token with no grant (`tokenId`). `days` is 1 to 30. | viewer |
+| GET | `/v1/ai/tools` | — | `[AITool]`: the tools of the MCP server with their group. 404 when MCP is off. | viewer |
 | GET | `/v1/nodes/{id}/processes?from=…&to=…&limit=10&by=cpu&series=60` | — | `NodeProcessesResponse`. `by` is `cpu`, `mem` or `io`. `series` is 0 to 120 (default 0, no series). With `series`, each row has a `series`. 400 for a bad `series`. | viewer |
 | GET | `/v1/nodes/{id}/processes/at?ts=…&by=cpu&limit=20` | — | `ProcessSnapshot`: the top processes of the node at one time. `ts` is RFC 3339 or `now-…` (default now). `by` is `cpu`, `mem` or `io`. `limit` is 1 to 50 (default 20). 400 for a bad `ts`, `by` or `limit`. A `ts` older than the plan limit gives `clamped: true` and no processes. | viewer |
 | GET | `/v1/nodes/{id}/processes/{key}?from=…&to=…&step=1m` | — | `ProcessDetail`: the points and the facts of one process. `{key}` is a `ProcessKey`. The default range is 1 h. `step` is raised to the bucket of the table and to a value that gives 300 points at most. 400 for a bad key, 404 when the process has no row in the range, 503 when ClickHouse is off. | viewer |
@@ -330,6 +335,30 @@ Each org has its own alert channels. When the alerter sends an alert (the notify
 **Webhook body.** `AlertPayload` is `{ v: 1, type: "alert" | "test", eventId, orgId, nodeId, nodeName, tags, metric, from, to, value, at, title, text }`. `value` is a ratio (0..1) for `cpu`, `mem` and `disk`, the seconds since the last sample for `reachability`, and the CPU percent of the process (top convention) for `long_proc`. For `long_proc`, `text` names the process, for example "OrbStack Helper (pid 812) at 85% CPU for 32m.". The header `X-Towertail-Event` is the type. With a secret, the server also sends `X-Towertail-Timestamp` (Unix seconds, the time of the send) and `X-Towertail-Signature: sha256=<hex>`, the HMAC-SHA256 of `<timestamp>.<body>` with the secret. Check the signature, and refuse a timestamp older than 5 minutes.
 
 **Private targets.** With `notify.block_private_targets=true` (the cloud), the server does not connect to loopback, private, link-local, CGNAT (`100.64.0.0/10`) or multicast addresses. It checks the address after the DNS lookup. It does not follow redirects.
+
+### 3.3 AI activity
+
+The server records each AI tool call in the ClickHouse table `ai_calls`. The routes in §3 read it. With ClickHouse off, the server records nothing, and the routes give 503 `unavailable` (`/v1/ai/tools` still works).
+
+**What the server records.** One row for each call of:
+
+- the MCP server (`/mcp` and `/mcp/v1`), through the bearer token of the caller;
+- the embedded assistant, for each read tool that it calls;
+- the apply and the undo of an assistant proposal (the tool of the proposal, or `undo_rules_change` for the undo of a rules change).
+
+`via` tells how the call came: `api_key`, `oauth`, `user` or `assistant`. The embedded assistant has `via = assistant` and `client = assistant`. For the other calls, `client` is the label of the token (for an OAuth token, the name of the AI client).
+
+**No metric values.** A row keeps the tool, the input arguments (1 KB at most), the `status`, the error text, the duration, the number of rows and bytes of the result, and `clamped`. It keeps no value of the result. For a write tool, `change` keeps the targets, the field changes and the `backup_id`.
+
+`status` is `ok`, `error`, `denied` (no scope, role too low, or Changes by AI off). `rate_limited` is reserved and the server does not set it now.
+
+**Retention.** The table has a TTL of 30 days. A range is `24h`, `7d` or `30d`.
+
+**Who sees what.** An admin or owner sees all calls of the org. Other roles see only the calls of their own user.
+
+**Pages.** The list gives the newest call first, 50 by default and 100 at most (`limit`). `next` is an opaque cursor. Send it as `cursor` to get the next page. `next` is empty on the last page. In a list, `input` has 200 characters at most. `AICallDetail` has the full input.
+
+**Drops.** The server buffers 4096 rows and writes them each 2 s. When the buffer is full, or a write fails, the server drops the rows and counts them in the metric `towertail_ai_calls_dropped_total`.
 
 ## 4. WebSocket messages
 
