@@ -12,6 +12,7 @@ public sealed partial class ServersPane : UserControl
 {
     private readonly AppEnvironment _env;
     private readonly ObservableCollection<ServerListRow> _rows = new();
+    private bool _attached;
 
     public ServersPane(AppEnvironment env)
     {
@@ -19,19 +20,31 @@ public sealed partial class ServersPane : UserControl
         InitializeComponent();
         Items.ItemsSource = _rows;
         AutoUpdateCheck.IsChecked = env.ServerSettings.AutoUpdateSamplersEnabled;
+        Loaded += (_, _) => Attach();
+        Unloaded += (_, _) => { if (!IsLoaded) Detach(); };
+    }
+
+    // The stores live as long as the app, so the pane listens only while it is in the tree.
+    private void Attach()
+    {
+        if (_attached) return;
+        _env.Nodes.Nodes.CollectionChanged += OnNodesChanged;
+        _env.Nodes.NodeUpdated += OnNodeUpdated;
+        _env.Cloud.StateChanged += OnCloudChanged;
+        _attached = true;
         SyncRows();
-        env.Nodes.Nodes.CollectionChanged += OnNodesChanged;
-        env.Nodes.NodeUpdated += (_, id) => UpdateRow(id);
-        Loaded += (_, _) =>
-        {
-            env.Cloud.StateChanged += OnCloudChanged;
-            LeaseCloudHosts();
-        };
-        Unloaded += (_, _) =>
-        {
-            env.Cloud.StateChanged -= OnCloudChanged;
-            env.Cloud.Lease.SetListed([]);
-        };
+        LeaseCloudHosts();
+    }
+
+    private void Detach()
+    {
+        if (!_attached) return;
+        _env.Nodes.Nodes.CollectionChanged -= OnNodesChanged;
+        _env.Nodes.NodeUpdated -= OnNodeUpdated;
+        _env.Cloud.StateChanged -= OnCloudChanged;
+        _env.Cloud.Lease.SetListed([]);
+        foreach (var row in _rows) row.Dispose();
+        _attached = false;
     }
 
     /// <summary>The cloud sends the data of a host only while a view holds a lease for it.</summary>
@@ -44,6 +57,7 @@ public sealed partial class ServersPane : UserControl
 
     private void SyncRows()
     {
+        foreach (var row in _rows) row.Dispose();
         _rows.Clear();
         foreach (var n in _env.Nodes.Nodes)
         {
@@ -57,6 +71,8 @@ public sealed partial class ServersPane : UserControl
         // NodeStore resets on bulk ops; easier to re-sync than diff.
         SyncRows();
     }
+
+    private void OnNodeUpdated(object? sender, Guid id) => UpdateRow(id);
 
     private void UpdateRow(Guid id)
     {

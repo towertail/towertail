@@ -15,7 +15,7 @@ namespace Towertail.WinUI.Preferences;
 /// <see cref="ServerStore"/>, subscribing to property changes so the row
 /// redraws when a new sample lands.
 /// </summary>
-public sealed class ServerListRow : INotifyPropertyChanged
+public sealed class ServerListRow : INotifyPropertyChanged, IDisposable
 {
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -35,6 +35,11 @@ public sealed class ServerListRow : INotifyPropertyChanged
         {
             _vm.PropertyChanged += OnVmChanged;
         }
+    }
+
+    public void Dispose()
+    {
+        if (_vm is not null) _vm.PropertyChanged -= OnVmChanged;
     }
 
     public void UpdateNode(Node node)

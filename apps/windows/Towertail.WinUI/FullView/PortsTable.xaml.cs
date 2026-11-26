@@ -8,30 +8,47 @@ namespace Towertail.WinUI.FullView;
 public sealed partial class PortsTable : UserControl
 {
     private ServerViewModel? _vm;
-    private PropertyChangedEventHandler? _handler;
+    private bool _attached;
     private bool _killInFlight;
 
-    public PortsTable() { InitializeComponent(); }
+    public PortsTable()
+    {
+        InitializeComponent();
+        Loaded += (_, _) => { Refresh(); Attach(); };
+        Unloaded += (_, _) => { if (!IsLoaded) Detach(); };
+    }
 
     public void Bind(ServerViewModel vm)
     {
+        if (_attached) Detach();
         _vm = vm;
         Refresh();
-        // Re-render whenever the VM signals new state. The sampler refreshes
-        // ports every 10s by default, so this fires a handful of times per
-        // minute — cheap to redraw fully.
-        _handler = (_, args) =>
-        {
-            if (args.PropertyName == nameof(ServerViewModel.Ports) ||
-                args.PropertyName == nameof(ServerViewModel.PortsAvailable) ||
-                args.PropertyName == nameof(ServerViewModel.LastSeen))
-                DispatcherQueue.TryEnqueue(Refresh);
-        };
-        vm.PropertyChanged += _handler;
-        Unloaded += (_, _) =>
-        {
-            if (_handler is { } h && _vm is { } v) v.PropertyChanged -= h;
-        };
+        if (IsLoaded) Attach();
+    }
+
+    // The view model lives as long as the app, so the table listens only while it is in the tree.
+    private void Attach()
+    {
+        if (_attached || _vm is null) return;
+        _vm.PropertyChanged += OnVmChanged;
+        _attached = true;
+    }
+
+    private void Detach()
+    {
+        if (!_attached) return;
+        _vm!.PropertyChanged -= OnVmChanged;
+        _attached = false;
+    }
+
+    // The sampler refreshes ports every 10s by default, so this fires a handful of
+    // times per minute — cheap to redraw fully.
+    private void OnVmChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName == nameof(ServerViewModel.Ports) ||
+            args.PropertyName == nameof(ServerViewModel.PortsAvailable) ||
+            args.PropertyName == nameof(ServerViewModel.LastSeen))
+            DispatcherQueue.TryEnqueue(Refresh);
     }
 
     private void Refresh()

@@ -16,12 +16,17 @@ public sealed class HistoryStore : IAsyncDisposable
     public const int MaxRowsPerNode = 2000;
     public static readonly TimeSpan ProcRetention = TimeSpan.FromHours(2);
     public static readonly TimeSpan DiskRetention = TimeSpan.FromHours(2);
+    public static readonly TimeSpan PruneEvery = TimeSpan.FromMinutes(5);
+    private const int BatchSize = 64;
 
     private readonly string _path;
     private readonly SqliteConnection _conn;
     private readonly BlockingCollection<Action<SqliteConnection>> _queue = new();
     private readonly Task _worker;
     private readonly CancellationTokenSource _cts = new();
+    private readonly System.Threading.Timer _pruneTimer;
+    // Only the worker thread uses this list. It completes each task after the COMMIT of the batch.
+    private readonly List<TaskCompletionSource> _waitingForCommit = new();
 
     private static readonly JsonSerializerOptions ProcJson = new()
     {
@@ -45,6 +50,7 @@ public sealed class HistoryStore : IAsyncDisposable
             _cts.Token,
             TaskCreationOptions.LongRunning | TaskCreationOptions.DenyChildAttach,
             TaskScheduler.Default);
+        _pruneTimer = new System.Threading.Timer(_ => _ = PruneAsync(DateTime.UtcNow), null, TimeSpan.Zero, PruneEvery);
     }
 
     private void ExecuteMigrations()
@@ -108,9 +114,27 @@ public sealed class HistoryStore : IAsyncDisposable
         }
     }
 
+    /// <summary>Runs the queue in batches of up to <see cref="BatchSize"/> items, one transaction for each batch.</summary>
     private void WorkerLoop()
     {
-        foreach (var work in _queue.GetConsumingEnumerable(_cts.Token))
+        foreach (var first in _queue.GetConsumingEnumerable(_cts.Token))
+        {
+            Exec("BEGIN");
+            Run(first);
+            for (var n = 1; n < BatchSize && _queue.TryTake(out var next); n++) Run(next);
+            Exec("COMMIT");
+            foreach (var done in _waitingForCommit) done.TrySetResult();
+            _waitingForCommit.Clear();
+        }
+
+        void Exec(string sql) => Run(conn =>
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = sql;
+            cmd.ExecuteNonQuery();
+        });
+
+        void Run(Action<SqliteConnection> work)
         {
             try { work(_conn); }
             catch { /* swallow — dropping a history write is better than crashing */ }
@@ -229,13 +253,6 @@ public sealed class HistoryStore : IAsyncDisposable
             cmd.Parameters.AddWithValue("$root", root ? 1 : 0);
             cmd.Parameters.AddWithValue("$items", payload);
             cmd.ExecuteNonQuery();
-
-            var cutoff = ts - ProcRetention.TotalSeconds;
-            using var prune = conn.CreateCommand();
-            prune.CommandText = "DELETE FROM proc_snapshots WHERE node_id = $id AND ts < $cutoff";
-            prune.Parameters.AddWithValue("$id", id);
-            prune.Parameters.AddWithValue("$cutoff", cutoff);
-            prune.ExecuteNonQuery();
         });
     }
 
@@ -292,12 +309,6 @@ public sealed class HistoryStore : IAsyncDisposable
                 pFrac.Value = r.Frac;
                 cmd.ExecuteNonQuery();
             }
-            var cutoff = ts - DiskRetention.TotalSeconds;
-            using var prune = conn.CreateCommand();
-            prune.CommandText = "DELETE FROM disk_capacity WHERE node_id = $id AND ts < $cutoff";
-            prune.Parameters.AddWithValue("$id", id);
-            prune.Parameters.AddWithValue("$cutoff", cutoff);
-            prune.ExecuteNonQuery();
         });
     }
 
@@ -329,12 +340,6 @@ public sealed class HistoryStore : IAsyncDisposable
                 pW.Value = r.W;
                 cmd.ExecuteNonQuery();
             }
-            var cutoff = ts - DiskRetention.TotalSeconds;
-            using var prune = conn.CreateCommand();
-            prune.CommandText = "DELETE FROM disk_io WHERE node_id = $id AND ts < $cutoff";
-            prune.Parameters.AddWithValue("$id", id);
-            prune.Parameters.AddWithValue("$cutoff", cutoff);
-            prune.ExecuteNonQuery();
         });
     }
 
@@ -365,8 +370,31 @@ public sealed class HistoryStore : IAsyncDisposable
 
     private static double BytesToMBps(long b) => Math.Max(0, b) / 1_048_576.0;
 
+    /// <summary>
+    /// Deletes the process and disk rows older than their retention, for all nodes.
+    /// The task completes after the batch commits.
+    /// </summary>
+    internal Task PruneAsync(DateTime now)
+    {
+        var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Enqueue(conn =>
+        {
+            _waitingForCommit.Add(done);
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+                DELETE FROM proc_snapshots WHERE ts < $proc;
+                DELETE FROM disk_capacity WHERE ts < $disk;
+                DELETE FROM disk_io WHERE ts < $disk;";
+            cmd.Parameters.AddWithValue("$proc", ToEpoch(now - ProcRetention));
+            cmd.Parameters.AddWithValue("$disk", ToEpoch(now - DiskRetention));
+            cmd.ExecuteNonQuery();
+        });
+        return done.Task;
+    }
+
     public async ValueTask DisposeAsync()
     {
+        await _pruneTimer.DisposeAsync().ConfigureAwait(false);
         _queue.CompleteAdding();
         _cts.Cancel();
         try { await _worker.ConfigureAwait(false); } catch { }

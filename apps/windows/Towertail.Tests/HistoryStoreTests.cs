@@ -101,4 +101,29 @@ public sealed class HistoryStoreTests : IAsyncLifetime
         old1.Cpu.Should().Be(5);
         old1.Score.Should().BeNull();
     }
+
+    [Fact]
+    public async Task PruneRemovesExpiredRows()
+    {
+        var node = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        var proc = new ProcSample(7, 1, "node", null, "u", 1, 1, 1, null, null, null, null);
+        foreach (var t in new[] { now.AddHours(-3), now.AddMinutes(-1) })
+        {
+            _store.AppendProcs(node, t, false, new[] { proc });
+            _store.AppendDiskCapacity(node, t, new[] { new DiskSample("C:", "NTFS", 1, 2) });
+            _store.AppendDiskIO(node, t, 1, 1, null);
+        }
+
+        await _store.PruneAsync(now);
+
+        using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_path};Pooling=False");
+        conn.Open();
+        foreach (var table in new[] { "proc_snapshots", "disk_capacity", "disk_io" })
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"SELECT COUNT(*) FROM {table}";
+            ((long)cmd.ExecuteScalar()!).Should().Be(1, table);
+        }
+    }
 }

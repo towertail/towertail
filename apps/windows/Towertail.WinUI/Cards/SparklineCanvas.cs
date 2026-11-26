@@ -14,14 +14,17 @@ namespace Towertail.WinUI.Cards;
 public sealed class SparklineCanvas : SKXamlCanvas
 {
     private MetricSeries? _series;
+    private bool _attached;
+
     public MetricSeries? Series
     {
         get => _series;
         set
         {
-            if (_series != null) _series.Points.CollectionChanged -= OnPointsChanged;
+            var attached = _attached;
+            if (attached) Detach();
             _series = value;
-            if (_series != null) _series.Points.CollectionChanged += OnPointsChanged;
+            if (attached) Attach();
             Invalidate();
         }
     }
@@ -29,6 +32,23 @@ public sealed class SparklineCanvas : SKXamlCanvas
     public SparklineCanvas()
     {
         PaintSurface += OnPaint;
+        // The series lives as long as the app, so listen to it only while in the tree.
+        Loaded += (_, _) => { Invalidate(); Attach(); };
+        Unloaded += (_, _) => { if (!IsLoaded) Detach(); };
+    }
+
+    private void Attach()
+    {
+        if (_attached) return;
+        if (_series != null) _series.Points.CollectionChanged += OnPointsChanged;
+        _attached = true;
+    }
+
+    private void Detach()
+    {
+        if (!_attached) return;
+        if (_series != null) _series.Points.CollectionChanged -= OnPointsChanged;
+        _attached = false;
     }
 
     private void OnPointsChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)

@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -24,6 +25,9 @@ public sealed partial class ServerCardView : UserControl
         set => SetValue(ViewModelProperty, value);
     }
 
+    private ServerViewModel? _attachedVm;
+    private bool _attached;
+
     public ServerCardView()
     {
         InitializeComponent();
@@ -34,7 +38,42 @@ public sealed partial class ServerCardView : UserControl
     private static void OnViewModelChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         if (d is not ServerCardView c) return;
+        if (c._attached) c.Detach();
         c.Bind();
+        if (c.IsLoaded) c.Attach();
+    }
+
+    // The view model and the cloud session live as long as the app, so the card listens only while it is in the tree.
+    private void Attach()
+    {
+        if (_attached || ViewModel is null) return;
+        _attachedVm = ViewModel;
+        _attachedVm.PropertyChanged += OnVmChanged;
+        Cloud.StateChanged += OnCloudStateChanged;
+        _attached = true;
+    }
+
+    private void Detach()
+    {
+        if (!_attached) return;
+        _attachedVm!.PropertyChanged -= OnVmChanged;
+        _attachedVm = null;
+        Cloud.StateChanged -= OnCloudStateChanged;
+        _attached = false;
+    }
+
+    private void OnVmChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is null or "" or nameof(ServerViewModel.LastSeen) or nameof(ServerViewModel.CpuPct)
+            or nameof(ServerViewModel.MemPct) or nameof(ServerViewModel.DiskMaxPct) or nameof(ServerViewModel.RxMBps)
+            or nameof(ServerViewModel.TxMBps) or nameof(ServerViewModel.Health)
+            // The stale watchdog changes these while LastSeen stays the same. Update() then moves the "last seen" text forward.
+            or nameof(ServerViewModel.OfflineReason) or nameof(ServerViewModel.NoDataSince))
+            Update();
+        if (e.PropertyName != nameof(ServerViewModel.Node) || ViewModel is null) return;
+        NameText.Text = ViewModel.Node.DisplayName;
+        HostText.Text = ViewModel.Node.UserAtHost;
+        UpdateTag();
     }
 
     private void Bind()
@@ -56,24 +95,20 @@ public sealed partial class ServerCardView : UserControl
         UpdateFavoriteIcon();
         Update();
         UpdateTag();
-        ViewModel.PropertyChanged += (_, e) =>
-        {
-            Update();
-            if (e.PropertyName != nameof(ServerViewModel.Node) || ViewModel is null) return;
-            NameText.Text = ViewModel.Node.DisplayName;
-            HostText.Text = ViewModel.Node.UserAtHost;
-            UpdateTag();
-        };
     }
 
-    // The tag follows the sign-in and the feed. The card listens only while it is in the tree.
+    // The tag follows the sign-in and the feed.
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        Cloud.StateChanged += OnCloudStateChanged;
+        Update();
         UpdateTag();
+        Attach();
     }
 
-    private void OnUnloaded(object sender, RoutedEventArgs e) => Cloud.StateChanged -= OnCloudStateChanged;
+    private void OnUnloaded(object sender, RoutedEventArgs e)
+    {
+        if (!IsLoaded) Detach();
+    }
 
     private static Towertail.WinUI.Cloud.CloudSession Cloud => Towertail.WinUI.App.Current.Environment.Cloud;
 
