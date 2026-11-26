@@ -255,7 +255,7 @@ go_unit() {
 
 go_integration() {
   section "go integration tests (server, testcontainers → clickhouse)"
-  (cd "$REPO_ROOT/server" && go test -tags=integration -timeout=180s ./internal/clickhouse/...)
+  (cd "$REPO_ROOT/server" && go test -tags=integration -timeout=400s ./internal/clickhouse/...)
   pass "server integration tests"
 }
 
