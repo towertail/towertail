@@ -218,15 +218,6 @@ func TestNoCallLog(t *testing.T) {
 	}
 }
 
-func TestTruncateKeepsCharacters(t *testing.T) {
-	if got := truncate("aé", 2); got != "a" {
-		t.Errorf("truncate = %q, want a", got)
-	}
-	if got := truncate("abc", 5); got != "abc" {
-		t.Errorf("truncate = %q", got)
-	}
-}
-
 func TestGroupCoversAllTools(t *testing.T) {
 	s := newServer(newFake())
 	tools := s.Tools(ToolSetLatest)

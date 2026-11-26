@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -14,9 +13,6 @@ import (
 	"github.com/towertail/towertail/server/internal/clickhouse"
 	"github.com/towertail/towertail/server/store"
 )
-
-// maxCallText is the most bytes of input and of error text in a row.
-const maxCallText = 1024
 
 // CallLog takes the record of each tool call. A nil CallLog records
 // nothing.
@@ -116,15 +112,15 @@ func (s *Server) record(ctx context.Context, tool string, args json.RawMessage, 
 	end := s.now()
 	row := clickhouse.AICall{
 		TS: start.UTC(), CallID: uuid.New(), OrgID: tok.OrgID, UserID: tok.UserID, TokenID: tok.ID, GrantID: tok.GrantID,
-		Via: via, Client: client, Tool: truncate(tool, 100), Input: truncate(string(args), maxCallText),
+		Via: via, Client: client, Tool: tool, Input: string(args),
 		Status: "ok", DurationMs: uint32(max(0, end.Sub(start).Milliseconds())), Bytes: uint32(len(out)),
 	}
 	switch {
 	case err == nil:
 	case errors.Is(err, ErrNoScope), errors.Is(err, ErrRole), errors.Is(err, ErrAIChangesOff):
-		row.Status, row.Error = "denied", truncate(err.Error(), maxCallText)
+		row.Status, row.Error = "denied", err.Error()
 	default:
-		row.Status, row.Error = "error", truncate(err.Error(), maxCallText)
+		row.Status, row.Error = "error", err.Error()
 	}
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(out, &fields) == nil {
@@ -141,6 +137,7 @@ func (s *Server) record(ctx context.Context, tool string, args json.RawMessage, 
 			}
 		}
 	}
+	row.Clip()
 	s.calls.Record(row)
 }
 
@@ -152,15 +149,4 @@ func viaOf(k store.TokenKind) string {
 		return "api_key"
 	}
 	return "user"
-}
-
-// truncate cuts s to at most n bytes, at a character boundary.
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	for n > 0 && !utf8.RuneStart(s[n]) {
-		n--
-	}
-	return s[:n]
 }

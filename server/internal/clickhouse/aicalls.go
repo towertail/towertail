@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -19,6 +20,8 @@ const (
 	defAICallLimit  = 50
 	aiCallListInput = 200 // characters of input in a list row
 	aiCallNames     = 100 // most distinct clients or tools in the stats
+	maxAICallText   = 1024
+	maxAICallTool   = 100
 )
 
 // AICall is one AI tool call. It has no result values. Change is the diff
@@ -31,6 +34,24 @@ type AICall struct {
 	Status, Error, Change    string
 	Clamped                  bool
 	DurationMs, Rows, Bytes  uint32
+}
+
+// Clip cuts the tool, the input and the error text to their limits. A cut
+// keeps whole characters.
+func (c *AICall) Clip() {
+	c.Tool = clip(c.Tool, maxAICallTool)
+	c.Input = clip(c.Input, maxAICallText)
+	c.Error = clip(c.Error, maxAICallText)
+}
+
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // AICallFilter selects calls by outcome.
