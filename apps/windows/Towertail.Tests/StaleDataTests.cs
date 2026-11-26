@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Towertail.Tests.Helpers;
 using Towertail.WinUI.Backend;
 using Towertail.WinUI.Collectors;
 using Towertail.WinUI.State;
@@ -56,7 +57,7 @@ public sealed class StaleDataTests : IAsyncLifetime
     public void FlagsOncePerEpisodeAndIngestClears()
     {
         var vm = new ServerViewModel(Node.LocalWindows("pc"));
-        vm.Ingest(Make(T0), receivedAt: T0);
+        vm.Ingest(SampleFixture.Make(T0), receivedAt: T0);
 
         vm.CheckStale(T0.AddSeconds(30), Limit).Should().BeFalse();
         vm.CheckStale(T0.AddSeconds(31), Limit).Should().BeTrue();
@@ -67,7 +68,7 @@ public sealed class StaleDataTests : IAsyncLifetime
         vm.NoDataSince.Should().Be(T0.AddSeconds(31));
         vm.OfflineReason.Should().Be("no data for 3m");
 
-        vm.Ingest(Make(T0), receivedAt: T0.AddMinutes(4));
+        vm.Ingest(SampleFixture.Make(T0), receivedAt: T0.AddMinutes(4));
         vm.NoDataSince.Should().BeNull();
         vm.OfflineReason.Should().BeNull();
         vm.CheckStale(T0.AddMinutes(4).AddSeconds(31), Limit).Should().BeTrue();
@@ -78,7 +79,7 @@ public sealed class StaleDataTests : IAsyncLifetime
     {
         var vm = new ServerViewModel(Node.LocalWindows("pc"));
         // The host clock is one hour behind.
-        vm.Ingest(Make(T0.AddHours(-1)), receivedAt: T0);
+        vm.Ingest(SampleFixture.Make(T0.AddHours(-1)), receivedAt: T0);
         vm.CheckStale(T0.AddSeconds(10), Limit).Should().BeFalse();
     }
 
@@ -86,7 +87,7 @@ public sealed class StaleDataTests : IAsyncLifetime
     public void ReasonAddsTheLastError()
     {
         var vm = new ServerViewModel(Node.LocalWindows("pc"));
-        vm.Ingest(Make(T0), receivedAt: T0);
+        vm.Ingest(SampleFixture.Make(T0), receivedAt: T0);
         vm.MarkOffline("timeout");
         vm.OfflineReason.Should().Be("timeout");
 
@@ -104,7 +105,7 @@ public sealed class StaleDataTests : IAsyncLifetime
     public void BaselineResetDelaysTheCheck()
     {
         var vm = new ServerViewModel(Node.LocalWindows("pc"));
-        vm.Ingest(Make(T0), receivedAt: T0);
+        vm.Ingest(SampleFixture.Make(T0), receivedAt: T0);
         vm.ResetStaleBaseline(T0.AddHours(2));
         vm.CheckStale(T0.AddHours(2).AddSeconds(20), Limit).Should().BeFalse();
         vm.CheckStale(T0.AddHours(2).AddSeconds(31), Limit).Should().BeTrue();
@@ -128,7 +129,7 @@ public sealed class StaleDataTests : IAsyncLifetime
         _servers.AttachNotifier(notifier);
 
         var n = _nodes.Nodes[0];
-        _servers.Ingest(n.Id, Make(DateTime.UtcNow));
+        _servers.Ingest(n.Id, SampleFixture.Make(DateTime.UtcNow));
         var vm = _servers.Find(n.Id)!;
         var last = vm.LastIngestAt!.Value;
         var limit = ServerStore.StaleLimit(_settings.PollingInterval(n.Kind));
@@ -147,7 +148,7 @@ public sealed class StaleDataTests : IAsyncLifetime
         _servers.AggregateLevel.Should().Be(HealthLevel.Nominal);
 
         // A new episode after the next sample notifies again.
-        _servers.Ingest(n.Id, Make(DateTime.UtcNow));
+        _servers.Ingest(n.Id, SampleFixture.Make(DateTime.UtcNow));
         var again = vm.LastIngestAt!.Value;
         _servers.CheckStale(again.AddSeconds(5));
         vm.NoDataSince.Should().BeNull();
@@ -160,7 +161,7 @@ public sealed class StaleDataTests : IAsyncLifetime
     public void StoreSkipsDisabledHosts()
     {
         var n = _nodes.Nodes[0];
-        _servers.Ingest(n.Id, Make(DateTime.UtcNow));
+        _servers.Ingest(n.Id, SampleFixture.Make(DateTime.UtcNow));
         _nodes.Update(n with { Enabled = false });
         var vm = _servers.Find(n.Id)!;
         var last = vm.LastIngestAt!.Value;
@@ -173,7 +174,7 @@ public sealed class StaleDataTests : IAsyncLifetime
     public void StoreWakeGapRestartsTheCheck()
     {
         var n = _nodes.Nodes[0];
-        _servers.Ingest(n.Id, Make(DateTime.UtcNow));
+        _servers.Ingest(n.Id, SampleFixture.Make(DateTime.UtcNow));
         var vm = _servers.Find(n.Id)!;
         var last = vm.LastIngestAt!.Value;
         _servers.CheckStale(last.AddSeconds(5));
@@ -195,13 +196,13 @@ public sealed class StaleDataTests : IAsyncLifetime
 
         var node = new Node { DisplayName = "n", Kind = NodeKind.Local, SnoozedUntil = DateTime.UtcNow.AddHours(1) };
         var vm = new ServerViewModel(node);
-        vm.Ingest(Make(T0), receivedAt: T0);
+        vm.Ingest(SampleFixture.Make(T0), receivedAt: T0);
         vm.CheckStale(T0.AddMinutes(3), Limit);
         notifier.EvaluateNoData(vm, T0.AddMinutes(3));
         count.Should().Be(0);
 
         var off = new ServerViewModel(new Node { DisplayName = "o", Kind = NodeKind.Local, NotifyOnCritical = false });
-        off.Ingest(Make(T0), receivedAt: T0);
+        off.Ingest(SampleFixture.Make(T0), receivedAt: T0);
         off.CheckStale(T0.AddMinutes(3), Limit);
         notifier.EvaluateNoData(off, T0.AddMinutes(3));
         count.Should().Be(0);
@@ -230,7 +231,7 @@ public sealed class StaleDataTests : IAsyncLifetime
         // A cloud node whose feed ended (poll source) still gets no local no-data alert.
         var cloud = Node.CloudOnly(Guid.NewGuid(), "cloud");
         _nodes.Add(cloud);
-        _servers.Ingest(cloud.Id, Make(DateTime.UtcNow));
+        _servers.Ingest(cloud.Id, SampleFixture.Make(DateTime.UtcNow));
         var vm = _servers.Find(cloud.Id)!;
         var last = vm.LastIngestAt!.Value;
         for (var t = last.AddSeconds(5); t <= last.AddMinutes(5); t = t.AddSeconds(5))
@@ -244,12 +245,12 @@ public sealed class StaleDataTests : IAsyncLifetime
     public void MarkUnreachableKeepsTheReason()
     {
         var n = _nodes.Nodes[0];
-        _servers.Ingest(n.Id, Make(DateTime.UtcNow));
+        _servers.Ingest(n.Id, SampleFixture.Make(DateTime.UtcNow));
         _servers.MarkUnreachable(n.Id, "timeout");
         var vm = _servers.Find(n.Id)!;
         vm.OfflineReason.Should().Be("timeout");
         vm.LastError.Should().Be("timeout");
-        _servers.Ingest(n.Id, Make(DateTime.UtcNow));
+        _servers.Ingest(n.Id, SampleFixture.Make(DateTime.UtcNow));
         vm.OfflineReason.Should().BeNull();
     }
 
@@ -278,13 +279,4 @@ public sealed class StaleDataTests : IAsyncLifetime
         ShortDuration.Text(TimeSpan.FromHours(68)).Should().Be("68h");
         ShortDuration.Age(TimeSpan.FromHours(68)).Should().Be("2d");
     }
-
-    private static Sample Make(DateTime ts) => new(
-        1, ts,
-        new HostInfo("pc", "windows", "amd64", "10.0", 0, "s", null),
-        new CpuInfo(10, 0, 0, 0, 8),
-        new MemInfo(4_000_000_000, 16_000_000_000),
-        new MemInfo(0, 0),
-        new[] { new DiskSample("C:", "NTFS", 100_000_000_000, 500_000_000_000) },
-        null, null, null, null, Array.Empty<string>());
 }

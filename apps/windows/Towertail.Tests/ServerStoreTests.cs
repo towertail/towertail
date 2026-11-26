@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Towertail.Tests.Helpers;
 using Towertail.WinUI.Backend;
 using Towertail.WinUI.State;
 using Towertail.WinUI.SystemServices;
@@ -38,13 +39,13 @@ public sealed class ServerStoreTests : IAsyncLifetime
         var n = _nodes.Nodes[0];
         _servers.AggregateLevel.Should().Be(HealthLevel.Nominal);
 
-        _servers.Ingest(n.Id, Make(n, diskPct: 97));
+        _servers.Ingest(n.Id, SampleFixture.Make(diskPct: 97));
         _servers.AggregateLevel.Should().Be(HealthLevel.Critical);
 
-        _servers.Ingest(n.Id, Make(n, diskPct: 90));
+        _servers.Ingest(n.Id, SampleFixture.Make(diskPct: 90));
         _servers.AggregateLevel.Should().Be(HealthLevel.Warn);
 
-        _servers.Ingest(n.Id, Make(n, diskPct: 40));
+        _servers.Ingest(n.Id, SampleFixture.Make(diskPct: 40));
         _servers.AggregateLevel.Should().Be(HealthLevel.Nominal);
     }
 
@@ -54,7 +55,7 @@ public sealed class ServerStoreTests : IAsyncLifetime
         var n = _nodes.Nodes[0] with { IconOnWarn = false, IconOnCritical = false };
         _nodes.Update(n);
 
-        _servers.Ingest(n.Id, Make(n, diskPct: 97));
+        _servers.Ingest(n.Id, SampleFixture.Make(diskPct: 97));
         _servers.AggregateLevel.Should().Be(HealthLevel.Nominal);
 
         _nodes.Update(n with { IconOnCritical = true });
@@ -67,7 +68,7 @@ public sealed class ServerStoreTests : IAsyncLifetime
         var n = _nodes.Nodes[0];
         _nodes.SetSnooze(n.Id, DateTime.UtcNow.AddHours(1));
 
-        _servers.Ingest(n.Id, Make(n, diskPct: 97));
+        _servers.Ingest(n.Id, SampleFixture.Make(diskPct: 97));
         _servers.AggregateLevel.Should().Be(HealthLevel.Nominal);
 
         _nodes.SetSnooze(n.Id, null);
@@ -85,7 +86,7 @@ public sealed class ServerStoreTests : IAsyncLifetime
         var n = _nodes.Nodes[0] with { ThresholdOverrides = new ThresholdOverrides(Mem: new ThresholdPair(0.2, 0.3), MemPressure: new ThresholdPair(50, 60)) };
         _nodes.Update(n);
 
-        servers.Ingest(n.Id, Make(n, diskPct: 10));
+        servers.Ingest(n.Id, SampleFixture.Make(diskPct: 10));
         var vm = servers.Find(n.Id)!;
         (vm.Thresholds.CpuWarn, vm.Thresholds.CpuCritical).Should().Be((0.3, 0.4));
         (vm.Thresholds.MemWarn, vm.Thresholds.MemCritical).Should().Be((0.2, 0.3));
@@ -154,24 +155,11 @@ public sealed class ServerStoreTests : IAsyncLifetime
 
         var cloud = Node.CloudOnly(Guid.NewGuid(), "cloud");
         _nodes.Add(cloud);
-        _servers.Ingest(cloud.Id, Make(cloud, diskPct: 99));
+        _servers.Ingest(cloud.Id, SampleFixture.Make(diskPct: 99));
         raised.Should().Be(0);
 
         var local = _nodes.Nodes[0];
-        _servers.Ingest(local.Id, Make(local, diskPct: 99));
+        _servers.Ingest(local.Id, SampleFixture.Make(diskPct: 99));
         raised.Should().BeGreaterThan(0);
-    }
-
-    private static Sample Make(Node n, double diskPct)
-    {
-        var diskUsed = (long)(diskPct / 100.0 * 500_000_000_000L);
-        return new Sample(
-            1, DateTime.UtcNow,
-            new HostInfo(n.DisplayName, "windows", "amd64", "10.0", 0, "s", null),
-            new CpuInfo(10, 0, 0, 0, 8),
-            new MemInfo(4_000_000_000, 16_000_000_000),
-            new MemInfo(0, 0),
-            new[] { new DiskSample("C:", "NTFS", diskUsed, 500_000_000_000) },
-            null, null, null, null, Array.Empty<string>());
     }
 }

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using FluentAssertions;
+using Towertail.Tests.Helpers;
 using Towertail.WinUI.Backend;
 using Towertail.WinUI.State;
 using Towertail.WinUI.SystemServices;
@@ -248,23 +249,14 @@ public sealed class LongProcViewModelTests
 {
     private static readonly DateTime T0 = LongProcTrackerTests.T0;
 
-    private static Sample Make(DateTime ts, params ProcSample[] procs) => new(
-        1, ts,
-        new HostInfo("pc", "linux", "amd64", "6.1", 0, "s", null),
-        new CpuInfo(10, 0, 0, 0, 8),
-        new MemInfo(4_000_000_000, 16_000_000_000),
-        new MemInfo(0, 0),
-        new[] { new DiskSample("/", "ext4", 100_000_000_000, 500_000_000_000) },
-        null, null,
-        new ProcList(false, 10, procs.Length, procs.Length, procs),
-        null, Array.Empty<string>());
+    private static ProcList Procs(params ProcSample[] items) => new(false, 10, items.Length, items.Length, items);
 
     private static ServerViewModel Run(Node node, LongProcRule global, int minutes, double cpu = 60)
     {
         var vm = new ServerViewModel(node);
         vm.ApplyLongProc(node, global);
         for (var m = 0; m <= minutes; m++)
-            vm.Ingest(Make(T0.AddMinutes(m), LongProcTrackerTests.Orb(cpu)), T0.AddMinutes(m));
+            vm.Ingest(SampleFixture.Make(T0.AddMinutes(m), procs: Procs(LongProcTrackerTests.Orb(cpu))), T0.AddMinutes(m));
         return vm;
     }
 
@@ -344,7 +336,7 @@ public sealed class LongProcViewModelTests
             vm.ApplyLongProc(node, LongProcRule.Defaults);
             for (var m = 0; m <= 40; m++)
             {
-                vm.Ingest(Make(T0.AddMinutes(m), LongProcTrackerTests.Orb(60)), T0.AddMinutes(m));
+                vm.Ingest(SampleFixture.Make(T0.AddMinutes(m), procs: Procs(LongProcTrackerTests.Orb(60))), T0.AddMinutes(m));
                 notifier.EvaluateLongProcs(vm, T0.AddMinutes(m));
             }
             raised.Should().ContainSingle();
@@ -356,7 +348,7 @@ public sealed class LongProcViewModelTests
             vm.ApplyLongProc(node, LongProcRule.Defaults with { Notify = AlertNotify.Off });
             for (var m = 41; m <= 80; m++)
             {
-                vm.Ingest(Make(T0.AddMinutes(m), LongProcTrackerTests.P(90, 9, "node", LongProcTrackerTests.Started)), T0.AddMinutes(m));
+                vm.Ingest(SampleFixture.Make(T0.AddMinutes(m), procs: Procs(LongProcTrackerTests.P(90, 9, "node", LongProcTrackerTests.Started))), T0.AddMinutes(m));
                 notifier.EvaluateLongProcs(vm, T0.AddMinutes(m));
             }
             vm.LongProcs.Should().ContainSingle();
@@ -462,21 +454,6 @@ public sealed class LongProcSettingsTests
             p.Nodes[0].IgnoredProcs.Should().Equal("OrbStack Helper");
         }
         finally { File.Delete(src); File.Delete(dst); }
-    }
-
-    [Fact]
-    public void ExportWithoutRuleKeepsTheCurrentOne()
-    {
-        var dst = Path.GetTempFileName();
-        try
-        {
-            File.WriteAllText(dst, MacSettings);
-            var export = SettingsTransfer.Decode("""{"globalThresholds": {"cpuWarn": 0.5}}""");
-            export.LongProc.Should().BeNull();
-            SettingsTransfer.Apply(export, new SettingsImportOptions(false, true, false, false, false), dst);
-            SettingsPersistence.Load(dst).LongProc.CpuPct.Should().Be(80);
-        }
-        finally { File.Delete(dst); }
     }
 
     [Fact]

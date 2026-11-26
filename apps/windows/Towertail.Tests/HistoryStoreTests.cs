@@ -23,14 +23,11 @@ public sealed class HistoryStoreTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AppendAndLoadRoundTrips()
+    public void AppendAndLoadRoundTrips()
     {
         var node = Guid.NewGuid();
         for (int i = 0; i < 100; i++)
             _store.Append(node, new HistoryPoint(DateTime.UtcNow.AddSeconds(-100 + i), 10 + i, 20, 30, 5, 1.0, 1.5));
-
-        // Allow the background worker to drain.
-        await Task.Delay(100);
 
         var rows = _store.LoadRecent(node, limit: 200);
         rows.Should().HaveCount(100);
@@ -43,7 +40,8 @@ public sealed class HistoryStoreTests : IAsyncLifetime
         var node = Guid.NewGuid();
         _store.Append(node, new HistoryPoint(DateTime.UtcNow.AddSeconds(-2), 1, 2, 3, 4, 5, 6, Procs: 34983));
         _store.Append(node, new HistoryPoint(DateTime.UtcNow.AddSeconds(-1), 1, 2, 3, 4, 5, 6));
-        await Task.Delay(100);
+        // The read waits for the queued writes. DisposeAsync can drop them.
+        _store.LoadRecent(node, 1);
 
         // Reopen: the procs ALTER runs again and must ignore the duplicate column.
         await _store.DisposeAsync();
@@ -54,24 +52,22 @@ public sealed class HistoryStoreTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ScoreAndLoadRoundTrip()
+    public void ScoreAndLoadRoundTrip()
     {
         var node = Guid.NewGuid();
         _store.Append(node, new HistoryPoint(DateTime.UtcNow.AddSeconds(-1), 1, 2, 3, 4, 5, 6, Score: 64.5, Load: 2.25));
-        await Task.Delay(100);
         var row = _store.LoadRecent(node, limit: 10).Single();
         row.Score.Should().Be(64.5);
         row.Load.Should().Be(2.25);
     }
 
     [Fact]
-    public async Task LoadRangeAveragesToMaxPoints()
+    public void LoadRangeAveragesToMaxPoints()
     {
         var node = Guid.NewGuid();
         var from = DateTime.UtcNow.AddMinutes(-10);
         for (int i = 0; i < 600; i++)
             _store.Append(node, new HistoryPoint(from.AddSeconds(i), i < 300 ? 10 : 30, null, null, null, null, null, Score: 90, Load: 1));
-        await Task.Delay(300);
 
         var rows = _store.LoadRange(node, from, from.AddMinutes(10), 10);
 
@@ -99,7 +95,6 @@ public sealed class HistoryStoreTests : IAsyncLifetime
         _store = new HistoryStore(_path);
         var node = Guid.NewGuid();
         _store.Append(node, new HistoryPoint(DateTime.UtcNow.AddSeconds(-1), 1, 2, 3, 4, 5, 6, Score: 80, Load: 3));
-        await Task.Delay(100);
 
         _store.LoadRecent(node, limit: 5).Single().Score.Should().Be(80);
         var old1 = _store.LoadRecent(Guid.Empty, limit: 5).Single();

@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Towertail.Tests.Helpers;
 using Towertail.WinUI.State;
 using Towertail.WinUI.SystemServices;
 using Xunit;
@@ -28,22 +29,22 @@ public sealed class ThresholdNotifierTests
             var vm = new ServerViewModel(node) { AlertRules = AlertRulesTests.Immediate };
 
             // Nominal → no fire.
-            vm.Ingest(Make(node, 10, 10, 10));
+            vm.Ingest(SampleFixture.Make(cpu: 10));
             notifier.Evaluate(vm);
             count.Should().Be(0);
 
             // Warn → fire once.
-            vm.Ingest(Make(node, 80, 10, 10));
+            vm.Ingest(SampleFixture.Make(cpu: 80));
             notifier.Evaluate(vm);
             count.Should().Be(1);
 
             // Still Warn, should not fire (same sev).
-            vm.Ingest(Make(node, 82, 10, 10));
+            vm.Ingest(SampleFixture.Make(cpu: 82));
             notifier.Evaluate(vm);
             count.Should().Be(1);
 
             // Critical → fire.
-            vm.Ingest(Make(node, 95, 10, 10));
+            vm.Ingest(SampleFixture.Make(cpu: 95));
             notifier.Evaluate(vm);
             count.Should().Be(2);
         }
@@ -68,7 +69,7 @@ public sealed class ThresholdNotifierTests
             nodes.Add(node);
             var vm = new ServerViewModel(node) { AlertRules = AlertRulesTests.Immediate };
 
-            vm.Ingest(Make(node, 95, 10, 10));
+            vm.Ingest(SampleFixture.Make(cpu: 95));
             notifier.Evaluate(vm);
 
             sink.Calls.Should().ContainSingle().Which.Should().Be(("web1: CPU Critical", "CPU at 95%", node.Id, "cpu"));
@@ -97,19 +98,5 @@ public sealed class ThresholdNotifierTests
     {
         public List<(string Title, string Body, Guid HostId, string Metric)> Calls { get; } = new();
         public void Notify(string title, string body, Guid hostId, string metric) => Calls.Add((title, body, hostId, metric));
-    }
-
-    private static Sample Make(Node n, double cpuPct, double memPct, double diskPct)
-    {
-        var memUsed = (long)(memPct / 100.0 * 16_000_000_000L);
-        var diskUsed = (long)(diskPct / 100.0 * 500_000_000_000L);
-        return new Sample(
-            1, DateTime.UtcNow,
-            new HostInfo(n.DisplayName, "windows", "amd64", "10.0", 0, "s", null),
-            new CpuInfo(cpuPct, 0, 0, 0, 8),
-            new MemInfo(memUsed, 16_000_000_000),
-            new MemInfo(0, 0),
-            new[] { new DiskSample("C:", "NTFS", diskUsed, 500_000_000_000) },
-            null, null, null, null, Array.Empty<string>());
     }
 }

@@ -64,28 +64,16 @@ public sealed class SamplerUpdateCoordinatorTests
         pusher.Calls.Should().Be(0);
     }
 
-    [Fact]
-    public async Task SuccessCooldownHoldsFor15Seconds()
+    [Theory]
+    [InlineData(false, 15)]
+    [InlineData(true, 300)]
+    public async Task CooldownHolds(bool fail, int seconds)
     {
-        var pusher = new FakePusher();
+        var pusher = new FakePusher { Fail = fail };
         var c = Make(pusher);
         await c.MaybeUpdateAsync(Ssh, "old", enabled: true);
-        _now += TimeSpan.FromSeconds(14);
-        await c.MaybeUpdateAsync(Ssh, "old", enabled: true);
-        pusher.Calls.Should().Be(1);
-        _now += TimeSpan.FromSeconds(2);
-        await c.MaybeUpdateAsync(Ssh, "old", enabled: true);
-        pusher.Calls.Should().Be(2);
-    }
-
-    [Fact]
-    public async Task FailureCooldownHoldsFor300Seconds()
-    {
-        var pusher = new FakePusher { Fail = true };
-        var c = Make(pusher);
-        await c.MaybeUpdateAsync(Ssh, "old", enabled: true);
-        c.LastError(Ssh.Id).Should().Be("boom");
-        _now += TimeSpan.FromSeconds(299);
+        if (fail) c.LastError(Ssh.Id).Should().Be("boom");
+        _now += TimeSpan.FromSeconds(seconds - 1);
         await c.MaybeUpdateAsync(Ssh, "old", enabled: true);
         pusher.Calls.Should().Be(1);
         _now += TimeSpan.FromSeconds(2);

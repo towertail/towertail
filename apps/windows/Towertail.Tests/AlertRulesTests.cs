@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using FluentAssertions;
+using Towertail.Tests.Helpers;
 using Towertail.WinUI.State;
 using Towertail.WinUI.SystemServices;
 using Xunit;
@@ -113,27 +114,6 @@ public sealed class AlertRulesTests
     }
 
     [Fact]
-    public void ImportWithoutAlertsKeepsCurrentRules()
-    {
-        var path = Path.GetTempFileName();
-        try
-        {
-            var p = PersistedSettings.Defaults();
-            var current = AlertRules.Defaults with { Disk = new AlertRule(60, AlertNotify.Off) };
-            p.Thresholds.Alerts = current;
-            SettingsPersistence.Save(p, path);
-
-            var export = new SettingsExport { GlobalThresholds = new PersistedThresholds { CpuWarn = 0.5 } };
-            SettingsTransfer.Apply(export, new SettingsImportOptions(false, true, false, false, false), path);
-
-            var back = SettingsPersistence.Load(path);
-            back.Thresholds.CpuWarn.Should().Be(0.5);
-            back.Thresholds.Alerts.Should().Be(current);
-        }
-        finally { File.Delete(path); }
-    }
-
-    [Fact]
     public void NodeOverrideWins()
     {
         var node = new Node { CustomAlerts = Immediate };
@@ -210,10 +190,10 @@ public sealed class AlertRulesTests
     public void CardStaysRawWhileAlertIsGated()
     {
         var vm = Vm(AlertRules.Defaults);
-        vm.Ingest(Make(T0, cpu: 95));
+        vm.Ingest(SampleFixture.Make(T0, cpu: 95));
         vm.RawLevel(AlertMetric.Cpu).Should().Be(HealthLevel.Critical);
         vm.AlertLevel(AlertMetric.Cpu).Should().Be(HealthLevel.Nominal);
-        for (int s = 10; s <= 300; s += 10) vm.Ingest(Make(T0.AddSeconds(s), cpu: 95));
+        for (int s = 10; s <= 300; s += 10) vm.Ingest(SampleFixture.Make(T0.AddSeconds(s), cpu: 95));
         vm.AlertLevel(AlertMetric.Cpu).Should().Be(HealthLevel.Critical);
     }
 
@@ -221,10 +201,10 @@ public sealed class AlertRulesTests
     public void ResetAfterUnreachableStartsAgain()
     {
         var vm = Vm(AlertRules.Defaults with { Cpu = new AlertRule(60, AlertNotify.All) });
-        for (int s = 0; s <= 60; s += 10) vm.Ingest(Make(T0.AddSeconds(s), cpu: 95));
+        for (int s = 0; s <= 60; s += 10) vm.Ingest(SampleFixture.Make(T0.AddSeconds(s), cpu: 95));
         vm.AlertLevel(AlertMetric.Cpu).Should().Be(HealthLevel.Critical);
         vm.ResetAlerts();
-        vm.Ingest(Make(T0.AddSeconds(70), cpu: 95));
+        vm.Ingest(SampleFixture.Make(T0.AddSeconds(70), cpu: 95));
         vm.AlertLevel(AlertMetric.Cpu).Should().Be(HealthLevel.Nominal);
     }
 
@@ -232,7 +212,7 @@ public sealed class AlertRulesTests
     public void DiskAlertsAtOnceByDefault()
     {
         var vm = Vm(AlertRules.Defaults);
-        vm.Ingest(Make(T0, disk: 97));
+        vm.Ingest(SampleFixture.Make(T0, diskPct: 97));
         vm.AlertLevel(AlertMetric.Disk).Should().Be(HealthLevel.Critical);
     }
 
@@ -240,7 +220,7 @@ public sealed class AlertRulesTests
     public void MemoryUnderPressureIsCriticalAtOnce()
     {
         var vm = Vm(AlertRules.Defaults);
-        vm.Ingest(Make(T0, mem: 80, health: new HealthInfo(10, Psi: new PsiInfo(0, 0, 8, 0, 0))));
+        vm.Ingest(SampleFixture.Make(T0, memPct: 80, health: new HealthInfo(10, Psi: new PsiInfo(0, 0, 8, 0, 0))));
         vm.MemPressured.Should().BeTrue();
         vm.AlertLevel(AlertMetric.Mem).Should().Be(HealthLevel.Critical);
     }
@@ -250,7 +230,7 @@ public sealed class AlertRulesTests
     {
         var vm = Vm(AlertRules.Defaults);
         for (int s = 0; s <= 120; s += 10)
-            vm.Ingest(Make(T0.AddSeconds(s), mem: 95, health: new HealthInfo(10, MemPressure: 1)));
+            vm.Ingest(SampleFixture.Make(T0.AddSeconds(s), memPct: 95, health: new HealthInfo(10, MemPressure: 1)));
         vm.MemPressured.Should().BeFalse();
         vm.RawLevel(AlertMetric.Mem).Should().Be(HealthLevel.Critical);
         vm.AlertLevel(AlertMetric.Mem).Should().Be(HealthLevel.Warn);
@@ -260,7 +240,7 @@ public sealed class AlertRulesTests
     public void MemoryWithUnknownPressureUsesSustain()
     {
         var vm = Vm(AlertRules.Defaults);
-        for (int s = 0; s <= 120; s += 10) vm.Ingest(Make(T0.AddSeconds(s), mem: 95));
+        for (int s = 0; s <= 120; s += 10) vm.Ingest(SampleFixture.Make(T0.AddSeconds(s), memPct: 95));
         vm.MemPressured.Should().BeNull();
         vm.AlertLevel(AlertMetric.Mem).Should().Be(HealthLevel.Critical);
     }
@@ -269,11 +249,11 @@ public sealed class AlertRulesTests
     public void SwapGrowthCountsAsPressure()
     {
         var vm = Vm(AlertRules.Defaults);
-        vm.Ingest(Make(T0, mem: 80, swapUsed: 0));
+        vm.Ingest(SampleFixture.Make(T0, memPct: 80, swapUsed: 0));
         vm.MemPressured.Should().BeNull();
-        vm.Ingest(Make(T0.AddSeconds(10), mem: 80, swapUsed: 0));
+        vm.Ingest(SampleFixture.Make(T0.AddSeconds(10), memPct: 80, swapUsed: 0));
         vm.MemPressured.Should().BeFalse();
-        vm.Ingest(Make(T0.AddSeconds(20), mem: 80, swapUsed: 50L * 1_048_576));
+        vm.Ingest(SampleFixture.Make(T0.AddSeconds(20), memPct: 80, swapUsed: 50L * 1_048_576));
         vm.MemPressured.Should().BeTrue();
         vm.AlertLevel(AlertMetric.Mem).Should().Be(HealthLevel.Critical);
     }
@@ -282,12 +262,12 @@ public sealed class AlertRulesTests
     public void HealthInodesBypassSustain()
     {
         var vm = Vm(AlertRules.Defaults);
-        vm.Ingest(Make(T0, inodes: 0.97, health: new HealthInfo(25_000)));
+        vm.Ingest(SampleFixture.Make(T0, inodes: 0.97, health: new HealthInfo(25_000)));
         vm.Health.TintOf(HealthSignal.Procs).Should().Be(HealthLevel.Critical);
         vm.AlertLevel(AlertMetric.Health).Should().Be(HealthLevel.Critical);
 
         var procsOnly = Vm(AlertRules.Defaults);
-        procsOnly.Ingest(Make(T0, health: new HealthInfo(25_000)));
+        procsOnly.Ingest(SampleFixture.Make(T0, health: new HealthInfo(25_000)));
         procsOnly.AlertLevel(AlertMetric.Health).Should().Be(HealthLevel.Nominal);
     }
 
@@ -310,11 +290,11 @@ public sealed class AlertRulesTests
             var vm = Vm(AlertRules.Defaults with { Cpu = new AlertRule(60, AlertNotify.Critical) }, node);
 
             // Warn sustained: CPU notifies on critical only.
-            for (int s = 0; s <= 60; s += 10) { vm.Ingest(Make(T0.AddSeconds(s), cpu: 80)); notifier.Evaluate(vm); }
+            for (int s = 0; s <= 60; s += 10) { vm.Ingest(SampleFixture.Make(T0.AddSeconds(s), cpu: 80)); notifier.Evaluate(vm); }
             vm.AlertLevel(AlertMetric.Cpu).Should().Be(HealthLevel.Warn);
             raised.Should().BeEmpty();
 
-            for (int s = 70; s <= 130; s += 10) { vm.Ingest(Make(T0.AddSeconds(s), cpu: 95)); notifier.Evaluate(vm); }
+            for (int s = 70; s <= 130; s += 10) { vm.Ingest(SampleFixture.Make(T0.AddSeconds(s), cpu: 95)); notifier.Evaluate(vm); }
             raised.Should().ContainSingle().Which.Severity.Should().Be(ThresholdNotifier.Severity.Critical);
         }
         finally { File.Delete(path); }
@@ -322,20 +302,4 @@ public sealed class AlertRulesTests
 
     private static ServerViewModel Vm(AlertRules rules, Node? node = null)
         => new(node ?? new Node { DisplayName = "n" }) { AlertRules = rules };
-
-    private static Sample Make(DateTime t, double cpu = 10, double mem = 10, double disk = 10,
-                               long? swapUsed = null, double? inodes = null, HealthInfo? health = null)
-    {
-        const long memTotal = 16_000_000_000L, diskTotal = 500_000_000_000L;
-        var d = new DiskSample("/", "ext4", (long)(disk / 100 * diskTotal), diskTotal,
-            inodes is double f ? (long)(f * 1000) : null, inodes is null ? null : 1000);
-        return new Sample(
-            1, t,
-            new HostInfo("n", "linux", "amd64", "6", 0, "s", null),
-            new CpuInfo(cpu, 0, 0, 0, 8),
-            new MemInfo((long)(mem / 100 * memTotal), memTotal),
-            swapUsed is long su ? new MemInfo(su, 8L * 1_073_741_824) : new MemInfo(0, 0),
-            new[] { d },
-            null, null, null, null, Array.Empty<string>(), health);
-    }
 }

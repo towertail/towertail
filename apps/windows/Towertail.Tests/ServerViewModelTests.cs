@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Towertail.Tests.Helpers;
 using Towertail.WinUI.Backend;
 using Towertail.WinUI.State;
 using Xunit;
@@ -38,8 +39,8 @@ public sealed class ServerViewModelTests
         var n = Node.LocalWindows();
         var vm = new ServerViewModel(n);
         var t = DateTime.UtcNow;
-        vm.Ingest(Make(t, rxCum: 1_048_576 * 0));
-        vm.Ingest(Make(t.AddSeconds(1), rxCum: 1_048_576 * 5));
+        vm.Ingest(SampleFixture.Make(t, rxCum: 1_048_576 * 0));
+        vm.Ingest(SampleFixture.Make(t.AddSeconds(1), rxCum: 1_048_576 * 5));
         vm.RxMBps.Should().NotBeNull();
         vm.RxMBps!.Value.Should().BeApproximately(5, 0.0001);
     }
@@ -139,18 +140,4 @@ public sealed class ServerViewModelTests
         new MemInfo(mem, 100),
         new MemInfo(0, 0),
         null, null, null, null, null, Array.Empty<string>());
-
-    private static Sample Make(DateTime t, long rxCum)
-    {
-        return new Sample(1, t,
-            new HostInfo("h", "windows", "amd64", "10.0", 0, "s", null),
-            new CpuInfo(0, 0, 0, 0, 8),
-            new MemInfo(1, 2),
-            new MemInfo(0, 0),
-            null, null,
-            new NetInfo(0, 0, rxCum, 0),
-            null,
-            null,
-            Array.Empty<string>());
-    }
 }

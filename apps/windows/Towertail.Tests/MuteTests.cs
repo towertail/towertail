@@ -151,19 +151,4 @@ public sealed class MuteTests
         }
         finally { File.Delete(path); }
     }
-
-    [Fact]
-    public void ImportWithoutMutedKeepsCurrentMutes()
-    {
-        var path = Path.GetTempFileName();
-        try
-        {
-            new ServerSettings(path) { MutedSignals = M(AlertSignal.Disk) }.Persist();
-            var export = SettingsTransfer.BuildFromCurrent(path);
-            export.GlobalThresholds.Muted = null;
-            SettingsTransfer.Apply(export, new SettingsImportOptions(false, true, false, false, false), path);
-            new ServerSettings(path).MutedSignals.Should().Be(M(AlertSignal.Disk));
-        }
-        finally { File.Delete(path); }
-    }
 }

@@ -59,31 +59,20 @@ public sealed class SshConnectionFactoryTests
         act.Should().Throw<SshConnectionFactory.NoCredentialException>();
     }
 
-    [Fact]
-    public void BuildConnectionInfo_UsesEffectivePortAndUser()
+    [Theory]
+    [InlineData(null, 22)]
+    [InlineData(2222, 2222)]
+    public void BuildConnectionInfo_UsesPortAndUser(int? port, int want)
     {
         var node = new Node
         {
             Kind = NodeKind.Ssh, SshUser = "alice", SshHost = "host.example",
-            SshPort = null, // → 22
-            AuthMethod = AuthMethod.Password
+            SshPort = port, AuthMethod = AuthMethod.Password
         };
         var info = SshConnectionFactory.BuildConnectionInfo(node, dpapiPassword: "pw");
         info.Host.Should().Be("host.example");
-        info.Port.Should().Be(22);
+        info.Port.Should().Be(want);
         info.Username.Should().Be("alice");
-    }
-
-    [Fact]
-    public void BuildConnectionInfo_RespectsExplicitPort()
-    {
-        var node = new Node
-        {
-            Kind = NodeKind.Ssh, SshUser = "alice", SshHost = "host.example",
-            SshPort = 2222, AuthMethod = AuthMethod.Password
-        };
-        var info = SshConnectionFactory.BuildConnectionInfo(node, dpapiPassword: "pw");
-        info.Port.Should().Be(2222);
     }
 
     [Theory]

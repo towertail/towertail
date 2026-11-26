@@ -150,4 +150,32 @@ public sealed class SettingsTransferTests
         }
         finally { File.Delete(path); }
     }
+
+    [Fact]
+    public void ImportWithoutSectionsKeepsCurrentValues()
+    {
+        var path = Path.GetTempFileName();
+        try
+        {
+            var p = PersistedSettings.Defaults();
+            var muted = new MutedSignals(new[] { AlertSignal.Disk });
+            var alerts = AlertRules.Defaults with { Disk = new AlertRule(60, AlertNotify.Off) };
+            p.Thresholds.Muted = muted;
+            p.Thresholds.Alerts = alerts;
+            p.LongProc = new LongProcRule { CpuPct = 80 };
+            SettingsPersistence.Save(p, path);
+
+            var export = SettingsTransfer.Decode("""{"globalThresholds": {"cpuWarn": 0.5}}""");
+            export.GlobalThresholds.Muted.Should().BeNull();
+            export.LongProc.Should().BeNull();
+            SettingsTransfer.Apply(export, new SettingsImportOptions(false, true, false, false, false), path);
+
+            var back = SettingsPersistence.Load(path);
+            back.Thresholds.CpuWarn.Should().Be(0.5);
+            back.Thresholds.Muted.Should().Be(muted);
+            back.Thresholds.Alerts.Should().Be(alerts);
+            back.LongProc.CpuPct.Should().Be(80);
+        }
+        finally { File.Delete(path); }
+    }
 }
