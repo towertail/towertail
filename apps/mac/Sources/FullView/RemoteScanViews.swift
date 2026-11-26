@@ -139,7 +139,7 @@ struct ScanOptInPanel: View {
             }
             step(2, done: false, title: "Run the sampler with --allow-disk-scan",
                  text: "Stop the sampler on the host. Then start it again with the flag.") {
-                Text("towertail-sampler start --endpoint … --token-file … --allow-disk-scan")
+                Text(verbatim: "towertail-sampler start --endpoint … --token-file … \\\n  --allow-disk-scan")
                     .font(.system(size: 12, design: .monospaced))
                     .textSelection(.enabled)
                     .padding(.horizontal, 8).padding(.vertical, 5)
