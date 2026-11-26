@@ -73,6 +73,7 @@ type builder struct {
 	orgInfo    OrgInfo
 	mailer     notify.Mailer
 	roles      Roles
+	alertLinks notify.Links
 }
 
 // WithLogger replaces the logger from the log config.
@@ -85,6 +86,10 @@ func WithStore(s store.ConfigStore) Option { return func(b *builder) { b.store =
 func WithNotifier(n notify.Notifier) Option {
 	return func(b *builder) { b.notifiers = append(b.notifiers, n) }
 }
+
+// WithAlertLinks adds "Ask why" and "Get fewer of these" links to alert
+// messages. Without it, alerts have no links.
+func WithAlertLinks(l notify.Links) Option { return func(b *builder) { b.alertLinks = l } }
 
 // WithMailer sends the mail of the email alert channel through m, in
 // place of SMTP.

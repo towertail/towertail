@@ -110,9 +110,13 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 	})
 	gate, _ := b.limits.(ChannelLimits)
 	plans, _ := b.limits.(AssistantPlans)
-	router := channels.NewRouter(a.store, cfg.Notify, b.mailer, gate, a.log)
-	notifiers := append([]notify.Notifier{router}, b.notifiers...)
 	journal := chEvents{ch: a.ch}
+	routerOpts := []channels.RouterOption{channels.WithSendCounter(journal)}
+	if b.alertLinks != nil {
+		routerOpts = append(routerOpts, channels.WithLinks(b.alertLinks))
+	}
+	router := channels.NewRouter(a.store, cfg.Notify, b.mailer, gate, a.log, routerOpts...)
+	notifiers := append([]notify.Notifier{router}, b.notifiers...)
 	for _, n := range notifiers {
 		if u, ok := n.(notify.JournalUser); ok {
 			u.UseJournal(journal)
@@ -276,6 +280,17 @@ func (s chEvents) WriteEvent(ctx context.Context, e clickhouse.EventRow) error {
 		return nil
 	}
 	return s.ch.WriteEvent(ctx, e)
+}
+
+// RuleSends counts the email sends of one rule for the alert emails.
+func (s chEvents) RuleSends(ctx context.Context, q channels.RuleSendsQuery) (int, error) {
+	if s.ch == nil {
+		return 0, nil
+	}
+	if !s.ch.Ready() {
+		return 0, errCHNotReady
+	}
+	return s.ch.RuleSends(ctx, clickhouse.RuleSendsQuery(q))
 }
 
 func (s chEvents) LastTints(ctx context.Context, since time.Time) ([]clickhouse.TintRow, error) {

@@ -250,19 +250,7 @@ func TestWithNotifier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ingest := func(cpuPct float64) {
-		t.Helper()
-		line := fmt.Sprintf(`{"v":1,"ts":%q,"host":{"name":"web-1","os":"linux","arch":"amd64"},"cpu":{"pct":%g,"cores":4},"mem":{"used":1,"total":100},"swap":{"used":0,"total":0},"errors":[]}`,
-			time.Now().UTC().Format(time.RFC3339Nano), cpuPct)
-		req := httptest.NewRequest(http.MethodPost, "/v1/ingest/samples", strings.NewReader(line+"\n"))
-		req.Header.Set("Authorization", "Bearer "+raw)
-		req.Header.Set("Content-Type", "application/x-ndjson")
-		rec := httptest.NewRecorder()
-		a.Handler().ServeHTTP(rec, req)
-		if rec.Code >= 300 {
-			t.Fatalf("ingest: %d %s", rec.Code, rec.Body)
-		}
-	}
+	ingest := func(cpuPct float64) { ingestCPU(t, a, raw, cpuPct) }
 	ingest(10)
 	ingest(95)
 	select {
@@ -272,6 +260,85 @@ func TestWithNotifier(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("no alert")
+	}
+}
+
+// ingestCPU posts one sample of host web-1 with the CPU percent.
+func ingestCPU(t *testing.T, a *App, token string, cpuPct float64) {
+	t.Helper()
+	line := fmt.Sprintf(`{"v":1,"ts":%q,"host":{"name":"web-1","os":"linux","arch":"amd64"},"cpu":{"pct":%g,"cores":4},"mem":{"used":1,"total":100},"swap":{"used":0,"total":0},"errors":[]}`,
+		time.Now().UTC().Format(time.RFC3339Nano), cpuPct)
+	req := httptest.NewRequest(http.MethodPost, "/v1/ingest/samples", strings.NewReader(line+"\n"))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/x-ndjson")
+	rec := httptest.NewRecorder()
+	a.Handler().ServeHTTP(rec, req)
+	if rec.Code >= 300 {
+		t.Fatalf("ingest: %d %s", rec.Code, rec.Body)
+	}
+}
+
+type fakeLinks struct {
+	mu    sync.Mutex
+	calls []notify.Alert
+}
+
+func (f *fakeLinks) AskURL(a notify.Alert) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, a)
+	return "https://app.example.com/ask?alert=" + a.AlertID.String()
+}
+
+func (f *fakeLinks) FewerURL(notify.Alert) string { return "" }
+
+func TestWithAlertLinks(t *testing.T) {
+	bodies := make(chan string, 4)
+	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		bodies <- string(b)
+	}))
+	t.Cleanup(hook.Close)
+	links := &fakeLinks{}
+	a, err := New(testConfig(t), quietLog(), WithAlertLinks(links))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(a.close)
+	ctx := context.Background()
+	node := store.Node{ID: uuid.New(), DisplayName: "web-1", Kind: "ssh", Enabled: true, NotifyOnWarn: true, NotifyOnCritical: true}
+	if err := a.store.PutNode(ctx, store.ZeroOrg, node); err != nil {
+		t.Fatal(err)
+	}
+	settings := store.DefaultServerSettings()
+	settings.Alerts.CPU = store.AlertRule{Notify: store.NotifyAll}
+	if err := a.store.PutSettings(ctx, store.ZeroOrg, settings); err != nil {
+		t.Fatal(err)
+	}
+	err = a.store.PutChannel(ctx, store.Channel{
+		ID: uuid.New(), OrgID: store.ZeroOrg, Kind: store.ChannelSlack, Name: "Slack", Enabled: true, Target: hook.URL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _, err := auth.NewIssuer(a.store).Issue(ctx, store.ZeroOrg, store.TokenKindSampler, "test", &node.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ingestCPU(t, a, raw, 10)
+	ingestCPU(t, a, raw, 95)
+	select {
+	case body := <-bodies:
+		if !strings.Contains(body, "https://app.example.com/ask?alert=") || !strings.Contains(body, "Ask why") {
+			t.Fatalf("slack body has no link: %s", body)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no slack message")
+	}
+	links.mu.Lock()
+	defer links.mu.Unlock()
+	if len(links.calls) == 0 || links.calls[0].Metric != "cpu" {
+		t.Errorf("link calls = %+v", links.calls)
 	}
 }
 
