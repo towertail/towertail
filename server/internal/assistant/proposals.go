@@ -18,6 +18,10 @@ const (
 	ProposalApplied = "applied"
 	ProposalUndone  = "undone"
 	ProposalExpired = "expired"
+	// ProposalApplying and ProposalUndoing hold the claim of one server
+	// while the writer runs.
+	ProposalApplying = "applying"
+	ProposalUndoing  = "undoing"
 )
 
 // proposalTTL is how long a pending proposal stays valid.
@@ -141,7 +145,8 @@ func (s *Service) check(ctx context.Context, a Actor, c Change) error {
 }
 
 // ApplyProposal applies the checked rows of a pending proposal. Two
-// applies of one proposal in this process run one after the other.
+// applies of one proposal in this process run one after the other. The
+// store claim stops two servers from applying one proposal.
 func (s *Service) ApplyProposal(ctx context.Context, a Actor, id uuid.UUID, rows []string) (Proposal, error) {
 	s.applyMu.Lock()
 	defer s.applyMu.Unlock()
@@ -154,7 +159,7 @@ func (s *Service) ApplyProposal(ctx context.Context, a Actor, id uuid.UUID, rows
 	case p.Expired(now):
 		if p.Status == ProposalPending {
 			p.Status = ProposalExpired
-			if err := s.store.UpdateProposal(ctx, p); err != nil {
+			if err := s.store.UpdateProposal(ctx, p, ProposalPending); err != nil && !errors.Is(err, ErrNotPending) {
 				return Proposal{}, err
 			}
 		}
@@ -171,16 +176,24 @@ func (s *Service) ApplyProposal(ctx context.Context, a Actor, id uuid.UUID, rows
 	if s.writer == nil {
 		return Proposal{}, errors.New("assistant: no writer")
 	}
+	orig := p
 	p.Rows = slices.Clone(p.Rows)
 	for i := range p.Rows {
 		p.Rows[i].Checked = slices.Contains(rows, p.Rows[i].ID)
 	}
+	claim := p
+	claim.Status = ProposalApplying
+	if err := s.store.UpdateProposal(ctx, claim, ProposalPending); err != nil {
+		return Proposal{}, err
+	}
 	ap, err := s.writer.Apply(a.ctx(ctx), a, p.Change, rows)
+	done := context.WithoutCancel(ctx)
 	if err != nil {
+		_ = s.store.UpdateProposal(done, orig, ProposalApplying)
 		return Proposal{}, err
 	}
 	p.Status, p.Applied, p.AppliedBy, p.AppliedAt = ProposalApplied, &ap, a.UserID, now
-	if err := s.store.UpdateProposal(ctx, p); err != nil {
+	if err := s.store.UpdateProposal(done, p, ProposalApplying); err != nil {
 		return Proposal{}, err
 	}
 	return p, nil
@@ -204,11 +217,20 @@ func (s *Service) UndoProposal(ctx context.Context, a Actor, id uuid.UUID) (Prop
 	if s.writer == nil {
 		return Proposal{}, errors.New("assistant: no writer")
 	}
-	if err := s.writer.Undo(a.ctx(ctx), a, p.Change, *p.Applied); err != nil {
+	orig := p
+	claim := p
+	claim.Status = ProposalUndoing
+	if err := s.store.UpdateProposal(ctx, claim, ProposalApplied); err != nil {
+		return Proposal{}, err
+	}
+	err = s.writer.Undo(a.ctx(ctx), a, p.Change, *p.Applied)
+	done := context.WithoutCancel(ctx)
+	if err != nil {
+		_ = s.store.UpdateProposal(done, orig, ProposalUndoing)
 		return Proposal{}, err
 	}
 	p.Status, p.UndoneAt = ProposalUndone, s.now()
-	if err := s.store.UpdateProposal(ctx, p); err != nil {
+	if err := s.store.UpdateProposal(done, p, ProposalUndoing); err != nil {
 		return Proposal{}, err
 	}
 	return p, nil

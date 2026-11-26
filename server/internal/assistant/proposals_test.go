@@ -198,3 +198,49 @@ func TestUndoProposal(t *testing.T) {
 		t.Fatalf("second undo: %v", err)
 	}
 }
+
+// otherServer moves a proposal into the claim status before the first
+// claim of this server, like a second server that is faster.
+type otherServer struct {
+	*MemoryStore
+	to string
+}
+
+func (o *otherServer) UpdateProposal(ctx context.Context, p Proposal, from string) error {
+	if o.to != "" {
+		rival := p
+		rival.Status, o.to = o.to, ""
+		if err := o.MemoryStore.UpdateProposal(ctx, rival, from); err != nil {
+			return err
+		}
+	}
+	return o.MemoryStore.UpdateProposal(ctx, p, from)
+}
+
+func TestProposalClaimLost(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t, config.AssistantConfig{})
+	p := e.propose(t, twoRows("rules", store.RoleAdmin))
+	rival := &otherServer{MemoryStore: e.st, to: ProposalApplying}
+	e.svc.store = rival
+	if _, err := e.svc.ApplyProposal(ctx, e.actor, p.ID, []string{"r1"}); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("apply: %v", err)
+	}
+	if e.writer.applies != 0 {
+		t.Fatal("the writer ran without the claim")
+	}
+
+	e.svc.store = e.st
+	p = e.propose(t, twoRows("rules", store.RoleAdmin))
+	if _, err := e.svc.ApplyProposal(ctx, e.actor, p.ID, []string{"r1"}); err != nil {
+		t.Fatal(err)
+	}
+	rival.to = ProposalUndoing
+	e.svc.store = rival
+	if _, err := e.svc.UndoProposal(ctx, e.actor, p.ID); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("undo: %v", err)
+	}
+	if e.writer.undone != 0 {
+		t.Fatal("the writer undid without the claim")
+	}
+}

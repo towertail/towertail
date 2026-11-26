@@ -118,7 +118,7 @@ func (s *MemoryStore) UpdateMessage(_ context.Context, m StoredMessage) error {
 	if i < 0 {
 		return ErrNotFound
 	}
-	m.Seq = list[i].Seq
+	m.Seq, m.CreatedAt = list[i].Seq, list[i].CreatedAt
 	list[i] = m
 	return nil
 }
@@ -140,11 +140,15 @@ func (s *MemoryStore) Proposal(_ context.Context, orgID, id uuid.UUID) (Proposal
 	return p, nil
 }
 
-func (s *MemoryStore) UpdateProposal(_ context.Context, p Proposal) error {
+func (s *MemoryStore) UpdateProposal(_ context.Context, p Proposal, from string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.proposals[p.ID]; !ok {
+	cur, ok := s.proposals[p.ID]
+	if !ok || cur.OrgID != p.OrgID {
 		return ErrNotFound
+	}
+	if cur.Status != from {
+		return ErrNotPending
 	}
 	s.proposals[p.ID] = p
 	return nil
@@ -172,22 +176,22 @@ func (s *MemoryStore) row(k usageKey) *usageRow {
 	return r
 }
 
-func (s *MemoryStore) keys(orgID, userID uuid.UUID, at time.Time) (day, month usageKey) {
+func usageKeys(orgID, userID uuid.UUID, at time.Time) (day, month usageKey) {
 	return usageKey{orgID, "user", userID.String(), dayPeriod(at)},
 		usageKey{orgID, "org", "", monthPeriod(at)}
 }
 
-func (s *MemoryStore) view(r Reservation, day, month *usageRow) UsageView {
+func usageView(r Reservation, day, month int) UsageView {
 	return UsageView{
-		Day:   WindowUsage{Used: day.questions, Limit: r.PerDay, ResetAt: dayReset(r.At)},
-		Month: WindowUsage{Used: month.questions, Limit: r.PerMonth, ResetAt: monthReset(r.At)},
+		Day:   WindowUsage{Used: day, Limit: r.PerDay, ResetAt: dayReset(r.At)},
+		Month: WindowUsage{Used: month, Limit: r.PerMonth, ResetAt: monthReset(r.At)},
 	}
 }
 
 func (s *MemoryStore) Reserve(_ context.Context, r Reservation) (UsageView, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	dk, mk := s.keys(r.OrgID, r.UserID, r.At)
+	dk, mk := usageKeys(r.OrgID, r.UserID, r.At)
 	day, month := s.row(dk), s.row(mk)
 	if r.PerDay > 0 && day.questions >= r.PerDay {
 		return UsageView{}, &LimitError{Scope: "day", ResetAt: dayReset(r.At), Used: day.questions, Limit: r.PerDay}
@@ -197,13 +201,13 @@ func (s *MemoryStore) Reserve(_ context.Context, r Reservation) (UsageView, erro
 	}
 	day.questions++
 	month.questions++
-	return s.view(r, day, month), nil
+	return usageView(r, day.questions, month.questions), nil
 }
 
 func (s *MemoryStore) AddUsage(_ context.Context, orgID, userID uuid.UUID, at time.Time, tokens, toolCalls int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	dk, mk := s.keys(orgID, userID, at)
+	dk, mk := usageKeys(orgID, userID, at)
 	for _, k := range []usageKey{dk, mk} {
 		r := s.row(k)
 		r.tokens += tokens
@@ -215,8 +219,8 @@ func (s *MemoryStore) AddUsage(_ context.Context, orgID, userID uuid.UUID, at ti
 func (s *MemoryStore) Usage(_ context.Context, orgID, userID uuid.UUID, at time.Time) (UsageView, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	dk, mk := s.keys(orgID, userID, at)
-	return s.view(Reservation{At: at}, s.row(dk), s.row(mk)), nil
+	dk, mk := usageKeys(orgID, userID, at)
+	return usageView(Reservation{At: at}, s.row(dk).questions, s.row(mk).questions), nil
 }
 
 func (s *MemoryStore) OrgsWithChats(_ context.Context) ([]uuid.UUID, error) {

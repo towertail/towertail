@@ -67,7 +67,10 @@ type ChatStore interface {
 type ProposalStore interface {
 	SaveProposal(ctx context.Context, p Proposal) error
 	Proposal(ctx context.Context, orgID, id uuid.UUID) (Proposal, error)
-	UpdateProposal(ctx context.Context, p Proposal) error
+	// UpdateProposal saves p only if the stored status is from. Else it
+	// gives ErrNotPending. This is a compare-and-set, so two servers
+	// cannot take one proposal.
+	UpdateProposal(ctx context.Context, p Proposal, from string) error
 }
 
 // UsageStore counts questions, tokens and tool calls.
