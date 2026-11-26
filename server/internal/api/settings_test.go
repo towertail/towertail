@@ -82,7 +82,7 @@ func TestPutSettingsRejectsBadRules(t *testing.T) {
 }
 
 func TestPutSettingsDropsAlerterCache(t *testing.T) {
-	e := newIngestEnv(t, config.Config{}, nil, nil)
+	e := newIngestEnv(t, config.Config{}, nil)
 	n := make(chanNotifier, 4)
 	e.srv.alerter = alerter.New(nil, nil, nil, &registeredStore{}, e.st, n)
 	ctx := t.Context()

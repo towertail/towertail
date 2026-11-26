@@ -48,20 +48,20 @@ func rangeBounds(c echo.Context, span time.Duration) (from, to, now time.Time) {
 	now = time.Now().UTC()
 	to = now
 	if v := c.QueryParam("to"); v != "" {
-		to, _ = parseRangeBound(v, to)
+		to = parseRangeBound(v, to)
 	}
 	from = to.Add(-span)
 	if v := c.QueryParam("from"); v != "" {
-		from, _ = parseRangeBound(v, from)
+		from = parseRangeBound(v, from)
 	}
 	return from, to, now
 }
 
 // parseRange reads from and to. The default range is the span up to
 // now. The plan limit clamps from. The caller sets NodeID.
-func (s *Server) parseRange(c echo.Context, span time.Duration) (historyRange, error) {
+func (s *Server) parseRange(c echo.Context, span time.Duration) historyRange {
 	from, to, now := rangeBounds(c, span)
-	return s.clampRange(c, from, to, now), nil
+	return s.clampRange(c, from, to, now)
 }
 
 // clampRange applies the plan limit of the token org to a range.
@@ -191,10 +191,7 @@ func (s *Server) handleHistory(c echo.Context) error {
 	}
 	step := historyStep(c)
 	if v := c.QueryParam("metrics"); v != "" {
-		r, err := s.parseRange(c, time.Hour)
-		if err != nil {
-			return err
-		}
+		r := s.parseRange(c, time.Hour)
 		r.NodeID = id
 		return s.handleHistoryMulti(c, r, v, step)
 	}
@@ -321,21 +318,17 @@ func resolution(d time.Duration) string {
 
 // parseRangeBound accepts RFC3339 absolute or "now-1h"-style relative
 // forms. The default bound is supplied for relative parse failures.
-func parseRangeBound(s string, fallback time.Time) (time.Time, error) {
+func parseRangeBound(s string, fallback time.Time) time.Time {
 	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
-		return t.UTC(), nil
+		return t.UTC()
 	}
-	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return t.UTC(), nil
-	}
-	// "now" / "now-1h"
 	if s == "now" {
-		return time.Now().UTC(), nil
+		return time.Now().UTC()
 	}
-	if len(s) > 4 && s[:4] == "now-" {
-		if d, err := time.ParseDuration(s[4:]); err == nil {
-			return time.Now().UTC().Add(-d), nil
+	if rest, ok := strings.CutPrefix(s, "now-"); ok {
+		if d, err := time.ParseDuration(rest); err == nil {
+			return time.Now().UTC().Add(-d)
 		}
 	}
-	return fallback, nil
+	return fallback
 }

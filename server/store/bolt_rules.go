@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"slices"
@@ -90,7 +91,7 @@ func (s *BoltStore) ReplaceRules(_ context.Context, orgID uuid.UUID, ch RulesCha
 func (s *BoltStore) eachRulesBackup(b *bolt.Bucket, orgID uuid.UUID, f func(key []byte, rb RulesBackup)) error {
 	prefix := orgPrefix(orgID)
 	c := b.Cursor()
-	for k, v := c.Seek(prefix); k != nil && hasPrefix(k, prefix); k, v = c.Next() {
+	for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
 		var rb RulesBackup
 		if err := json.Unmarshal(v, &rb); err != nil {
 			return err

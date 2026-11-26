@@ -16,7 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/towertail/sampler/pkg/schema"
 
-	"github.com/towertail/towertail/server/internal/control"
+	"github.com/towertail/towertail/server/store"
 	"github.com/towertail/towertail/server/wire"
 )
 
@@ -48,7 +48,7 @@ var (
 
 // Enqueuer puts a control message on the queue of a node.
 type Enqueuer interface {
-	Enqueue(ctx context.Context, nodeID uuid.UUID, kind string, payload []byte) error
+	EnqueueControl(ctx context.Context, msg store.ControlMessage) error
 }
 
 // Notifier tells the apps about a changed job.
@@ -134,7 +134,7 @@ func (m *Manager) Request(ctx context.Context, orgID, nodeID uuid.UUID, req wire
 	}
 	payload, err := json.Marshal(wire.DiskScanPayload{JobID: j.ID, Root: j.Root, MaxDepth: j.MaxDepth, MinBytes: j.MinBytes, MinFrac: j.MinFrac})
 	if err == nil {
-		err = m.queue.Enqueue(ctx, nodeID, control.KindDiskScan, payload)
+		err = m.queue.EnqueueControl(ctx, store.ControlMessage{NodeID: nodeID, Kind: store.ControlKindDiskScan, Payload: payload})
 	}
 	if err != nil {
 		now := m.now()

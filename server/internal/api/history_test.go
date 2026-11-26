@@ -46,10 +46,7 @@ func fleetCtx(t *testing.T, query string) echo.Context {
 
 func TestParseRangeClampsToPlan(t *testing.T) {
 	s := &Server{query: query.NewService(nil, nil, fixedLimits(30), nil)}
-	r, err := s.parseRange(rangeCtx(t, "from=now-2160h"), time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := s.parseRange(rangeCtx(t, "from=now-2160h"), time.Hour)
 	if !r.Clamped {
 		t.Fatal("clamped = false, want true")
 	}
@@ -60,10 +57,7 @@ func TestParseRangeClampsToPlan(t *testing.T) {
 
 func TestParseRangeInsidePlan(t *testing.T) {
 	s := &Server{query: query.NewService(nil, nil, fixedLimits(30), nil)}
-	r, err := s.parseRange(rangeCtx(t, "from=now-24h"), time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := s.parseRange(rangeCtx(t, "from=now-24h"), time.Hour)
 	if r.Clamped {
 		t.Fatal("clamped = true, want false")
 	}
@@ -71,10 +65,7 @@ func TestParseRangeInsidePlan(t *testing.T) {
 
 func TestParseRangeNoLimits(t *testing.T) {
 	for _, s := range []*Server{{query: query.NewService(nil, nil, nil, nil)}, {query: query.NewService(nil, nil, fixedLimits(0), nil)}} {
-		r, err := s.parseRange(rangeCtx(t, "from=now-2160h"), time.Hour)
-		if err != nil {
-			t.Fatal(err)
-		}
+		r := s.parseRange(rangeCtx(t, "from=now-2160h"), time.Hour)
 		if r.Clamped || time.Since(r.From) < 89*24*time.Hour {
 			t.Fatalf("range = %+v, want no clamp", r)
 		}
@@ -84,10 +75,7 @@ func TestParseRangeNoLimits(t *testing.T) {
 // A range that ends before the oldest allowed time becomes empty.
 func TestParseRangeToBeforeLimit(t *testing.T) {
 	s := &Server{query: query.NewService(nil, nil, fixedLimits(30), nil)}
-	r, err := s.parseRange(rangeCtx(t, "from=now-2160h&to=now-1440h"), time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := s.parseRange(rangeCtx(t, "from=now-2160h&to=now-1440h"), time.Hour)
 	if !r.Clamped || !r.To.Equal(r.From) {
 		t.Fatalf("range = %+v, want an empty clamped range", r)
 	}
@@ -95,10 +83,7 @@ func TestParseRangeToBeforeLimit(t *testing.T) {
 
 func TestParseRangeWithoutID(t *testing.T) {
 	s := &Server{query: query.NewService(nil, nil, nil, nil)}
-	r, err := s.parseRange(fleetCtx(t, "from=now-2h"), time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := s.parseRange(fleetCtx(t, "from=now-2h"), time.Hour)
 	if got := r.To.Sub(r.From); got < 119*time.Minute || got > 121*time.Minute {
 		t.Fatalf("range = %v, want 2h", got)
 	}

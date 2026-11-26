@@ -27,10 +27,10 @@ type fakeQueue struct {
 	msgs []string
 }
 
-func (q *fakeQueue) Enqueue(_ context.Context, _ uuid.UUID, kind string, _ []byte) error {
+func (q *fakeQueue) EnqueueControl(_ context.Context, msg store.ControlMessage) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	q.msgs = append(q.msgs, kind)
+	q.msgs = append(q.msgs, msg.Kind)
 	return nil
 }
 

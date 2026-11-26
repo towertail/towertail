@@ -434,7 +434,7 @@ The server's [`wire`](../server/wire/wire.go) package is the source of truth. No
 - `Channel` — `{ id, kind, name, enabled, target, hasSecret, route: { minTint?, metrics?, tags? }, createdAt, blocked? }`. An alert channel of the org (§3.2).
 - `ChannelRequest` — `{ kind, name, enabled?, target?, secret?, route }`. On PUT, a missing `enabled`, `target` or `secret` keeps the stored value. `"secret": ""` removes the secret. `ChannelTestResponse` is `{ ok, error? }`.
 - `AlertPayload` — the body of a generic webhook (§3.2).
-- `ClientMessage` (`SubscribeMessage` is an alias), `StreamHello`, `LiveSummary`, `HealthBrief`, `HostFacts`, `DetailTab`, `ViewDetail`, `DetailParts`, `LeaseNotice` — the lease mode of the stream (§4).
+- `ClientMessage`, `StreamHello`, `LiveSummary`, `HealthBrief`, `HostFacts`, `DetailTab`, `ViewDetail`, `DetailParts`, `LeaseNotice` — the lease mode of the stream (§4).
 - `LoginRequest`, `LoginResponse`.
 - `EnrollRequest`, `EnrollResponse`, `JoinTokenRequest`, `JoinTokenResponse`, `JoinRequest`. `SamplerToken` is `{ id, label, nodeId?, createdAt, lastUsedAt? }`.
 - `ControlNextResponse`, `KillProcessPayload`, `DiskScanPayload`.

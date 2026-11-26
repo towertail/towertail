@@ -701,8 +701,6 @@ server/
 │   │   └── state.go                # per-node state machine
 │   ├── hub/
 │   │   └── hub.go                  # WS broadcast hub
-│   ├── control/
-│   │   └── queue.go                # per-node control msg queue in Bolt
 │   └── version/
 │       └── version.go              # ldflags injected
 ├── migrations/

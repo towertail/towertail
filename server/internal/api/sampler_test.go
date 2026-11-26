@@ -348,7 +348,7 @@ func TestJoin_PlanFull(t *testing.T) {
 }
 
 func TestJoinToken_KindGuard(t *testing.T) {
-	e := newIngestEnv(t, config.Config{}, nil, nil)
+	e := newIngestEnv(t, config.Config{}, nil)
 	raw, _, err := e.issuer.IssueJoin(context.Background(), store.ZeroOrg, nil, "j", time.Hour)
 	if err != nil {
 		t.Fatal(err)

@@ -2,7 +2,6 @@ package store
 
 import (
 	"encoding/json"
-	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -331,12 +330,18 @@ type User struct {
 	CreatedAt    time.Time `json:"createdAt"`
 }
 
+// Kinds of ControlMessage.
+const (
+	ControlKindKillProcess = "kill_process"
+	ControlKindDiskScan    = "disk_scan"
+)
+
 // ControlMessage is an out-of-band command for a specific node's sampler.
 // Samplers long-poll /v1/control/next to pick these up.
 type ControlMessage struct {
 	ID        uuid.UUID  `json:"id"`
 	NodeID    uuid.UUID  `json:"nodeId"`
-	Kind      string     `json:"kind"` // "kill_process" | "disk_scan"
+	Kind      string     `json:"kind"` // ControlKind*
 	Payload   []byte     `json:"payload"`
 	CreatedAt time.Time  `json:"createdAt"`
 	ClaimedAt *time.Time `json:"claimedAt,omitempty"`
@@ -376,11 +381,3 @@ func (r Role) Valid() bool { return r.rank() > 0 }
 // Allows reports whether r has the rank of need or a higher rank. An
 // invalid role allows nothing.
 func (r Role) Allows(need Role) bool { return r.Valid() && r.rank() >= need.rank() }
-
-// ParseRole converts a role name.
-func ParseRole(s string) (Role, error) {
-	if r := Role(s); r.Valid() {
-		return r, nil
-	}
-	return "", fmt.Errorf("unknown role %q", s)
-}

@@ -64,7 +64,6 @@ internal/
 ├── alerter/             threshold and reachability state machine
 ├── channels/            alert channels: Slack, Discord, PagerDuty, webhook, SMTP
 ├── hub/                 WebSocket fan-out
-├── control/             control queue for each node (for example, kill process)
 └── version/             set by ldflags
 docker/                  Dockerfile, compose, Caddy
 testdata/load/           load generator
@@ -80,7 +79,7 @@ The defaults are in the code. To change them, use a YAML file (`TT_CONFIG_FILE=/
 
 ## ClickHouse
 
-- Migrations: goose SQL files in `internal/clickhouse/migrations/`, with the version table `goose_db_version`. They use `{{.DB}}` for the database name (`clickhouse.database`, default `towertail`). On start, the server applies the migrations that are not applied. A database from before goose (tables and no version table) gets version 1 marked as applied. Other modules add their own sets with `app.WithMigrations`.
+- Migrations: goose SQL files in `internal/clickhouse/migrations/`, with the version table `goose_db_version`. They use `{{.DB}}` for the database name (`clickhouse.database`, default `towertail`). On start, the server applies the migrations that are not applied. A database from before goose (tables and no version table) gets version 1 marked as applied.
 - Connection: `clickhouse.addr`, or `clickhouse.addrs` for more than one node. Set `clickhouse.secure=true` for TLS.
 - Ingest queue: when the batcher queue is full, `POST /v1/ingest/samples` returns 503 with `Retry-After: 5` and keeps none of the samples of the request.
 - Spill: a flush that fails 3 retries (1 s, 2 s, 4 s) goes to `clickhouse.spill_dir` (default `storage.path/spill`) as `*.ndjson.gz`, up to `clickhouse.spill_max_bytes` (default 1 GiB). The next good flush replays the oldest file. A file that cannot be read becomes `*.bad`.

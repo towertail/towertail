@@ -23,7 +23,6 @@ type Client struct {
 	cfg     config.ClickHouseConfig
 	log     *slog.Logger
 	db      string
-	extra   []migrationSet
 	conn    driver.Conn
 	ready   atomic.Bool
 	batcher *batcher

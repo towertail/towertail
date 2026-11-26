@@ -21,20 +21,8 @@ var migrationsFS embed.FS
 // coreVersionTable is the goose version table of the core migrations.
 const coreVersionTable = "goose_db_version"
 
-// migrationSet is a folder of goose SQL files with its own version table.
-type migrationSet struct {
-	fsys  fs.FS
-	table string
-}
-
-// AddMigrations adds a migration set that runs after the core set, with
-// its own version table. Call it before Start.
-func (c *Client) AddMigrations(fsys fs.FS, table string) {
-	c.extra = append(c.extra, migrationSet{fsys: fsys, table: table})
-}
-
-// ApplyMigrations runs the core migrations, then the added sets. The SQL
-// files use {{.DB}} for the database name.
+// ApplyMigrations runs the core migrations. The SQL files use {{.DB}} for
+// the database name.
 func (c *Client) ApplyMigrations(ctx context.Context) error {
 	if err := c.conn.Exec(ctx, "CREATE DATABASE IF NOT EXISTS "+c.db); err != nil {
 		return fmt.Errorf("create database: %w", err)
@@ -49,22 +37,19 @@ func (c *Client) ApplyMigrations(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	sets := append([]migrationSet{{fsys: core, table: coreVersionTable}}, c.extra...)
-	for _, set := range sets {
-		if err := c.migrate(ctx, db, set); err != nil {
-			return fmt.Errorf("%s: %w", set.table, err)
-		}
+	if err := c.migrate(ctx, db, core); err != nil {
+		return fmt.Errorf("%s: %w", coreVersionTable, err)
 	}
 	return nil
 }
 
-func (c *Client) migrate(ctx context.Context, db *sql.DB, set migrationSet) error {
-	fsys, err := renderMigrations(set.fsys, c.db)
+func (c *Client) migrate(ctx context.Context, db *sql.DB, src fs.FS) error {
+	fsys, err := renderMigrations(src, c.db)
 	if err != nil {
 		return err
 	}
 	p, err := goose.NewProvider(goose.DialectClickHouse, db, fsys,
-		goose.WithTableName(c.table(set.table)),
+		goose.WithTableName(c.table(coreVersionTable)),
 		goose.WithDisableGlobalRegistry(true),
 		goose.WithIsolateDDL(true),
 	)
@@ -76,7 +61,7 @@ func (c *Client) migrate(ctx context.Context, db *sql.DB, set migrationSet) erro
 		return err
 	}
 	for _, r := range results {
-		c.log.Info("clickhouse: migration applied", "table", set.table, "version", r.Source.Version, "dur_ms", r.Duration.Milliseconds())
+		c.log.Info("clickhouse: migration applied", "table", coreVersionTable, "version", r.Source.Version, "dur_ms", r.Duration.Milliseconds())
 	}
 	return nil
 }

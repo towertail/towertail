@@ -22,7 +22,6 @@ import (
 	"github.com/towertail/towertail/server/internal/alerter"
 	"github.com/towertail/towertail/server/internal/auth"
 	"github.com/towertail/towertail/server/internal/clickhouse"
-	"github.com/towertail/towertail/server/internal/control"
 	"github.com/towertail/towertail/server/internal/hub"
 	"github.com/towertail/towertail/server/internal/mcp"
 	"github.com/towertail/towertail/server/internal/query"
@@ -32,11 +31,6 @@ import (
 	"github.com/towertail/towertail/server/runtime"
 	"github.com/towertail/towertail/server/store"
 )
-
-// IntervalAdvisor gives the push interval for a host. 0 means no order.
-type IntervalAdvisor interface {
-	Interval(orgID, nodeID uuid.UUID) time.Duration
-}
 
 // LeaseIndex tells if a live view lease covers a host.
 type LeaseIndex interface {
@@ -56,12 +50,10 @@ type Server struct {
 	issuer        *auth.TokenIssuer
 	hub           *hub.Hub
 	alerter       *alerter.Engine
-	control       *control.Queue
 	scans         *scan.Manager
 	limits        Limits
 	channels      Channels
 	channelLimits ChannelLimits
-	interval      IntervalAdvisor
 	leases        LeaseIndex
 	roles         Roles
 	ranks         *rankCache
@@ -85,7 +77,6 @@ type Deps struct {
 	Issuer  *auth.TokenIssuer
 	Hub     *hub.Hub
 	Alerter *alerter.Engine
-	Control *control.Queue
 	Scans   *scan.Manager
 	// Limits gives the plan limits. Nil means no limits.
 	Limits Limits
@@ -94,8 +85,6 @@ type Deps struct {
 	Channels Channels
 	// ChannelLimits gives the channel kinds of the plan. Nil permits all.
 	ChannelLimits ChannelLimits
-	// Interval gives the push interval of a host. Nil means no order.
-	Interval IntervalAdvisor
 	// Leases gives the live view leases. Nil turns off the lease interval.
 	Leases LeaseIndex
 	// Roles gives the role of a user in an org. Nil gives the owner role
@@ -182,12 +171,10 @@ func New(d Deps) *Server {
 		issuer:        d.Issuer,
 		hub:           d.Hub,
 		alerter:       d.Alerter,
-		control:       d.Control,
 		scans:         d.Scans,
 		limits:        d.Limits,
 		channels:      d.Channels,
 		channelLimits: d.ChannelLimits,
-		interval:      d.Interval,
 		leases:        d.Leases,
 		roles:         d.Roles,
 		ranks:         newRankCache(),

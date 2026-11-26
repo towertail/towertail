@@ -90,13 +90,8 @@ func parseAlertQuery(c echo.Context, org uuid.UUID, now time.Time) (query.AlertQ
 		}
 		q.Hosts = append(q.Hosts, id)
 	}
-	var err error
-	if q.From, err = parseRangeBound(p("from"), now.Add(-7*24*time.Hour)); err != nil {
-		return q, err
-	}
-	if q.To, err = parseRangeBound(p("to"), now); err != nil {
-		return q, err
-	}
+	q.From = parseRangeBound(p("from"), now.Add(-7*24*time.Hour))
+	q.To = parseRangeBound(p("to"), now)
 	for name, dst := range map[string]**time.Time{"started_from": &q.StartedFrom, "started_to": &q.StartedTo} {
 		if v := p(name); v != "" {
 			at, err := time.Parse(time.RFC3339Nano, v)
@@ -109,6 +104,7 @@ func parseAlertQuery(c echo.Context, org uuid.UUID, now time.Time) (query.AlertQ
 	}
 	for name, dst := range map[string]*int{"bins": &q.Bins, "limit": &q.Limit} {
 		if v := p(name); v != "" {
+			var err error
 			if *dst, err = strconv.Atoi(v); err != nil {
 				return q, echo.NewHTTPError(http.StatusBadRequest, "bad "+name)
 			}

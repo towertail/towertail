@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -99,7 +100,7 @@ func (s *BoltStore) ListNodes(_ context.Context, orgID uuid.UUID) ([]Node, error
 		b := tx.Bucket(bucketNodes)
 		c := b.Cursor()
 		prefix := orgPrefix(orgID)
-		for k, v := c.Seek(prefix); k != nil && hasPrefix(k, prefix); k, v = c.Next() {
+		for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
 			var n Node
 			if err := json.Unmarshal(v, &n); err != nil {
 				return err
@@ -369,7 +370,7 @@ func (s *BoltStore) ListChannels(_ context.Context, orgID uuid.UUID) ([]Channel,
 	err := s.db.View(func(tx *bolt.Tx) error {
 		c := tx.Bucket(bucketChannels).Cursor()
 		prefix := orgPrefix(orgID)
-		for k, v := c.Seek(prefix); k != nil && hasPrefix(k, prefix); k, v = c.Next() {
+		for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
 			var ch Channel
 			if err := json.Unmarshal(v, &ch); err != nil {
 				return err
@@ -452,7 +453,7 @@ func (s *BoltStore) ClaimControl(_ context.Context, nodeID uuid.UUID) (ControlMe
 		c := b.Cursor()
 		prefix := nodeID[:]
 		k, v := c.Seek(prefix)
-		if k == nil || !hasPrefix(k, prefix) {
+		if k == nil || !bytes.HasPrefix(k, prefix) {
 			return ErrNotFound
 		}
 		if err := json.Unmarshal(v, &out); err != nil {
@@ -461,16 +462,4 @@ func (s *BoltStore) ClaimControl(_ context.Context, nodeID uuid.UUID) (ControlMe
 		return b.Delete(k)
 	})
 	return out, err
-}
-
-func hasPrefix(k, prefix []byte) bool {
-	if len(k) < len(prefix) {
-		return false
-	}
-	for i := range prefix {
-		if k[i] != prefix[i] {
-			return false
-		}
-	}
-	return true
 }

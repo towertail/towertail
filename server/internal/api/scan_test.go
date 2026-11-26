@@ -21,7 +21,6 @@ import (
 
 	"github.com/towertail/towertail/server/config"
 	"github.com/towertail/towertail/server/internal/auth"
-	"github.com/towertail/towertail/server/internal/control"
 	"github.com/towertail/towertail/server/internal/hub"
 	"github.com/towertail/towertail/server/internal/scan"
 	"github.com/towertail/towertail/server/store"
@@ -55,7 +54,6 @@ func newScanEnv(t *testing.T) *scanEnv {
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := hub.New(log, hub.Options{})
-	ctrl := control.New(st)
 	issuer := auth.NewIssuer(st)
 	srv := New(Deps{
 		Config:   &config.Config{},
@@ -63,8 +61,7 @@ func newScanEnv(t *testing.T) *scanEnv {
 		Store:    st,
 		Issuer:   issuer,
 		Hub:      h,
-		Control:  ctrl,
-		Scans:    scan.NewManager(scanStore, ctrl, h, log, nil),
+		Scans:    scan.NewManager(scanStore, st, h, log, nil),
 		Channels: &fakeChannels{},
 	})
 
@@ -392,7 +389,7 @@ func (s *fakeSampler) claim() wire.DiskScanPayload {
 		s.t.Fatalf("claim: %d", res.StatusCode)
 	}
 	var msg wire.ControlNextResponse
-	if err := json.NewDecoder(res.Body).Decode(&msg); err != nil || msg.Kind != control.KindDiskScan {
+	if err := json.NewDecoder(res.Body).Decode(&msg); err != nil || msg.Kind != store.ControlKindDiskScan {
 		s.t.Fatalf("claim: %+v %v", msg, err)
 	}
 	var p wire.DiskScanPayload
@@ -432,7 +429,7 @@ func TestDiskScanEndToEnd(t *testing.T) {
 	}
 	defer ws.CloseNow()
 	// Wait until the hub has the client, then each update reaches it.
-	if err := wsjson.Write(ctx, ws, wire.SubscribeMessage{Type: "ping"}); err != nil {
+	if err := wsjson.Write(ctx, ws, wire.ClientMessage{Type: "ping"}); err != nil {
 		t.Fatal(err)
 	}
 	var pong wire.WSMessage

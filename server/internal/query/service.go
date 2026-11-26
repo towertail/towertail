@@ -167,21 +167,16 @@ func (h HostSort) key(host wire.FleetHost) float64 {
 	case SortDisk:
 		return deref(host.Disk)
 	case SortNet:
-		return float64(derefU(host.NetRx)) + float64(derefU(host.NetTx))
+		return float64(deref(host.NetRx)) + float64(deref(host.NetTx))
 	}
 	return deref(host.CPU)
 }
 
-func deref(p *float64) float64 {
+// deref gives *p, or the zero value when p is nil.
+func deref[T any](p *T) T {
+	var zero T
 	if p == nil {
-		return 0
-	}
-	return *p
-}
-
-func derefU(p *uint64) uint64 {
-	if p == nil {
-		return 0
+		return zero
 	}
 	return *p
 }

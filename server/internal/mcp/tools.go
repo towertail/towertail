@@ -25,8 +25,6 @@ const (
 // metricNames are the metrics that host_metrics and compare accept.
 var metricNames = []string{"cpu", "mem", "net_rx", "net_tx", "disk_read", "disk_write"}
 
-const metricHelp = "cpu (percent), mem (ratio 0 to 1), net_rx and net_tx (bytes each second), disk_read and disk_write (bytes each second)"
-
 func ts(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 
 func tsPtr(t *time.Time) string {

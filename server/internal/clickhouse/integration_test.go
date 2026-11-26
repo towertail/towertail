@@ -16,7 +16,6 @@ import (
 	"log/slog"
 	"os"
 	"testing"
-	"testing/fstest"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,7 +32,7 @@ const testImage = "clickhouse/clickhouse-server:26.8.26.12-alpine"
 func startClickHouse(t *testing.T) (*Client, func()) {
 	t.Helper()
 	addr, stop := startContainer(t)
-	client := startClient(t, addr, "towertail", nil)
+	client := startClient(t, addr, "towertail")
 	return client, func() {
 		stopClient(client)
 		stop()
@@ -68,8 +67,8 @@ func startContainer(t *testing.T) (string, func()) {
 	}
 }
 
-// startClient starts a Client on database db. setup runs before Start.
-func startClient(t *testing.T, addr, db string, setup func(*Client)) *Client {
+// startClient starts a Client on database db.
+func startClient(t *testing.T, addr, db string) *Client {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	client := New(config.ClickHouseConfig{
@@ -87,9 +86,6 @@ func startClient(t *testing.T, addr, db string, setup func(*Client)) *Client {
 		SpillDir:         t.TempDir(),
 		SpillMaxBytes:    1 << 20,
 	}, log)
-	if setup != nil {
-		setup(client)
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	if err := client.Start(ctx); err != nil {
@@ -139,7 +135,7 @@ func TestMigrationsMarkBaseline(t *testing.T) {
 	addr, stop := startContainer(t)
 	defer stop()
 
-	raw := startClient(t, addr, "old", nil)
+	raw := startClient(t, addr, "old")
 	ctx := context.Background()
 	org, node := uuid.New(), uuid.New()
 	ts := time.Now().UTC().Add(-3 * time.Hour)
@@ -158,7 +154,7 @@ func TestMigrationsMarkBaseline(t *testing.T) {
 	}
 	stopClient(raw)
 
-	client := startClient(t, addr, "old", nil)
+	client := startClient(t, addr, "old")
 	defer stopClient(client)
 	got := versions(t, client, coreVersionTable)
 	if len(got) < 3 || got[0] != 0 || got[1] != 1 || got[2] != 2 {
@@ -171,37 +167,21 @@ func TestMigrationsMarkBaseline(t *testing.T) {
 	}
 }
 
-// Another database name and an added migration set work side by side
-// with the default database.
-func TestMigrationsOtherDatabaseAndExtraSet(t *testing.T) {
+// Another database name works side by side with the default database.
+func TestMigrationsOtherDatabase(t *testing.T) {
 	addr, stop := startContainer(t)
 	defer stop()
 
-	extra := fstest.MapFS{
-		"00001_cloud.sql": {Data: []byte(`-- +goose NO TRANSACTION
--- +goose Up
-CREATE TABLE IF NOT EXISTS {{.DB}}.cloud_usage (org_id UUID, n UInt64)
-ENGINE = MergeTree ORDER BY org_id;
-`)},
-	}
-	client := startClient(t, addr, "tt_other", func(c *Client) {
-		c.AddMigrations(extra, "cloud_db_version")
-	})
+	client := startClient(t, addr, "tt_other")
 	defer stopClient(client)
 
 	var n uint8
 	ctx := context.Background()
-	if err := client.conn.QueryRow(ctx, "EXISTS TABLE tt_other.cloud_usage").Scan(&n); err != nil || n != 1 {
-		t.Fatalf("cloud_usage exists = %d, err %v", n, err)
-	}
 	if err := client.conn.QueryRow(ctx, "EXISTS TABLE tt_other.samples_raw").Scan(&n); err != nil || n != 1 {
 		t.Fatalf("samples_raw exists = %d, err %v", n, err)
 	}
 	if err := client.conn.QueryRow(ctx, "EXISTS DATABASE towertail").Scan(&n); err != nil || n != 0 {
 		t.Fatalf("towertail database exists = %d, err %v", n, err)
-	}
-	if got := versions(t, client, "cloud_db_version"); len(got) == 0 || got[len(got)-1] != 1 {
-		t.Fatalf("cloud versions = %v", got)
 	}
 
 	// Ingest goes to the other database.

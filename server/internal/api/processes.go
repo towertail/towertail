@@ -26,10 +26,7 @@ func (s *Server) handleProcesses(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	r, err := s.parseRange(c, time.Hour)
-	if err != nil {
-		return err
-	}
+	r := s.parseRange(c, time.Hour)
 	r.NodeID = id
 	limit := 10
 	if v := c.QueryParam("limit"); v != "" {
@@ -129,7 +126,7 @@ func (s *Server) handleProcessesAt(c echo.Context) error {
 	}
 	at := time.Now().UTC()
 	if v := c.QueryParam("ts"); v != "" {
-		at, _ = parseRangeBound(v, time.Time{})
+		at = parseRangeBound(v, time.Time{})
 		if at.IsZero() {
 			return echo.NewHTTPError(http.StatusBadRequest, "bad ts")
 		}
@@ -186,10 +183,7 @@ func (s *Server) handleProcess(c echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "bad key")
 	}
-	r, err := s.parseRange(c, time.Hour)
-	if err != nil {
-		return err
-	}
+	r := s.parseRange(c, time.Hour)
 	r.NodeID = id
 	if err := s.requireCH(c); err != nil {
 		return err

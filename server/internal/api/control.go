@@ -10,7 +10,6 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/towertail/towertail/server/authctx"
-	"github.com/towertail/towertail/server/internal/control"
 	"github.com/towertail/towertail/server/store"
 	"github.com/towertail/towertail/server/wire"
 )
@@ -24,7 +23,7 @@ func (s *Server) handleControlNext(c echo.Context) error {
 	if t.Kind != store.TokenKindSampler || t.NodeID == nil {
 		return echo.NewHTTPError(http.StatusForbidden, "sampler token required")
 	}
-	msg, err := s.control.Claim(c.Request().Context(), *t.NodeID)
+	msg, err := s.store.ClaimControl(c.Request().Context(), *t.NodeID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return c.NoContent(http.StatusNoContent)
@@ -55,7 +54,7 @@ func (s *Server) handleKillProcess(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "pid required")
 	}
 	payload, _ := json.Marshal(wire.KillProcessPayload{PID: int32(pid64)})
-	if err := s.control.Enqueue(c.Request().Context(), id, control.KindKillProcess, payload); err != nil {
+	if err := s.store.EnqueueControl(c.Request().Context(), store.ControlMessage{NodeID: id, Kind: store.ControlKindKillProcess, Payload: payload}); err != nil {
 		return err
 	}
 	s.audit(c, "kill_process", "node", id, "pid", pid64)

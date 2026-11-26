@@ -20,7 +20,6 @@ import (
 	"github.com/towertail/towertail/server/internal/auth"
 	"github.com/towertail/towertail/server/internal/channels"
 	"github.com/towertail/towertail/server/internal/clickhouse"
-	"github.com/towertail/towertail/server/internal/control"
 	"github.com/towertail/towertail/server/internal/hub"
 	"github.com/towertail/towertail/server/internal/scan"
 	"github.com/towertail/towertail/server/notify"
@@ -92,9 +91,6 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 	a.rt = runtime.New(a.log)
 	if !cfg.ClickHouse.Disabled {
 		a.ch = clickhouse.New(cfg.ClickHouse, a.log)
-		for _, m := range b.migrations {
-			a.ch.AddMigrations(m.fsys, m.table)
-		}
 		a.rt.Register(a.ch)
 		a.eager = append(a.eager, a.ch.Name())
 	} else {
@@ -119,7 +115,6 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 		}
 	}
 	a.alerter = alerter.New(a.log, nil, a.hub, journal, a.store, notifiers...)
-	ctrl := control.New(a.store)
 	scanDB, err := a.scanDB()
 	if err != nil {
 		return nil, err
@@ -128,7 +123,7 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("open scan store: %w", err)
 	}
-	a.scans = scan.NewManager(scanStore, ctrl, a.hub, a.log, nil)
+	a.scans = scan.NewManager(scanStore, a.store, a.hub, a.log, nil)
 
 	routes := make([]func(*api.Server), 0, len(b.routes))
 	for _, f := range b.routes {
@@ -144,11 +139,9 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 		Issuer:        issuer,
 		Hub:           a.hub,
 		Alerter:       a.alerter,
-		Control:       ctrl,
 		Scans:         a.scans,
 		Limits:        b.limits,
 		ChannelLimits: gate,
-		Interval:      b.interval,
 		Leases:        a.hub,
 		Roles:         b.roles,
 		Channels:      router,

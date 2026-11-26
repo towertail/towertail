@@ -24,10 +24,6 @@ import (
 
 const sampleLine = `{"v":1,"ts":"2026-04-23T10:00:00.000Z","host":{"name":"x","os":"linux","arch":"amd64","kernel":"6.6","uptime_s":1,"sampler":"0.7.0+abc"},"cpu":{"pct":1,"load_1":0,"load_5":0,"load_15":0,"cores":2},"mem":{"used":1,"total":100},"swap":{"used":0,"total":0},"errors":[]}`
 
-type fixedInterval time.Duration
-
-func (f fixedInterval) Interval(uuid.UUID, uuid.UUID) time.Duration { return time.Duration(f) }
-
 type fakeLeases bool
 
 func (f fakeLeases) Covered(uuid.UUID, uuid.UUID) bool { return bool(f) }
@@ -42,7 +38,7 @@ type ingestEnv struct {
 	issuer *auth.TokenIssuer
 }
 
-func newIngestEnv(t *testing.T, cfg config.Config, limits Limits, interval IntervalAdvisor) *ingestEnv {
+func newIngestEnv(t *testing.T, cfg config.Config, limits Limits) *ingestEnv {
 	t.Helper()
 	st, err := store.OpenBolt(t.TempDir())
 	if err != nil {
@@ -52,11 +48,10 @@ func newIngestEnv(t *testing.T, cfg config.Config, limits Limits, interval Inter
 	issuer := auth.NewIssuer(st)
 	cfg.Ingest.MaxBodyBytes = 1 << 20
 	d := Deps{
-		Config:   &cfg,
-		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Store:    st,
-		Issuer:   issuer,
-		Interval: interval,
+		Config: &cfg,
+		Log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Store:  st,
+		Issuer: issuer,
 	}
 	if limits != nil {
 		d.Limits = limits
@@ -103,7 +98,7 @@ func bodyKeys(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 }
 
 func TestIngest_AcceptedBody(t *testing.T) {
-	e := newIngestEnv(t, config.Config{}, nil, nil)
+	e := newIngestEnv(t, config.Config{}, nil)
 	_, tok := e.node(nil)
 	rec := e.post(tok, []byte(sampleLine+"\n"))
 	wantCode(t, rec, http.StatusAccepted)
@@ -119,7 +114,7 @@ func TestIngest_AcceptedBody(t *testing.T) {
 }
 
 func TestIngest_GoneHostRemoved(t *testing.T) {
-	e := newIngestEnv(t, config.Config{}, nil, nil)
+	e := newIngestEnv(t, config.Config{}, nil)
 	n, tok := e.node(nil)
 	if err := e.st.DeleteNode(context.Background(), store.ZeroOrg, n.ID); err != nil {
 		t.Fatal(err)
@@ -134,7 +129,7 @@ func TestIngest_GoneHostRemoved(t *testing.T) {
 }
 
 func TestIngest_GoneCloudOff(t *testing.T) {
-	e := newIngestEnv(t, config.Config{}, nil, nil)
+	e := newIngestEnv(t, config.Config{}, nil)
 	_, tok := e.node(func(n *store.Node) { n.Enabled = false })
 	rec := e.post(tok, []byte(sampleLine))
 	wantCode(t, rec, http.StatusGone)
@@ -146,7 +141,7 @@ func TestIngest_GoneCloudOff(t *testing.T) {
 }
 
 func TestIngest_PlanFull(t *testing.T) {
-	e := newIngestEnv(t, config.Config{}, maxNodes(1), nil)
+	e := newIngestEnv(t, config.Config{}, maxNodes(1))
 	_, first := e.node(func(n *store.Node) { n.DisplayName = "first" })
 	_, second := e.node(func(n *store.Node) { n.DisplayName = "second" })
 	wantCode(t, e.post(first, []byte(sampleLine)), http.StatusAccepted)
@@ -160,7 +155,7 @@ func TestIngest_PlanFull(t *testing.T) {
 }
 
 func TestIngestReplyCarriesProcCwd(t *testing.T) {
-	e := newIngestEnv(t, config.Config{}, nil, nil)
+	e := newIngestEnv(t, config.Config{}, nil)
 	_, on := e.node(nil)
 	_, off := e.node(func(n *store.Node) { n.HideProcFolders = true })
 	for tok, want := range map[string]bool{on: true, off: false} {
@@ -173,20 +168,10 @@ func TestIngestReplyCarriesProcCwd(t *testing.T) {
 }
 
 func TestIngest_NoLimits(t *testing.T) {
-	e := newIngestEnv(t, config.Config{}, nil, nil)
+	e := newIngestEnv(t, config.Config{}, nil)
 	for range 3 {
 		_, tok := e.node(nil)
 		wantCode(t, e.post(tok, []byte(sampleLine)), http.StatusAccepted)
-	}
-}
-
-func TestIngest_IntervalField(t *testing.T) {
-	e := newIngestEnv(t, config.Config{}, nil, fixedInterval(5*time.Second))
-	_, tok := e.node(nil)
-	rec := e.post(tok, []byte(sampleLine))
-	wantCode(t, rec, http.StatusAccepted)
-	if bodyKeys(t, rec)["interval"] != "5s" {
-		t.Fatalf("body: %s", rec.Body)
 	}
 }
 
@@ -200,7 +185,7 @@ func (e *ingestEnv) intervalOf(tok string) (string, bool) {
 }
 
 func TestIngestIntervalLiveWhenCovered(t *testing.T) {
-	e := newIngestEnv(t, config.Config{Stream: streamIntervals}, nil, nil)
+	e := newIngestEnv(t, config.Config{Stream: streamIntervals}, nil)
 	e.srv.leases = fakeLeases(true)
 	_, tok := e.node(nil)
 	if got, _ := e.intervalOf(tok); got != "5s" {
@@ -209,7 +194,7 @@ func TestIngestIntervalLiveWhenCovered(t *testing.T) {
 }
 
 func TestIngestIntervalIdleWhenNotCovered(t *testing.T) {
-	e := newIngestEnv(t, config.Config{Stream: streamIntervals}, nil, nil)
+	e := newIngestEnv(t, config.Config{Stream: streamIntervals}, nil)
 	e.srv.leases = fakeLeases(false)
 	_, tok := e.node(nil)
 	if got, _ := e.intervalOf(tok); got != "30s" {
@@ -218,26 +203,17 @@ func TestIngestIntervalIdleWhenNotCovered(t *testing.T) {
 }
 
 func TestIngestNoIntervalWithoutIndex(t *testing.T) {
-	e := newIngestEnv(t, config.Config{Stream: streamIntervals}, nil, nil)
+	e := newIngestEnv(t, config.Config{Stream: streamIntervals}, nil)
 	_, tok := e.node(nil)
 	if got, ok := e.intervalOf(tok); ok {
 		t.Fatalf("interval %q, want no key", got)
 	}
 }
 
-func TestIngestAdvisorWinsOverLease(t *testing.T) {
-	e := newIngestEnv(t, config.Config{Stream: streamIntervals}, nil, fixedInterval(10*time.Second))
-	e.srv.leases = fakeLeases(true)
-	_, tok := e.node(nil)
-	if got, _ := e.intervalOf(tok); got != "10s" {
-		t.Fatalf("interval %q, want 10s", got)
-	}
-}
-
 func TestIngestIntervalFollowsLease(t *testing.T) {
 	now := time.Now()
 	h := hub.New(slog.New(slog.NewTextHandler(io.Discard, nil)), hub.Options{Now: func() time.Time { return now }})
-	e := newIngestEnv(t, config.Config{Stream: streamIntervals}, nil, nil)
+	e := newIngestEnv(t, config.Config{Stream: streamIntervals}, nil)
 	e.srv.leases = h
 	n, tok := e.node(nil)
 	c := h.Register(store.ZeroOrg, nil, hub.ClientOptions{Lease: true})
@@ -267,7 +243,7 @@ func TestIngestIntervalFollowsLease(t *testing.T) {
 
 func TestIngest_UpdateField(t *testing.T) {
 	cfg := config.Config{Sampler: config.SamplerConfig{LatestVersion: "0.7.1"}}
-	e := newIngestEnv(t, cfg, nil, nil)
+	e := newIngestEnv(t, cfg, nil)
 	_, tok := e.node(nil)
 	for _, c := range []struct {
 		ua   string
@@ -291,14 +267,14 @@ func TestIngest_UpdateField(t *testing.T) {
 }
 
 func TestIngest_GateSkipsBody(t *testing.T) {
-	e := newIngestEnv(t, config.Config{}, nil, nil)
+	e := newIngestEnv(t, config.Config{}, nil)
 	_, tok := e.node(func(n *store.Node) { n.Enabled = false })
 	rec := e.post(tok, []byte("not gzip"), "Content-Encoding", "gzip")
 	wantCode(t, rec, http.StatusGone)
 }
 
 func TestDeleteNodeKeepsSamplerToken(t *testing.T) {
-	e := newIngestEnv(t, config.Config{}, nil, nil)
+	e := newIngestEnv(t, config.Config{}, nil)
 	n, tok := e.node(nil)
 	user, _, err := e.issuer.Issue(context.Background(), store.ZeroOrg, store.TokenKindUser, "u", nil, nil)
 	if err != nil {
@@ -484,7 +460,7 @@ func TestDecodeSample_RejectsWithValues(t *testing.T) {
 }
 
 func TestIngestPassesHealthToAlerter(t *testing.T) {
-	e := newIngestEnv(t, config.Config{}, nil, nil)
+	e := newIngestEnv(t, config.Config{}, nil)
 	rs := &registeredStore{}
 	e.srv.alerter = alerter.New(nil, nil, nil, rs, e.st)
 	s := store.DefaultServerSettings()
@@ -510,5 +486,27 @@ func TestIngestPassesHealthToAlerter(t *testing.T) {
 	ev := rs.events[0]
 	if ev.Metric != "health" || ev.Tint != "critical" {
 		t.Fatalf("event = %+v", ev)
+	}
+}
+
+func TestParseTS(t *testing.T) {
+	for in, want := range map[string]string{
+		"2026-04-23T10:00:00.000Z":    "2026-04-23T10:00:00Z",
+		"2026-04-23T10:00:00Z":        "2026-04-23T10:00:00Z",
+		"2026-04-23T10:00:00.5+02:00": "2026-04-23T08:00:00.5Z",
+	} {
+		got, err := parseTS(in)
+		if err != nil || got.Format(time.RFC3339Nano) != want {
+			t.Errorf("parseTS(%q) = %v, %v; want %s", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"2026-04-23 10:00:00Z", "2026-04-23T10:00:00"} {
+		if _, err := parseTS(in); err == nil {
+			t.Errorf("parseTS(%q) has no error", in)
+		}
+	}
+	got, err := parseTS("")
+	if err != nil || time.Since(got) > time.Minute || time.Since(got) < -time.Minute {
+		t.Errorf("parseTS(\"\") = %v, %v", got, err)
 	}
 }

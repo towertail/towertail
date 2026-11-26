@@ -91,18 +91,6 @@ func TestRoleAllows(t *testing.T) {
 	}
 }
 
-func TestParseRole(t *testing.T) {
-	for _, name := range []string{"owner", "admin", "member", "viewer"} {
-		r, err := ParseRole(name)
-		if err != nil || string(r) != name {
-			t.Errorf("ParseRole(%q) = %q, %v", name, r, err)
-		}
-	}
-	if _, err := ParseRole("root"); err == nil {
-		t.Error("ParseRole(root) has no error")
-	}
-}
-
 func TestMutedSignalsSkipsUnknownAndSorts(t *testing.T) {
 	var m MutedSignals
 	if err := json.Unmarshal([]byte(`["mem","nope","cpu","cpu"]`), &m); err != nil {

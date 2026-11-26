@@ -18,6 +18,8 @@ import (
 
 // Roles gives the role of a user in an org.
 type Roles interface {
+	// Role returns store.ErrNoMembership when the user has no role in the
+	// org.
 	Role(ctx context.Context, orgID, userID uuid.UUID) (store.Role, error)
 }
 

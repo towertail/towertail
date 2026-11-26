@@ -2,7 +2,7 @@
 // by the server and its clients (Mac app RemoteBackend, sampler).
 // Types here are authoritative; clients must match these exactly.
 //
-// Metric-shape types (Sample, Host, CPU, …) are re-exported from
+// Metric-shape types (Sample, Disk, Net, …) come from
 // github.com/towertail/sampler/pkg/schema so the wire contract has one source of truth.
 // The sampler emits schema.Sample on stdout/push; the server decodes
 // the same struct here. Types below that aren't re-exports are
@@ -20,24 +20,16 @@ import (
 // --- Metric shapes re-exported from schema ---
 
 type (
-	Host         = schema.HostInfo
-	CPU          = schema.CPUInfo
-	MemSwap      = schema.MemInfo
-	Disk         = schema.DiskSample
-	DiskIO       = schema.DiskIOInfo
-	DiskIODevice = schema.DiskIODeviceInfo
-	Net          = schema.NetInfo
-	Procs        = schema.ProcList
-	Proc         = schema.ProcSample
+	Disk   = schema.DiskSample
+	DiskIO = schema.DiskIOInfo
+	Net    = schema.NetInfo
+	Procs  = schema.ProcList
 )
 
-// Sample wraps schema.Sample so the server can carry the original
-// wire bytes alongside the decoded fields (we re-emit them on the
-// WebSocket fan-out without re-marshalling). The JSON shape on the
-// wire is identical to schema.Sample — see ingest/TestDecodeSample.
+// Sample wraps schema.Sample so that the server can add methods to it. The
+// JSON shape on the wire is the same as schema.Sample.
 type Sample struct {
 	schema.Sample
-	Raw json.RawMessage `json:"-"`
 }
 
 // --- Server-only types ---
@@ -97,9 +89,6 @@ type ClientMessage struct {
 	// TTL is the lease time in seconds.
 	TTL int `json:"ttl,omitempty"`
 }
-
-// SubscribeMessage is the old name of ClientMessage.
-type SubscribeMessage = ClientMessage
 
 // APIError is the uniform error envelope.
 type APIError struct {

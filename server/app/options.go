@@ -1,12 +1,8 @@
 package app
 
 import (
-	"context"
-	"io/fs"
 	"log/slog"
-	"time"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/towertail/towertail/server/internal/api"
@@ -16,34 +12,16 @@ import (
 )
 
 // Limits gives the plan limits of an org.
-type Limits interface {
-	// HistoryDays is the number of days of history that the org can
-	// read. 0 means no limit.
-	HistoryDays(ctx context.Context, orgID uuid.UUID) int
-	// MaxNodes is the number of nodes that the org can have. A negative
-	// value means no limit.
-	MaxNodes(ctx context.Context, orgID uuid.UUID) int
-}
+type Limits = api.Limits
 
 // ChannelLimits tells if the plan of an org permits a channel kind. When
 // the Limits value of WithLimits also implements it, the server uses it.
 // Else all kinds are permitted.
-type ChannelLimits interface {
-	ChannelAllowed(ctx context.Context, orgID uuid.UUID, kind store.ChannelKind) bool
-}
+type ChannelLimits = api.ChannelLimits
 
-// Roles gives the role of a user in an org.
-type Roles interface {
-	// Role returns store.ErrNoMembership when the user has no role in the
-	// org.
-	Role(ctx context.Context, orgID, userID uuid.UUID) (store.Role, error)
-}
-
-// IntervalAdvisor gives the push interval of a host. 0 means that the
-// server sends no interval order.
-type IntervalAdvisor interface {
-	Interval(orgID, nodeID uuid.UUID) time.Duration
-}
+// Roles gives the role of a user in an org. Role returns
+// store.ErrNoMembership when the user has no role in the org.
+type Roles = api.Roles
 
 // Router gives route groups for extra routes.
 type Router interface {
@@ -63,16 +41,9 @@ type builder struct {
 	routes     []func(Router)
 	middleware []echo.MiddlewareFunc
 	components []runtime.Component
-	migrations []migrations
 	limits     Limits
 	mailer     notify.Mailer
-	interval   IntervalAdvisor
 	roles      Roles
-}
-
-type migrations struct {
-	fsys  fs.FS
-	table string
 }
 
 // WithLogger replaces the logger from the log config.
@@ -105,23 +76,11 @@ func WithComponent(c runtime.Component) Option {
 	return func(b *builder) { b.components = append(b.components, c) }
 }
 
-// WithMigrations adds ClickHouse migrations that run after the core
-// migrations. fsys holds goose SQL files at its root, and {{.DB}} in them
-// is the database name. table is the goose version table of the set. It
-// has no effect when ClickHouse is disabled.
-func WithMigrations(fsys fs.FS, table string) Option {
-	return func(b *builder) { b.migrations = append(b.migrations, migrations{fsys: fsys, table: table}) }
-}
-
 // WithLimits sets the plan limits. The node create endpoints reply 402
 // above MaxNodes. The history endpoints clamp "from" to
 // the history days of the org. A value that implements ChannelLimits also
 // gates the alert channel kinds.
 func WithLimits(l Limits) Option { return func(b *builder) { b.limits = l } }
-
-// WithIntervalAdvisor sets the source of the push interval orders in the
-// ingest reply.
-func WithIntervalAdvisor(a IntervalAdvisor) Option { return func(b *builder) { b.interval = a } }
 
 // WithRoles sets the source of the roles. With no source, each user token
 // has the owner role.

@@ -352,10 +352,8 @@ func parseTS(s string) (time.Time, error) {
 	if s == "" {
 		return time.Now().UTC(), nil
 	}
-	for _, layout := range []string{"2006-01-02T15:04:05.000Z07:00", "2006-01-02T15:04:05Z07:00", "2006-01-02T15:04:05.000Z", "2006-01-02T15:04:05Z"} {
-		if t, err := time.Parse(layout, s); err == nil {
-			return t.UTC(), nil
-		}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t.UTC(), nil
 	}
 	return time.Time{}, echoErrorf(http.StatusBadRequest, "invalid ts: %q", s)
 }
