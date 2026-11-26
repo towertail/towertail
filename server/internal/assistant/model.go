@@ -30,6 +30,9 @@ type Request struct {
 	// NoTools keeps the tools in the request but stops the model from
 	// calling them (tool_choice none).
 	NoTools bool
+	// Conversation is a stable, opaque ID of the chat. A gateway can use it
+	// to keep one session for each chat.
+	Conversation string
 }
 
 // ToolDef is a client tool.

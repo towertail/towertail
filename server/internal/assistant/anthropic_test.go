@@ -118,12 +118,13 @@ func collect(t *testing.T, m Model, r Request) []Part {
 
 func baseRequest() Request {
 	return Request{
-		Model:     "claude-sonnet-5-5",
-		System:    []string{"rules", "facts"},
-		Tools:     []ToolDef{{Name: "alerts", Description: "a", Schema: json.RawMessage(`{"type":"object","properties":{"range":{"type":"string"}}}`)}, {Name: "cite", Description: "c", Schema: json.RawMessage(`{"type":"object","properties":{},"required":[]}`)}},
-		Messages:  []Message{{Role: "user", Parts: []Part{txt("hi")}}},
-		MaxTokens: 777,
-		Effort:    "low",
+		Model:        "claude-sonnet-5-5",
+		System:       []string{"rules", "facts"},
+		Tools:        []ToolDef{{Name: "alerts", Description: "a", Schema: json.RawMessage(`{"type":"object","properties":{"range":{"type":"string"}}}`)}, {Name: "cite", Description: "c", Schema: json.RawMessage(`{"type":"object","properties":{},"required":[]}`)}},
+		Messages:     []Message{{Role: "user", Parts: []Part{txt("hi")}}},
+		MaxTokens:    777,
+		Effort:       "low",
+		Conversation: "conv1",
 	}
 }
 
@@ -154,6 +155,9 @@ func TestAnthropicRequest(t *testing.T) {
 	}
 	if parse(body).get("fallbacks").exists() {
 		t.Fatal("fallbacks sent to a custom base_url")
+	}
+	if got := parse(body).get("metadata", "user_id").str(); got != "conv1" {
+		t.Fatalf("metadata.user_id %q", got)
 	}
 	h := srv.headers[0]
 	if h.Get("X-Api-Key") != "test-key" || h.Get("X-Test") != "1" {

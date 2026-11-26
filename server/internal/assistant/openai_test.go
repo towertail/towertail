@@ -117,6 +117,9 @@ func TestOpenAIToolsAndHistory(t *testing.T) {
 	)
 	parts := collect(t, m, r)
 	b := parse(body)
+	if b.get("user").str() != "conv1" {
+		t.Fatalf("user %s", b.get("user").raw())
+	}
 	if b.get("tool_choice").str() != "none" {
 		t.Fatalf("tool_choice %s", b.get("tool_choice").raw())
 	}

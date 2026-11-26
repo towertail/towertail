@@ -159,6 +159,9 @@ func (m *OpenAIModel) params(r Request) (openai.ChatCompletionNewParams, error) 
 		MaxCompletionTokens: param.NewOpt(int64(r.MaxTokens)),
 		StreamOptions:       openai.ChatCompletionStreamOptionsParam{IncludeUsage: param.NewOpt(true)},
 	}
+	if r.Conversation != "" {
+		p.User = param.NewOpt(r.Conversation)
+	}
 	if len(r.System) > 0 {
 		p.Messages = append(p.Messages, openai.SystemMessage(strings.Join(r.System, "\n\n")))
 	}

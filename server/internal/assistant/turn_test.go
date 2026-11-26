@@ -732,6 +732,9 @@ func TestRequestFromPlan(t *testing.T) {
 	if r.Model != "claude-haiku-5-5" || r.MaxTokens != 321 || !r.WebSearch || r.Effort != "low" || r.NoTools {
 		t.Fatalf("request %+v", r)
 	}
+	if len(r.Conversation) != 32 || strings.Contains(r.Conversation, "-") {
+		t.Fatalf("conversation %q", r.Conversation)
+	}
 	if len(r.System) < 2 || !strings.Contains(r.System[0], "Towertail assistant") {
 		t.Fatalf("system %d", len(r.System))
 	}
@@ -832,6 +835,9 @@ func TestHistoryReplay(t *testing.T) {
 	}
 	if got := strings.Join(roles, ","); got != "user,assistant,user,assistant,user" {
 		t.Fatalf("roles %s", got)
+	}
+	if c := e.model.reqs[0].Conversation; c == "" || e.model.reqs[1].Conversation != c || e.model.reqs[2].Conversation != c {
+		t.Fatal("conversation changes in one chat")
 	}
 }
 

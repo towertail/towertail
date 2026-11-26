@@ -167,6 +167,9 @@ func (m *AnthropicModel) params(r Request) (anthropic.MessageNewParams, error) {
 			OfAuto: &anthropic.ToolChoiceAutoParam{},
 		},
 	}
+	if r.Conversation != "" {
+		p.Metadata = anthropic.MetadataParam{UserID: param.NewOpt(r.Conversation)}
+	}
 	if r.NoTools {
 		none := anthropic.NewToolChoiceNoneParam()
 		p.ToolChoice = anthropic.ToolChoiceUnionParam{OfNone: &none}

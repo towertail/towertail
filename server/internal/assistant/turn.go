@@ -2,6 +2,8 @@ package assistant
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -149,6 +151,13 @@ func (t *turn) run(ctx context.Context, q Question, hist []Message, view UsageVi
 	return t.emitErr
 }
 
+// conversationID gives the provider a stable hash of the chat ID, not the
+// ID itself.
+func conversationID(chat uuid.UUID) string {
+	sum := sha256.Sum256(chat[:])
+	return hex.EncodeToString(sum[:16])
+}
+
 // reply is one streamed model answer.
 type reply struct {
 	parts []Part
@@ -159,12 +168,13 @@ type reply struct {
 
 func (t *turn) loop(ctx context.Context) (StopReason, error) {
 	capped := false
+	conv := conversationID(t.chatID)
 	for round := 0; ; round++ {
 		last := round >= maxRounds-1
 		r, err := t.stream(ctx, Request{
 			Model: t.l.model, System: t.system, Tools: t.tb.defs, Messages: t.hist,
 			MaxTokens: t.l.maxTokens(), WebSearch: t.l.webSearch(), Effort: t.l.cfg.EffortOrDefault(),
-			NoTools: capped || last,
+			NoTools: capped || last, Conversation: conv,
 		})
 		if err != nil {
 			t.keep(r.parts, r.usage, true)
