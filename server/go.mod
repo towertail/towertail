@@ -25,7 +25,7 @@ require (
 	github.com/towertail/sampler v1.6.0
 	github.com/urfave/cli/v3 v3.14.0
 	go.etcd.io/bbolt v1.5.0
-	golang.org/x/crypto v0.58.0
+	golang.org/x/crypto v0.59.0
 	golang.org/x/time v0.16.0
 )
 
