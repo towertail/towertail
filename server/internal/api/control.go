@@ -31,7 +31,7 @@ func (s *Server) handleControlNext(c echo.Context) error {
 		return err
 	}
 	return c.JSON(http.StatusOK, wire.ControlNextResponse{
-		ID:      msg.ID,
+		ID:      msg.ID.String(),
 		Kind:    msg.Kind,
 		Payload: msg.Payload,
 	})

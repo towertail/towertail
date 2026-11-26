@@ -136,7 +136,7 @@ Sync uses a tar pipe (no rsync needed on the VM side — winvm has `tar` via Git
 The sampler (`towertail-sampler`) is in its own repo: [towertail/sampler](https://github.com/towertail/sampler), Go module `github.com/towertail/sampler`, Apache-2.0. This repo has no sampler source.
 
 - **Binaries:** `samplers.lock` pins one sampler release (`SAMPLER_VERSION`, `SAMPLER_REPO`, sha256 of `manifest.json` and `sample-v1.json`). `scripts/fetch-samplers.sh [triple...]` downloads the binaries into `dist/samplers/<triple>/`, plus `manifest.json` and `sample-v1.json`, and checks each sha256. The apps bundle `dist/samplers/`.
-- **Server:** `server/go.mod` requires `github.com/towertail/sampler` and imports `pkg/schema`. There is no committed `go.work`.
+- **Server:** `server/go.mod` requires `github.com/towertail/sampler` and imports `pkg/schema`. It takes the push protocol shapes (join, ingest replies, control messages) from `pkg/schema/push.go` too. A change of these shapes needs bump step 3. There is no committed `go.work`.
 - **Bump:**
   1. Tag and publish the new release in towertail/sampler.
   2. In `samplers.lock`, set `SAMPLER_VERSION`, then set both sha256 values from the release assets (`shasum -a 256 manifest.json sample-v1.json`).
@@ -155,7 +155,7 @@ Invocation modes (see [wire-format.md](https://github.com/towertail/sampler/blob
 
 ## Server — `server/`
 
-Go module `github.com/towertail/towertail/server` (own `go.mod`, Go 1.26). It requires `github.com/towertail/sampler` for `pkg/schema`. Entry point `cmd/towertail-server` (`serve`, `migrate`, `token issue`, `user create`); `serve` calls `app.New(cfg).Run(ctx)`. Public packages: `app` (wiring and the extension API for the cloud), `authctx`, `config`, `notify`, `runtime`, `store`, `wire`. The others are in `internal/` (api, hub, clickhouse, alerter, auth, channels, postgres, scan, version). Not started: `cmd/towertail-relay`. Design and status: [`docs/server-plan.md`](docs/server-plan.md); API contract: [`docs/wire.md`](docs/wire.md).
+Go module `github.com/towertail/towertail/server` (own `go.mod`, Go 1.26). It requires `github.com/towertail/sampler` for `pkg/schema`: the metric shapes and the push protocol shapes. Entry point `cmd/towertail-server` (`serve`, `migrate`, `token issue`, `user create`); `serve` calls `app.New(cfg).Run(ctx)`. Public packages: `app` (wiring and the extension API for the cloud), `authctx`, `config`, `notify`, `runtime`, `store`, `wire`. The others are in `internal/` (api, hub, clickhouse, alerter, auth, channels, postgres, scan, version). Not started: `cmd/towertail-relay`. Design and status: [`docs/server-plan.md`](docs/server-plan.md); API contract: [`docs/wire.md`](docs/wire.md).
 
 Config comes from defaults, a YAML file (`TT_CONFIG_FILE`) and `TT_` env vars. A double underscore separates levels: `TT_CLICKHOUSE__ADDR` sets `clickhouse.addr`. Docker deployment: `server/docker/` (compose with ClickHouse and Caddy; the build context is `server/`).
 

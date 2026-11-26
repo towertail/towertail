@@ -105,7 +105,7 @@ func TestDiskScanRequestEndpoint(t *testing.T) {
 	decode(t, rec.Body.Bytes(), &msg)
 	var p wire.DiskScanPayload
 	decode(t, msg.Payload, &p)
-	if msg.Kind != "disk_scan" || p.JobID != j.ID || p.Root != "/" || p.MaxDepth != 6 {
+	if msg.Kind != "disk_scan" || p.JobID != j.ID.String() || p.Root != "/" || p.MaxDepth != 6 {
 		t.Fatalf("control message: %+v %+v", msg, p)
 	}
 
@@ -348,9 +348,9 @@ func (s *fakeSampler) claim() wire.DiskScanPayload {
 	return p
 }
 
-func (s *fakeSampler) post(job uuid.UUID, line string) bool {
+func (s *fakeSampler) post(job string, line string) bool {
 	s.t.Helper()
-	res := s.send(http.MethodPost, "/v1/disk-scans/"+job.String()+"/progress", []byte(line))
+	res := s.send(http.MethodPost, "/v1/disk-scans/"+job+"/progress", []byte(line))
 	if res.StatusCode != http.StatusOK {
 		s.t.Fatalf("progress: %d", res.StatusCode)
 	}
@@ -412,7 +412,7 @@ func TestDiskScanEndToEnd(t *testing.T) {
 		if s := nextState(); s != "running" {
 			t.Fatalf("state %s", s)
 		}
-		res = sampler.send(http.MethodPut, "/v1/disk-scans/"+p.JobID.String()+"/result", resultGzip(t), "Content-Encoding", "gzip")
+		res = sampler.send(http.MethodPut, "/v1/disk-scans/"+p.JobID+"/result", resultGzip(t), "Content-Encoding", "gzip")
 		if res.StatusCode != http.StatusNoContent {
 			t.Fatalf("result: %d", res.StatusCode)
 		}
@@ -420,7 +420,7 @@ func TestDiskScanEndToEnd(t *testing.T) {
 			t.Fatalf("state %s", s)
 		}
 		// The Go client asks for gzip and gunzips the body.
-		res = app.send(http.MethodGet, "/v1/disk-scans/"+p.JobID.String()+"/result", nil)
+		res = app.send(http.MethodGet, "/v1/disk-scans/"+p.JobID+"/result", nil)
 		if res.StatusCode != http.StatusOK || !res.Uncompressed {
 			t.Fatalf("result get: %d, uncompressed=%v", res.StatusCode, res.Uncompressed)
 		}
@@ -442,7 +442,7 @@ func TestDiskScanEndToEnd(t *testing.T) {
 		p := sampler.claim()
 		sampler.post(p.JobID, progressLine)
 		nextState()
-		res = app.send(http.MethodPost, "/v1/disk-scans/"+p.JobID.String()+"/cancel", nil)
+		res = app.send(http.MethodPost, "/v1/disk-scans/"+p.JobID+"/cancel", nil)
 		var j wire.DiskScanJob
 		if err := json.NewDecoder(res.Body).Decode(&j); err != nil || j.State != "running" || !j.CancelRequested {
 			t.Fatalf("cancel: %+v %v", j, err)

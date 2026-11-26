@@ -132,7 +132,7 @@ func (m *Manager) Request(ctx context.Context, orgID, nodeID uuid.UUID, req wire
 	if err != nil {
 		return j, err
 	}
-	payload, err := json.Marshal(wire.DiskScanPayload{JobID: j.ID, Root: j.Root, MaxDepth: j.MaxDepth, MinBytes: j.MinBytes, MinFrac: j.MinFrac})
+	payload, err := json.Marshal(wire.DiskScanPayload{JobID: j.ID.String(), Root: j.Root, MaxDepth: j.MaxDepth, MinBytes: j.MinBytes, MinFrac: j.MinFrac})
 	if err == nil {
 		err = m.queue.EnqueueControl(ctx, store.ControlMessage{NodeID: nodeID, Kind: store.ControlKindDiskScan, Payload: payload})
 	}

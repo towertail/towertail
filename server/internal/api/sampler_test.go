@@ -58,7 +58,7 @@ func TestSamplerTokens(t *testing.T) {
 	}
 
 	got := list()
-	if len(got) != 1 || got[0].Label != "web-1" || got[0].NodeID == nil || *got[0].NodeID != enr.NodeID {
+	if len(got) != 1 || got[0].Label != "web-1" || got[0].NodeID == nil || got[0].NodeID.String() != enr.NodeID {
 		t.Fatalf("list: %+v", got)
 	}
 	if strings.Contains(do(http.MethodGet, "/v1/sampler/tokens", "").Body.String(), "hash") {
@@ -76,7 +76,7 @@ func TestSamplerTokens(t *testing.T) {
 	if got := list(); len(got) != 0 {
 		t.Fatalf("list after delete: %v", got)
 	}
-	if _, err := e.st.GetNode(ctx, store.ZeroOrg, enr.NodeID); err != nil {
+	if _, err := e.st.GetNode(ctx, store.ZeroOrg, uuid.MustParse(enr.NodeID)); err != nil {
 		t.Fatalf("the node must stay: %v", err)
 	}
 }
@@ -143,7 +143,7 @@ func TestEnroll_MakesNodeWithGivenID(t *testing.T) {
 	id := uuid.New()
 	rec, out := e.enroll(`{"display_name":"mac","node_id":"` + id.String() + `"}`)
 	wantCode(t, rec, http.StatusOK)
-	if out.NodeID != id {
+	if out.NodeID != id.String() {
 		t.Fatalf("node id %v, want %v", out.NodeID, id)
 	}
 	n, err := e.st.GetNode(context.Background(), store.ZeroOrg, id)
@@ -157,7 +157,7 @@ func TestEnroll_MakesNodeWithGivenID(t *testing.T) {
 	// A second call binds to the same node.
 	rec, again := e.enroll(`{"display_name":"mac","node_id":"` + id.String() + `"}`)
 	wantCode(t, rec, http.StatusOK)
-	if again.NodeID != id || len(e.nodes()) != 1 {
+	if again.NodeID != id.String() || len(e.nodes()) != 1 {
 		t.Fatalf("second call: %v, %d nodes", again.NodeID, len(e.nodes()))
 	}
 }
@@ -227,12 +227,12 @@ func TestJoin_OneUse(t *testing.T) {
 	tok := e.joinToken()
 	rec, out := e.join(tok, "m-1")
 	wantCode(t, rec, http.StatusOK)
-	n, err := e.st.GetNode(context.Background(), store.ZeroOrg, out.NodeID)
+	n, err := e.st.GetNode(context.Background(), store.ZeroOrg, uuid.MustParse(out.NodeID))
 	if err != nil || n.DisplayName != "web-1" || n.MachineID != "m-1" {
 		t.Fatalf("node: %+v, %v", n, err)
 	}
 	st, err := e.issuer.Verify(context.Background(), out.SamplerToken)
-	if err != nil || st.Kind != store.TokenKindSampler || *st.NodeID != out.NodeID {
+	if err != nil || st.Kind != store.TokenKindSampler || st.NodeID.String() != out.NodeID {
 		t.Fatalf("sampler token: %+v, %v", st, err)
 	}
 	rec, _ = e.join(tok, "m-2")
@@ -308,7 +308,7 @@ func TestJoinToken_KindGuard(t *testing.T) {
 func TestUpdateNode_KeepsMachineID(t *testing.T) {
 	e := newEnrollEnv(t, config.Config{}, nil)
 	_, out := e.enroll(`{"display_name":"web-1","machine_id":"m-1"}`)
-	path := "/v1/nodes/" + out.NodeID.String()
+	path := "/v1/nodes/" + out.NodeID
 	wantCode(t, e.do(http.MethodPut, path, "", []byte(`{"displayName":"renamed","kind":"ssh","enabled":true}`)), http.StatusOK)
 	var n store.Node
 	decode(t, e.do(http.MethodGet, path, "", nil).Body.Bytes(), &n)
@@ -363,9 +363,9 @@ func TestEnrollAndJoin_ExpectFirstSample(t *testing.T) {
 	if len(rs.events) != 2 {
 		t.Fatalf("events = %+v", rs.events)
 	}
-	for i, id := range []uuid.UUID{a.NodeID, b.NodeID} {
+	for i, id := range []string{a.NodeID, b.NodeID} {
 		ev := rs.events[i]
-		if ev.Kind != "registered" || ev.NodeID != id || ev.OrgID != store.ZeroOrg || ev.Tint != "ok" {
+		if ev.Kind != "registered" || ev.NodeID.String() != id || ev.OrgID != store.ZeroOrg || ev.Tint != "ok" {
 			t.Errorf("event %d = %+v", i, ev)
 		}
 	}

@@ -2,7 +2,8 @@
 // by the server and its clients (Mac app RemoteBackend, sampler).
 // Types here are authoritative; clients must match these exactly.
 //
-// Metric-shape types (Sample, Disk, Net, …) come from
+// Metric shapes (Sample, Disk, Net, …) and push protocol shapes (join,
+// ingest replies, control messages) come from
 // github.com/towertail/sampler/pkg/schema so the wire contract has one source of truth.
 // The sampler emits schema.Sample on stdout/push; the server decodes
 // the same struct here. Types below that aren't re-exports are
@@ -24,6 +25,26 @@ type (
 	DiskIO = schema.DiskIOInfo
 	Net    = schema.NetInfo
 	Procs  = schema.ProcList
+)
+
+// --- Push protocol shapes re-exported from schema ---
+
+type (
+	JoinRequest              = schema.JoinRequest
+	EnrollResponse           = schema.EnrollResponse
+	IngestResponse           = schema.IngestResponse
+	IngestPlanFull           = schema.IngestPlanFull
+	IngestGone               = schema.IngestGone
+	ControlNextResponse      = schema.ControlNextResponse
+	KillProcessPayload       = schema.KillProcessPayload
+	DiskScanPayload          = schema.DiskScanPayload
+	DiskScanProgressResponse = schema.DiskScanProgressResponse
+)
+
+const (
+	GoneHostRemoved    = schema.GoneHostRemoved
+	GoneAccountDeleted = schema.GoneAccountDeleted
+	GoneCloudOff       = schema.GoneCloudOff
 )
 
 // Sample wraps schema.Sample so that the server can add methods to it. The
@@ -114,7 +135,7 @@ type LoginResponse struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-// EnrollRequest / EnrollResponse for /v1/sampler/enroll. A NodeID that
+// EnrollRequest is the body of /v1/sampler/enroll. The reply is an EnrollResponse. A NodeID that
 // does not exist makes the node with that ID. An empty NodeID with a
 // known MachineID binds to the node of that machine.
 type EnrollRequest struct {
@@ -122,45 +143,6 @@ type EnrollRequest struct {
 	MachineID   string    `json:"machine_id,omitempty"`
 	NodeID      uuid.UUID `json:"node_id,omitempty"`
 }
-
-type EnrollResponse struct {
-	NodeID       uuid.UUID `json:"node_id"`
-	SamplerToken string    `json:"sampler_token"`
-	Endpoint     string    `json:"endpoint"`
-}
-
-// IngestResponse is the 202 body of POST /v1/ingest/samples. Interval
-// is a Go duration ("5s"). Update is the version that the sampler
-// should run. Both are left out when the server has no order.
-type IngestResponse struct {
-	Accepted int    `json:"accepted"`
-	Rejected int    `json:"rejected"`
-	Error    string `json:"error,omitempty"`
-	Interval string `json:"interval,omitempty"`
-	Update   string `json:"update,omitempty"`
-	// ProcCwd tells the sampler to send process folders. The server always sets it.
-	ProcCwd *bool `json:"proc_cwd,omitempty"`
-}
-
-// IngestPlanFull is the 402 body of POST /v1/ingest/samples. The sampler
-// pauses for RetryAfter seconds.
-type IngestPlanFull struct {
-	RetryAfter int `json:"retry_after"`
-}
-
-// IngestGone is the 410 body of POST /v1/ingest/samples. The sampler
-// exits. Action is always "exit".
-type IngestGone struct {
-	Action string `json:"action"`
-	Reason string `json:"reason"`
-}
-
-// Reasons of IngestGone.
-const (
-	GoneHostRemoved    = "host_removed"
-	GoneAccountDeleted = "account_deleted"
-	GoneCloudOff       = "cloud_off"
-)
 
 // JoinTokenRequest is the body of POST /v1/sampler/join-tokens.
 type JoinTokenRequest struct {
@@ -173,14 +155,6 @@ type JoinTokenResponse struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-// JoinRequest is the body of POST /v1/sampler/join. The reply is an
-// EnrollResponse.
-type JoinRequest struct {
-	JoinToken   string `json:"join_token" validate:"required"`
-	DisplayName string `json:"display_name" validate:"required"`
-	MachineID   string `json:"machine_id,omitempty"`
-}
-
 // SamplerToken is one sampler token in GET /v1/sampler/tokens. It has no
 // secret.
 type SamplerToken struct {
@@ -189,19 +163,6 @@ type SamplerToken struct {
 	NodeID     *uuid.UUID `json:"nodeId,omitempty"`
 	CreatedAt  time.Time  `json:"createdAt"`
 	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
-}
-
-// ControlNextResponse is returned from the sampler long-poll. When no
-// message is available, HTTP 204 is returned with no body.
-type ControlNextResponse struct {
-	ID      uuid.UUID       `json:"id"`
-	Kind    string          `json:"kind"`
-	Payload json.RawMessage `json:"payload"`
-}
-
-// KillProcessPayload is the JSON body of a kill_process control message.
-type KillProcessPayload struct {
-	PID int32 `json:"pid"`
 }
 
 // NodeHistoryPoint is one bucket of a history range response.
@@ -640,22 +601,6 @@ type DiskScanJob struct {
 // DiskScanJobList is the body of GET /v1/nodes/{id}/disk-scans.
 type DiskScanJobList struct {
 	Jobs []DiskScanJob `json:"jobs"`
-}
-
-// DiskScanPayload is the JSON body of a disk_scan control message. The
-// sampler uses its defaults for keys that are not there.
-type DiskScanPayload struct {
-	JobID    uuid.UUID `json:"job_id"`
-	Root     string    `json:"root"`
-	MaxDepth int       `json:"max_depth,omitempty"`
-	MinBytes int64     `json:"min_bytes,omitempty"`
-	MinFrac  *float64  `json:"min_frac,omitempty"`
-}
-
-// DiskScanProgressResponse is the reply to a progress post. Cancel
-// tells the sampler to stop the scan.
-type DiskScanProgressResponse struct {
-	Cancel bool `json:"cancel"`
 }
 
 // ChannelRoute selects the alerts of a channel. minTint is warn (the

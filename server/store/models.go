@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/towertail/sampler/pkg/schema"
 )
 
 // Node mirrors the Swift-side Node struct in apps/mac/Sources/State/Node.swift.
@@ -332,8 +333,8 @@ type User struct {
 
 // Kinds of ControlMessage.
 const (
-	ControlKindKillProcess = "kill_process"
-	ControlKindDiskScan    = "disk_scan"
+	ControlKindKillProcess = schema.ControlKindKillProcess
+	ControlKindDiskScan    = schema.ControlKindDiskScan
 )
 
 // ControlMessage is an out-of-band command for a specific node's sampler.

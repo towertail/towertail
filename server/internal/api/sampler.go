@@ -155,7 +155,7 @@ func (s *Server) finishEnroll(c echo.Context, orgID uuid.UUID, node store.Node, 
 		return err
 	}
 	return c.JSON(http.StatusOK, wire.EnrollResponse{
-		NodeID:       node.ID,
+		NodeID:       node.ID.String(),
 		SamplerToken: raw,
 		Endpoint:     s.publicURL(c),
 	})
