@@ -20,7 +20,7 @@ import (
 const joinTokenTTL = time.Hour
 
 // handleSamplerEnroll binds (or creates) a Node and issues a sampler
-// token in one round-trip. Called by `sampler service install`.
+// token in one round-trip. The apps call it to enroll a host.
 func (s *Server) handleSamplerEnroll(c echo.Context) error {
 	t, _ := authctx.TokenFrom(c)
 	if t.Kind != store.TokenKindUser && t.Kind != store.TokenKindAdmin {

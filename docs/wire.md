@@ -202,7 +202,7 @@ A disk scan finds what uses the disk space below a folder of a node. The sampler
 **Opt-in on two sides.** A scan runs only when both are true:
 
 - The node has `allowDiskScan: true` (a `Node` field, default `false`). Else `POST /v1/nodes/{id}/disk-scans` gives 403 `forbidden` with the message `disk scans are off for this node`. A `PUT /v1/nodes/{id}` body without the `allowDiskScan` key keeps the stored value.
-- The sampler runs with `--allow-disk-scan` (`towertail-sampler push` and `service install`). Else the sampler posts an `error` line with the message `disk scans are off on this host: run the sampler with --allow-disk-scan`, and the job becomes `failed`.
+- The sampler runs with `--allow-disk-scan` (`towertail-sampler push` and `start`). Else the sampler posts an `error` line with the message `disk scans are off on this host: run the sampler with --allow-disk-scan`, and the job becomes `failed`.
 
 **Request.**
 
