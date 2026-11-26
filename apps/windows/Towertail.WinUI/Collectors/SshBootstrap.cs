@@ -29,6 +29,23 @@ public sealed class SshBootstrap
 
     public enum RemoteOs { Linux, Darwin, Windows, Unknown }
 
+    public enum InstallStep { Detecting, Uploading, Verifying }
+
+    public enum InstallFailure { None, UnknownOs, NoBundle, SelfCheck }
+
+    public sealed record InstallResult(RemoteTriple Target, InstallFailure Failure)
+    {
+        public bool Ok => Failure == InstallFailure.None;
+
+        public string? FailureText => Failure switch
+        {
+            InstallFailure.UnknownOs => $"unknown OS ({Target.Triple})",
+            InstallFailure.NoBundle => "deploy failed (sftp)",
+            InstallFailure.SelfCheck => "self-check failed",
+            _ => null,
+        };
+    }
+
     public sealed record RemoteTriple(RemoteOs Os, string Arch, string Triple, string DeployPath)
     {
         public bool IsWindows => Os == RemoteOs.Windows;
@@ -39,7 +56,7 @@ public sealed class SshBootstrap
     /// output (<c>Linux x86_64</c>), Windows falls through to the DOS <c>ver</c>
     /// output (<c>Microsoft Windows [Version 10.0.22000.1]</c>).
     /// </summary>
-    public Task<RemoteTriple> DetectAsync(CancellationToken ct = default)
+    private Task<RemoteTriple> DetectAsync(CancellationToken ct = default)
         => Task.Run(() =>
         {
             using var client = Connect();
@@ -88,7 +105,7 @@ public sealed class SshBootstrap
     /// decompressed remotely with <c>gunzip</c> — cuts the wire payload by
     /// roughly 60%. Falls back to raw upload if <c>gunzip</c> is missing.
     /// </summary>
-    public Task<bool> DeployAsync(RemoteTriple target, string? bundleRoot = null, CancellationToken ct = default)
+    private Task<bool> DeployAsync(RemoteTriple target, string? bundleRoot = null, CancellationToken ct = default)
         => Task.Run(() =>
         {
             var root = bundleRoot ?? AppContext.BaseDirectory;
@@ -157,7 +174,7 @@ public sealed class SshBootstrap
     /// <summary>
     /// Run <c>--self-check</c> on the newly-deployed binary.
     /// </summary>
-    public Task<bool> VerifyAsync(RemoteTriple target, CancellationToken ct = default)
+    private Task<bool> VerifyAsync(RemoteTriple target, CancellationToken ct = default)
         => Task.Run(() =>
         {
             using var client = Connect();
@@ -166,18 +183,37 @@ public sealed class SshBootstrap
         }, ct);
 
     /// <summary>
-    /// Detect, upload and self-check. Returns the triple. Throws when a step fails.
+    /// Detect, upload and self-check. Stops at the first failed step.
+    /// <paramref name="onStep"/> runs on the context of the caller.
+    /// </summary>
+    public async Task<InstallResult> InstallAsync(Action<InstallStep>? onStep = null, CancellationToken ct = default)
+    {
+        onStep?.Invoke(InstallStep.Detecting);
+        var target = await DetectAsync(ct);
+        if (target.Os == RemoteOs.Unknown)
+            return new InstallResult(target, InstallFailure.UnknownOs);
+        onStep?.Invoke(InstallStep.Uploading);
+        if (!await DeployAsync(target, ct: ct))
+            return new InstallResult(target, InstallFailure.NoBundle);
+        onStep?.Invoke(InstallStep.Verifying);
+        var verified = await VerifyAsync(target, ct);
+        return new InstallResult(target, verified ? InstallFailure.None : InstallFailure.SelfCheck);
+    }
+
+    /// <summary>
+    /// Install the sampler. Returns the triple. Throws when a step fails.
     /// </summary>
     public async Task<string> PushUpdateAsync(CancellationToken ct = default)
     {
-        var target = await DetectAsync(ct).ConfigureAwait(false);
-        if (target.Os == RemoteOs.Unknown)
-            throw new InvalidOperationException("unsupported remote OS");
-        if (!await DeployAsync(target, ct: ct).ConfigureAwait(false))
-            throw new InvalidOperationException($"no bundled sampler for triple {target.Triple}");
-        if (!await VerifyAsync(target, ct).ConfigureAwait(false))
-            throw new InvalidOperationException($"self-check failed for triple {target.Triple}");
-        return target.Triple;
+        var result = await InstallAsync(ct: ct).ConfigureAwait(false);
+        var t = result.Target.Triple;
+        return result.Failure switch
+        {
+            InstallFailure.None => t,
+            InstallFailure.UnknownOs => throw new InvalidOperationException("unsupported remote OS"),
+            InstallFailure.NoBundle => throw new InvalidOperationException($"no bundled sampler for triple {t}"),
+            _ => throw new InvalidOperationException($"self-check failed for triple {t}"),
+        };
     }
 
     private SshClient Connect() => SshConnectionFactory.Connect(

@@ -10,4 +10,15 @@
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Margin" Value="1,24,0,6" />
     </Style>
+
+    <Style x:Key="SettingsRowGrid" TargetType="Grid">
+        <Setter Property="MinHeight" Value="64" />
+        <Setter Property="Padding" Value="16,12,16,12" />
+    </Style>
+    <Style x:Key="SettingsRowBorder" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="4" />
+    </Style>
 </ResourceDictionary>

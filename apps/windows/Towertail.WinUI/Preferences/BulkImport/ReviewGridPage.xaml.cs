@@ -177,24 +177,10 @@ public sealed partial class ReviewGridPage : Page
                 node,
                 hostKeyPrompt: autoTrust,
                 onTrust: capture);
-            var triple = await bootstrap.DetectAsync().ConfigureAwait(true);
-            if (triple.Os == SshBootstrap.RemoteOs.Unknown)
-            {
-                row.StatusDetail = $"unknown OS ({triple.Triple})";
-                row.Status = ImportRow.RowStatus.Failed;
-                return;
-            }
-            var deployed = await bootstrap.DeployAsync(triple).ConfigureAwait(true);
-            if (!deployed)
-            {
-                row.StatusDetail = "deploy failed (sftp)";
-                row.Status = ImportRow.RowStatus.Failed;
-                return;
-            }
-            var verified = await bootstrap.VerifyAsync(triple).ConfigureAwait(true);
-            row.StatusDetail = verified ? $"reachable ({triple.Triple})" : "self-check failed";
-            row.Status = verified ? ImportRow.RowStatus.Ok : ImportRow.RowStatus.Failed;
-            if (verified && acceptedFingerprint is not null)
+            var result = await bootstrap.InstallAsync().ConfigureAwait(true);
+            row.StatusDetail = result.Ok ? $"reachable ({result.Target.Triple})" : result.FailureText!;
+            row.Status = result.Ok ? ImportRow.RowStatus.Ok : ImportRow.RowStatus.Failed;
+            if (result.Ok && acceptedFingerprint is not null)
             {
                 row.KnownHostFingerprint = acceptedFingerprint;
             }

@@ -23,4 +23,12 @@ public sealed class SshBootstrapTests
     [InlineData("/opt/towertail-sampler", "/home/u", "/opt/towertail-sampler")]
     public void ResolvesHomeInRemotePath(string templated, string home, string want)
         => SshBootstrap.ResolveRemotePath(templated, home).Should().Be(want);
+
+    [Theory]
+    [InlineData(SshBootstrap.InstallFailure.None, null)]
+    [InlineData(SshBootstrap.InstallFailure.UnknownOs, "unknown OS (linux-amd64)")]
+    [InlineData(SshBootstrap.InstallFailure.NoBundle, "deploy failed (sftp)")]
+    [InlineData(SshBootstrap.InstallFailure.SelfCheck, "self-check failed")]
+    public void FailureTextMatchesWizard(SshBootstrap.InstallFailure failure, string? want)
+        => new SshBootstrap.InstallResult(SshBootstrap.ParseUnameOrVer(""), failure).FailureText.Should().Be(want);
 }

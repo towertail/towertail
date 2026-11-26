@@ -190,16 +190,7 @@ public static class SshConnectionFactory
         HostKeyPrompt? hostKeyPrompt = null,
         Action<string>? onTrust = null,
         Func<Guid, string?>? passwordProvider = null)
-    {
-        var password = node.AuthMethod == AuthMethod.Password
-            ? (passwordProvider ?? DefaultPasswordProvider)(node.Id)
-            : null;
-        var info = BuildConnectionInfo(node, password);
-        var client = new SshClient(info);
-        WireHostKeyValidation(client, node.SshHost ?? "", node.KnownHostFingerprint, hostKeyPrompt, onTrust);
-        client.Connect();
-        return client;
-    }
+        => Connect(node, i => new SshClient(i), hostKeyPrompt, onTrust, passwordProvider);
 
     /// <summary>Same shape as <see cref="Connect"/> but returns an SFTP client.</summary>
     public static SftpClient ConnectSftp(
@@ -207,12 +198,20 @@ public static class SshConnectionFactory
         HostKeyPrompt? hostKeyPrompt = null,
         Action<string>? onTrust = null,
         Func<Guid, string?>? passwordProvider = null)
+        => Connect(node, i => new SftpClient(i), hostKeyPrompt, onTrust, passwordProvider);
+
+    private static T Connect<T>(
+        Node node,
+        Func<ConnectionInfo, T> create,
+        HostKeyPrompt? hostKeyPrompt,
+        Action<string>? onTrust,
+        Func<Guid, string?>? passwordProvider) where T : BaseClient
     {
         var password = node.AuthMethod == AuthMethod.Password
             ? (passwordProvider ?? DefaultPasswordProvider)(node.Id)
             : null;
         var info = BuildConnectionInfo(node, password);
-        var client = new SftpClient(info);
+        var client = create(info);
         WireHostKeyValidation(client, node.SshHost ?? "", node.KnownHostFingerprint, hostKeyPrompt, onTrust);
         client.Connect();
         return client;

@@ -28,7 +28,7 @@ public sealed partial class TrayPopoverWindow : Window
         InitializeComponent();
         Root.Bind(env);
 
-        _appWindow = GetAppWindow();
+        _appWindow = AppWindow;
         if (_appWindow?.Presenter is OverlappedPresenter overlapped)
         {
             overlapped.SetBorderAndTitleBar(false, false);
@@ -72,13 +72,6 @@ public sealed partial class TrayPopoverWindow : Window
             if (FullViewRegistry.IsAnyOpen) return;
             HidePopover();
         }
-    }
-
-    private AppWindow? GetAppWindow()
-    {
-        var hwnd = WindowNative.GetWindowHandle(this);
-        var id = Win32Interop.GetWindowIdFromWindow(hwnd);
-        return AppWindow.GetFromWindowId(id);
     }
 
     /// <summary>

@@ -175,30 +175,16 @@ public sealed partial class DeployProgressPage : Page
             Action<Guid, string> capture = (_, fp) => fingerprint = fp;
             var bootstrap = new SshBootstrap(row.Node, hostKeyPrompt: autoTrust, onTrust: capture);
 
-            row.StatusDetail = "detecting…";
-            var triple = await bootstrap.DetectAsync().ConfigureAwait(true);
-            if (triple.Os == SshBootstrap.RemoteOs.Unknown)
+            var result = await bootstrap.InstallAsync(step => row.StatusDetail = step switch
+            {
+                SshBootstrap.InstallStep.Detecting => "detecting…",
+                SshBootstrap.InstallStep.Uploading => "uploading sampler…",
+                _ => "verifying…",
+            }).ConfigureAwait(true);
+            if (!result.Ok)
             {
                 row.StatusStage = DeployRow.Stage.Failed;
-                row.StatusDetail = $"unknown OS ({triple.Triple})";
-                UpdateCounters();
-                return;
-            }
-
-            row.StatusDetail = "uploading sampler…";
-            if (!await bootstrap.DeployAsync(triple).ConfigureAwait(true))
-            {
-                row.StatusStage = DeployRow.Stage.Failed;
-                row.StatusDetail = "deploy failed (sftp)";
-                UpdateCounters();
-                return;
-            }
-
-            row.StatusDetail = "verifying…";
-            if (!await bootstrap.VerifyAsync(triple).ConfigureAwait(true))
-            {
-                row.StatusStage = DeployRow.Stage.Failed;
-                row.StatusDetail = "self-check failed";
+                row.StatusDetail = result.FailureText!;
                 UpdateCounters();
                 return;
             }
@@ -208,7 +194,7 @@ public sealed partial class DeployProgressPage : Page
             var node = row.Node with { KnownHostFingerprint = fingerprint };
             CommitNode(node, env);
             row.StatusStage = DeployRow.Stage.Ok;
-            row.StatusDetail = $"deployed ({triple.Triple})";
+            row.StatusDetail = $"deployed ({result.Target.Triple})";
         }
         catch (Exception ex)
         {

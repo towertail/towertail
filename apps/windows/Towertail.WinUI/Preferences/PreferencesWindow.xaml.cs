@@ -1,10 +1,7 @@
-using Microsoft.UI;
-using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Towertail.WinUI.Bootstrap;
 using Windows.Graphics;
-using WinRT.Interop;
 
 namespace Towertail.WinUI.Preferences;
 
@@ -19,7 +16,7 @@ public sealed partial class PreferencesWindow : Window
         Title = "Towertail Preferences";
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
-        ResizeInitial(980, 640);
+        AppWindow.Resize(new SizeInt32(980, 640));
         Nav.SelectedItem = Nav.MenuItems[0];
         ShowPane("servers");
         _toastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(6) };
@@ -40,17 +37,6 @@ public sealed partial class PreferencesWindow : Window
         ToastText.Text = text ?? "";
         _toastTimer.Stop();
         if (text is not null) _toastTimer.Start();
-    }
-
-    private void ResizeInitial(int w, int h)
-    {
-        try
-        {
-            var hwnd = WindowNative.GetWindowHandle(this);
-            var id = Win32Interop.GetWindowIdFromWindow(hwnd);
-            AppWindow.GetFromWindowId(id)?.Resize(new SizeInt32(w, h));
-        }
-        catch { }
     }
 
     /// <summary>Opens the pane with <paramref name="tag"/>.</summary>

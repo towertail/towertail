@@ -1,5 +1,3 @@
-using Microsoft.UI;
-using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Towertail.WinUI.Backend;
@@ -8,7 +6,6 @@ using Towertail.WinUI.Cloud;
 using Towertail.WinUI.State;
 using Towertail.WinUI.SystemServices;
 using Windows.Graphics;
-using WinRT.Interop;
 
 namespace Towertail.WinUI.Preferences;
 
@@ -36,7 +33,7 @@ public sealed partial class ServerEditWindow : Window
         _env = Towertail.WinUI.App.Current.Environment;
         InitializeComponent();
         Title = "Server";
-        ResizeInitial(560, 860);
+        AppWindow.Resize(new SizeInt32(560, 860));
         foreach (var m in ThresholdMetrics.Usage) AddThresholdRow(ThresholdRows, m);
         foreach (var m in ThresholdMetrics.Health) AddThresholdRow(HealthRows, m);
     }
@@ -76,17 +73,6 @@ public sealed partial class ServerEditWindow : Window
     {
         var own = _existing?.MutedSignals ?? MutedSignals.None;
         return new(_mutes.Where(m => m.Box.IsEnabled ? m.Box.IsChecked == true : own.Contains(m.Signal)).Select(m => m.Signal));
-    }
-
-    private void ResizeInitial(int w, int h)
-    {
-        try
-        {
-            var hwnd = WindowNative.GetWindowHandle(this);
-            var id = Win32Interop.GetWindowIdFromWindow(hwnd);
-            AppWindow.GetFromWindowId(id)?.Resize(new SizeInt32(w, h));
-        }
-        catch { }
     }
 
     public void Bind(Node? n, Action<Node?> onDone)
@@ -158,7 +144,7 @@ public sealed partial class ServerEditWindow : Window
         {
             CloudRulesHost.Children.Add(new TextBlock { Text = "Sign in to Cloud to see the rules of this host.", Opacity = 0.7 });
         }
-        ResizeInitial(800, 860);
+        AppWindow.Resize(new SizeInt32(800, 860));
     }
 
     /// <summary>Scrolls the form to the cloud rules. The debug renders use it.</summary>

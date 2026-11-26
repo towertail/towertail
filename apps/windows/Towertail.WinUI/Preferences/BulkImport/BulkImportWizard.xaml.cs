@@ -1,5 +1,4 @@
 using Microsoft.UI;
-using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -20,7 +19,7 @@ public sealed partial class BulkImportWizard : Window
     {
         InitializeComponent();
         Title = "Bulk import servers";
-        ResizeInitial(1040, 620);
+        AppWindow.Resize(new SizeInt32(1040, 620));
         _state.CandidatesChanged += OnCandidatesChanged;
         SetStep(0);
     }
@@ -29,17 +28,6 @@ public sealed partial class BulkImportWizard : Window
     {
         _env = env;
         SetStep(0);
-    }
-
-    private void ResizeInitial(int w, int h)
-    {
-        try
-        {
-            var hwnd = WindowNative.GetWindowHandle(this);
-            var id = Win32Interop.GetWindowIdFromWindow(hwnd);
-            AppWindow.GetFromWindowId(id)?.Resize(new SizeInt32(w, h));
-        }
-        catch { }
     }
 
     private void OnBack(object sender, RoutedEventArgs e) => SetStep(_step - 1);
