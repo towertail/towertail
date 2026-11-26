@@ -36,7 +36,7 @@ final class LocalBackend: Backend {
         self.nodes = nodeStore
         self.history = history
         self.diskScans = DiskScanStore(url: HistoryStore.defaultURL())
-        HostKeyTrustPersister.bind(store: nodeStore)
+        HostKeyTrust.bind(store: nodeStore)
 
         let servers = ServerStore(
             history: history,

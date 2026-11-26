@@ -108,7 +108,7 @@ struct DisksTab: View {
                 .frame(width: 60, alignment: .leading)
             Text("\(Int((frac * 100).rounded()))%").font(.system(size: 13, weight: .semibold).monospacedDigit())
                 .foregroundStyle(tint.valueColor).frame(width: 44, alignment: .trailing)
-            Text("\(ProcessTable.formatBytes(d.used)) / \(ProcessTable.formatBytes(d.total))")
+            Text("\(ByteFormat.size(d.used)) / \(ByteFormat.size(d.total))")
                 .font(.system(size: 12).monospacedDigit()).foregroundStyle(WB.muted)
                 .frame(width: 140, alignment: .leading)
             GeometryReader { geo in

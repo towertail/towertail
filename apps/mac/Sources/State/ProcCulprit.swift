@@ -26,7 +26,7 @@ struct ProcCulprit: Equatable, Sendable {
         func text(_ c: ProcCulprit) -> String {
             switch self {
             case .cpu: return String(format: "%.0f%%", c.cpuPct)
-            case .mem: return ProcessTable.formatBytes(c.rss)
+            case .mem: return ByteFormat.size(c.rss)
             case .io(let rates):
                 let r = c.ioRate(rates) ?? ProcIORate(read: 0, write: 0)
                 return "R \(Self.mbps(r.read)) · W \(Self.mbps(r.write))"

@@ -62,7 +62,7 @@ final class ProcCulpritTests: XCTestCase {
         let gb: Int64 = 1_073_741_824
         let items = [node(1, cpu: 1, rss: gb), node(2, cpu: 1, rss: gb)]
         let top = ProcCulprit.top(items, by: .mem, limit: 3)
-        XCTAssertEqual(ProcCulprit.Ranking.mem.text(top[0]), ProcessTable.formatBytes(2 * gb))
+        XCTAssertEqual(ProcCulprit.Ranking.mem.text(top[0]), ByteFormat.size(2 * gb))
     }
 
     func testTopLimitAndTieOrder() {

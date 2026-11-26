@@ -19,11 +19,8 @@ struct PortsTable: View {
         KeyPathComparator(\PortRow.estIn, order: .reverse),
     ]
 
-    /// Row queued for the kill confirmation. Mirrors `ProcessTable` —
-    /// non-nil presents the dialog; cleared on cancel/confirm.
-    @State private var killCandidate: PortRow?
-    @State private var killResult: KillResult?
-    @State private var killInFlight: Bool = false
+    /// Row queued for the kill confirmation. Non-nil presents the dialog.
+    @State private var killCandidate: KillTarget?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -41,7 +38,7 @@ struct PortsTable: View {
                                 pid: r.pid,
                                 name: r.name,
                                 canKill: node != nil,
-                                onKill: { killCandidate = r }
+                                onKill: { killCandidate = KillTarget(pid: r.pid, name: r.name) }
                             )
                         }
                         .width(min: 72, ideal: 88)
@@ -99,92 +96,7 @@ struct PortsTable: View {
             }
         }
         .padding(.horizontal, 16)
-        .confirmationDialog(
-            killDialogTitle,
-            isPresented: Binding(
-                get: { killCandidate != nil },
-                set: { if !$0 { killCandidate = nil } }
-            ),
-            titleVisibility: .visible,
-            presenting: killCandidate
-        ) { row in
-            Button(role: .destructive) {
-                runKill(row: row)
-            } label: {
-                Text(verbatim: "Kill \(row.pid)")
-            }
-            .disabled(killInFlight || node == nil)
-            Button("Cancel", role: .cancel) { }
-        } message: { row in
-            Text(killDialogMessage(for: row))
-        }
-        .alert(
-            killAlertTitle,
-            isPresented: Binding(
-                get: { killResult != nil },
-                set: { if !$0 { killResult = nil } }
-            ),
-            presenting: killResult
-        ) { _ in
-            Button("OK", role: .cancel) { killResult = nil }
-        } message: { result in
-            switch result {
-            case .success(let pid, let name):
-                Text(verbatim: "Sent SIGKILL to \(name) (PID \(pid)).")
-            case .failure(let message):
-                Text(message)
-            }
-        }
-    }
-
-    private var killDialogTitle: String {
-        guard let row = killCandidate else { return "Kill process" }
-        return "Kill \(row.name)?"
-    }
-
-    private var killAlertTitle: String {
-        guard let r = killResult else { return "" }
-        switch r {
-        case .success: return "Process killed"
-        case .failure: return "Kill failed"
-        }
-    }
-
-    private func killDialogMessage(for row: PortRow) -> String {
-        let cmd = killCommandPreview(pid: row.pid)
-        return "This will run:\n\n\(cmd)\n\nThe process will be terminated immediately with SIGKILL."
-    }
-
-    private func killCommandPreview(pid: Int32) -> String {
-        guard let node else { return "kill -9 \(pid)" }
-        switch node.kind {
-        case .local:
-            return "kill -9 \(pid)"
-        case .ssh:
-            let user = node.sshUser ?? "?"
-            let host = node.sshHost ?? "?"
-            return "ssh \(user)@\(host) 'kill -9 \(pid)'"
-        case .cloud:
-            return "Not available for a host that reports to Cloud."
-        }
-    }
-
-    private func runKill(row: PortRow) {
-        guard let node else { return }
-        killInFlight = true
-        Task {
-            let outcome = await ProcessKiller.kill(pid: row.pid, node: node)
-            await MainActor.run {
-                killInFlight = false
-                killCandidate = nil
-                switch outcome {
-                case .success:
-                    killResult = .success(pid: row.pid, name: row.name)
-                case .failure(let message):
-                    killResult = .failure(message: message)
-                }
-            }
-        }
+        .processKillFlow(node: node, target: $killCandidate)
     }
 
     private var header: some View {

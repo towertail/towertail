@@ -138,7 +138,7 @@ final class DiskUsageModel {
     /// new jobs, for example ones that another device starts. Runs until
     /// the calling task is cancelled.
     func attach() async {
-        guard let follower = scanner as? any DiskScanFollower else { return }
+        guard let follower = scanner as? RemoteDiskScanner else { return }
         let updates = follower.jobs(node: node)
         if let j = await follower.lastJob(node: node) { follow(job: j) }
         for await j in updates { follow(job: j) }
@@ -150,7 +150,7 @@ final class DiskUsageModel {
     func follow(job j: DiskScanJob) {
         guard !isBusy else { return }
         job = j
-        guard let follower = scanner as? any DiskScanFollower else { return }
+        guard let follower = scanner as? RemoteDiskScanner else { return }
         if j.refreshOf != nil {
             // A refresh from another device: merge it when it is done.
             guard j.state == .done, j.scope == scope, let done = j.finishedTs, done > lastChange,

@@ -27,10 +27,8 @@ func makeDiskScanner(
         return LocalDiskScanner()
     case .ssh:
         return SSHDiskScanner(
-            hostKeyPrompt: HostKeyTrustPrompter.sharedPromptAdapter,
-            onTrust: { id, fp in
-                Task { @MainActor in HostKeyTrustPersister.persist(nodeId: id, fingerprint: fp) }
-            },
+            hostKeyPrompt: HostKeyTrust.prompt,
+            onTrust: HostKeyTrust.onTrust,
             prepare: prepareSSH
         )
     }

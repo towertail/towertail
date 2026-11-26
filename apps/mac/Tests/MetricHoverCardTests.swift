@@ -47,7 +47,7 @@ final class MetricHoverCardTests: XCTestCase {
         guard case .top(let lines, let others) = c.procs else { return XCTFail("no top") }
         XCTAssertEqual(lines.count, 2)
         XCTAssertEqual(c.value, "50%")
-        XCTAssertEqual(others, ProcessTable.formatBytes(8_000_000_000 - 2 * gb))
+        XCTAssertEqual(others, ByteFormat.size(8_000_000_000 - 2 * gb))
     }
 
     func testUnsupportedMetricsGiveNil() {

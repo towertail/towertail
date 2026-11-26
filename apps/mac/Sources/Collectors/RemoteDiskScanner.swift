@@ -1,17 +1,5 @@
 import Foundation
 
-/// The disk scan endpoints of the server that `RemoteDiskScanner` uses.
-@MainActor
-protocol DiskScanJobService: AnyObject, Sendable {
-    func startDiskScan(nodeId: UUID, request: DiskScanRequest) async throws -> DiskScanJob
-    func diskScans(nodeId: UUID) async throws -> [DiskScanJob]
-    func diskScan(jobId: String) async throws -> DiskScanJob
-    func diskScanResult(jobId: String) async throws -> DiskScanResult?
-    func cancelDiskScan(jobId: String) async throws -> DiskScanJob
-}
-
-extension RemoteClient: DiskScanJobService {}
-
 /// Sends job changes (from `disk_scan_updated`, polls and refetches) to the
 /// tasks that wait for them.
 @MainActor
@@ -52,29 +40,18 @@ final class DiskScanJobFeed {
 
     /// Reads the jobs that are not final again, for example after the
     /// WebSocket was lost.
-    func refetch(using service: any DiskScanJobService) async {
+    func refetch(using client: RemoteClient) async {
         for id in active.keys {
-            if let j = try? await service.diskScan(jobId: id) { publish(j) }
+            if let j = try? await client.diskScan(jobId: id) { publish(j) }
         }
     }
-}
-
-/// A scanner that can also show jobs that run on the server already, for
-/// example a job that another device started.
-protocol DiskScanFollower: DiskScanner {
-    /// The newest job of the node, or nil.
-    func lastJob(node: Node) async -> DiskScanJob?
-    /// Events of an existing job, as `scan` sends them.
-    func follow(node: Node, job: DiskScanJob) -> AsyncThrowingStream<DiskScanEvent, Error>
-    /// All job changes of the node.
-    @MainActor func jobs(node: Node) -> AsyncStream<DiskScanJob>
 }
 
 /// Runs scans through the server (docs/wire.md §3.1). The stream sends a
 /// `.job` event for each job change, then the result, error or cancel.
 /// Cancel the consuming task to cancel the job on the server.
-struct RemoteDiskScanner: DiskScanFollower {
-    let service: any DiskScanJobService
+struct RemoteDiskScanner: DiskScanner {
+    let service: RemoteClient
     let feed: DiskScanJobFeed
     /// Poll for the job in case a WebSocket message is lost.
     var pollInterval: TimeInterval = 10
@@ -91,14 +68,17 @@ struct RemoteDiskScanner: DiskScanFollower {
         }
     }
 
+    /// Events of an existing job, as `scan` sends them. For example a job that another device started.
     func follow(node: Node, job: DiskScanJob) -> AsyncThrowingStream<DiskScanEvent, Error> {
         stream { job }
     }
 
+    /// The newest job of the node, or nil.
     func lastJob(node: Node) async -> DiskScanJob? {
         try? await service.diskScans(nodeId: node.id).first
     }
 
+    /// All job changes of the node.
     @MainActor func jobs(node: Node) -> AsyncStream<DiskScanJob> {
         feed.subscribe(nodeId: node.id)
     }

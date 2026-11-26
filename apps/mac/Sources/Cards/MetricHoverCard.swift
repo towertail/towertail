@@ -89,7 +89,7 @@ struct MetricHoverContent: Equatable {
             .filter { $0.total > 0 }
             .max { Double($0.used) / Double($0.total) < Double($1.used) / Double($1.total) }
         let free = fullest.map {
-            "\(ProcessTable.formatBytes(max(0, $0.total - $0.used))) free of \(ProcessTable.formatBytes($0.total))"
+            "\(ByteFormat.size(max(0, $0.total - $0.used))) free of \(ByteFormat.size($0.total))"
         }
         let io = vm.diskIO.total
         let procs: Procs
@@ -165,7 +165,7 @@ struct MetricHoverContent: Equatable {
             return nil
         default:
             guard let used = vm.memUsedBytes else { return nil }
-            return ProcessTable.formatBytes(max(0, used - top.reduce(0) { $0 + $1.rss }))
+            return ByteFormat.size(max(0, used - top.reduce(0) { $0 + $1.rss }))
         }
     }
 }

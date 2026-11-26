@@ -176,7 +176,7 @@ struct ProcessesTab: View {
                         Text(String(format: "%.1f%%", o.peak)).monospacedDigit().foregroundStyle(.secondary)
                     }
                     .width(min: 56, ideal: 68, max: 80)
-                    TableColumn("Memory peak") { o in Text(ProcessTable.formatBytes(o.rssMax)).monospacedDigit() }
+                    TableColumn("Memory peak") { o in Text(ByteFormat.size(o.rssMax)).monospacedDigit() }
                         .width(min: 76, ideal: 90, max: 100)
                     TableColumn("Time ≥ 50% CPU") { o in
                         Text(o.highFor > 0 ? ShortDuration.long(o.highFor) : "—").monospacedDigit().foregroundStyle(.secondary)

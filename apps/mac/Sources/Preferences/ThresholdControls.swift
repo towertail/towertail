@@ -159,7 +159,7 @@ struct FleetBar: View {
     }
 
     private func level(_ v: Double) -> ThresholdTint {
-        v >= pair.critical ? .critical : v >= pair.warn ? .warn : .nominal
+        ThresholdTint(value: v, warn: pair.warn, critical: pair.critical)
     }
 
     private func position(_ v: Double) -> CGFloat {

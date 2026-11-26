@@ -75,9 +75,7 @@ struct MetricSeries: Sendable {
 
     func tint(warn: Double, critical: Double) -> ThresholdTint {
         guard let v = latest?.v else { return .stale }
-        if v >= critical { return .critical }
-        if v >= warn { return .warn }
-        return .nominal
+        return ThresholdTint(value: v, warn: warn, critical: critical)
     }
 
     func nearest(to date: Date) -> MetricPoint? {

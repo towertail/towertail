@@ -116,7 +116,7 @@ struct MetricRail: View {
 extension RailMetric {
     /// Value text of a tile with two numbers.
     func shortFormat(_ v: Double) -> String {
-        FullViewWindow.formatByteRate(bytesPerSec: v * 1_048_576)
+        ByteFormat.rate(bytesPerSec: v * 1_048_576)
             .replacingOccurrences(of: "/s", with: "")
     }
 }

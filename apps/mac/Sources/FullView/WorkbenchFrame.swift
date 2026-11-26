@@ -29,7 +29,7 @@ extension RailMetric {
         switch self {
         case .cpu, .mem, .disk: return "\(Int((v * 100).rounded()))%"
         case .load: return String(format: "%.2f", v)
-        case .net, .io: return FullViewWindow.formatByteRate(bytesPerSec: v * 1_048_576)
+        case .net, .io: return ByteFormat.rate(bytesPerSec: v * 1_048_576)
         case .health: return "\(Int(v.rounded()))"
         }
     }

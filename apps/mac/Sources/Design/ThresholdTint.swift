@@ -6,6 +6,10 @@ enum ThresholdTint: Sendable, Equatable {
     case critical
     case stale
 
+    init(value: Double, warn: Double, critical: Double) {
+        self = value >= critical ? .critical : value >= warn ? .warn : .nominal
+    }
+
     var color: Color {
         switch self {
         case .nominal:  Color("Tint/Nominal")

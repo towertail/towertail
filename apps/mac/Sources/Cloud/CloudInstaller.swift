@@ -23,8 +23,8 @@ final class CloudInstaller {
         let id = node.id
         let client = try await SSHConnectionFactory.connect(
             node: node,
-            hostKeyPrompt: HostKeyTrustPrompter.sharedPromptAdapter,
-            onTrust: { fp in Task { @MainActor in HostKeyTrustPersister.persist(nodeId: id, fingerprint: fp) } }
+            hostKeyPrompt: HostKeyTrust.prompt,
+            onTrust: { fp in HostKeyTrust.onTrust(id, fp) }
         )
         return CitadelSession(client: client)
     }

@@ -324,7 +324,7 @@ final class WelcomeFlow {
         do {
             client = try await SSHConnectionFactory.connect(
                 node: candidate.node(),
-                hostKeyPrompt: HostKeyTrustPrompter.sharedPromptAdapter
+                hostKeyPrompt: HostKeyTrust.prompt
             )
         } catch is SSHConnectionFactory.NoCredential {
             return (.refused, nil)
@@ -345,8 +345,8 @@ final class WelcomeFlow {
     static let sshVerify: Verify = { node in
         _ = try await SSHBootstrap.bootstrapAndVerify(
             node: node,
-            hostKeyPrompt: HostKeyTrustPrompter.sharedPromptAdapter,
-            onTrust: { id, fp in Task { @MainActor in HostKeyTrustPersister.persist(nodeId: id, fingerprint: fp) } }
+            hostKeyPrompt: HostKeyTrust.prompt,
+            onTrust: HostKeyTrust.onTrust
         )
     }
 }

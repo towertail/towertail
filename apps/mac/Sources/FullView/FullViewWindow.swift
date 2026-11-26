@@ -319,20 +319,4 @@ struct FullViewWindow: View {
         let action = LongProcIgnore(settings: settings, nodes: nodeStore, servers: store, backend: backend)
         Task { await action.ignore(name, on: scope) }
     }
-
-    /// Formats a byte-rate with an adaptive unit so small values stay readable.
-    /// 500 B/s stays in bytes; 120_000 B/s becomes "117.2 KB/s"; >1 MiB/s in MB/s.
-    static func formatByteRate(bytesPerSec: Double) -> String {
-        let v = max(0, bytesPerSec)
-        if v < 1_024 {
-            return String(format: "%.0f B/s", v)
-        }
-        if v < 1_048_576 {
-            return String(format: "%.1f KB/s", v / 1_024)
-        }
-        if v < 1_073_741_824 {
-            return String(format: "%.1f MB/s", v / 1_048_576)
-        }
-        return String(format: "%.2f GB/s", v / 1_073_741_824)
-    }
 }

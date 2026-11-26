@@ -96,7 +96,7 @@ struct ProcessTable: View {
                     .width(min: 60, ideal: 70)
 
                     TableColumn("RSS", value: \.rss) { r in
-                        Text(Self.formatBytes(r.rss)).monospacedDigit()
+                        Text(ByteFormat.size(r.rss)).monospacedDigit()
                             .textSelection(.enabled)
                     }
                     .width(min: 60, ideal: 80)
@@ -301,25 +301,13 @@ struct ProcessTable: View {
         }
     }
 
-    nonisolated static func formatBytes(_ b: Int64) -> String {
-        let v = Double(max(b, 0))
-        if v < 1024 { return String(format: "%.0f B", v) }
-        if v < 1_048_576 { return String(format: "%.0f KB", v / 1024) }
-        if v < 1_073_741_824 { return String(format: "%.1f MB", v / 1_048_576) }
-        return String(format: "%.2f GB", v / 1_073_741_824)
-    }
-
     /// Formats a per-process I/O rate. -1 is the "no previous snapshot /
     /// no sampler visibility" sentinel and renders as an em-dash so the
     /// user can tell "unknown" apart from "0 B/s idle".
     static func formatIORate(_ bps: Double) -> String {
         if bps < 0 { return "—" }
-        let v = max(0, bps)
-        if v < 1 { return "0 B/s" }
-        if v < 1_024 { return String(format: "%.0f B/s", v) }
-        if v < 1_048_576 { return String(format: "%.1f KB/s", v / 1_024) }
-        if v < 1_073_741_824 { return String(format: "%.1f MB/s", v / 1_048_576) }
-        return String(format: "%.2f GB/s", v / 1_073_741_824)
+        if bps < 1 { return "0 B/s" }
+        return ByteFormat.rate(bytesPerSec: bps)
     }
 }
 
@@ -410,170 +398,6 @@ struct PIDCell: View {
         }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-    }
-}
-
-enum KillResult: Equatable {
-    case success(pid: Int32, name: String)
-    case failure(message: String)
-}
-
-/// Dispatches SIGKILL against a PID either locally via /bin/kill or
-/// through the same SSH path the sampler uses. Shared module-level helper
-/// rather than a method on ProcessTable so the table stays focused on
-/// display and this logic can be tested / reused.
-enum ProcessKiller {
-    enum Outcome {
-        case success
-        case failure(message: String)
-    }
-
-    static func kill(pid: Int32, node: Node) async -> Outcome {
-        switch node.kind {
-        case .local:
-            return await killLocal(pid: pid)
-        case .ssh:
-            return await killSSH(pid: pid, node: node)
-        case .cloud:
-            return .failure(message: "The app cannot stop processes on a host that reports to Cloud.")
-        }
-    }
-
-    private static func killLocal(pid: Int32) async -> Outcome {
-        do {
-            let result = try await ProcessRunner.run(
-                executable: URL(fileURLWithPath: "/bin/kill"),
-                arguments: ["-9", String(pid)]
-            )
-            if result.exitCode == 0 { return .success }
-            let err = String(data: result.stderr, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return .failure(message: err.isEmpty
-                ? "kill exited \(result.exitCode)"
-                : "kill exited \(result.exitCode): \(err)")
-        } catch {
-            return .failure(message: SamplerInvokeError.shortDescription(for: error))
-        }
-    }
-
-    private static func killSSH(pid: Int32, node: Node) async -> Outcome {
-        guard let user = node.sshUser, !user.isEmpty,
-              let host = node.sshHost, !host.isEmpty else {
-            return .failure(message: "SSH node missing user or host")
-        }
-        let args = [
-            "-o", "BatchMode=yes",
-            "-o", "ConnectTimeout=5",
-            "-o", "StrictHostKeyChecking=accept-new",
-            "\(user)@\(host)",
-            "kill -9 \(pid)"
-        ]
-        do {
-            let result = try await ProcessRunner.run(
-                executable: URL(fileURLWithPath: "/usr/bin/ssh"),
-                arguments: args
-            )
-            if result.exitCode == 0 { return .success }
-            let err = String(data: result.stderr, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return .failure(message: err.isEmpty
-                ? "ssh exited \(result.exitCode)"
-                : "ssh exited \(result.exitCode): \(err)")
-        } catch {
-            return .failure(message: SamplerInvokeError.shortDescription(for: error))
-        }
-    }
-}
-
-/// The process that the kill flow asks about.
-struct KillTarget: Equatable, Sendable {
-    let pid: Int32
-    let name: String
-}
-
-/// Dialog and result alert of a kill. One flow for each table.
-private struct ProcessKillFlow: ViewModifier {
-    let node: Node?
-    @Binding var target: KillTarget?
-    /// The alert needs an OK, so the user sees stderr.
-    @State private var result: KillResult?
-    @State private var inFlight = false
-
-    func body(content: Content) -> some View {
-        content
-            .confirmationDialog(
-                target.map { "Kill \($0.name)?" } ?? "Kill process",
-                isPresented: Binding(get: { target != nil }, set: { if !$0 { target = nil } }),
-                titleVisibility: .visible,
-                presenting: target
-            ) { t in
-                Button(role: .destructive) {
-                    run(t)
-                } label: {
-                    Text(verbatim: "Kill \(t.pid)")
-                }
-                .disabled(inFlight || node == nil)
-                Button("Cancel", role: .cancel) { }
-            } message: { t in
-                Text("This will run:\n\n\(preview(pid: t.pid))\n\nThe process will be terminated immediately with SIGKILL.")
-            }
-            .alert(
-                alertTitle,
-                isPresented: Binding(get: { result != nil }, set: { if !$0 { result = nil } }),
-                presenting: result
-            ) { _ in
-                Button("OK", role: .cancel) { result = nil }
-            } message: { r in
-                switch r {
-                case .success(let pid, let name):
-                    Text(verbatim: "Sent SIGKILL to \(name) (PID \(pid)).")
-                case .failure(let message):
-                    Text(message)
-                }
-            }
-    }
-
-    private var alertTitle: String {
-        switch result {
-        case .success: return "Process killed"
-        case .failure: return "Kill failed"
-        case nil: return ""
-        }
-    }
-
-    /// Shell preview. It shows the exact command, with the remote prefix.
-    private func preview(pid: Int32) -> String {
-        guard let node else { return "kill -9 \(pid)" }
-        switch node.kind {
-        case .local:
-            return "kill -9 \(pid)"
-        case .ssh:
-            return "ssh \(node.sshUser ?? "?")@\(node.sshHost ?? "?") 'kill -9 \(pid)'"
-        case .cloud:
-            return "Not available for a host that reports to Cloud."
-        }
-    }
-
-    private func run(_ t: KillTarget) {
-        guard let node else { return }
-        inFlight = true
-        Task {
-            let outcome = await ProcessKiller.kill(pid: t.pid, node: node)
-            await MainActor.run {
-                inFlight = false
-                target = nil
-                switch outcome {
-                case .success: result = .success(pid: t.pid, name: t.name)
-                case .failure(let message): result = .failure(message: message)
-                }
-            }
-        }
-    }
-}
-
-extension View {
-    func processKillFlow(node: Node?, target: Binding<KillTarget?>) -> some View {
-        modifier(ProcessKillFlow(node: node, target: target))
     }
 }
 

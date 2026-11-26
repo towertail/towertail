@@ -224,7 +224,7 @@ struct TopProcessPanel: View {
     }
 
     private var memoryColumn: some TableColumnContent<ProcessSnapshotRow, Never> {
-        TableColumn("Memory") { r in Text(ProcessTable.formatBytes(r.rss)).monospacedDigit() }
+        TableColumn("Memory") { r in Text(ByteFormat.size(r.rss)).monospacedDigit() }
             .width(min: 60, ideal: 76, max: 90)
     }
 
@@ -238,7 +238,7 @@ struct TopProcessPanel: View {
                 Text(String(format: "%.1f%%", r.cpuPctMax ?? 0)).monospacedDigit().foregroundStyle(.secondary)
             }
             .width(min: 70, ideal: 90)
-            TableColumn("Memory peak") { r in Text(ProcessTable.formatBytes(r.rss)).monospacedDigit() }
+            TableColumn("Memory peak") { r in Text(ByteFormat.size(r.rss)).monospacedDigit() }
                 .width(min: 80, ideal: 100)
             TableColumn("I/O avg") { r in
                 Text(r.ioBps.map(ProcessTable.formatIORate) ?? "—").monospacedDigit().foregroundStyle(.secondary)

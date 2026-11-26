@@ -165,7 +165,7 @@ struct ProcessPanel: View {
         let uptime = running ? started.map { "uptime " + ShortDuration.long((cursor ?? Date()).timeIntervalSince($0)) } : nil
         return LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible())], spacing: 8) {
             cell("CPU", running ? String(format: "%.1f%%", v?.cpuPct ?? 0) : "—", cpuSub, help: "Cores used · share of the host CPU")
-            cell("Memory", running ? ProcessTable.formatBytes(v?.rss ?? 0) : "—", memSub)
+            cell("Memory", running ? ByteFormat.size(v?.rss ?? 0) : "—", memSub)
             cell("Disk I/O", running ? (v?.ioBps.map(ProcessTable.formatIORate) ?? "—") : "—", running ? "read and write" : " ")
             cell("Threads", running ? (model.detail?.facts.threads.map(String.init) ?? "—") : "—", uptime ?? " ")
         }
@@ -204,7 +204,7 @@ struct ProcessPanel: View {
         VStack(alignment: .leading, spacing: 6) {
             KLabel("Memory over the window")
             chart(name: "Memory", color: WB.mem, points: model.detail?.rss ?? [],
-                  axis: { ProcessTable.formatBytes(Int64($0)) }, value: { ProcessTable.formatBytes(Int64($0)) })
+                  axis: { ByteFormat.size(Int64($0)) }, value: { ByteFormat.size(Int64($0)) })
         }
     }
 

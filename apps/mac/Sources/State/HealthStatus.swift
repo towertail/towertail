@@ -61,29 +61,26 @@ struct HealthStatus: Sendable, Equatable {
         func add(_ signal: Signal, _ tint: ThresholdTint, _ text: String) {
             if tint != .nominal { out.append(Reason(signal: signal, tint: tint, text: text)) }
         }
-        func level(_ v: Double, warn: Double, critical: Double) -> ThresholdTint {
-            v >= critical ? .critical : v >= warn ? .warn : .nominal
-        }
 
         if let h = info {
-            add(.procs, level(Double(h.procs), warn: Double(t.procsWarn), critical: Double(t.procsCritical)),
+            add(.procs, ThresholdTint(value: Double(h.procs), warn: Double(t.procsWarn), critical: Double(t.procsCritical)),
                 "\(Self.count(h.procs)) processes")
             if let z = h.zombies {
                 let top = h.zombieParents?.first.map { " (\($0.name))" } ?? ""
-                add(.zombies, level(Double(z), warn: Double(t.zombiesWarn), critical: Double(t.zombiesCritical)),
+                add(.zombies, ThresholdTint(value: Double(z), warn: Double(t.zombiesWarn), critical: Double(t.zombiesCritical)),
                     "\(Self.count(z)) zombies\(top)")
             }
             if let f = Self.fraction(h.pidsUsed, h.pidsMax) {
-                add(.pids, level(f, warn: t.health.pids.warn, critical: t.health.pids.critical),
+                add(.pids, ThresholdTint(value: f, warn: t.health.pids.warn, critical: t.health.pids.critical),
                     "PIDs \(Self.pct(f)) of limit")
             }
             if let f = Self.fraction(h.filesUsed, h.filesMax) {
-                add(.files, level(f, warn: t.health.files.warn, critical: t.health.files.critical),
+                add(.files, ThresholdTint(value: f, warn: t.health.files.warn, critical: t.health.files.critical),
                     "Open files \(Self.pct(f)) of limit")
             }
             if let pct = h.memPressurePct {
                 let mac = t.health.macMemPressure
-                add(.memPressure, level(Double(pct), warn: mac.warn, critical: mac.critical),
+                add(.memPressure, ThresholdTint(value: Double(pct), warn: mac.warn, critical: mac.critical),
                     "Memory pressure \(pct)%")
             } else if let p = h.psi {
                 if p.memFull >= t.health.memPressure.critical {
@@ -100,17 +97,17 @@ struct HealthStatus: Sendable, Equatable {
                 }
             }
             if let p = h.psi {
-                add(.ioPressure, level(p.ioFull, warn: t.health.ioPressure.warn, critical: t.health.ioPressure.critical),
+                add(.ioPressure, ThresholdTint(value: p.ioFull, warn: t.health.ioPressure.warn, critical: t.health.ioPressure.critical),
                     "I/O pressure \(Int(p.ioFull.rounded()))%")
             }
         }
         if disks == nil, let f = inodeRatio {
-            add(.inodes, level(f, warn: t.health.inodes.warn, critical: t.health.inodes.critical),
+            add(.inodes, ThresholdTint(value: f, warn: t.health.inodes.warn, critical: t.health.inodes.critical),
                 "Inodes \(Self.pct(f))")
         }
         for d in disks ?? [] {
             if let f = Self.fraction(d.inodesUsed, d.inodesTotal) {
-                add(.inodes, level(f, warn: t.health.inodes.warn, critical: t.health.inodes.critical),
+                add(.inodes, ThresholdTint(value: f, warn: t.health.inodes.warn, critical: t.health.inodes.critical),
                     "Inodes \(Self.pct(f)) on \(d.mount)")
             }
         }

@@ -52,7 +52,7 @@ struct MetricCell: View {
                 let v = hoverValue ?? series.latest?.v ?? 0
                 Text("\(Int(round(v * 100)))%")
                     .font(Typography.bigNumber)
-                    .foregroundStyle(Color.threshold(v, warn: warn, critical: critical))
+                    .foregroundStyle(ThresholdTint(value: v, warn: warn, critical: critical).color)
             case .netDualRate:
                 HStack(spacing: 6) {
                     HStack(spacing: 1) {

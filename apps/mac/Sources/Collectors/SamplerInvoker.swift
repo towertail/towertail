@@ -61,10 +61,8 @@ func makeInvoker(for node: Node) -> SamplerInvoker {
         return LocalSamplerInvoker()
     case .ssh:
         return SSHSamplerInvoker(
-            hostKeyPrompt: HostKeyTrustPrompter.sharedPromptAdapter,
-            onTrust: { id, fp in
-                Task { @MainActor in HostKeyTrustPersister.persist(nodeId: id, fingerprint: fp) }
-            }
+            hostKeyPrompt: HostKeyTrust.prompt,
+            onTrust: HostKeyTrust.onTrust
         )
     }
 }
