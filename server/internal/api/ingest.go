@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -360,7 +361,7 @@ func parseTS(s string) (time.Time, error) {
 }
 
 func echoErrorf(status int, format string, args ...any) error {
-	return echo.NewHTTPError(status, format)
+	return echo.NewHTTPError(status, fmt.Sprintf(format, args...))
 }
 
 // evalAlerter drives the in-memory threshold engine on a per-sample basis.

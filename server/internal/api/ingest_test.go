@@ -463,10 +463,23 @@ func TestDecodeSample_Health(t *testing.T) {
 	}
 }
 
-func TestDecodeSample_RejectsUnknownVersion(t *testing.T) {
-	line := []byte(`{"v":99,"ts":"2026-04-23T10:00:00Z","host":{"name":"x"},"cpu":{},"mem":{"used":1,"total":100},"swap":{"used":0,"total":0},"errors":[]}`)
-	if _, _, err := decodeSample(line, uuid.New(), uuid.New()); err == nil {
-		t.Error("expected error")
+func TestDecodeSample_RejectsWithValues(t *testing.T) {
+	const tail = `"host":{"name":"x"},"cpu":{},"mem":{"used":1,"total":100},"swap":{"used":0,"total":0},"errors":[]}`
+	tests := []struct {
+		name string
+		line string
+		want string
+	}{
+		{"unknown version", `{"v":99,"ts":"2026-04-23T10:00:00Z",` + tail, "unsupported schema v=99"},
+		{"bad ts", `{"v":1,"ts":"nope",` + tail, `invalid ts: "nope"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := decodeSample([]byte(tt.line), uuid.New(), uuid.New())
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("err = %v, want text %q", err, tt.want)
+			}
+		})
 	}
 }
 
