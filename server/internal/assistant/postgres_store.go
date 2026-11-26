@@ -207,20 +207,18 @@ func (s *PostgresStore) SaveProposal(ctx context.Context, p Proposal) error {
 	return err
 }
 
-func (s *PostgresStore) Proposal(ctx context.Context, orgID, id uuid.UUID) (Proposal, error) {
+const proposalCols = `id, org_id, chat_id, message_id, change, status, applied, applied_by, applied_at, undone_at, created_at`
+
+type rowScanner interface{ Scan(dest ...any) error }
+
+func scanProposal(r rowScanner) (Proposal, error) {
 	var (
 		p                   Proposal
 		msgID, appliedBy    *uuid.UUID
 		appliedAt, undoneAt *time.Time
 		change, applied     []byte
 	)
-	err := s.pool.QueryRow(ctx,
-		`SELECT id, org_id, chat_id, message_id, change, status, applied, applied_by, applied_at, undone_at, created_at
-		 FROM assistant_proposals WHERE id = $1 AND org_id = $2`, id, orgID).
-		Scan(&p.ID, &p.OrgID, &p.ChatID, &msgID, &change, &p.Status, &applied, &appliedBy, &appliedAt, &undoneAt, &p.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Proposal{}, ErrNotFound
-	}
+	err := r.Scan(&p.ID, &p.OrgID, &p.ChatID, &msgID, &change, &p.Status, &applied, &appliedBy, &appliedAt, &undoneAt, &p.CreatedAt)
 	if err != nil {
 		return Proposal{}, err
 	}
@@ -245,6 +243,34 @@ func (s *PostgresStore) Proposal(ctx context.Context, orgID, id uuid.UUID) (Prop
 		p.UndoneAt = *undoneAt
 	}
 	return p, nil
+}
+
+func (s *PostgresStore) Proposal(ctx context.Context, orgID, id uuid.UUID) (Proposal, error) {
+	p, err := scanProposal(s.pool.QueryRow(ctx,
+		`SELECT `+proposalCols+` FROM assistant_proposals WHERE id = $1 AND org_id = $2`, id, orgID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Proposal{}, ErrNotFound
+	}
+	return p, err
+}
+
+func (s *PostgresStore) ChatProposals(ctx context.Context, orgID, chatID uuid.UUID) ([]Proposal, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+proposalCols+` FROM assistant_proposals
+		 WHERE org_id = $1 AND chat_id = $2 ORDER BY created_at, id`, orgID, chatID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Proposal{}
+	for rows.Next() {
+		p, err := scanProposal(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }
 
 // UpdateProposal is one UPDATE with the status as a guard, so only one

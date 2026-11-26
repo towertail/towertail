@@ -301,6 +301,45 @@ func TestAssistantChats(t *testing.T) {
 	}
 }
 
+func TestAssistantGetChatProposals(t *testing.T) {
+	e := newAssistantEnv(t, aiConfig(), nil).start()
+	member, _ := e.login(store.RoleMember)
+	chat := e.newChat(member)
+	get := func() struct {
+		Proposals []struct {
+			ID, Status, BackupID string
+		} `json:"proposals"`
+	} {
+		code, b := e.do(http.MethodGet, "/v1/assistant/chats/"+chat.String(), member, "")
+		if code != http.StatusOK || !strings.Contains(string(b), `"proposals":[`) {
+			t.Fatalf("get: %d %s", code, b)
+		}
+		var out struct {
+			Proposals []struct {
+				ID, Status, BackupID string
+			} `json:"proposals"`
+		}
+		if err := json.Unmarshal(b, &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	if n := len(get().Proposals); n != 0 {
+		t.Fatalf("proposals = %d, want 0", n)
+	}
+
+	id := e.propose(chat, "alerts", store.RoleMember)
+	if got := get().Proposals; len(got) != 1 || got[0].ID != id.String() || got[0].Status != "pending" {
+		t.Fatalf("pending: %+v", got)
+	}
+	if code, b := e.do(http.MethodPost, "/v1/assistant/proposals/"+id.String()+"/apply", member, `{"rows":["r1"]}`); code != http.StatusOK {
+		t.Fatalf("apply: %d %s", code, b)
+	}
+	if got := get().Proposals; len(got) != 1 || got[0].Status != "applied" {
+		t.Fatalf("applied: %+v", got)
+	}
+}
+
 func TestAssistantApplyRights(t *testing.T) {
 	e := newAssistantEnv(t, aiConfig(), nil).start()
 	viewer, _ := e.login(store.RoleViewer)

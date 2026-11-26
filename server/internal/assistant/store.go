@@ -67,6 +67,8 @@ type ChatStore interface {
 type ProposalStore interface {
 	SaveProposal(ctx context.Context, p Proposal) error
 	Proposal(ctx context.Context, orgID, id uuid.UUID) (Proposal, error)
+	// ChatProposals gives the proposals of one chat, oldest first.
+	ChatProposals(ctx context.Context, orgID, chatID uuid.UUID) ([]Proposal, error)
 	// UpdateProposal saves p only if the stored status is from. Else it
 	// gives ErrNotPending. This is a compare-and-set, so two servers
 	// cannot take one proposal.

@@ -74,6 +74,11 @@ func NewService(cfg config.AssistantConfig, m Model, t Tools, w Writer, st Store
 // Chats gives the store that the chat routes use.
 func (s *Service) Chats() ChatStore { return s.store }
 
+// ChatProposals gives the proposals of one chat with their current status.
+func (s *Service) ChatProposals(ctx context.Context, orgID, chatID uuid.UUID) ([]Proposal, error) {
+	return s.store.ChatProposals(ctx, orgID, chatID)
+}
+
 // orgSettings reads the org settings.
 func (s *Service) orgSettings(ctx context.Context, orgID uuid.UUID) (bool, store.AIChanges, error) {
 	if s.settings == nil {

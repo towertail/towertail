@@ -140,6 +140,19 @@ func (s *MemoryStore) Proposal(_ context.Context, orgID, id uuid.UUID) (Proposal
 	return p, nil
 }
 
+func (s *MemoryStore) ChatProposals(_ context.Context, orgID, chatID uuid.UUID) ([]Proposal, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := []Proposal{}
+	for _, p := range s.proposals {
+		if p.OrgID == orgID && p.ChatID == chatID {
+			out = append(out, p)
+		}
+	}
+	slices.SortFunc(out, func(a, b Proposal) int { return a.CreatedAt.Compare(b.CreatedAt) })
+	return out, nil
+}
+
 func (s *MemoryStore) UpdateProposal(_ context.Context, p Proposal, from string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

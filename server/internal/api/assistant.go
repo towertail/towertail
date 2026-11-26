@@ -172,7 +172,11 @@ func (s *Server) handleGetChat(c echo.Context) error {
 	if msgs == nil {
 		msgs = []assistant.StoredMessage{}
 	}
-	return c.JSON(http.StatusOK, map[string]any{"chat": chat, "messages": msgs})
+	props, err := s.assistant.ChatProposals(c.Request().Context(), a.OrgID, id)
+	if err != nil {
+		return assistantError(err)
+	}
+	return c.JSON(http.StatusOK, map[string]any{"chat": chat, "messages": msgs, "proposals": props})
 }
 
 func (s *Server) handleDeleteChat(c echo.Context) error {

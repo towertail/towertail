@@ -23,6 +23,7 @@ func testStore(t *testing.T, h storeHarness) {
 	t.Run("Messages", func(t *testing.T) { contractMessages(t, h) })
 	t.Run("Proposals", func(t *testing.T) { contractProposals(t, h) })
 	t.Run("ProposalClaim", func(t *testing.T) { contractProposalClaim(t, h) })
+	t.Run("ChatProposals", func(t *testing.T) { contractChatProposals(t, h) })
 	t.Run("Reserve", func(t *testing.T) { contractReserve(t, h) })
 	t.Run("ReserveRace", func(t *testing.T) { contractReserveRace(t, h) })
 	t.Run("Usage", func(t *testing.T) { contractUsage(t, h) })
@@ -230,6 +231,41 @@ func contractProposals(t *testing.T, h storeHarness) {
 	back.OrgID = other
 	if err := h.st.UpdateProposal(ctx, back, ProposalUndone); !errors.Is(err, ErrNotFound) {
 		t.Errorf("update other org: %v", err)
+	}
+}
+
+func contractChatProposals(t *testing.T, h storeHarness) {
+	ctx := context.Background()
+	org, other, user := h.newOrg(t), h.newOrg(t), uuid.New()
+	c1 := newChat(t, h.st, org, user, "", time.Now())
+	c2 := newChat(t, h.st, org, user, "", time.Now())
+
+	got, err := h.st.ChatProposals(ctx, org, c1.ID)
+	if err != nil || got == nil || len(got) != 0 {
+		t.Fatalf("empty = %v, %v", got, err)
+	}
+	first := newProposal(t, h.st, org, c1.ID)
+	newProposal(t, h.st, org, c2.ID)
+	second := first
+	second.ID, second.CreatedAt = uuid.New(), first.CreatedAt.Add(time.Second)
+	if err := h.st.SaveProposal(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	second.Status, second.Applied = ProposalApplied, &Applied{BackupID: uuid.New(), Rows: []string{"r1"}}
+	if err := h.st.UpdateProposal(ctx, second, ProposalPending); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err = h.st.ChatProposals(ctx, org, c1.ID)
+	if err != nil || len(got) != 2 || got[0].ID != first.ID || got[1].ID != second.ID {
+		t.Fatalf("list = %+v, %v", got, err)
+	}
+	if got[0].Status != ProposalPending || got[1].Status != ProposalApplied || got[1].Applied.BackupID != second.Applied.BackupID ||
+		len(got[0].Rows) != 1 {
+		t.Fatalf("fields %+v", got)
+	}
+	if got, err := h.st.ChatProposals(ctx, other, c1.ID); err != nil || len(got) != 0 {
+		t.Fatalf("other org = %v, %v", got, err)
 	}
 }
 
