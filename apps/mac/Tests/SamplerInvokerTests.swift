@@ -217,8 +217,7 @@ final class SSHSamplerInvokerTimeoutTests: XCTestCase {
         let start = Date()
         await assertTimeout(invoker)
         XCTAssertLessThan(Date().timeIntervalSince(start), 2)
-        try await Task.sleep(nanoseconds: 100_000_000)
-        XCTAssertTrue(session.closed)
+        try await waitFor(timeout: 2) { session.closed }
     }
 
     func testHungConnectTimesOutAndClosesLateClient() async throws {
@@ -229,8 +228,7 @@ final class SSHSamplerInvokerTimeoutTests: XCTestCase {
         }
         await assertTimeout(invoker)
         XCTAssertFalse(session.closed)
-        try await Task.sleep(nanoseconds: 800_000_000)
-        XCTAssertTrue(session.closed)
+        try await waitFor(timeout: 2) { session.closed }
     }
 
     func testFastCommandIsNotAffected() async throws {

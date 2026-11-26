@@ -21,8 +21,6 @@ final class HistoryStoreTests: XCTestCase {
                 rxMBps: 1.0, txMBps: 0.5
             ))
         }
-        // Give the async append queue a moment to flush.
-        try await Task.sleep(nanoseconds: 200_000_000)
 
         let loaded = store.loadRecent(nodeID: id)
         XCTAssertEqual(loaded.count, 5)
@@ -38,7 +36,6 @@ final class HistoryStoreTests: XCTestCase {
         let t = Date()
         store.append(nodeID: a, point: HistoryPoint(t: t, cpu: 0.1, mem: nil, disk: nil, net: nil, rxMBps: nil, txMBps: nil))
         store.append(nodeID: b, point: HistoryPoint(t: t, cpu: 0.9, mem: nil, disk: nil, net: nil, rxMBps: nil, txMBps: nil))
-        try await Task.sleep(nanoseconds: 200_000_000)
 
         let la = store.loadRecent(nodeID: a)
         let lb = store.loadRecent(nodeID: b)
@@ -60,7 +57,6 @@ final class HistoryStoreTests: XCTestCase {
                 rxMBps: nil, txMBps: nil, score: Double(i), load: 2
             ))
         }
-        try await Task.sleep(nanoseconds: 200_000_000)
 
         let pts = store.loadRange(nodeID: id, from: t0, to: t0.addingTimeInterval(100), maxPoints: 10)
         XCTAssertEqual(pts.count, 10)
@@ -84,7 +80,6 @@ final class HistoryStoreTests: XCTestCase {
         store.append(nodeID: id, point: HistoryPoint(
             t: Date(), cpu: 0.1, mem: nil, disk: nil, net: nil, rxMBps: nil, txMBps: nil, score: 77, load: 1.25
         ))
-        try await Task.sleep(nanoseconds: 200_000_000)
         let p = try XCTUnwrap(store.loadRecent(nodeID: id).first)
         XCTAssertEqual(p.score, 77)
         XCTAssertEqual(p.load, 1.25)
@@ -111,7 +106,6 @@ final class HistoryStoreTests: XCTestCase {
         store.append(nodeID: id, point: HistoryPoint(
             t: Date(), cpu: 0.1, mem: nil, disk: nil, net: nil, rxMBps: nil, txMBps: nil, score: 60, load: 3
         ))
-        try await Task.sleep(nanoseconds: 200_000_000)
         let p = try XCTUnwrap(store.loadRecent(nodeID: id).first)
         XCTAssertEqual(p.score, 60)
         XCTAssertEqual(p.load, 3)

@@ -62,14 +62,6 @@ final class UsageScreenshotTests: XCTestCase {
         window.close()
     }
 
-    private func waitFor(_ cond: @escaping @MainActor () -> Bool) async throws {
-        let end = Date().addingTimeInterval(3)
-        while !cond() {
-            if Date() > end { return XCTFail("condition not met") }
-            try await Task.sleep(nanoseconds: 10_000_000)
-        }
-    }
-
     func testIdle() throws {
         let node = Node.localMac()
         let m = DiskUsageModel(node: node, store: store, scanner: FakeDiskScanner(), scope: "~")

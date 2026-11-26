@@ -71,15 +71,6 @@ final class CloudFeedTests: XCTestCase {
         return String(decoding: try JSONSerialization.data(withJSONObject: envelope), as: UTF8.self)
     }
 
-    private func waitFor(_ check: @escaping @MainActor () -> Bool) async throws {
-        let deadline = Date().addingTimeInterval(5)
-        while Date() < deadline {
-            if check() { return }
-            try await Task.sleep(nanoseconds: 50_000_000)
-        }
-        XCTFail("condition not met within 5s")
-    }
-
     private func connect() async throws {
         feed.start()
         try await waitFor { self.server.hasWebSocketClient }

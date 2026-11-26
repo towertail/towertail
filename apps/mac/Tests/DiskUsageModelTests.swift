@@ -16,14 +16,6 @@ final class DiskUsageModelTests: XCTestCase {
         try? FileManager.default.removeItem(at: url)
     }
 
-    private func waitFor(_ cond: @escaping @MainActor () -> Bool, timeout: TimeInterval = 3) async throws {
-        let end = Date().addingTimeInterval(timeout)
-        while !cond() {
-            if Date() > end { return XCTFail("condition not met") }
-            try await Task.sleep(nanoseconds: 10_000_000)
-        }
-    }
-
     func testIdleToRunningToDone() async throws {
         let r = try ScanFixtures.result("darwin")
         let fake = FakeDiskScanner()
@@ -57,7 +49,7 @@ final class DiskUsageModelTests: XCTestCase {
         try Data(repeating: 1, count: 2_000_000).write(to: cache.appendingPathComponent("blob"))
         let m = DiskUsageModel(node: node, store: store, scanner: LocalDiskScanner(binary: bin), scope: dir.path)
         m.start()
-        try await waitFor({ m.phase != .running(nil) && !m.isRunning }, timeout: 30)
+        try await waitFor(timeout: 30) { m.phase != .running(nil) && !m.isRunning }
         XCTAssertEqual(m.phase, .done)
         XCTAssertGreaterThanOrEqual(m.result?.scannedBytes ?? 0, 2_000_000)
         XCTAssertEqual(store.latest(nodeID: node.id, scope: dir.path)?.result, m.result)

@@ -165,16 +165,6 @@ final class RemoteBackendIntegrationTests: XCTestCase {
         throw lastErr ?? NSError(domain: "readyz", code: 0)
     }
 
-    private func waitFor(timeout seconds: Double,
-                         _ check: @escaping @MainActor () -> Bool) async throws {
-        let deadline = Date().addingTimeInterval(seconds)
-        while Date() < deadline {
-            if check() { return }
-            try await Task.sleep(nanoseconds: 100_000_000)
-        }
-        XCTFail("condition not met within \(seconds)s")
-    }
-
     /// Finds the sampler binary for the current host triple under
     /// `dist/samplers/<triple>/towertail-sampler`. Tries multiple roots
     /// since xcodebuild's test-host CWD is unpredictable.

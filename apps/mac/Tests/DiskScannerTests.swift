@@ -187,12 +187,4 @@ final class DiskScannerTests: XCTestCase {
         XCTAssertEqual(r.os, "darwin")
         XCTAssertGreaterThanOrEqual(r.files, 1)
     }
-
-    private func waitFor(timeout: TimeInterval = 5, _ cond: @escaping () -> Bool) async throws {
-        let end = Date().addingTimeInterval(timeout)
-        while !cond() {
-            if Date() > end { return XCTFail("condition not met in \(timeout) s") }
-            try await Task.sleep(nanoseconds: 50_000_000)
-        }
-    }
 }

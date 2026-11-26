@@ -81,30 +81,19 @@ final class AlertRulesTests: XCTestCase {
         XCTAssertEqual(v.alertLevel, .critical)
     }
 
-    func testToleranceSurvivesOneDip() {
-        let v = vm(rules())
-        for s in stride(from: 0, through: 60, by: 10) { v.ingest(sample(at: s, cpu: s == 30 ? 20 : 95)) }
-        XCTAssertEqual(v.alertTint(for: .cpu), .critical)
-    }
-
-    func testFullToleranceResetsOnDip() {
-        let v = vm(rules(tolerance: 1.0))
-        for s in stride(from: 0, through: 60, by: 10) { v.ingest(sample(at: s, cpu: s == 30 ? 20 : 95)) }
-        XCTAssertEqual(v.alertTint(for: .cpu), .nominal)
-    }
-
-    func testSpikeAfterCalmDoesNotAlert() {
-        let v = vm(rules())
-        for s in stride(from: 0, through: 60, by: 10) { v.ingest(sample(at: s, cpu: 10)) }
-        v.ingest(sample(at: 70, cpu: 99))
-        v.ingest(sample(at: 80, cpu: 99))
-        XCTAssertEqual(v.alertTint(for: .cpu), .nominal)
-    }
-
-    func testCriticalFallsBackToWarnWhenOnlyWarnIsSustained() {
-        let v = vm(rules())
-        for s in stride(from: 0, through: 60, by: 10) { v.ingest(sample(at: s, cpu: s < 30 ? 80 : 95)) }
-        XCTAssertEqual(v.alertTint(for: .cpu), .warn)
+    func testCPUSustainWindow() {
+        let steps = Array(stride(from: 0, through: 60, by: 10))
+        let cases: [(name: String, tolerance: Double, samples: [(Int, Double)], expected: ThresholdTint)] = [
+            ("tolerance survives one dip", 0.8, steps.map { ($0, $0 == 30 ? 20 : 95) }, .critical),
+            ("full tolerance resets on dip", 1.0, steps.map { ($0, $0 == 30 ? 20 : 95) }, .nominal),
+            ("spike after calm does not alert", 0.8, steps.map { ($0, 10) } + [(70, 99), (80, 99)], .nominal),
+            ("critical falls back to warn", 0.8, steps.map { ($0, $0 < 30 ? 80 : 95) }, .warn),
+        ]
+        for c in cases {
+            let v = vm(rules(tolerance: c.tolerance))
+            for (s, cpu) in c.samples { v.ingest(sample(at: s, cpu: cpu)) }
+            XCTAssertEqual(v.alertTint(for: .cpu), c.expected, c.name)
+        }
     }
 
     func testUnevenPollIsTimeWeighted() {

@@ -34,10 +34,7 @@ final class RealCollectorTests: XCTestCase {
         let sink = ServerStore()
 
         let run = Task.detached { await collector.run(sink: sink) }
-        let deadline = Date().addingTimeInterval(10)
-        while invoker.calledIDs.isEmpty, Date() < deadline {
-            try await Task.sleep(nanoseconds: 50_000_000)
-        }
+        try await waitFor(timeout: 10) { !invoker.calledIDs.isEmpty }
         try await Task.sleep(nanoseconds: 300_000_000)
         run.cancel()
 

@@ -24,7 +24,8 @@ final class SettingsTransferTests: XCTestCase {
         )
     }
 
-    private func makeExport(nodes: [Node], cpuWarn: Double = 0.9) -> SettingsExport {
+    private func makeExport(nodes: [Node], cpuWarn: Double = 0.9,
+                            tweak: (inout PersistedSettings) -> Void = { _ in }) -> SettingsExport {
         var p = base(nodes: nodes)
         p.thresholds.cpuWarn = cpuWarn
         p.localPollingIntervalSeconds = 5
@@ -32,15 +33,21 @@ final class SettingsTransferTests: XCTestCase {
         p.notificationsEnabled = true
         p.defaultTerminalApp = "iTerm"
         p.menuBarIconStyle = "full"
+        tweak(&p)
         return SettingsExport.from(p, appVersion: "0.9.9")
     }
 
-    func testRoundTripEncodeDecode() throws {
-        let export = makeExport(nodes: [
-            Node(displayName: "db", kind: .ssh, sshUser: "ops", sshHost: "db.internal"),
-        ])
-        let data = try SettingsTransfer.encode(export)
-        let back = try SettingsTransfer.decode(data)
+    func testRoundTripCarriesAllFields() throws {
+        let node = Node(displayName: "db", kind: .ssh, sshUser: "ops", sshHost: "db.internal",
+                        customLongProc: .defaults, ignoredProcs: ["postgres"], mutedSignals: MutedSignals([.zombies]))
+        let export = makeExport(nodes: [node]) { p in
+            p.popoverLayout = "cards"
+            p.longProc.cpuPct = 120
+            p.longProc.ignore = ["clickhouse-server"]
+            p.thresholds.muted = MutedSignals([.cpu])
+        }
+        XCTAssertEqual(export.general.popoverLayout, "cards")
+        let back = try SettingsTransfer.decode(SettingsTransfer.encode(export))
         // iso8601 drops sub-second precision, so compare the rest piecewise.
         XCTAssertEqual(back.version, export.version)
         XCTAssertEqual(back.appVersion, export.appVersion)
@@ -49,6 +56,93 @@ final class SettingsTransferTests: XCTestCase {
         XCTAssertEqual(back.notifications, export.notifications)
         XCTAssertEqual(back.nodes, export.nodes)
         XCTAssertLessThan(abs(back.exportedAt.timeIntervalSince(export.exportedAt)), 1.0)
+        XCTAssertEqual(back.longProc, export.longProc)
+        XCTAssertEqual(back.longProc?.cpuPct, 120)
+        XCTAssertEqual(back.longProc?.ignore, ["clickhouse-server"])
+        XCTAssertEqual(back.nodes.first?.ignoredProcs, ["postgres"])
+        XCTAssertEqual(back.nodes.first?.customLongProc, .defaults)
+        XCTAssertEqual(back.globalThresholds.muted, MutedSignals([.cpu]))
+        XCTAssertEqual(back.nodes.first?.mutedSignals, MutedSignals([.zombies]))
+        let (merged, _) = SettingsTransfer.apply(back, to: base(), selection: .allDefaults)
+        XCTAssertEqual(merged.popoverLayout, "cards")
+        XCTAssertEqual(merged.longProc.cpuPct, 120)
+    }
+
+    func testImportWithoutFieldKeepsCurrent() throws {
+        let cases: [(name: String, current: (inout PersistedSettings) -> Void, remove: [String],
+                     check: (SettingsExport, PersistedSettings, String) -> Void)] = [
+            ("menuBarIconStyle", { $0.menuBarIconStyle = "full" }, ["general", "menuBarIconStyle"],
+             { _, merged, msg in XCTAssertEqual(merged.menuBarIconStyle, "full", msg) }),
+            ("popoverLayout", { $0.popoverLayout = "cards" }, ["general", "popoverLayout"],
+             { _, merged, msg in XCTAssertEqual(merged.popoverLayout, "cards", msg) }),
+            ("longProc", { $0.longProc.cpuPct = 200 }, ["longProc"],
+             { ex, merged, msg in
+                 XCTAssertNil(ex.longProc, msg)
+                 XCTAssertEqual(merged.longProc.cpuPct, 200, msg)
+             }),
+            ("muted", { $0.thresholds.muted = MutedSignals([.memPressure]) }, ["globalThresholds", "muted"],
+             { ex, merged, msg in
+                 XCTAssertNil(ex.globalThresholds.muted, msg)
+                 XCTAssertEqual(merged.thresholds.muted, MutedSignals([.memPressure]), msg)
+             }),
+        ]
+        for c in cases {
+            var current = base()
+            c.current(&current)
+            var json = try XCTUnwrap(JSONSerialization.jsonObject(with: SettingsTransfer.encode(makeExport(nodes: []))) as? [String: Any])
+            if c.remove.count == 1 {
+                json[c.remove[0]] = nil
+            } else {
+                var section = try XCTUnwrap(json[c.remove[0]] as? [String: Any])
+                section[c.remove[1]] = nil
+                json[c.remove[0]] = section
+            }
+            let ex = try SettingsTransfer.decode(JSONSerialization.data(withJSONObject: json))
+            var sel = ImportSelection.allDefaults
+            sel.globalThresholds = true
+            c.check(ex, SettingsTransfer.apply(ex, to: current, selection: sel).merged, c.name)
+        }
+    }
+
+    func testPersistedSettingsMissingKeyUsesDefault() throws {
+        let cases: [(name: String, change: (inout [String: Any]) -> Void, check: (PersistedSettings, String) -> Void)] = [
+            ("menuBarIconStyle", { $0["platform"] = ["darwin": ["launchAtLogin": false]] },
+             { XCTAssertEqual($0.menuBarIconStyle, "pulse", $1) }),
+            ("popoverLayout", { $0.removeValue(forKey: "popoverLayout") },
+             { XCTAssertEqual($0.popoverLayout, "rows", $1) }),
+            ("longProc", { $0["longProc"] = nil },
+             {
+                 XCTAssertEqual($0.longProc, .defaults, $1)
+                 XCTAssertNil($0.nodes.first?.customLongProc, $1)
+                 XCTAssertEqual($0.nodes.first?.ignoredProcs, [], $1)
+             }),
+        ]
+        for c in cases {
+            var json = try XCTUnwrap(JSONSerialization.jsonObject(
+                with: JSONEncoder().encode(base(nodes: [Node(displayName: "db", kind: .ssh)]))) as? [String: Any])
+            c.change(&json)
+            let data = try JSONSerialization.data(withJSONObject: json)
+            c.check(try JSONDecoder().decode(PersistedSettings.self, from: data), c.name)
+        }
+    }
+
+    func testImportServerThresholdsCopiesOverrideFields() {
+        let existing = Node(displayName: "db", kind: .ssh, sshUser: "ops", sshHost: "db")
+        var incoming = existing
+        incoming.thresholdOverrides = ThresholdOverrides(cpu: ThresholdPair(warn: 0.3, critical: 0.6))
+        incoming.customLongProc = .defaults
+        incoming.ignoredProcs = ["postgres"]
+        incoming.mutedSignals = MutedSignals([.cpu])
+        var sel = ImportSelection.allDefaults
+        sel.servers = false          // don't add/replace hosts
+        sel.serverThresholds = true  // but do sync custom overrides
+        let (merged, report) = SettingsTransfer.apply(makeExport(nodes: [incoming]), to: base(nodes: [existing]), selection: sel)
+        XCTAssertEqual(merged.nodes.count, 1)
+        XCTAssertEqual(merged.nodes.first?.thresholdOverrides?.cpu?.warn, 0.3)
+        XCTAssertEqual(merged.nodes.first?.customLongProc, .defaults)
+        XCTAssertEqual(merged.nodes.first?.ignoredProcs, ["postgres"])
+        XCTAssertEqual(merged.nodes.first?.mutedSignals, MutedSignals([.cpu]))
+        XCTAssertEqual(report.serverThresholdsUpdated, 1)
     }
 
     func testImportWithoutAlertsKeepsCurrentAlerts() throws {
@@ -159,15 +253,6 @@ final class SettingsTransferTests: XCTestCase {
     // who round-trips Mac → Windows → Mac (or vice-versa) never loses their
     // Windows-only settings.
 
-    func testImportWithoutMenuBarIconStyleKeepsCurrent() throws {
-        var b = base()
-        b.menuBarIconStyle = "full"
-        var ex = makeExport(nodes: [])
-        ex.general.menuBarIconStyle = nil
-        let (merged, _) = SettingsTransfer.apply(ex, to: b, selection: .allDefaults)
-        XCTAssertEqual(merged.menuBarIconStyle, "full")
-    }
-
     func testMenuBarIconStyleLivesInDarwinBlock() throws {
         var b = base()
         b.menuBarIconStyle = "full"
@@ -176,39 +261,6 @@ final class SettingsTransferTests: XCTestCase {
         let darwin = try XCTUnwrap((json["platform"] as? [String: Any])?["darwin"] as? [String: Any])
         XCTAssertEqual(darwin["menuBarIconStyle"] as? String, "full")
         XCTAssertEqual(try JSONDecoder().decode(PersistedSettings.self, from: data).menuBarIconStyle, "full")
-    }
-
-    func testMissingMenuBarIconStyleDefaultsToPulse() throws {
-        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(base())) as? [String: Any])
-        json["platform"] = ["darwin": ["launchAtLogin": false]]
-        let data = try JSONSerialization.data(withJSONObject: json)
-        XCTAssertEqual(try JSONDecoder().decode(PersistedSettings.self, from: data).menuBarIconStyle, "pulse")
-    }
-
-    func testPopoverLayoutRoundTrip() throws {
-        var b = base()
-        b.popoverLayout = "cards"
-        let ex = SettingsExport.from(b)
-        XCTAssertEqual(ex.general.popoverLayout, "cards")
-        let decoded = try JSONDecoder().decode(SettingsExport.self, from: JSONEncoder().encode(ex))
-        let (merged, _) = SettingsTransfer.apply(decoded, to: base(), selection: .allDefaults)
-        XCTAssertEqual(merged.popoverLayout, "cards")
-    }
-
-    func testImportWithoutPopoverLayoutKeepsCurrent() throws {
-        var b = base()
-        b.popoverLayout = "cards"
-        var ex = makeExport(nodes: [])
-        ex.general.popoverLayout = nil
-        let (merged, _) = SettingsTransfer.apply(ex, to: b, selection: .allDefaults)
-        XCTAssertEqual(merged.popoverLayout, "cards")
-    }
-
-    func testMissingPopoverLayoutDefaultsToRows() throws {
-        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(base())) as? [String: Any])
-        json.removeValue(forKey: "popoverLayout")
-        let data = try JSONSerialization.data(withJSONObject: json)
-        XCTAssertEqual(try JSONDecoder().decode(PersistedSettings.self, from: data).popoverLayout, "rows")
     }
 
     private func decodeLayout(version: Any?, layout: String) throws -> String {
@@ -318,90 +370,6 @@ final class SettingsTransferTests: XCTestCase {
         XCTAssertEqual(merged.platformBlocks.foreign["linux"], .object(["x": .bool(false)]))
     }
 
-    func testImportServerThresholdsOnlyAppliesOverrides() {
-        let existingID = UUID()
-        let existing = Node(id: existingID, displayName: "db", kind: .ssh, sshUser: "ops", sshHost: "db")
-        var withThresh = existing
-        withThresh.thresholdOverrides = ThresholdOverrides(cpu: ThresholdPair(warn: 0.3, critical: 0.6))
-        let b = base(nodes: [existing])
-        let ex = makeExport(nodes: [withThresh])
-        var sel = ImportSelection.allDefaults
-        sel.servers = false          // don't add/replace hosts
-        sel.serverThresholds = true  // but do sync custom overrides
-        let (merged, report) = SettingsTransfer.apply(ex, to: b, selection: sel)
-        XCTAssertEqual(merged.nodes.count, 1)
-        XCTAssertNotNil(merged.nodes.first?.thresholdOverrides)
-        XCTAssertEqual(merged.nodes.first?.thresholdOverrides?.cpu?.warn, 0.3)
-        XCTAssertEqual(report.serverThresholdsUpdated, 1)
-    }
-
-    func testLongProcRoundTripsAndImports() throws {
-        var p = base(nodes: [Node(displayName: "db", kind: .ssh, customLongProc: .defaults, ignoredProcs: ["postgres"])])
-        p.longProc.cpuPct = 120
-        p.longProc.ignore = ["clickhouse-server"]
-        let ex = SettingsExport.from(p)
-        let back = try SettingsTransfer.decode(SettingsTransfer.encode(ex))
-        XCTAssertEqual(back.longProc, p.longProc)
-        XCTAssertEqual(back.nodes.first?.ignoredProcs, ["postgres"])
-        XCTAssertEqual(back.nodes.first?.customLongProc, .defaults)
-        let (merged, _) = SettingsTransfer.apply(back, to: base(), selection: .allDefaults)
-        XCTAssertEqual(merged.longProc.cpuPct, 120)
-    }
-
-    func testOldExportKeepsCurrentLongProc() throws {
-        var b = base()
-        b.longProc.cpuPct = 200
-        var json = try JSONSerialization.jsonObject(with: SettingsTransfer.encode(makeExport(nodes: []))) as! [String: Any]
-        json["longProc"] = nil
-        let ex = try SettingsTransfer.decode(JSONSerialization.data(withJSONObject: json))
-        XCTAssertNil(ex.longProc)
-        XCTAssertEqual(SettingsTransfer.apply(ex, to: b, selection: .allDefaults).merged.longProc.cpuPct, 200)
-    }
-
-    func testPersistedSettingsWithoutLongProcDecodesDefaults() throws {
-        var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(base(nodes: [Node(displayName: "db", kind: .ssh)]))) as! [String: Any]
-        json["longProc"] = nil
-        let p = try JSONDecoder().decode(PersistedSettings.self, from: JSONSerialization.data(withJSONObject: json))
-        XCTAssertEqual(p.longProc, .defaults)
-        XCTAssertNil(p.nodes.first?.customLongProc)
-        XCTAssertEqual(p.nodes.first?.ignoredProcs, [])
-    }
-
-    func testImportServerThresholdsCopiesLongProcFields() {
-        let existing = Node(displayName: "db", kind: .ssh, sshUser: "ops", sshHost: "db")
-        var incoming = existing
-        incoming.customLongProc = .defaults
-        incoming.ignoredProcs = ["postgres"]
-        var sel = ImportSelection.allDefaults
-        sel.servers = false
-        let (merged, report) = SettingsTransfer.apply(makeExport(nodes: [incoming]), to: base(nodes: [existing]), selection: sel)
-        XCTAssertEqual(merged.nodes.first?.ignoredProcs, ["postgres"])
-        XCTAssertEqual(merged.nodes.first?.customLongProc, .defaults)
-        XCTAssertEqual(report.serverThresholdsUpdated, 1)
-    }
-
-    func testMutedSignalsRoundTrip() throws {
-        var p = base(nodes: [Node(displayName: "db", kind: .ssh, mutedSignals: MutedSignals([.zombies]))])
-        p.thresholds.muted = MutedSignals([.cpu])
-        let back = try SettingsTransfer.decode(SettingsTransfer.encode(SettingsExport.from(p)))
-        XCTAssertEqual(back.globalThresholds.muted, MutedSignals([.cpu]))
-        XCTAssertEqual(back.nodes.first?.mutedSignals, MutedSignals([.zombies]))
-    }
-
-    func testImportWithoutMutedKeepsCurrentGlobalMutes() throws {
-        var b = base()
-        b.thresholds.muted = MutedSignals([.memPressure])
-        var json = try JSONSerialization.jsonObject(with: SettingsTransfer.encode(makeExport(nodes: []))) as! [String: Any]
-        var t = json["globalThresholds"] as! [String: Any]
-        t["muted"] = nil
-        json["globalThresholds"] = t
-        let ex = try SettingsTransfer.decode(JSONSerialization.data(withJSONObject: json))
-        XCTAssertNil(ex.globalThresholds.muted)
-        var sel = ImportSelection.allDefaults
-        sel.globalThresholds = true
-        XCTAssertEqual(SettingsTransfer.apply(ex, to: b, selection: sel).merged.thresholds.muted, MutedSignals([.memPressure]))
-    }
-
     func testBadMutedValueKeepsSettings() throws {
         var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(base())) as! [String: Any]
         var t = json["thresholds"] as! [String: Any]
@@ -410,17 +378,5 @@ final class SettingsTransferTests: XCTestCase {
         let p = try JSONDecoder().decode(PersistedSettings.self, from: JSONSerialization.data(withJSONObject: json))
         XCTAssertNil(p.thresholds.muted)
         XCTAssertEqual(p.thresholds.cpuWarn, 0.5)
-    }
-
-    func testImportServerThresholdsCopiesMutedSignals() {
-        let existing = Node(displayName: "db", kind: .ssh, sshUser: "ops", sshHost: "db")
-        var incoming = existing
-        incoming.mutedSignals = MutedSignals([.cpu])
-        var sel = ImportSelection.allDefaults
-        sel.servers = false
-        sel.serverThresholds = true
-        let (merged, report) = SettingsTransfer.apply(makeExport(nodes: [incoming]), to: base(nodes: [existing]), selection: sel)
-        XCTAssertEqual(merged.nodes.first?.mutedSignals, MutedSignals([.cpu]))
-        XCTAssertEqual(report.serverThresholdsUpdated, 1)
     }
 }

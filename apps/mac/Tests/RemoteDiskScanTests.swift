@@ -174,14 +174,6 @@ final class RemoteDiskScanTests: XCTestCase {
         return (r, data)
     }
 
-    private func waitFor(timeout: TimeInterval = 5, _ cond: @escaping @MainActor () -> Bool) async throws {
-        let end = Date().addingTimeInterval(timeout)
-        while !cond() {
-            if Date() > end { return XCTFail("condition not met") }
-            try await Task.sleep(nanoseconds: 20_000_000)
-        }
-    }
-
     private func states(_ c: Collector) -> [DiskScanJob.State] {
         c.events.compactMap { if case .job(let j) = $0 { return j.state } else { return nil } }
     }

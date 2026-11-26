@@ -38,15 +38,6 @@ final class CloudRulesTests: XCTestCase {
         server.captured.filter { $0.method == method && $0.path == path }.count
     }
 
-    private func waitFor(_ check: @escaping @MainActor () -> Bool) async throws {
-        let deadline = Date().addingTimeInterval(5)
-        while Date() < deadline {
-            if check() { return }
-            try await Task.sleep(nanoseconds: 20_000_000)
-        }
-        XCTFail("condition not met within 5s")
-    }
-
     func testRefreshFillsEffective() async throws {
         let data = try fixtureData()
         server.on("GET", "/v1/rules") { _ in .json(200, data) }

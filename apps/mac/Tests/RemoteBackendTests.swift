@@ -521,16 +521,6 @@ final class RemoteBackendTests: XCTestCase {
         ]
     }
 
-    private func waitFor(timeout seconds: Double,
-                         _ check: @escaping @MainActor () -> Bool) async throws {
-        let deadline = Date().addingTimeInterval(seconds)
-        while Date() < deadline {
-            if check() { return }
-            try await Task.sleep(nanoseconds: 50_000_000)
-        }
-        XCTFail("condition not met within \(seconds)s")
-    }
-
     // MARK: - Long-running process fields
 
     func testRemoteLongProcFieldsMapBothWays() throws {

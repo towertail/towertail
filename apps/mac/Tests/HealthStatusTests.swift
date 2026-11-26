@@ -159,17 +159,31 @@ final class HealthStatusTests: XCTestCase {
 
     // MARK: thresholds
 
-    func testThresholdsWithoutHealthKeysLoadDefaults() throws {
-        let json = """
-        { "cpuWarn": 0.7, "cpuCritical": 0.9, "memWarn": 0.7, "memCritical": 0.9, "diskWarn": 0.8, "diskCritical": 0.9 }
-        """.data(using: .utf8)!
-        let m = try JSONDecoder().decode(MetricThresholds.self, from: json)
-        XCTAssertEqual(m.procsWarn, 5000)
-        XCTAssertEqual(m.procsCritical, 20000)
-        XCTAssertEqual(m.zombiesWarn, 200)
-        XCTAssertEqual(m.zombiesCritical, 2000)
-        let p = try JSONDecoder().decode(PersistedThresholds.self, from: json)
-        XCTAssertEqual(MetricThresholds(p), m)
+    func testMissingThresholdKeysLoadDefaults() throws {
+        let base = #""cpuWarn": 0.7, "cpuCritical": 0.9, "memWarn": 0.7, "memCritical": 0.9, "diskWarn": 0.8, "diskCritical": 0.9"#
+        let cases: [(name: String, json: String, check: (Data, String) throws -> Void)] = [
+            ("health keys", "{ \(base) }", { json, msg in
+                let m = try JSONDecoder().decode(MetricThresholds.self, from: json)
+                XCTAssertEqual(m.procsWarn, 5000, msg)
+                XCTAssertEqual(m.procsCritical, 20000, msg)
+                XCTAssertEqual(m.zombiesWarn, 200, msg)
+                XCTAssertEqual(m.zombiesCritical, 2000, msg)
+                let p = try JSONDecoder().decode(PersistedThresholds.self, from: json)
+                XCTAssertEqual(MetricThresholds(p), m, msg)
+            }),
+            ("health limits", "{ \(base), \"health\": { \"inodes\": { \"warn\": 0.5, \"critical\": 0.7 } } }", { json, msg in
+                let m = try JSONDecoder().decode(MetricThresholds.self, from: json)
+                XCTAssertEqual(m.health.inodes, ThresholdPair(warn: 0.5, critical: 0.7), msg)
+                XCTAssertEqual(m.health.pids, HealthLimits.defaults.pids, msg)
+            }),
+            ("mac key", #"{"pids":{"warn":0.5,"critical":0.6},"memPressure":{"warn":11,"critical":22}}"#, { json, msg in
+                let h = try JSONDecoder().decode(HealthLimits.self, from: json)
+                XCTAssertEqual(h.macMemPressure, ThresholdPair(warn: 80, critical: 90), msg)
+                XCTAssertEqual(h.pids, ThresholdPair(warn: 0.5, critical: 0.6), msg)
+                XCTAssertEqual(h.memPressure, ThresholdPair(warn: 11, critical: 22), msg)
+            }),
+        ]
+        for c in cases { try c.check(Data(c.json.utf8), c.name) }
     }
 
     func testThresholdsClampWarnBelowCritical() {
@@ -238,16 +252,6 @@ final class HealthStatusTests: XCTestCase {
         XCTAssertEqual(s.tint(of: .pids), .warn)
     }
 
-    func testThresholdsWithoutHealthLimitsLoadDefaults() throws {
-        let json = """
-        { "cpuWarn": 0.7, "cpuCritical": 0.9, "memWarn": 0.7, "memCritical": 0.9, "diskWarn": 0.8, "diskCritical": 0.9,
-          "health": { "inodes": { "warn": 0.5, "critical": 0.7 } } }
-        """.data(using: .utf8)!
-        let m = try JSONDecoder().decode(MetricThresholds.self, from: json)
-        XCTAssertEqual(m.health.inodes, ThresholdPair(warn: 0.5, critical: 0.7))
-        XCTAssertEqual(m.health.pids, HealthLimits.defaults.pids)
-    }
-
     // MARK: history
 
     func testHistoryRoundTripsProcsAndMigratesOldTable() async throws {
@@ -271,7 +275,6 @@ final class HealthStatusTests: XCTestCase {
             t: t, cpu: 0.1, mem: nil, disk: nil, net: nil, rxMBps: nil, txMBps: nil))
         store.append(nodeID: id, point: HistoryPoint(
             t: t.addingTimeInterval(1), cpu: 0.1, mem: nil, disk: nil, net: nil, rxMBps: nil, txMBps: nil, procs: 34983))
-        try await Task.sleep(nanoseconds: 200_000_000)
 
         let rows = store.loadRecent(nodeID: id)
         XCTAssertEqual(rows.count, 2)
@@ -309,12 +312,23 @@ final class HealthStatusTests: XCTestCase {
                      thresholds: thresholds ?? defaults, kernelCriticalOnly: criticalOnly)
     }
 
-    func testMacPressureNumberUsesMacThresholds() {
-        let warn = mac(85)
-        XCTAssertEqual(warn.tint(of: .memPressure), .warn)
-        XCTAssertEqual(warn.reasons.first?.text, "Memory pressure 85%")
-        XCTAssertEqual(mac(92).tint(of: .memPressure), .critical)
-        XCTAssertEqual(mac(58, level: 2).tint, .nominal, "the number wins over the kernel level")
+    func testMacPressureLevels() {
+        let cases: [(name: String, pct: Int?, level: Int?, criticalOnly: Bool, tint: ThresholdTint, text: String?)] = [
+            ("85% warns", 85, nil, false, .warn, "Memory pressure 85%"),
+            ("92% is critical", 92, nil, false, .critical, "Memory pressure 92%"),
+            ("number wins over kernel level", 58, 2, false, .nominal, nil),
+            ("kernel high warns", nil, 2, false, .warn, "Memory pressure high"),
+            ("kernel critical", nil, 4, false, .critical, "Memory pressure critical"),
+            ("kernel normal", nil, 1, false, .nominal, nil),
+            ("critical-only ignores high", nil, 2, true, .nominal, nil),
+            ("critical-only keeps critical", nil, 4, true, .critical, "Memory pressure critical"),
+        ]
+        for c in cases {
+            let h = mac(c.pct, level: c.level, criticalOnly: c.criticalOnly)
+            XCTAssertEqual(h.tint, c.tint, c.name)
+            XCTAssertEqual(h.tint(of: .memPressure), c.tint, c.name)
+            XCTAssertEqual(h.reasons.first?.text, c.text, c.name)
+        }
     }
 
     func testMacPressureOverrideAppliesToNumber() {
@@ -322,21 +336,6 @@ final class HealthStatusTests: XCTestCase {
         let t = MetricThresholds.effective(global: defaults, override: o)
         let h = mac(97, level: 4, thresholds: t)
         XCTAssertFalse(h.reasons.contains { $0.signal == .memPressure })
-    }
-
-    func testMacPressureFallsBackToKernelLevel() {
-        let warn = mac(nil, level: 2)
-        XCTAssertEqual(warn.tint, .warn)
-        XCTAssertEqual(warn.reasons.first?.text, "Memory pressure high")
-        XCTAssertEqual(mac(nil, level: 4).tint, .critical)
-        XCTAssertEqual(mac(nil, level: 1).tint, .nominal)
-    }
-
-    func testOldSamplerWithOverrideOnlyCritical() {
-        XCTAssertTrue(mac(nil, level: 2, criticalOnly: true).reasons.isEmpty)
-        let crit = mac(nil, level: 4, criticalOnly: true)
-        XCTAssertEqual(crit.tint, .critical)
-        XCTAssertEqual(crit.reasons.first?.text, "Memory pressure critical")
     }
 
     func testMacNumberKeepsIOPressure() {
@@ -351,15 +350,6 @@ final class HealthStatusTests: XCTestCase {
         let t = ThresholdOverrides(memPressure: p).applied(to: .defaults)
         XCTAssertEqual(t.health.memPressure, p)
         XCTAssertEqual(t.health.macMemPressure, p)
-    }
-
-    func testHealthLimitsWithoutMacKeyLoadDefault() throws {
-        let json = #"{"pids":{"warn":0.5,"critical":0.6},"memPressure":{"warn":11,"critical":22}}"#
-        let h = try JSONDecoder().decode(HealthLimits.self, from: Data(json.utf8))
-        XCTAssertEqual(h.macMemPressure, ThresholdPair(warn: 80, critical: 90))
-        XCTAssertEqual(h.pids, ThresholdPair(warn: 0.5, critical: 0.6))
-        XCTAssertEqual(h.memPressure, ThresholdPair(warn: 11, critical: 22))
-        XCTAssertEqual(h.ioPressure, HealthLimits.defaults.ioPressure)
     }
 
     func testPairForHostOS() {

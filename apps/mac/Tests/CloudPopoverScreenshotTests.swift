@@ -91,12 +91,9 @@ final class CloudPopoverScreenshotTests: XCTestCase {
         let account = CloudAccount(endpoint: server.baseURL, keychain: keychain, client: CloudAuthClient(endpoint: server.baseURL))
         let cloud = CloudSession(account: account, servers: store, nodes: nodes)
         await account.restore()
-        let deadline = Date().addingTimeInterval(5)
-        while !server.hasWebSocketClient, Date() < deadline { try await Task.sleep(nanoseconds: 50_000_000) }
+        try await waitFor { server.hasWebSocketClient }
         server.sendToAllWebSockets(text: "{\"type\":\"hello\"}")
-        while !(cloud.feed?.connected == true && cloud.feed?.alerted.contains(db.id) == true), Date() < deadline {
-            try await Task.sleep(nanoseconds: 50_000_000)
-        }
+        try await waitFor { cloud.feed?.connected == true && cloud.feed?.alerted.contains(db.id) == true }
         XCTAssertEqual(cloud.feed?.alerted, [db.id])
 
         for layout in [PopoverLayout.cards, .rows] {
