@@ -11,7 +11,7 @@ namespace Towertail.WinUI.SystemServices;
 /// can open the right full-view window. Posts the toasts of cloud alerts with the buttons
 /// "Ack" and "Snooze 1 h".
 /// </summary>
-public sealed class AppNotifier(Logger? log = null) : ICloudAlertPoster
+public sealed class AppNotifier(Logger? log = null) : INotificationSink, ICloudAlertPoster
 {
     private readonly AppNotificationManager _mgr = AppNotificationManager.Default;
     private bool _registered;
@@ -32,7 +32,7 @@ public sealed class AppNotifier(Logger? log = null) : ICloudAlertPoster
             .AddArgument("host", hostId.ToString())
             .AddArgument("metric", metric)
             .BuildNotification();
-        _mgr.Show(n);
+        Show(n);
     }
 
     /// <summary>

@@ -129,6 +129,7 @@ public sealed class AppEnvironment
         var toasts = new AppNotifier(logger);
         var cloud = new CloudSession(account, nodes, servers, cloudPrefs, collector.UiMarshaller, logger, toasts,
             rulesCachePath: TowertailApp.AppDataPath(CloudRulesFileName));
+        notifier.Forward(toasts);
         NotificationTapRouter.ActionHandler = cloud.PerformAsync;
         try
         {

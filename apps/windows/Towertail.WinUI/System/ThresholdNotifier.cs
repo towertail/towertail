@@ -2,6 +2,12 @@ using Towertail.WinUI.State;
 
 namespace Towertail.WinUI.SystemServices;
 
+/// <summary>Receives one toast.</summary>
+public interface INotificationSink
+{
+    void Notify(string title, string body, Guid hostId, string metric);
+}
+
 /// <summary>
 /// Per-(host, metric) finite state machine over the sustain-gated alert level, with per-rule
 /// notify gates, debounce, and snooze. Mirrors ThresholdNotifier.swift.
@@ -29,6 +35,10 @@ public sealed class ThresholdNotifier
         _settings = settings;
         _nodes = nodes;
     }
+
+    /// <summary>Sends each raised notification to the sink as a toast.</summary>
+    public void Forward(INotificationSink sink)
+        => Raised += (_, p) => sink.Notify(p.Title(_nodes.ById(p.NodeId)?.DisplayName ?? ""), p.Text, p.NodeId, p.Tab);
 
     /// <summary>
     /// Fires on escalation of the sustain-gated alert level. A downgrade only updates
@@ -148,5 +158,31 @@ public sealed class ThresholdNotifier
         return s;
     }
 
-    public sealed record NotifyPayload(Guid NodeId, Metric Metric, Severity Severity, double Value, string? Body = null);
+    public sealed record NotifyPayload(Guid NodeId, Metric Metric, Severity Severity, double Value, string? Body = null)
+    {
+        /// <summary>"web1: CPU Critical", "web1: no data", "web1: long-running process".</summary>
+        public string Title(string host) => Metric switch
+        {
+            Metric.NoData => $"{host}: no data",
+            Metric.LongProc => $"{host}: long-running process",
+            _ => $"{host}: {Metric.ToString().ToUpperInvariant()} {(Severity == Severity.Critical ? "Critical" : "Warning")}",
+        };
+
+        public string Text => !string.IsNullOrEmpty(Body) ? Body : Metric switch
+        {
+            Metric.Cpu => $"CPU at {Math.Round(Value * 100):0}%",
+            Metric.Mem => $"Memory at {Math.Round(Value * 100):0}%",
+            Metric.Disk => $"Disk at {Math.Round(Value * 100):0}%",
+            _ => "Threshold crossed",
+        };
+
+        /// <summary>The full-view tab that a tap opens. No-data and long processes open the CPU tab.</summary>
+        public string Tab => Metric switch
+        {
+            Metric.Mem => "mem",
+            Metric.Disk => "disk",
+            Metric.Health => "health",
+            _ => "cpu",
+        };
+    }
 }
