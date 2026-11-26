@@ -1411,16 +1411,20 @@ func TestProcessStartsIntegration(t *testing.T) {
 	if err := client.insert(ctx, []IngestBundle{{Sample: SampleRow{TS: start, OrgID: org, NodeID: node, SchemaV: 1, Errors: []string{}}, Procs: procs}}); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
-	mv := client.table("procs_top_1m_mv")
-	if err := client.conn.Exec(ctx, "SYSTEM REFRESH VIEW "+mv); err != nil {
-		t.Fatalf("refresh: %v", err)
-	}
-	if err := client.conn.Exec(ctx, "SYSTEM WAIT VIEW "+mv); err != nil {
-		t.Fatalf("wait: %v", err)
-	}
 
 	api := ProcStartKey{NodeID: node, Key: wire.NewProcessKey("api", "/bin/api")}
 	nostart := ProcStartKey{NodeID: node, Key: wire.NewProcessKey("nostart", "/bin/nostart")}
+	// The 1m view reads only the last 2 full minutes, so the test puts the buckets in the rollup.
+	for _, b := range []struct {
+		ts   time.Time
+		rank uint8
+		k    ProcStartKey
+	}{{start, 1, api}, {start, 2, nostart}, {start.Add(time.Minute), 1, api}} {
+		if err := client.conn.Exec(ctx, "INSERT INTO "+client.table("procs_top_1m")+" (ts_minute, org_id, node_id, rank, name, cmd_hash, refreshed_at) VALUES (?, ?, ?, ?, ?, ?, now())",
+			b.ts, org, node, b.rank, b.k.Key.Name, b.k.Key.CmdHash); err != nil {
+			t.Fatalf("rollup: %v", err)
+		}
+	}
 	missing := ProcStartKey{NodeID: node, Key: wire.NewProcessKey("ghost", "/bin/ghost")}
 	other := ProcStartKey{NodeID: uuid.New(), Key: api.Key}
 	keys := []ProcStartKey{api, nostart, missing, other}
