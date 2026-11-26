@@ -38,13 +38,7 @@ enum TerminalLauncher {
     static func openSSH(for node: Node, app: String) -> Result<Void, LaunchError> {
         guard node.kind == .ssh else { return .failure(.notSSH) }
         guard let host = node.sshHost, !host.isEmpty else { return .failure(.missingHost) }
-        let user = (node.sshUser?.isEmpty == false) ? node.sshUser! : nil
-
-        var comps = URLComponents()
-        comps.scheme = "ssh"
-        comps.user = user
-        comps.host = host
-        guard let sshURL = comps.url else {
+        guard let sshURL = node.sshURL else {
             return .failure(.scriptFailed("Couldn't build ssh:// URL"))
         }
 

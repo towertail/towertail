@@ -151,6 +151,20 @@ final class SamplerInvokerTests: XCTestCase {
         XCTAssertEqual(decoded.knownHostFingerprint, "SHA256:ZZZZ")
         XCTAssertFalse(decoded.sendProcFolders)
     }
+
+    func testSSHURLUsesPort() {
+        let withPort = Node(displayName: "n", kind: .ssh, sshUser: "alice", sshHost: "h", sshPort: 2222)
+        XCTAssertEqual(withPort.sshURL?.absoluteString, "ssh://alice@h:2222")
+
+        let noPort = Node(displayName: "n", kind: .ssh, sshUser: "alice", sshHost: "h", sshPort: nil)
+        XCTAssertEqual(noPort.sshURL?.absoluteString, "ssh://alice@h")
+
+        let noUser = Node(displayName: "n", kind: .ssh, sshUser: "", sshHost: "h", sshPort: 2222)
+        XCTAssertEqual(noUser.sshURL?.absoluteString, "ssh://h:2222")
+
+        XCTAssertNil(Node(displayName: "n", kind: .local).sshURL)
+        XCTAssertNil(Node(displayName: "n", kind: .ssh, sshHost: "").sshURL)
+    }
 }
 
 // MARK: - Timeout

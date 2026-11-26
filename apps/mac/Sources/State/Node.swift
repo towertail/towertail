@@ -288,4 +288,15 @@ struct Node: Codable, Identifiable, Equatable, Sendable {
             return "cloud"
         }
     }
+
+    /// `ssh://[user@]host[:port]`. The port is set only when `sshPort` has a value.
+    var sshURL: URL? {
+        guard kind == .ssh, let host = sshHost, !host.isEmpty else { return nil }
+        var comps = URLComponents()
+        comps.scheme = "ssh"
+        comps.user = sshUser?.isEmpty == false ? sshUser : nil
+        comps.host = host
+        comps.port = sshPort
+        return comps.url
+    }
 }
