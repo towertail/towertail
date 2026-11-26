@@ -53,8 +53,9 @@ func NewAnthropicModel(cfg config.AssistantConfig, key string, hc *http.Client) 
 }
 
 // Stream sends r and gives the parts of the answer. A text delta gives a
-// PartText. A finished block gives a PartToolCall (for a tool call) and a
-// PartNative. The last part is a PartStop with the usage.
+// PartText. A finished block gives a PartToolCall (for a tool call) or a
+// PartSearch (for a web search block), and a PartNative. The last part is
+// a PartStop with the usage.
 func (m *AnthropicModel) Stream(ctx context.Context, r Request) iter.Seq2[Part, error] {
 	return func(yield func(Part, error) bool) {
 		params, err := m.params(r)
@@ -95,6 +96,11 @@ func (m *AnthropicModel) Stream(ctx context.Context, r Request) iter.Seq2[Part, 
 						return
 					}
 				}
+				if s := anthropicSearch(blk); s != nil {
+					if !yield(Part{Kind: PartSearch, Search: s}, nil) {
+						return
+					}
+				}
 				if !yield(Part{Kind: PartNative, Native: json.RawMessage(blk.RawJSON())}, nil) {
 					return
 				}
@@ -105,10 +111,11 @@ func (m *AnthropicModel) Stream(ctx context.Context, r Request) iter.Seq2[Part, 
 			return
 		}
 		yield(Part{Kind: PartStop, Stop: anthropicStop(msg.StopReason), Usage: &Usage{
-			Input:      int(msg.Usage.InputTokens),
-			Output:     int(msg.Usage.OutputTokens),
-			CacheRead:  int(msg.Usage.CacheReadInputTokens),
-			CacheWrite: int(msg.Usage.CacheCreationInputTokens),
+			Input:       int(msg.Usage.InputTokens),
+			Output:      int(msg.Usage.OutputTokens),
+			CacheRead:   int(msg.Usage.CacheReadInputTokens),
+			CacheWrite:  int(msg.Usage.CacheCreationInputTokens),
+			WebSearches: int(msg.Usage.ServerToolUse.WebSearchRequests),
 		}}, nil)
 	}
 }
@@ -122,6 +129,46 @@ func anthropicCall(blk anthropic.ContentBlockUnion, partial *strings.Builder) *T
 		c.Err = "The tool input is not valid JSON. The output may have been cut off."
 	}
 	return c
+}
+
+// anthropicSearch reads a finished web search block: the server_tool_use
+// gives the query, the web_search_tool_result gives the result count or the
+// error code. Other blocks give nil.
+func anthropicSearch(blk anthropic.ContentBlockUnion) *SearchCall {
+	switch blk.Type {
+	case "server_tool_use":
+		if blk.Name != "web_search" {
+			return nil
+		}
+		var in struct {
+			Query string `json:"query"`
+		}
+		_ = json.Unmarshal(blk.Input, &in)
+		return &SearchCall{ID: blk.ID, Query: in.Query}
+	case "web_search_tool_result":
+		var res struct {
+			ToolUseID string          `json:"tool_use_id"`
+			Content   json.RawMessage `json:"content"`
+		}
+		if json.Unmarshal([]byte(blk.RawJSON()), &res) != nil {
+			return nil
+		}
+		s := &SearchCall{ID: res.ToolUseID}
+		var items []json.RawMessage
+		var fail struct {
+			ErrorCode string `json:"error_code"`
+		}
+		switch {
+		case json.Unmarshal(res.Content, &items) == nil:
+			s.Results = len(items)
+		case json.Unmarshal(res.Content, &fail) == nil && fail.ErrorCode != "":
+			s.Err = fail.ErrorCode
+		default:
+			s.Err = "unknown"
+		}
+		return s
+	}
+	return nil
 }
 
 func anthropicStop(s anthropic.StopReason) StopReason {

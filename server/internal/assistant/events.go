@@ -49,8 +49,9 @@ func newEvent(name string, v any) Event {
 // Decode reads the data of the event into v.
 func (e Event) Decode(v any) error { return json.Unmarshal(e.Data, v) }
 
-// StepEvent shows a read tool call. The first event has the status
-// "running". The second has "done" or "error", with ms and rows.
+// StepEvent shows a read tool call or a web search (tool "web_search").
+// The first event has the status "running". The second has "done" or
+// "error", with ms and rows.
 type StepEvent struct {
 	ID     string `json:"id"`
 	Tool   string `json:"tool,omitempty"`
@@ -94,6 +95,8 @@ type DoneStats struct {
 	Input     int   `json:"input"`
 	Output    int   `json:"output"`
 	CacheRead int   `json:"cacheRead"`
+	// WebSearches counts the web searches of the provider.
+	WebSearches int `json:"webSearches,omitempty"`
 }
 
 // DoneEvent ends a stream that worked.

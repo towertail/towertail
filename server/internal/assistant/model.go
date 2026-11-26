@@ -56,6 +56,8 @@ const (
 	PartToolResult PartKind = "tool_result"
 	PartNative     PartKind = "native"
 	PartStop       PartKind = "stop"
+	// PartSearch tells the turn about a web search. It is not stored.
+	PartSearch PartKind = "search"
 )
 
 // StopReason tells why the model stopped.
@@ -80,6 +82,16 @@ type Part struct {
 	Native json.RawMessage `json:"native,omitempty"`
 	Stop   StopReason      `json:"stop,omitempty"`
 	Usage  *Usage          `json:"usage,omitempty"`
+	Search *SearchCall     `json:"search,omitempty"`
+}
+
+// SearchCall is a web search of the provider. The start has Query. The
+// result has Results or Err. A summary has no Query.
+type SearchCall struct {
+	ID      string `json:"id"`
+	Query   string `json:"query,omitempty"`
+	Results int    `json:"results,omitempty"`
+	Err     string `json:"err,omitempty"`
 }
 
 // ToolCall is a tool call of the model. Err is set when the model gave
@@ -105,6 +117,8 @@ type Usage struct {
 	Output     int `json:"output"`
 	CacheRead  int `json:"cacheRead"`
 	CacheWrite int `json:"cacheWrite"`
+	// WebSearches counts the web searches of the provider.
+	WebSearches int `json:"webSearches,omitempty"`
 }
 
 // Add adds u2 to u.
@@ -113,6 +127,7 @@ func (u *Usage) Add(u2 Usage) {
 	u.Output += u2.Output
 	u.CacheRead += u2.CacheRead
 	u.CacheWrite += u2.CacheWrite
+	u.WebSearches += u2.WebSearches
 }
 
 // ProviderError is a failed provider request. Its text is for the log

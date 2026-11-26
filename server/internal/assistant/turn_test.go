@@ -585,6 +585,105 @@ func TestPauseTurnContinues(t *testing.T) {
 	}
 }
 
+func search(id, query string, results int, err string) Part {
+	return Part{Kind: PartSearch, Search: &SearchCall{ID: id, Query: query, Results: results, Err: err}}
+}
+
+func TestWebSearchSteps(t *testing.T) {
+	use := Part{Kind: PartNative, Native: json.RawMessage(`{"type":"server_tool_use","id":"s1","name":"web_search","input":{"query":"q"}}`)}
+	res := Part{Kind: PartNative, Native: json.RawMessage(`{"type":"web_search_tool_result","tool_use_id":"s1","content":[]}`)}
+	first, second := stop(StopToolUse, 10, 5), stop(StopEnd, 10, 5)
+	first.Usage.WebSearches, second.Usage.WebSearches = 1, 1
+	// One tool call is allowed. The searches do not use it.
+	cfg := config.AssistantConfig{Limits: config.AssistantLimits{Default: config.AssistantPlanLimits{MaxToolCalls: 1}}}
+	e := newEnv(t, cfg,
+		round{parts: []Part{
+			txt("Let me look. "), search("s1", "towertail release", 0, ""), use,
+			search("s1", "", 2, ""), res, call("t1", "alerts", `{}`), first,
+		}},
+		round{parts: []Part{search("s2", "second", 0, ""), search("s2", "", 0, "max_uses_exceeded"), txt("Found it."), second}},
+	)
+	e.tools.out["alerts"] = `[1]`
+	evs, err := e.ask(context.Background(), "news?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(names(evs), ","), "text,step,step,step,step,step,step,text,usage,done"; got != want {
+		t.Fatalf("events %s, want %s", got, want)
+	}
+	var steps []StepEvent
+	for _, ev := range evs {
+		if ev.Name == EventStep {
+			var s StepEvent
+			_ = ev.Decode(&s)
+			steps = append(steps, s)
+		}
+	}
+	if s := steps[0]; s.ID != "s1" || s.Tool != "web_search" || s.Title != "Search the web: towertail release" || s.Status != "running" {
+		t.Fatalf("start %+v", s)
+	}
+	if s := steps[1]; s.ID != "s1" || s.Status != "done" || s.Rows != 2 {
+		t.Fatalf("result %+v", s)
+	}
+	if s := steps[3]; s.ID != "t1" || s.Status != "done" {
+		t.Fatalf("tool step %+v", s)
+	}
+	if s := steps[5]; s.ID != "s2" || s.Status != "error" {
+		t.Fatalf("error result %+v", s)
+	}
+	if !slices.Equal(e.tools.called, []string{"alerts"}) {
+		t.Fatalf("called %v", e.tools.called)
+	}
+	var d DoneEvent
+	_ = find(t, evs, EventDone).Decode(&d)
+	if d.Stats.WebSearches != 2 || d.Stats.ToolCalls != 1 || d.Stats.Rows != 1 {
+		t.Fatalf("stats %+v", d.Stats)
+	}
+
+	var stored []string
+	for _, m := range e.messages(t) {
+		for _, p := range m.Native {
+			if p.Kind == PartSearch {
+				t.Fatal("search part stored")
+			}
+		}
+		for _, p := range m.Parts {
+			switch p.Name {
+			case EventStep:
+				var s StepEvent
+				_ = p.Decode(&s)
+				stored = append(stored, s.ID+":"+s.Status+":"+s.Title)
+			case EventText:
+				var te TextEvent
+				_ = p.Decode(&te)
+				stored = append(stored, te.Delta)
+			}
+		}
+	}
+	want := []string{"Let me look. ", "s1:done:Search the web: towertail release", "t1:done:List alerts", "s2:error:Search the web: second", "Found it."}
+	if !slices.Equal(stored, want) {
+		t.Fatalf("stored parts %q, want %q", stored, want)
+	}
+}
+
+func TestWebSearchSummaryStep(t *testing.T) {
+	e := newEnv(t, config.AssistantConfig{},
+		round{parts: []Part{txt("See A."), search("oai_search", "", 3, ""), stop(StopEnd, 1, 1)}},
+	)
+	evs, err := e.ask(context.Background(), "news?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(names(evs), ","), "text,step,usage,done"; got != want {
+		t.Fatalf("events %s, want %s", got, want)
+	}
+	var s StepEvent
+	_ = evs[1].Decode(&s)
+	if s.ID != "oai_search" || s.Tool != "web_search" || s.Title != "Searched the web" || s.Status != "done" || s.Rows != 3 {
+		t.Fatalf("step %+v", s)
+	}
+}
+
 func TestLimitsWebSearchOpenAI(t *testing.T) {
 	yes := true
 	for _, tc := range []struct {

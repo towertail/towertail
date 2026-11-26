@@ -11,11 +11,12 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/anthropics/anthropic-sdk-go"
+
 	"github.com/towertail/towertail/server/config"
 )
 
-// anthropicServer replays testdata/anthropic_stream.txt and keeps the
-// request bodies.
+// anthropicServer replays a fixture stream and keeps the request bodies.
 type anthropicServer struct {
 	*httptest.Server
 	mu      sync.Mutex
@@ -23,9 +24,9 @@ type anthropicServer struct {
 	headers []http.Header
 }
 
-func newAnthropicServer(t *testing.T) *anthropicServer {
+func newAnthropicServer(t *testing.T, fixture string) *anthropicServer {
 	t.Helper()
-	stream, err := os.ReadFile("testdata/anthropic_stream.txt")
+	stream, err := os.ReadFile(fixture)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +130,7 @@ func baseRequest() Request {
 }
 
 func TestAnthropicRequest(t *testing.T) {
-	srv := newAnthropicServer(t)
+	srv := newAnthropicServer(t, "testdata/anthropic_stream.txt")
 	cfg := config.AssistantConfig{BaseURL: srv.URL, Headers: map[string]string{"X-Test": "1"}}
 	m := NewAnthropicModel(cfg, "test-key", srv.Client())
 	collect(t, m, baseRequest())
@@ -166,7 +167,7 @@ func TestAnthropicRequest(t *testing.T) {
 }
 
 func TestAnthropicNoToolsAndWebSearch(t *testing.T) {
-	srv := newAnthropicServer(t)
+	srv := newAnthropicServer(t, "testdata/anthropic_stream.txt")
 	m := NewAnthropicModel(config.AssistantConfig{BaseURL: srv.URL}, "k", srv.Client())
 
 	r := baseRequest()
@@ -217,8 +218,74 @@ func TestWebSearchSupported(t *testing.T) {
 	}
 }
 
+func TestAnthropicSearchParts(t *testing.T) {
+	srv := newAnthropicServer(t, "testdata/anthropic_search_stream.txt")
+	m := NewAnthropicModel(config.AssistantConfig{BaseURL: srv.URL}, "k", srv.Client())
+	parts := collect(t, m, baseRequest())
+
+	var searches []SearchCall
+	var asst []Part
+	var kinds []string
+	for _, p := range parts {
+		kinds = append(kinds, string(p.Kind))
+		switch p.Kind {
+		case PartSearch:
+			searches = append(searches, *p.Search)
+		case PartNative, PartText:
+			asst = append(asst, p)
+		}
+	}
+	want := []SearchCall{{ID: "srvtoolu_01", Query: "towertail release"}, {ID: "srvtoolu_01", Results: 2}}
+	if !slices.Equal(searches, want) {
+		t.Fatalf("searches %+v, want %+v", searches, want)
+	}
+	// Each search part comes before the native block of it.
+	if got := strings.Join(kinds, ","); got != "text,native,search,native,search,native,text,native,stop" {
+		t.Fatalf("parts %s", got)
+	}
+	last := parts[len(parts)-1]
+	if last.Stop != StopEnd || last.Usage.WebSearches != 1 || last.Usage.Output != 30 {
+		t.Fatalf("last %+v %+v", last, *last.Usage)
+	}
+	natives := slices.DeleteFunc(slices.Clone(asst), func(p Part) bool { return p.Kind != PartNative })
+	if parse(string(natives[1].Native)).get("input", "query").str() != "towertail release" {
+		t.Fatalf("server_tool_use block %s", natives[1].Native)
+	}
+	if res := parse(string(natives[2].Native)); res.get("tool_use_id").str() != "srvtoolu_01" || len(res.get("content").arr()) != 2 {
+		t.Fatalf("web_search_tool_result block %s", natives[2].Native)
+	}
+
+	r := baseRequest()
+	r.Messages = append(r.Messages, Message{Role: "assistant", Parts: asst}, Message{Role: "user", Parts: []Part{txt("more")}})
+	collect(t, m, r)
+	blocks := parse(srv.last()).get("messages", 1, "content").arr()
+	if len(blocks) != len(natives) {
+		t.Fatalf("assistant blocks %d: %s", len(blocks), parse(srv.last()).get("messages", 1).raw())
+	}
+	for i, p := range natives {
+		if !jsonEqual(json.RawMessage(blocks[i].raw()), string(p.Native)) {
+			t.Fatalf("block %d not replayed unchanged: %s, want %s", i, blocks[i].raw(), p.Native)
+		}
+	}
+}
+
+func TestAnthropicSearchError(t *testing.T) {
+	blk := `{"type":"web_search_tool_result","tool_use_id":"srvtoolu_02","content":{"type":"web_search_tool_result_error","error_code":"max_uses_exceeded"}}`
+	var u anthropic.ContentBlockUnion
+	if err := u.UnmarshalJSON([]byte(blk)); err != nil {
+		t.Fatal(err)
+	}
+	if got := anthropicSearch(u); got == nil || *got != (SearchCall{ID: "srvtoolu_02", Err: "max_uses_exceeded"}) {
+		t.Fatalf("search %+v", got)
+	}
+	_ = u.UnmarshalJSON([]byte(`{"type":"server_tool_use","id":"srvtoolu_03","name":"web_fetch","input":{"url":"https://x"}}`))
+	if got := anthropicSearch(u); got != nil {
+		t.Fatalf("web_fetch gave a search %+v", got)
+	}
+}
+
 func TestAnthropicStreamParts(t *testing.T) {
-	srv := newAnthropicServer(t)
+	srv := newAnthropicServer(t, "testdata/anthropic_stream.txt")
 	m := NewAnthropicModel(config.AssistantConfig{BaseURL: srv.URL}, "k", srv.Client())
 	parts := collect(t, m, baseRequest())
 
@@ -275,7 +342,7 @@ func jsonEqual(raw json.RawMessage, want string) bool {
 }
 
 func TestAnthropicNativeReplay(t *testing.T) {
-	srv := newAnthropicServer(t)
+	srv := newAnthropicServer(t, "testdata/anthropic_stream.txt")
 	m := NewAnthropicModel(config.AssistantConfig{BaseURL: srv.URL}, "k", srv.Client())
 	parts := collect(t, m, baseRequest())
 	var asst []Part

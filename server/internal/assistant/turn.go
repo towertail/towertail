@@ -79,7 +79,7 @@ func (s *Service) Ask(ctx context.Context, a Actor, chatID uuid.UUID, q Question
 	t := &turn{
 		s: s, a: a, l: l, ai: ai, chatID: chatID, emit: emit, start: now,
 		system: systemPrompt(l.cfg), tb: s.newToolbox(a, ai),
-		calls: map[string]string{}, steps: map[string]int{},
+		calls: map[string]string{}, steps: map[string]int{}, searchAt: map[string]time.Time{},
 	}
 	return t.run(ctx, q, historyOf(stored), view)
 }
@@ -100,9 +100,10 @@ type turn struct {
 	out   []StoredMessage   // new messages, in order
 	calls map[string]string // read tool calls that worked: ID to tool
 
-	events  []Event        // events of the current assistant message
-	steps   map[string]int // index in events of the step of a call
-	pending strings.Builder
+	events   []Event              // events of the current assistant message
+	steps    map[string]int       // index in events of the step of a call
+	searchAt map[string]time.Time // start of each web search
+	pending  strings.Builder
 
 	emitErr error
 	usage   Usage
@@ -147,6 +148,10 @@ func (t *turn) run(ctx context.Context, q Question, hist []Message, view UsageVi
 	t.send(newEvent(EventUsage, UsageEvent{Day: view.Day, Month: view.Month}))
 	t.stats.MS = t.s.now().Sub(t.start).Milliseconds()
 	t.stats.Input, t.stats.Output, t.stats.CacheRead = t.usage.Input, t.usage.Output, t.usage.CacheRead
+	t.stats.WebSearches = t.usage.WebSearches
+	if t.stats.WebSearches > 0 {
+		t.s.log.Info("assistant: web searches", "org", t.a.OrgID, "chat", t.chatID, "searches", t.stats.WebSearches)
+	}
 	t.send(newEvent(EventDone, DoneEvent{ChatID: t.chatID, MessageID: id, Stop: stop, Stats: t.stats}))
 	return t.emitErr
 }
@@ -262,6 +267,8 @@ func (t *turn) stream(ctx context.Context, req Request) (reply, error) {
 			r.parts = append(r.parts, part)
 		case PartNative:
 			r.parts = append(r.parts, part)
+		case PartSearch:
+			t.searchStep(*part.Search)
 		case PartStop:
 			r.stop = part.Stop
 			if part.Usage != nil {
@@ -427,6 +434,40 @@ func (t *turn) exec(ctx context.Context, c ToolCall) ToolResult {
 func (t *turn) finishStep(s StepEvent) {
 	t.send(newEvent(EventStep, StepEvent{ID: s.ID, Status: s.Status, MS: s.MS, Rows: s.Rows}))
 	t.events[t.steps[s.ID]] = newEvent(EventStep, s)
+}
+
+// searchStep shows a web search as a step. The first part of an ID with a
+// query starts the step, and the next part of that ID ends it. A part with
+// no query and a new ID is a summary that gives a finished step. Searches
+// do not count as tool calls.
+func (t *turn) searchStep(s SearchCall) {
+	if i, ok := t.steps[s.ID]; ok {
+		var step StepEvent
+		_ = t.events[i].Decode(&step)
+		step.Status, step.Rows = "done", s.Results
+		if s.Err != "" {
+			step.Status = "error"
+		}
+		step.MS = time.Since(t.searchAt[s.ID]).Milliseconds()
+		t.finishStep(step)
+		return
+	}
+	if s.Query == "" {
+		status := "done"
+		if s.Err != "" {
+			status = "error"
+		}
+		t.record(newEvent(EventStep, StepEvent{ID: s.ID, Tool: "web_search", Title: "Searched the web", Status: status, Rows: s.Results}))
+		return
+	}
+	q := []rune(s.Query)
+	if len(q) > 80 {
+		q = append(q[:79], '…')
+	}
+	t.flushText()
+	t.searchAt[s.ID] = time.Now()
+	t.steps[s.ID] = len(t.events)
+	t.record(newEvent(EventStep, StepEvent{ID: s.ID, Tool: "web_search", Title: "Search the web: " + string(q), Status: "running"}))
 }
 
 // countRows counts the items of the top-level arrays of a tool result.
