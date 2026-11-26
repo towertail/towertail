@@ -7,12 +7,14 @@ import (
 	"iter"
 	"maps"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/param"
+	"github.com/openai/openai-go/v3/packages/ssestream"
 	"github.com/openai/openai-go/v3/shared"
 
 	"github.com/towertail/towertail/server/config"
@@ -21,7 +23,8 @@ import (
 const defaultOpenAIBase = "https://api.openai.com/v1"
 
 // OpenAIModel streams from the Chat Completions API of OpenAI or of a
-// compatible server. It sends no cache markers and ignores WebSearch.
+// compatible server. It sends no cache markers. For WebSearch it sends
+// web_search_options.
 type OpenAIModel struct {
 	client openai.Client
 	cfg    config.AssistantConfig
@@ -58,10 +61,11 @@ func (m *OpenAIModel) Stream(ctx context.Context, r Request) iter.Seq2[Part, err
 			yield(Part{}, err)
 			return
 		}
-		stream := m.client.Chat.Completions.NewStreaming(ctx, params)
+		stream := m.client.Chat.Completions.NewStreaming(ctx, params, m.requestOptions(r)...)
 		defer stream.Close()
 
 		calls := map[int64]*pendingCall{}
+		cited := map[string]bool{}
 		var usage Usage
 		var finish string
 		var refused bool
@@ -74,8 +78,25 @@ func (m *OpenAIModel) Stream(ctx context.Context, r Request) iter.Seq2[Part, err
 					Output:    int(u.CompletionTokens),
 					CacheRead: cached,
 				}
+				if f, ok := u.JSON.ExtraFields["web_search_requests"]; ok {
+					_ = json.Unmarshal([]byte(f.Raw()), &usage.WebSearches)
+				}
 			}
 			for _, c := range chunk.Choices {
+				if f, ok := c.Delta.JSON.ExtraFields["annotations"]; ok {
+					var anns []struct {
+						Type        string `json:"type"`
+						URLCitation struct {
+							URL string `json:"url"`
+						} `json:"url_citation"`
+					}
+					_ = json.Unmarshal([]byte(f.Raw()), &anns)
+					for _, a := range anns {
+						if a.Type == "url_citation" && a.URLCitation.URL != "" {
+							cited[a.URLCitation.URL] = true
+						}
+					}
+				}
 				if c.Delta.Content != "" {
 					if !yield(Part{Kind: PartText, Text: c.Delta.Content}, nil) {
 						return
@@ -112,12 +133,30 @@ func (m *OpenAIModel) Stream(ctx context.Context, r Request) iter.Seq2[Part, err
 				return
 			}
 		}
+		if usage.WebSearches > 0 || len(cited) > 0 {
+			if !yield(Part{Kind: PartSearch, Search: &SearchCall{ID: "oai_search", Results: len(cited)}}, nil) {
+				return
+			}
+		}
 		stop := openaiStop(finish)
 		if refused {
 			stop = StopRefusal
 		}
 		yield(Part{Kind: PartStop, Stop: stop, Usage: &usage}, nil)
 	}
+}
+
+// requestOptions adds web_search_options for WebSearch. The field max_uses
+// is not in the OpenAI API, so only other servers get it.
+func (m *OpenAIModel) requestOptions(r Request) []option.RequestOption {
+	if !r.WebSearch {
+		return nil
+	}
+	opts := map[string]any{"search_context_size": "low"}
+	if u, err := url.Parse(m.cfg.BaseURL); m.cfg.BaseURL != "" && (err != nil || u.Hostname() != "api.openai.com") {
+		opts["max_uses"] = webSearchUses
+	}
+	return []option.RequestOption{option.WithJSONSet("web_search_options", opts)}
 }
 
 func pc2call(pc *pendingCall) *ToolCall {
@@ -149,6 +188,10 @@ func openaiError(err error) error {
 	var ae *openai.Error
 	if errors.As(err, &ae) {
 		return &ProviderError{Status: ae.StatusCode, Err: err}
+	}
+	var se *ssestream.StreamError
+	if errors.As(err, &se) {
+		return &ProviderError{Err: err}
 	}
 	return err
 }

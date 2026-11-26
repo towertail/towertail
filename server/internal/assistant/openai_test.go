@@ -46,7 +46,6 @@ func TestOpenAIStream(t *testing.T) {
 	m := NewOpenAIModel(cfg, "test-key", srv.Client())
 	r := baseRequest()
 	r.Model = "gpt-test"
-	r.WebSearch = true
 	parts := collect(t, m, r)
 
 	if path != "/v1/chat/completions" || auth != "Bearer test-key" || custom != "1" {
@@ -153,5 +152,104 @@ func TestNewModelPicksProvider(t *testing.T) {
 	}
 	if _, err := NewModel(config.AssistantConfig{Model: "m"}, func(string) string { return "" }, nil); err == nil {
 		t.Fatal("no key accepted")
+	}
+}
+
+// openaiServer answers with stream and keeps the last request body.
+func openaiServer(t *testing.T, stream string, body *string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		*body = string(b)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(stream))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+const openaiShortStream = "data: {\"id\":\"c\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+
+func TestOpenAIWebSearchOptions(t *testing.T) {
+	var body string
+	srv := openaiServer(t, openaiShortStream, &body)
+	m := NewOpenAIModel(config.AssistantConfig{BaseURL: srv.URL}, "k", srv.Client())
+	r := baseRequest()
+	r.WebSearch = true
+	collect(t, m, r)
+	ws := parse(body).get("web_search_options")
+	if ws.get("search_context_size").str() != "low" || ws.get("max_uses").num() != webSearchUses {
+		t.Fatalf("web_search_options %s", ws.raw())
+	}
+	if !parse(body).get("stream").on() || parse(body).get("tools", 0, "function", "name").str() != "alerts" {
+		t.Fatalf("body %s", body)
+	}
+
+	// OpenAI itself does not get the field max_uses.
+	hc := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		b, _ := io.ReadAll(req.Body)
+		body = string(b)
+		if req.URL.Host != "api.openai.com" {
+			t.Errorf("host %s", req.URL.Host)
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(openaiShortStream)), Request: req}, nil
+	})}
+	collect(t, NewOpenAIModel(config.AssistantConfig{}, "k", hc), r)
+	ws = parse(body).get("web_search_options")
+	if ws.get("search_context_size").str() != "low" || ws.get("max_uses").exists() {
+		t.Fatalf("web_search_options to OpenAI %s", ws.raw())
+	}
+}
+
+func TestOpenAISearchUsageAndAnnotations(t *testing.T) {
+	stream := `data: {"id":"c","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"See A and B."}}]}
+
+data: {"id":"c","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"annotations":[{"type":"url_citation","url_citation":{"url":"https://a.example","title":"A","start_index":4,"end_index":5}},{"type":"url_citation","url_citation":{"url":"https://b.example","title":"B","start_index":10,"end_index":11}},{"type":"url_citation","url_citation":{"url":"https://a.example","title":"A","start_index":0,"end_index":3}}]},"finish_reason":"stop"}]}
+
+data: {"id":"c","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"web_search_requests":2}}
+
+data: [DONE]
+
+`
+	var body string
+	srv := openaiServer(t, stream, &body)
+	m := NewOpenAIModel(config.AssistantConfig{BaseURL: srv.URL}, "k", srv.Client())
+	r := baseRequest()
+	r.WebSearch = true
+	parts := collect(t, m, r)
+	if len(parts) < 2 {
+		t.Fatalf("parts %+v", parts)
+	}
+	s, last := parts[len(parts)-2], parts[len(parts)-1]
+	if s.Kind != PartSearch || *s.Search != (SearchCall{ID: "oai_search", Results: 2}) {
+		t.Fatalf("search part %+v", s)
+	}
+	if last.Kind != PartStop || last.Usage.WebSearches != 2 || last.Usage.Input != 10 {
+		t.Fatalf("last %+v", last)
+	}
+}
+
+func TestOpenAIStreamError(t *testing.T) {
+	stream := `data: {"id":"c","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Par"}}]}
+
+data: {"error":{"message":"The model failed.","type":"server_error","code":"run_failed"}}
+
+`
+	var body string
+	srv := openaiServer(t, stream, &body)
+	m := NewOpenAIModel(config.AssistantConfig{BaseURL: srv.URL}, "k", srv.Client())
+	var got error
+	var stops int
+	for p, err := range m.Stream(t.Context(), baseRequest()) {
+		if err != nil {
+			got = err
+		}
+		if p.Kind == PartStop {
+			stops++
+		}
+	}
+	var pe *ProviderError
+	if !asProviderError(got, &pe) || !strings.Contains(got.Error(), "The model failed.") || stops != 0 {
+		t.Fatalf("err %v, stops %d", got, stops)
 	}
 }
