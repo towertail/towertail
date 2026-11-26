@@ -238,9 +238,9 @@ func (s *Server) requireHost(ctx context.Context, org uuid.UUID, ref string) (st
 	return s.q.ResolveHost(ctx, org, ref)
 }
 
-// snoozeUntil gives the end of a snooze from until or for. An undo takes
-// neither and gives nil.
-func (s *Server) snoozeUntil(until, forText string, undo bool) (*time.Time, error) {
+// SnoozeUntil gives the end of a snooze from until or for. An undo takes
+// neither and gives nil. A bad value gives an input error.
+func (s *Server) SnoozeUntil(until, forText string, undo bool) (*time.Time, error) {
 	switch {
 	case undo && (until != "" || forText != ""):
 		return nil, badf("undo takes neither until nor for")
@@ -306,7 +306,7 @@ func (s *Server) snoozeAlert(ctx context.Context, _ *sdk.CallToolRequest, in Sno
 	if err != nil {
 		return nil, AlertChangeOut{}, err
 	}
-	until, err := s.snoozeUntil(in.Until, in.For, in.Undo)
+	until, err := s.SnoozeUntil(in.Until, in.For, in.Undo)
 	if err != nil {
 		return nil, AlertChangeOut{}, w.done(Change{}, err)
 	}
@@ -367,7 +367,7 @@ func (s *Server) snoozeHost(ctx context.Context, _ *sdk.CallToolRequest, in Snoo
 }
 
 func (w *writeCall) snoozeHost(ctx context.Context, in SnoozeHostIn) (SnoozeHostOut, error) {
-	until, err := w.s.snoozeUntil(in.Until, in.For, in.Undo)
+	until, err := w.s.SnoozeUntil(in.Until, in.For, in.Undo)
 	if err != nil {
 		return SnoozeHostOut{}, err
 	}
@@ -389,6 +389,12 @@ func (w *writeCall) snoozeHost(ctx context.Context, in SnoozeHostIn) (SnoozeHost
 	}
 	out.Change.Fields = append(out.Change.Fields, f)
 	return out, nil
+}
+
+// IsInputError tells if err is a mistake in the arguments of a tool call.
+func IsInputError(err error) bool {
+	var in *inputError
+	return errors.As(err, &in)
 }
 
 // metricNames lists the metrics that can be muted.

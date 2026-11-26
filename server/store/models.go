@@ -166,6 +166,8 @@ type ServerSettings struct {
 	RulesOrigin *RulesOrigin `json:"rulesOrigin,omitempty"`
 	// MCP holds the org rules for AI clients that use the MCP server.
 	MCP MCPSettings `json:"mcp"`
+	// AssistantOff turns off the embedded assistant for the org.
+	AssistantOff bool `json:"assistantOff,omitempty"`
 }
 
 // MutedSet gives the metrics that are muted on the node: the union of the

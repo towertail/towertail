@@ -3,7 +3,10 @@ package api
 import (
 	"errors"
 	"log/slog"
+	"math"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -13,6 +16,17 @@ import (
 	"github.com/towertail/towertail/server/store"
 	"github.com/towertail/towertail/server/wire"
 )
+
+// codedError gives an HTTP error with its own code and an optional reset
+// time.
+type codedError struct {
+	Status  int
+	Code    string
+	Message string
+	ResetAt *time.Time
+}
+
+func (e *codedError) Error() string { return e.Message }
 
 // httpErrorHandler is installed as Echo's global error handler. It
 // writes the uniform {"error": {...}} envelope.
@@ -25,8 +39,16 @@ func httpErrorHandler(log *slog.Logger) echo.HTTPErrorHandler {
 		code := "internal"
 		msg := err.Error()
 
+		var resetAt *time.Time
+		var ce *codedError
 		var he *echo.HTTPError
-		if errors.As(err, &he) {
+		if errors.As(err, &ce) {
+			status, code, msg, resetAt = ce.Status, ce.Code, ce.Message, ce.ResetAt
+			if resetAt != nil && status == http.StatusTooManyRequests {
+				wait := max(int(math.Ceil(time.Until(*resetAt).Seconds())), 1)
+				c.Response().Header().Set(echo.HeaderRetryAfter, strconv.Itoa(wait))
+			}
+		} else if errors.As(err, &he) {
 			status = he.Code
 			if s, ok := he.Message.(string); ok {
 				msg = s
@@ -65,7 +87,7 @@ func httpErrorHandler(log *slog.Logger) echo.HTTPErrorHandler {
 			log.Error("api: error", "status", status, "err", err, "request_id", reqID)
 		}
 		_ = c.JSON(status, wire.APIErrorEnvelope{
-			Error: wire.APIError{Code: code, Message: msg, RequestID: reqID},
+			Error: wire.APIError{Code: code, Message: msg, RequestID: reqID, ResetAt: resetAt},
 		})
 	}
 }

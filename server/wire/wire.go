@@ -116,6 +116,8 @@ type APIError struct {
 	Code      string `json:"code"`
 	Message   string `json:"message"`
 	RequestID string `json:"request_id,omitempty"`
+	// ResetAt tells when a limit resets (daily_limit, plan_limit).
+	ResetAt *time.Time `json:"resetAt,omitempty"`
 }
 
 type APIErrorEnvelope struct {

@@ -184,3 +184,26 @@ func TestPutSettingsBackupOnlyOnRuleChange(t *testing.T) {
 		t.Errorf("%d backups, want 2", n)
 	}
 }
+
+func TestSettingsAssistantOff(t *testing.T) {
+	e := newAlertEnv(t)
+	if e.settings().AssistantOff {
+		t.Fatal("the assistant must be on by default")
+	}
+	if code, b := e.do(store.RoleAdmin, "PUT", "/v1/settings", `{"assistantOff":true}`); code != http.StatusOK {
+		t.Fatalf("put: %d %s", code, b)
+	}
+	code, b := e.do(store.RoleViewer, "GET", "/v1/settings", "")
+	if code != http.StatusOK || !strings.Contains(string(b), `"assistantOff":true`) {
+		t.Fatalf("get: %d %s", code, b)
+	}
+	if !e.settings().AssistantOff || e.settings().MCP.AIChanges != store.AIChangesAlerts {
+		t.Fatalf("stored = %+v", e.settings())
+	}
+	if code, b := e.do(store.RoleAdmin, "PUT", "/v1/settings", `{"assistantOff":false}`); code != http.StatusOK || e.settings().AssistantOff {
+		t.Fatalf("put false: %d %s", code, b)
+	}
+	if _, b := e.do(store.RoleViewer, "GET", "/v1/settings", ""); strings.Contains(string(b), "assistantOff") {
+		t.Fatalf("an off switch that is false must stay out of the JSON: %s", b)
+	}
+}
