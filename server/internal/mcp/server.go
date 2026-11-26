@@ -129,6 +129,9 @@ type Options struct {
 	// Actions runs the write tools. With nil, the tools are listed, and a
 	// call gives an error.
 	Actions Actions
+	// Calls takes the record of each tool call. With nil, calls are not
+	// recorded, and write calls go to the log as audit lines.
+	Calls CallLog
 }
 
 // setServer is the MCP server of one tool set.
@@ -144,6 +147,7 @@ type Server struct {
 	orgInfo  OrgInfo
 	settings SettingsReader
 	actions  Actions
+	calls    CallLog
 	appURL   string
 	version  string
 	ref      Reference
@@ -162,6 +166,7 @@ func New(q Queries, o Options) *Server {
 		orgInfo:  o.OrgInfo,
 		settings: o.Settings,
 		actions:  o.Actions,
+		calls:    o.Calls,
 		appURL:   o.AppURL,
 		version:  o.Version,
 		ref:      NewReference(),
@@ -175,6 +180,7 @@ func New(q Queries, o Options) *Server {
 			&sdk.Implementation{Name: "towertail", Version: o.Version},
 			&sdk.ServerOptions{Instructions: instructions},
 		)}
+		s.sets[set].srv.AddReceivingMiddleware(s.recordCalls)
 	}
 	// A handler returns a nil result, or leaves Content nil. Then the SDK
 	// adds the JSON text block of the output. Google reads only that block.

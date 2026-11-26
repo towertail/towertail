@@ -152,8 +152,11 @@ func (w *writeCall) done(ch Change, err error) error {
 }
 
 // auditLog writes one log line for each write call, also a refused one. It
-// keeps no metric values.
+// keeps no metric values. With a call log, the log has the record instead.
 func (s *Server) auditLog(c caller, tool string, ch *Change, err error) {
+	if s.calls != nil {
+		return
+	}
 	args := []any{
 		"tool", tool, "client", c.Token.Label, "org_id", c.Token.OrgID, "actor_token", c.Token.ID,
 		"actor_kind", c.Token.Kind, "role", c.Role,

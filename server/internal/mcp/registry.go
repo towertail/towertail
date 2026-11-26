@@ -97,7 +97,15 @@ func (s *Server) ToolSpecs() []ToolSpec {
 // Call runs a read-only tool. ctx must carry a token (authctx.WithToken) and a
 // role (authctx.WithRole). Call validates args and applies the schema
 // defaults, then runs the handler. A handler error comes back unchanged.
+// Call records the call, with the way from WithVia.
 func (s *Server) Call(ctx context.Context, name string, args json.RawMessage) (json.RawMessage, error) {
+	start := s.now()
+	out, err := s.call(ctx, name, args)
+	s.record(ctx, name, args, start, out, err)
+	return out, err
+}
+
+func (s *Server) call(ctx context.Context, name string, args json.RawMessage) (json.RawMessage, error) {
 	e := s.tools[name]
 	if e == nil {
 		return nil, fmt.Errorf("%w: %s", ErrUnknownTool, name)
