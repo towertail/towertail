@@ -479,6 +479,62 @@ func TestNotifiedCounts(t *testing.T) {
 	}
 }
 
+func TestRuleSends(t *testing.T) {
+	client, cleanup := startClickHouse(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	org, node, otherNode := uuid.New(), uuid.New(), uuid.New()
+	cpu, proc, mem, other := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	env := &incidentEnv{t: t, client: client, org: org, now: now}
+	env.event(node, "cpu", "warn", 2*time.Hour, cpu, "{}")
+	env.event(node, "long_proc/x", "warn", 3*time.Hour, proc, "{}")
+	env.event(node, "mem", "warn", 3*time.Hour, mem, "{}")
+	env.event(otherNode, "cpu", "warn", 2*time.Hour, other, "{}")
+	line := func(n, alert uuid.UUID, text string, ago time.Duration) AlertLine {
+		return AlertLine{TS: now.Add(-ago), OrgID: org, NodeID: n, AlertID: alert, Kind: "notified", Text: text}
+	}
+	err := client.WriteAlertLines(ctx, []AlertLine{
+		line(node, cpu, "Email ops, Slack", time.Hour),
+		line(node, cpu, "Email ops (failed)", 30*time.Minute),
+		line(node, cpu, "Email ops", 40*24*time.Hour),
+		line(node, proc, "Email ops", 2*time.Hour),
+		line(node, mem, "Email ops", 2*time.Hour),
+		line(otherNode, other, "Email ops", time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := func(metric string, channels ...string) int {
+		t.Helper()
+		n, err := client.RuleSends(ctx, RuleSendsQuery{
+			OrgID: org, NodeID: node, Metric: metric, Channels: channels, Since: now.Add(-30 * 24 * time.Hour),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	for _, tc := range []struct {
+		metric   string
+		channels []string
+		want     int
+	}{
+		{"cpu", []string{"Email ops"}, 1},
+		{"long_proc", []string{"Email ops"}, 1},
+		{"mem", []string{"Email ops"}, 1},
+		{"cp", []string{"Email ops"}, 0},
+		{"disk", []string{"Email ops"}, 0},
+		{"cpu", []string{"Email dev"}, 0},
+		{"cpu", nil, 0},
+	} {
+		if got := count(tc.metric, tc.channels...); got != tc.want {
+			t.Errorf("RuleSends(%s, %v) = %d, want %d", tc.metric, tc.channels, got, tc.want)
+		}
+	}
+}
+
 func TestHostFacts(t *testing.T) {
 	client, cleanup := startClickHouse(t)
 	defer cleanup()

@@ -56,6 +56,9 @@ type Alert struct {
 	Test bool
 	// Repeat is true for the one reminder after a snooze ends.
 	Repeat bool
+	// RuleEmails is the count of emails that the rule of this alert sent for
+	// this host in the last 30 days, before this alert. 0 hides the line.
+	RuleEmails int
 }
 
 // Mailer sends the mail of the email alert channel. The server uses SMTP
@@ -71,6 +74,12 @@ var ErrPermanent = errors.New("notify: permanent error")
 type Notifier interface {
 	Name() string
 	Notify(ctx context.Context, a Alert) error
+}
+
+// Links builds web links for an alert. An empty string means no link.
+type Links interface {
+	AskURL(a Alert) string   // "Ask why"
+	FewerURL(a Alert) string // "Get fewer of these"
 }
 
 var metricLabels = map[string]string{

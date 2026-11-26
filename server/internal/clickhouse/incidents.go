@@ -254,3 +254,32 @@ func (c *Client) NotifiedCounts(ctx context.Context, q NotifiedQuery) ([]Notifie
 	slices.SortFunc(out, func(a, b NotifiedRow) int { return strings.Compare(a.AlertID.String(), b.AlertID.String()) })
 	return out, nil
 }
+
+// RuleSendsQuery selects the sends of one rule on one host. Metric is the
+// base metric, for example "cpu" or "long_proc". Channels are the names of
+// the email channels of the org.
+type RuleSendsQuery struct {
+	OrgID, NodeID uuid.UUID
+	Metric        string
+	Channels      []string
+	Since         time.Time
+}
+
+// RuleSends counts the sends to the given channels for the alerts of one
+// host and metric since q.Since. Failed sends do not count.
+func (c *Client) RuleSends(ctx context.Context, q RuleSendsQuery) (int, error) {
+	if len(q.Channels) == 0 {
+		return 0, nil
+	}
+	var n int64
+	row := c.conn.QueryRow(ctx,
+		"SELECT toInt64(sum(length(arrayFilter(x -> has(?, x), splitByString(', ', text))))) FROM "+c.table("alert_log")+
+			" WHERE org_id = ? AND node_id = ? AND kind = 'notified' AND ts >= ?"+
+			" AND alert_id IN (SELECT alert_id FROM "+c.table("events")+
+			" WHERE org_id = ? AND node_id = ? AND ts >= ? AND (metric = ? OR startsWith(metric, concat(?, '/'))))",
+		q.Channels, q.OrgID, q.NodeID, q.Since, q.OrgID, q.NodeID, q.Since, q.Metric, q.Metric)
+	if err := row.Scan(&n); err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}

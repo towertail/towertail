@@ -448,12 +448,14 @@ func TestTestSend(t *testing.T) {
 }
 
 type fakeMailer struct {
-	to  []string
-	err error
+	to    []string
+	alert notify.Alert
+	err   error
 }
 
-func (m *fakeMailer) SendAlert(_ context.Context, to []string, _ notify.Alert) error {
+func (m *fakeMailer) SendAlert(_ context.Context, to []string, a notify.Alert) error {
 	m.to = to
+	m.alert = a
 	return m.err
 }
 
@@ -565,5 +567,214 @@ func TestRouterJournalLine(t *testing.T) {
 	empty.UseJournal(j)
 	if err := empty.Notify(context.Background(), a); err != nil || len(j.lines) != 1 {
 		t.Fatalf("no channel: %v, lines = %+v", err, j.lines)
+	}
+}
+
+type fakeLinks struct{ ask, fewer string }
+
+func (f fakeLinks) AskURL(notify.Alert) string   { return f.ask }
+func (f fakeLinks) FewerURL(notify.Alert) string { return f.fewer }
+
+func TestChatLinks(t *testing.T) {
+	links := fakeLinks{ask: "https://app.example.com/?ask=a&b=<1>", fewer: "https://app.example.com/f?x=(1) 2"}
+	for _, tc := range []struct {
+		name        string
+		links       notify.Links
+		emails      int
+		test        bool
+		wantSlack   string
+		wantDiscord string
+	}{
+		{"none", nil, 0, false, "CPU 93% (was warn)", "CPU 93% (was warn)"},
+		{
+			"links", links, 0, false,
+			"CPU 93% (was warn)\n<https://app.example.com/?ask=a&amp;b=&lt;1&gt;|✦ Ask why> · <https://app.example.com/f?x=(1) 2|Get fewer of these →>",
+			"CPU 93% (was warn)\n[✦ Ask why](https://app.example.com/?ask=a&b=<1>) · [Get fewer of these →](https://app.example.com/f?x=%281%29%202)",
+		},
+		{"count only", nil, 96, false, "CPU 93% (was warn)\n96 emails in 30 d", "CPU 93% (was warn)\n96 emails in 30 d"},
+		{"one email", nil, 1, false, "CPU 93% (was warn)\n1 email in 30 d", "CPU 93% (was warn)\n1 email in 30 d"},
+		{
+			"links and count", fakeLinks{ask: "https://x.test/a"}, 5, false,
+			"CPU 93% (was warn)\n<https://x.test/a|✦ Ask why> · 5 emails in 30 d",
+			"CPU 93% (was warn)\n[✦ Ask why](https://x.test/a) · 5 emails in 30 d",
+		},
+		{"test alert", links, 5, true, "CPU 93% (was warn)", "CPU 93% (was warn)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sh, dh := newHook(t), newHook(t)
+			var opts []RouterOption
+			if tc.links != nil {
+				opts = append(opts, WithLinks(tc.links))
+			}
+			list := []store.Channel{channel(store.ChannelSlack, sh.srv.URL), channel(store.ChannelDiscord, dh.srv.URL)}
+			r := NewRouter(fakeStore{list: list}, config.NotifyConfig{}, nil, nil, slog.New(slog.DiscardHandler), opts...)
+			a := testAlert()
+			a.RuleEmails, a.Test = tc.emails, tc.test
+			for _, ch := range list {
+				if err := r.senders[ch.Kind].send(context.Background(), ch, a); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if att := sh.json(t, 0)["attachments"].([]any)[0].(map[string]any); att["text"] != tc.wantSlack {
+				t.Errorf("slack text = %q, want %q", att["text"], tc.wantSlack)
+			}
+			if e := dh.json(t, 0)["embeds"].([]any)[0].(map[string]any); e["description"] != tc.wantDiscord {
+				t.Errorf("discord description = %q, want %q", e["description"], tc.wantDiscord)
+			}
+		})
+	}
+}
+
+func TestEmailRuleCount(t *testing.T) {
+	srv := newSMTPServer(t, "250")
+	ch := channel(store.ChannelEmail, "ops@example.com")
+	a := testAlert()
+	for _, tc := range []struct {
+		n    int
+		want string
+	}{{0, ""}, {96, "This rule sent 96 emails in 30 days."}, {1, "This rule sent 1 email in 30 days."}} {
+		a.RuleEmails = tc.n
+		if err := (email{cfg: srv.cfg("none")}).send(context.Background(), ch, a); err != nil {
+			t.Fatal(err)
+		}
+		msg, _ := srv.msgs.Load().(string)
+		if has := strings.Contains(msg, "This rule sent"); has != (tc.want != "") || !strings.Contains(msg, tc.want) {
+			t.Errorf("n=%d: message:\n%s", tc.n, msg)
+		}
+	}
+}
+
+type fakeCounter struct {
+	mu    sync.Mutex
+	calls []RuleSendsQuery
+	n     int
+	err   error
+}
+
+func (f *fakeCounter) RuleSends(_ context.Context, q RuleSendsQuery) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, q)
+	return f.n, f.err
+}
+
+func (f *fakeCounter) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.calls)
+}
+
+func newCountRouter(c SendCounter, m notify.Mailer, list ...store.Channel) *Router {
+	r := NewRouter(fakeStore{list: list}, config.NotifyConfig{}, m, nil, slog.New(slog.DiscardHandler), WithSendCounter(c))
+	r.delays = []time.Duration{time.Millisecond, time.Millisecond}
+	return r
+}
+
+func TestRouterRuleEmails(t *testing.T) {
+	m, c := &fakeMailer{}, &fakeCounter{n: 96}
+	off := channel(store.ChannelEmail, "off@example.com")
+	off.Name, off.Enabled = "Email off", false
+	on := channel(store.ChannelEmail, "ops@example.com")
+	on.Name = "Email ops"
+	r := newCountRouter(c, m, off, on)
+	a := testAlert()
+	before := time.Now()
+	if err := r.Notify(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	if m.alert.RuleEmails != 96 {
+		t.Errorf("RuleEmails = %d, want 96", m.alert.RuleEmails)
+	}
+	if len(c.calls) != 1 {
+		t.Fatalf("calls = %d, want 1", len(c.calls))
+	}
+	q := c.calls[0]
+	if q.OrgID != a.OrgID || q.NodeID != a.NodeID || q.Metric != "cpu" {
+		t.Errorf("query = %+v", q)
+	}
+	if len(q.Channels) != 2 || q.Channels[0] != "Email off" || q.Channels[1] != "Email ops" {
+		t.Errorf("channels = %v", q.Channels)
+	}
+	if d := before.Add(-sendWindow).Sub(q.Since); d > time.Second || d < -time.Second {
+		t.Errorf("since = %v", q.Since)
+	}
+	// The send adds one to the cached count, with no new query.
+	if err := r.Notify(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	if m.alert.RuleEmails != 97 || c.count() != 1 {
+		t.Errorf("second alert: RuleEmails = %d, calls = %d", m.alert.RuleEmails, c.count())
+	}
+}
+
+func TestRouterRuleEmailsSkips(t *testing.T) {
+	wh := newHook(t)
+	offEmail := channel(store.ChannelEmail, "ops@example.com")
+	offEmail.Enabled = false
+	hook := channel(store.ChannelWebhook, wh.srv.URL)
+	slackOnly := []store.Channel{channel(store.ChannelSlack, wh.srv.URL)}
+	for _, tc := range []struct {
+		name string
+		list []store.Channel
+	}{
+		{"webhook only", []store.Channel{offEmail, hook}},
+		{"slack and no email channel", slackOnly},
+		{"no channel", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &fakeCounter{n: 5}
+			if err := newCountRouter(c, &fakeMailer{}, tc.list...).Notify(context.Background(), testAlert()); err != nil {
+				t.Fatal(err)
+			}
+			if c.count() != 0 {
+				t.Errorf("calls = %d, want 0", c.count())
+			}
+		})
+	}
+	t.Run("test alert", func(t *testing.T) {
+		c := &fakeCounter{n: 5}
+		m := &fakeMailer{}
+		r := newCountRouter(c, m, channel(store.ChannelEmail, "ops@example.com"))
+		a := testAlert()
+		a.Test = true
+		if err := r.Notify(context.Background(), a); err != nil {
+			t.Fatal(err)
+		}
+		if c.count() != 0 || m.alert.RuleEmails != 0 {
+			t.Errorf("calls = %d, RuleEmails = %d", c.count(), m.alert.RuleEmails)
+		}
+	})
+}
+
+func TestRouterRuleEmailsError(t *testing.T) {
+	m, c := &fakeMailer{}, &fakeCounter{err: errors.New("clickhouse down")}
+	r := newCountRouter(c, m, channel(store.ChannelEmail, "ops@example.com"))
+	a := testAlert()
+	for range 2 {
+		if err := r.Notify(context.Background(), a); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(m.to) != 1 || m.alert.RuleEmails != 1 {
+		t.Errorf("to = %v, RuleEmails = %d", m.to, m.alert.RuleEmails)
+	}
+	if c.count() != 1 {
+		t.Errorf("calls = %d, want 1 (the error is cached)", c.count())
+	}
+}
+
+func TestRouterFailedEmailNotCounted(t *testing.T) {
+	m, c := &fakeMailer{err: fmt.Errorf("bad: %w", notify.ErrPermanent)}, &fakeCounter{n: 3}
+	r := newCountRouter(c, m, channel(store.ChannelEmail, "ops@example.com"))
+	a := testAlert()
+	if err := r.Notify(context.Background(), a); err == nil {
+		t.Fatal("want an error")
+	}
+	m.err = nil
+	if err := r.Notify(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	if m.alert.RuleEmails != 3 {
+		t.Errorf("RuleEmails = %d, want 3", m.alert.RuleEmails)
 	}
 }

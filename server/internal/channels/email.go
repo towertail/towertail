@@ -152,7 +152,11 @@ func (e email) message(from *mail.Address, to []string, a notify.Alert) []byte {
 		fmt.Fprintf(&b, "%s: %s\r\n", h[0], h[1])
 	}
 	b.WriteString("\r\n")
-	body := a.Title() + "\n\n" + a.Text() + "\n\nNode: " + a.NodeName + " (" + a.NodeID.String() + ")\nTime: " +
+	body := a.Title() + "\n\n" + a.Text() + "\n\n"
+	if a.RuleEmails > 0 {
+		body += "This rule sent " + emailCount(a.RuleEmails) + " in 30 days.\n\n"
+	}
+	body += "Node: " + a.NodeName + " (" + a.NodeID.String() + ")\nTime: " +
 		a.At.UTC().Format(time.RFC3339) + "\n\n-- \nTowertail\n"
 	b.WriteString(strings.ReplaceAll(body, "\n", "\r\n"))
 	return b.Bytes()
