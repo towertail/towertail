@@ -54,19 +54,6 @@ public sealed class HistoryStoreTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task TrimKeepsOnlyLatest()
-    {
-        var node = Guid.NewGuid();
-        for (int i = 0; i < 50; i++)
-            _store.Append(node, new HistoryPoint(DateTime.UtcNow.AddSeconds(-50 + i), i, null, null, null, null, null));
-        await Task.Delay(100);
-        _store.Trim(node, keep: 10);
-        await Task.Delay(100);
-        var rows = _store.LoadRecent(node, limit: 100);
-        rows.Should().HaveCount(10);
-    }
-
-    [Fact]
     public async Task ScoreAndLoadRoundTrip()
     {
         var node = Guid.NewGuid();

@@ -1,6 +1,5 @@
 using Towertail.WinUI.State;
 using Towertail.WinUI.SystemServices;
-using Microsoft.Extensions.Logging;
 
 namespace Towertail.WinUI.Collectors;
 
@@ -9,7 +8,7 @@ namespace Towertail.WinUI.Collectors;
 /// <see cref="ISamplerInvoker"/> on the configured cadence (2s local / 10s SSH by default),
 /// respects <see cref="SystemReachabilityMonitor.ShouldPoll"/>, and backs off on failure.
 /// </summary>
-public sealed class RealCollector : ICollector, IAsyncDisposable
+public sealed class RealCollector : IAsyncDisposable
 {
     private readonly NodeStore _nodes;
     private readonly ServerStore _servers;

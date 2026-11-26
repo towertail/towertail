@@ -24,13 +24,6 @@ public sealed class MetricSeries
         EnforceRetention();
     }
 
-    public void Replace(IEnumerable<TimedValue> points)
-    {
-        Points.Clear();
-        foreach (var p in points) Points.Add(p);
-        EnforceRetention();
-    }
-
     public double? Latest => Points.Count == 0 ? null : Points[^1].Value;
 
     private void EnforceRetention()
@@ -40,3 +33,5 @@ public sealed class MetricSeries
         while (Points.Count > _cap) Points.RemoveAt(0);
     }
 }
+
+public readonly record struct TimedValue(DateTime T, double Value);

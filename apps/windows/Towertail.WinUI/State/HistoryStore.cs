@@ -215,27 +215,6 @@ public sealed class HistoryStore : IAsyncDisposable
         return tcs.Task.GetAwaiter().GetResult();
     }
 
-    public void Trim(Guid nodeId, int keep = MaxRowsPerNode)
-    {
-        var id = nodeId.ToString();
-        Enqueue(conn =>
-        {
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = @"
-                DELETE FROM samples
-                WHERE node_id = $id
-                  AND ts < (
-                    SELECT MIN(ts) FROM (
-                      SELECT ts FROM samples WHERE node_id = $id
-                      ORDER BY ts DESC LIMIT $keep
-                    )
-                  )";
-            cmd.Parameters.AddWithValue("$id", id);
-            cmd.Parameters.AddWithValue("$keep", keep);
-            cmd.ExecuteNonQuery();
-        });
-    }
-
     public void AppendProcs(Guid nodeId, DateTime t, bool root, IReadOnlyList<ProcSample> items)
     {
         var id = nodeId.ToString();
@@ -359,30 +338,7 @@ public sealed class HistoryStore : IAsyncDisposable
         });
     }
 
-    public sealed record DiskCapacityRow(DateTime T, string Mount, double Frac);
     public sealed record DiskIORow(DateTime T, string Device, double ReadMBps, double WriteMBps);
-
-    public IReadOnlyList<DiskCapacityRow> LoadRecentDiskCapacity(Guid nodeId)
-    {
-        var tcs = new TaskCompletionSource<IReadOnlyList<DiskCapacityRow>>();
-        var cutoff = ToEpoch(DateTime.UtcNow) - DiskRetention.TotalSeconds;
-        Enqueue(conn =>
-        {
-            var list = new List<DiskCapacityRow>();
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = "SELECT ts, mount, frac FROM disk_capacity WHERE node_id = $id AND ts >= $cutoff ORDER BY ts ASC";
-            cmd.Parameters.AddWithValue("$id", nodeId.ToString());
-            cmd.Parameters.AddWithValue("$cutoff", cutoff);
-            using var reader = cmd.ExecuteReader();
-            while (reader.Read())
-                list.Add(new DiskCapacityRow(
-                    DateTime.UnixEpoch.AddSeconds(reader.GetDouble(0)),
-                    reader.GetString(1),
-                    reader.GetDouble(2)));
-            tcs.TrySetResult(list);
-        });
-        return tcs.Task.GetAwaiter().GetResult();
-    }
 
     public IReadOnlyList<DiskIORow> LoadRecentDiskIO(Guid nodeId)
     {

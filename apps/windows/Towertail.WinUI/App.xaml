@@ -7,7 +7,6 @@
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
-                <ResourceDictionary Source="Design/Theme.xaml" />
                 <ResourceDictionary Source="Design/Typography.xaml" />
             </ResourceDictionary.MergedDictionaries>
         </ResourceDictionary>
