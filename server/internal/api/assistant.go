@@ -275,10 +275,13 @@ func (s *Server) handleApplyProposal(c echo.Context) error {
 	if err := s.checkOn(ctx, a); err != nil {
 		return err
 	}
+	start := time.Now()
 	p, err := s.assistant.ApplyProposal(ctx, a, id, body.Rows)
 	if err != nil {
+		s.recordProposal(c, s.failedProposal(ctx, a, id, body.Rows), false, start, err)
 		return assistantError(err)
 	}
+	s.recordProposal(c, p, false, start, nil)
 	s.auditProposal(c, "assistant.apply", p)
 	return c.JSON(http.StatusOK, map[string]any{"proposal": p})
 }
@@ -296,10 +299,13 @@ func (s *Server) handleUndoProposal(c echo.Context) error {
 	if err := s.checkOn(ctx, a); err != nil {
 		return err
 	}
+	start := time.Now()
 	p, err := s.assistant.UndoProposal(ctx, a, id)
 	if err != nil {
+		s.recordProposal(c, s.failedProposal(ctx, a, id, nil), true, start, err)
 		return assistantError(err)
 	}
+	s.recordProposal(c, p, true, start, nil)
 	s.auditProposal(c, "assistant.undo", p)
 	return c.JSON(http.StatusOK, map[string]any{"proposal": p})
 }

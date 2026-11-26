@@ -16,6 +16,7 @@ import (
 	bolt "go.etcd.io/bbolt"
 
 	"github.com/towertail/towertail/server/config"
+	"github.com/towertail/towertail/server/internal/aicalls"
 	"github.com/towertail/towertail/server/internal/alerter"
 	"github.com/towertail/towertail/server/internal/api"
 	"github.com/towertail/towertail/server/internal/assistant"
@@ -48,6 +49,7 @@ type App struct {
 	ch      *clickhouse.Client
 	hub     *hub.Hub
 	alerter *alerter.Engine
+	calls   *aicalls.Log // nil when ClickHouse is off
 	scans   *scan.Manager
 	api     *api.Server
 	// eager are the components that Run starts.
@@ -123,6 +125,12 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 		}
 	}
 	a.alerter = alerter.New(a.log, nil, a.hub, journal, a.store, notifiers...)
+	// A nil *aicalls.Log in the interface would not be nil.
+	var calls mcp.CallLog
+	if a.ch != nil {
+		a.calls = aicalls.NewLog(chCalls{ch: a.ch}, a.log)
+		calls = a.calls
+	}
 	scanDB, err := a.scanDB()
 	if err != nil {
 		return nil, err
@@ -167,6 +175,7 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 		Channels:       router,
 		AssistantStore: aiStore,
 		AssistantPlans: plans,
+		Calls:          calls,
 		Middleware:     b.middleware,
 		Routes:         routes,
 	})
@@ -218,8 +227,22 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	go a.scans.Run(ctx, scanSweepInterval)
 	go a.alerter.Run(ctx, reachabilitySweepInterval)
+	callsCtx, stopCalls := context.WithCancel(ctx)
+	defer stopCalls()
+	callsDone := make(chan struct{})
+	if a.calls != nil {
+		go func() {
+			a.calls.Run(callsCtx)
+			close(callsDone)
+		}()
+	} else {
+		close(callsDone)
+	}
 
 	err := a.api.Start(ctx)
+	// The call log writes its last rows before ClickHouse stops.
+	stopCalls()
+	<-callsDone
 	if stopErr := a.rt.StopAll(context.Background()); stopErr != nil {
 		a.log.Warn("stop components", "err", stopErr)
 	}
@@ -270,6 +293,17 @@ func (a *App) installBootstrapToken(ctx context.Context, issuer *auth.TokenIssue
 }
 
 var errCHNotReady = errors.New("clickhouse not ready")
+
+// chCalls gives the AI call log the table of ClickHouse. It drops rows when
+// ClickHouse is off or not ready.
+type chCalls struct{ ch *clickhouse.Client }
+
+func (s chCalls) WriteAICalls(ctx context.Context, rows []clickhouse.AICall) error {
+	if s.ch == nil || !s.ch.Ready() {
+		return nil
+	}
+	return s.ch.WriteAICalls(ctx, rows)
+}
 
 // chEvents gives the alerter the events of ClickHouse. It drops events
 // when ClickHouse is off or not ready.

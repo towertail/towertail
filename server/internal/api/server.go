@@ -65,6 +65,10 @@ type Server struct {
 	apiKeyRates   *keyLimiters
 	mcp           *mcp.Server
 	assistant     *assistant.Service
+	// calls takes the record of each AI call. Nil records nothing.
+	calls mcp.CallLog
+	// aiCalls reads the AI call log. Nil gives 503 on the AI activity routes.
+	aiCalls aiCallReader
 	// ssePing is the keep-alive interval of a stream. Zero means 15 s.
 	ssePing time.Duration
 	// streamCompression is the permessage-deflate mode of /v1/stream.
@@ -103,6 +107,9 @@ type Deps struct {
 	AssistantStore assistant.Store
 	// AssistantPlans gives the plan of an org. Nil uses limits.default.
 	AssistantPlans AssistantPlans
+	// Calls takes the record of each AI call (MCP, assistant). Nil records
+	// nothing.
+	Calls mcp.CallLog
 	// Middleware runs after the core middleware.
 	Middleware []echo.MiddlewareFunc
 	// Routes add routes after the core routes.
@@ -210,10 +217,14 @@ func New(d Deps) *Server {
 	if d.Hub != nil {
 		events = d.Hub
 	}
+	s.calls = d.Calls
+	if d.CH != nil {
+		s.aiCalls = d.CH
+	}
 	s.actions = actions.NewService(d.Store, alerts, d.Journal, engine, events, d.Log)
 	assistantOn := d.Config.Assistant.Enabled() && d.AssistantStore != nil
 	if d.Config.MCP.Enabled || assistantOn {
-		o := mcp.Options{Version: version.Version, Log: d.Log, Settings: d.Store, OrgInfo: d.OrgInfo, AppURL: d.Config.MCP.AppURL, Actions: s.actions}
+		o := mcp.Options{Version: version.Version, Log: d.Log, Settings: d.Store, OrgInfo: d.OrgInfo, AppURL: d.Config.MCP.AppURL, Actions: s.actions, Calls: d.Calls}
 		// A nil *scan.Manager in the interface would not be nil.
 		if d.Scans != nil {
 			o.Scans = d.Scans
@@ -331,6 +342,12 @@ func (s *Server) registerRoutes() {
 	write.GET("/api-keys", s.handleListAPIKeys, viewer)
 	write.POST("/api-keys", s.handleCreateAPIKey, viewer)
 	write.DELETE("/api-keys/:id", s.handleRevokeAPIKey, viewer)
+	// AI activity. API keys get 403, as on the key routes.
+	write.GET("/ai/calls", s.handleListAICalls, viewer, s.needAICalls)
+	write.GET("/ai/calls/stats", s.handleAICallStats, viewer, s.needAICalls)
+	write.GET("/ai/calls/:id", s.handleGetAICall, viewer, s.needAICalls)
+	write.GET("/ai/usage", s.handleAIUsage, viewer, s.needAICalls)
+	write.GET("/ai/tools", s.handleAITools, viewer)
 
 	write.POST("/alerts/bulk", s.handleBulkAlerts, member)
 	write.POST("/alerts/:id/ack", s.handleAckAlert, member)

@@ -80,6 +80,13 @@ type aiWriter struct {
 	mu      sync.Mutex
 	applied [][]string
 	undone  int
+	backups []uuid.UUID
+}
+
+func (w *aiWriter) lastBackup() uuid.UUID {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.backups[len(w.backups)-1]
 }
 
 func (w *aiWriter) Plan(context.Context, assistant.Actor, string, json.RawMessage) (assistant.Change, error) {
@@ -90,7 +97,8 @@ func (w *aiWriter) Apply(_ context.Context, _ assistant.Actor, _ assistant.Chang
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.applied = append(w.applied, rows)
-	return assistant.Applied{Rows: rows, BackupID: uuid.New()}, nil
+	w.backups = append(w.backups, uuid.New())
+	return assistant.Applied{Rows: rows, BackupID: w.backups[len(w.backups)-1]}, nil
 }
 
 func (w *aiWriter) Undo(context.Context, assistant.Actor, assistant.Change, assistant.Applied) error {

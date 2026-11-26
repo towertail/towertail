@@ -129,6 +129,11 @@ func (s *Service) load(ctx context.Context, a Actor, id uuid.UUID) (Proposal, er
 	return p, nil
 }
 
+// Proposal gives a proposal of the chat of the actor.
+func (s *Service) Proposal(ctx context.Context, a Actor, id uuid.UUID) (Proposal, error) {
+	return s.load(ctx, a, id)
+}
+
 // check runs conditions 3 and 4: the role and the org rule.
 func (s *Service) check(ctx context.Context, a Actor, c Change) error {
 	if !a.Role.Allows(c.MinRole) {
