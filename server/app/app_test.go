@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
 
 	"github.com/towertail/towertail/server/config"
@@ -338,5 +339,63 @@ func TestNewWithChannelLimits(t *testing.T) {
 				t.Fatalf("status = %d, want %d: %s", rec.Code, tc.want, rec.Body)
 			}
 		})
+	}
+}
+
+// poolStore looks like the Postgres store for assistantStore.
+type poolStore struct{ store.ConfigStore }
+
+func (poolStore) Pool() *pgxpool.Pool { return nil }
+
+func TestAssistantStore(t *testing.T) {
+	bs, err := store.OpenBolt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = bs.Close() })
+	if assistantStore(bs) != nil {
+		t.Error("a Bolt store must give no assistant store")
+	}
+	if assistantStore(poolStore{bs}) == nil {
+		t.Error("a store with Pool must give an assistant store")
+	}
+}
+
+type errPlans struct {
+	planLimits
+	asked chan uuid.UUID
+}
+
+func (p errPlans) AssistantPlan(_ context.Context, org uuid.UUID) (string, int, error) {
+	p.asked <- org
+	return "", 0, fmt.Errorf("stop here")
+}
+
+func TestAssistantPlansReachServer(t *testing.T) {
+	bs, err := store.OpenBolt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = bs.Close() })
+	cfg := testConfig(t)
+	cfg.Assistant = config.AssistantConfig{Model: "claude-sonnet-5-5", APIKey: "test"}
+	plans := errPlans{asked: make(chan uuid.UUID, 1)}
+	a, err := New(cfg, quietLog(), WithStore(poolStore{bs}), WithLimits(plans))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(a.close)
+	raw, _, err := auth.NewIssuer(bs).Issue(context.Background(), store.ZeroOrg, store.TokenKindUser, "test", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/v1/assistant/usage", nil)
+	req.Header.Set("Authorization", "Bearer "+raw)
+	rec := httptest.NewRecorder()
+	a.Handler().ServeHTTP(rec, req)
+	select {
+	case <-plans.asked:
+	default:
+		t.Fatalf("the plan source was not asked: %d %s", rec.Code, rec.Body)
 	}
 }

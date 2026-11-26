@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/towertail/towertail/server/config"
 	"github.com/towertail/towertail/server/internal/actions"
 	"github.com/towertail/towertail/server/internal/alerter"
+	"github.com/towertail/towertail/server/internal/assistant"
 	"github.com/towertail/towertail/server/internal/auth"
 	"github.com/towertail/towertail/server/internal/clickhouse"
 	"github.com/towertail/towertail/server/internal/hub"
@@ -62,6 +64,9 @@ type Server struct {
 	query         *query.Service
 	apiKeyRates   *keyLimiters
 	mcp           *mcp.Server
+	assistant     *assistant.Service
+	// ssePing is the keep-alive interval of a stream. Zero means 15 s.
+	ssePing time.Duration
 	// streamCompression is the permessage-deflate mode of /v1/stream.
 	streamCompression websocket.CompressionMode
 }
@@ -94,6 +99,10 @@ type Deps struct {
 	// Roles gives the role of a user in an org. Nil gives the owner role
 	// to every user token.
 	Roles Roles
+	// AssistantStore keeps chats, proposals and usage. Nil turns off the assistant.
+	AssistantStore assistant.Store
+	// AssistantPlans gives the plan of an org. Nil uses limits.default.
+	AssistantPlans AssistantPlans
 	// Middleware runs after the core middleware.
 	Middleware []echo.MiddlewareFunc
 	// Routes add routes after the core routes.
@@ -122,6 +131,7 @@ func New(d Deps) *Server {
 		Skipper: func(c echo.Context) bool {
 			p := c.Request().URL.Path
 			return strings.HasPrefix(p, "/v1/stream") ||
+				(c.Request().Method == http.MethodPost && strings.HasPrefix(p, "/v1/assistant/chats/") && strings.HasSuffix(p, "/messages")) ||
 				(strings.HasPrefix(p, "/v1/disk-scans/") && strings.HasSuffix(p, "/result"))
 		},
 	}))
@@ -201,13 +211,20 @@ func New(d Deps) *Server {
 		events = d.Hub
 	}
 	s.actions = actions.NewService(d.Store, alerts, d.Journal, engine, events, d.Log)
-	if d.Config.MCP.Enabled {
+	assistantOn := d.Config.Assistant.Enabled() && d.AssistantStore != nil
+	if d.Config.MCP.Enabled || assistantOn {
 		o := mcp.Options{Version: version.Version, Log: d.Log, Settings: d.Store, OrgInfo: d.OrgInfo, AppURL: d.Config.MCP.AppURL, Actions: s.actions}
 		// A nil *scan.Manager in the interface would not be nil.
 		if d.Scans != nil {
 			o.Scans = d.Scans
 		}
-		s.mcp = mcp.New(s.query, o)
+		m := mcp.New(s.query, o)
+		if d.Config.MCP.Enabled {
+			s.mcp = m
+		}
+		if assistantOn {
+			s.assistant = newAssistantService(d, s, m)
+		}
 	}
 	if d.Config.Stream.Compression == "no_context_takeover" {
 		s.streamCompression = websocket.CompressionNoContextTakeover
@@ -350,6 +367,18 @@ func (s *Server) registerRoutes() {
 	write.GET("/sampler/tokens", s.handleListSamplerTokens, admin)
 	write.DELETE("/sampler/tokens/:id", s.handleRevokeSamplerToken, admin)
 
+	// The assistant routes take user tokens only. Without an assistant they
+	// give 503, and usage tells that the assistant is off.
+	needAI := s.needAssistant
+	write.POST("/assistant/chats", s.handleCreateChat, viewer, needAI)
+	write.GET("/assistant/chats", s.handleListChats, viewer, needAI)
+	write.GET("/assistant/chats/:id", s.handleGetChat, viewer, needAI)
+	write.DELETE("/assistant/chats/:id", s.handleDeleteChat, viewer, needAI)
+	write.POST("/assistant/chats/:id/messages", s.handleAsk, viewer, needAI)
+	write.POST("/assistant/proposals/:id/apply", s.handleApplyProposal, viewer, needAI)
+	write.POST("/assistant/proposals/:id/undo", s.handleUndoProposal, viewer, needAI)
+	write.GET("/assistant/usage", s.handleAssistantUsage, viewer)
+
 	// Sampler-authenticated group. Ingest gets its own (higher) budget
 	// since a fleet of samplers pushing 1/s can easily exceed the
 	// generic per-IP limit.
@@ -475,4 +504,16 @@ func ipExtractor(header string) echo.IPExtractor {
 			return direct(r)
 		}
 	}
+}
+
+// newAssistantService builds the assistant. A bad provider config leaves
+// the assistant off.
+func newAssistantService(d Deps, s *Server, m *mcp.Server) *assistant.Service {
+	model, err := assistant.NewModel(d.Config.Assistant, os.Getenv, nil)
+	if err != nil {
+		d.Log.Error("assistant: model", "err", err)
+		return nil
+	}
+	w := newAssistantWriter(s.actions, m, s.query, s.query)
+	return assistant.NewService(d.Config.Assistant, model, m, w, d.AssistantStore, d.AssistantPlans, settingsSource{d.Store}, d.Log)
 }

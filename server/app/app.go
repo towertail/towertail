@@ -12,11 +12,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	bolt "go.etcd.io/bbolt"
 
 	"github.com/towertail/towertail/server/config"
 	"github.com/towertail/towertail/server/internal/alerter"
 	"github.com/towertail/towertail/server/internal/api"
+	"github.com/towertail/towertail/server/internal/assistant"
 	"github.com/towertail/towertail/server/internal/auth"
 	"github.com/towertail/towertail/server/internal/channels"
 	"github.com/towertail/towertail/server/internal/clickhouse"
@@ -107,6 +109,7 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 		MaxLeasesPerUser: cfg.Stream.MaxLeasesPerUser,
 	})
 	gate, _ := b.limits.(ChannelLimits)
+	plans, _ := b.limits.(AssistantPlans)
 	router := channels.NewRouter(a.store, cfg.Notify, b.mailer, gate, a.log)
 	notifiers := append([]notify.Notifier{router}, b.notifiers...)
 	journal := chEvents{ch: a.ch}
@@ -126,6 +129,13 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 	}
 	a.scans = scan.NewManager(scanStore, a.store, a.hub, a.log, nil)
 
+	aiStore := assistantStore(a.store)
+	if aiStore != nil && cfg.Assistant.Enabled() {
+		sweeper := assistant.NewSweeper(aiStore, plans, cfg.Assistant, a.log)
+		a.rt.Register(sweeper)
+		a.eager = append(a.eager, sweeper.Name())
+	}
+
 	routes := make([]func(*api.Server), 0, len(b.routes))
 	for _, f := range b.routes {
 		routes = append(routes, func(s *api.Server) { f(s) })
@@ -135,26 +145,38 @@ func New(cfg config.Config, opts ...Option) (a *App, err error) {
 		orgInfo = orgInfoAdapter{b.orgInfo}
 	}
 	a.api = api.New(api.Deps{
-		Config:        a.cfg,
-		Log:           a.log,
-		Runtime:       a.rt,
-		Store:         a.store,
-		CH:            a.ch,
-		Journal:       journal,
-		Issuer:        issuer,
-		Hub:           a.hub,
-		Alerter:       a.alerter,
-		Scans:         a.scans,
-		OrgInfo:       orgInfo,
-		Limits:        b.limits,
-		ChannelLimits: gate,
-		Leases:        a.hub,
-		Roles:         b.roles,
-		Channels:      router,
-		Middleware:    b.middleware,
-		Routes:        routes,
+		Config:         a.cfg,
+		Log:            a.log,
+		Runtime:        a.rt,
+		Store:          a.store,
+		CH:             a.ch,
+		Journal:        journal,
+		Issuer:         issuer,
+		Hub:            a.hub,
+		Alerter:        a.alerter,
+		Scans:          a.scans,
+		OrgInfo:        orgInfo,
+		Limits:         b.limits,
+		ChannelLimits:  gate,
+		Leases:         a.hub,
+		Roles:          b.roles,
+		Channels:       router,
+		AssistantStore: aiStore,
+		AssistantPlans: plans,
+		Middleware:     b.middleware,
+		Routes:         routes,
 	})
 	return a, nil
+}
+
+// assistantStore gives the assistant store of a Postgres store. Any other
+// store (Bolt) gives nil, so the assistant is off.
+func assistantStore(st store.ConfigStore) assistant.Store {
+	p, ok := st.(interface{ Pool() *pgxpool.Pool })
+	if !ok {
+		return nil
+	}
+	return assistant.NewPostgresStore(p.Pool())
 }
 
 // OpenStore opens the Postgres store when cloud.managed is true, else the

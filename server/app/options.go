@@ -43,6 +43,10 @@ func (a orgInfoAdapter) OrgFacts(ctx context.Context, orgID uuid.UUID) (mcp.OrgF
 // Else all kinds are permitted.
 type ChannelLimits = api.ChannelLimits
 
+// AssistantPlans gives the assistant plan of an org. When the Limits value
+// of WithLimits also implements it, the server uses it.
+type AssistantPlans = api.AssistantPlans
+
 // Roles gives the role of a user in an org. Role returns
 // store.ErrNoMembership when the user has no role in the org.
 type Roles = api.Roles
