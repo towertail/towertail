@@ -21,6 +21,8 @@
 .PARAMETER Flaui
   Tier 3. Runs `dotnet test apps/windows/Towertail.UITests` with
   `--filter Category=FlaUI`. Requires an interactive Windows desktop session.
+  The run sets TOWERTAIL_FLAUI=1. A skipped test fails the run. TOWERTAIL_EXE
+  must point to the built Towertail.exe when it is not on PATH.
 
 .PARAMETER GoUnit
   Delegates to `go test ./...` on server/. Useful so a Windows dev can validate
@@ -242,8 +244,13 @@ function Run-RemoteIntegration {
 
 function Run-Flaui {
   Write-Section 'windows client: tier 3 (FlaUI smoke)'
-  & dotnet test $winUiTestsProj --filter 'Category=FlaUI'
-  if ($LASTEXITCODE -ne 0) { throw 'FlaUI tests failed' }
+  try {
+    $env:TOWERTAIL_FLAUI = '1'
+    & dotnet test $winUiTestsProj --filter 'Category=FlaUI' -- xUnit.FailSkips=true
+    if ($LASTEXITCODE -ne 0) { throw 'FlaUI tests failed' }
+  } finally {
+    Remove-Item -Path Env:TOWERTAIL_FLAUI -ErrorAction SilentlyContinue
+  }
   Write-Pass 'windows FlaUI tests'
 }
 
