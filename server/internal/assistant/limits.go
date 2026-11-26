@@ -9,10 +9,11 @@ import (
 
 	"github.com/towertail/towertail/server/authctx"
 	"github.com/towertail/towertail/server/config"
+	"github.com/towertail/towertail/server/internal/mcp"
 )
 
 func authctxWith(ctx context.Context, a Actor) context.Context {
-	return authctx.WithRole(authctx.WithToken(ctx, a.Token), a.Role)
+	return mcp.WithVia(authctx.WithRole(authctx.WithToken(ctx, a.Token), a.Role), "assistant")
 }
 
 // orgLimits are the limits that apply to one org.
