@@ -180,12 +180,14 @@ public sealed class LocalTestHttpServer : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _cts.Cancel();
-        try { _listener.Stop(); } catch { }
+        // An HttpListener socket can block for ever in CloseAsync, inside a lock. Give each close a limit.
         foreach (var ws in SnapshotSockets())
         {
-            try { await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None).ConfigureAwait(false); }
+            var close = Task.Run(() => ws.CloseAsync(WebSocketCloseStatus.NormalClosure, null, CancellationToken.None));
+            try { await Task.WhenAny(close, Task.Delay(TimeSpan.FromSeconds(2))).ConfigureAwait(false); }
             catch { }
         }
+        try { _listener.Stop(); } catch { }
         try { await _loop.ConfigureAwait(false); } catch { }
     }
 
