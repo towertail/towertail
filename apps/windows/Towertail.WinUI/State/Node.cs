@@ -109,6 +109,10 @@ public sealed record Node
         _ => "?",
     };
 
+    /// <summary>The ssh command line for a terminal. Adds <c>-p</c> only when the node has a port.</summary>
+    [JsonIgnore]
+    public string SshCommand => SshPort is int p ? $"ssh -p {p} {UserAtHost}" : $"ssh {UserAtHost}";
+
     public static Node LocalWindows(string displayName = "This PC")
         => new() { DisplayName = displayName, Kind = NodeKind.Local };
 

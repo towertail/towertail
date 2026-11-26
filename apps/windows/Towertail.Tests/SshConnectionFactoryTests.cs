@@ -86,6 +86,15 @@ public sealed class SshConnectionFactoryTests
         info.Port.Should().Be(2222);
     }
 
+    [Theory]
+    [InlineData(2222, "ssh -p 2222 alice@h")]
+    [InlineData(null, "ssh alice@h")]
+    public void SshCommand_AddsPortOnlyWhenSet(int? port, string expected)
+    {
+        var node = new Node { Kind = NodeKind.Ssh, SshUser = "alice", SshHost = "h", SshPort = port };
+        node.SshCommand.Should().Be(expected);
+    }
+
     [Fact]
     public void Fingerprint_MatchesSshKeygenFormat()
     {
