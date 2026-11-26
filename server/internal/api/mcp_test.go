@@ -272,7 +272,7 @@ func TestOAuthTokenOnRESTRoute(t *testing.T) {
 	_, member := e.login(t, store.RoleOwner)
 	tok := e.oauthToken(t, &member, nil)
 	for _, path := range []string{"/v1/nodes", "/v1/settings"} {
-		if rec := e.do(http.MethodGet, path, tok, ""); rec.Code != http.StatusForbidden {
+		if rec := e.do(http.MethodGet, path, tok, nil); rec.Code != http.StatusForbidden {
 			t.Errorf("GET %s: %d %s, want 403", path, rec.Code, rec.Body)
 		}
 	}
@@ -312,7 +312,7 @@ func TestProtectedResourceMetadata(t *testing.T) {
 		"/.well-known/oauth-protected-resource":        testResource,
 		"/.well-known/oauth-protected-resource/mcp/v1": testResource + "/v1",
 	} {
-		rec := e.do(http.MethodGet, path, "", "")
+		rec := e.do(http.MethodGet, path, "", nil)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s: %d %s", path, rec.Code, rec.Body)
 		}
@@ -332,7 +332,7 @@ func TestProtectedResourceMetadata(t *testing.T) {
 
 	off := newMCPEnv(t, config.HTTPConfig{}, true)
 	for _, path := range []string{"/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp", "/.well-known/oauth-protected-resource/mcp/v1"} {
-		if rec := off.do(http.MethodGet, path, "", ""); rec.Code != http.StatusNotFound {
+		if rec := off.do(http.MethodGet, path, "", nil); rec.Code != http.StatusNotFound {
 			t.Errorf("OAuth off %s: %d, want 404", path, rec.Code)
 		}
 	}
@@ -413,7 +413,7 @@ func TestTokenRoleOnContext(t *testing.T) {
 		return c.NoContent(http.StatusNoContent)
 	}, e.srv.bearer(store.TokenKindOAuth, store.TokenKindAPI), tokenToRequest)
 	_, admin := e.login(t, store.RoleAdmin)
-	rec := e.do(http.MethodPost, "/test/role", e.oauthToken(t, &admin, nil), "")
+	rec := e.do(http.MethodPost, "/test/role", e.oauthToken(t, &admin, nil), nil)
 	if rec.Code != http.StatusNoContent || !ok || got != store.RoleAdmin {
 		t.Fatalf("role = %q %v (%d), want admin", got, ok, rec.Code)
 	}

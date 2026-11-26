@@ -121,7 +121,7 @@ type assistantEnv struct {
 	t      *testing.T
 	ts     *httptest.Server
 	srv    *Server
-	st     store.ConfigStore
+	st     *store.BoltStore
 	ms     *assistant.MemoryStore
 	model  *fakeAIModel
 	writer *aiWriter
@@ -269,7 +269,7 @@ func errCode(t *testing.T, b []byte) errBody {
 func TestAssistantTokens(t *testing.T) {
 	e := newAssistantEnv(t, aiConfig(), nil).start()
 	user, _ := e.login(store.RoleViewer)
-	key := (&keyEnv{srv: e.srv, st: e.st, issuer: e.issuer, roles: e.roles}).create(t, user, "k").Token
+	key := (&keyEnv{testEnv: &testEnv{t: t, srv: e.srv, st: e.st, issuer: e.issuer}, roles: e.roles}).create(t, user, "k").Token
 	if code, _ := e.do(http.MethodPost, "/v1/assistant/chats", key, `{}`); code != http.StatusForbidden && code != http.StatusUnauthorized {
 		t.Fatalf("api key: %d, want 401 or 403", code)
 	}
@@ -430,15 +430,15 @@ func TestAssistantUnavailable(t *testing.T) {
 	} {
 		e := newKeyEnvConfig(t, &cfg)
 		user, _ := e.login(t, store.RoleOwner)
-		chats := e.do(http.MethodPost, "/v1/assistant/chats", user, `{}`)
+		chats := e.do(http.MethodPost, "/v1/assistant/chats", user, []byte(`{}`))
 		if chats.Code != http.StatusServiceUnavailable || errCode(t, chats.Body.Bytes()).Error.Code != "assistant_unavailable" {
 			t.Errorf("%s: chats %d %s", name, chats.Code, chats.Body)
 		}
-		msg := e.do(http.MethodPost, "/v1/assistant/chats/"+uuid.NewString()+"/messages", user, `{"text":"x"}`)
+		msg := e.do(http.MethodPost, "/v1/assistant/chats/"+uuid.NewString()+"/messages", user, []byte(`{"text":"x"}`))
 		if msg.Code != http.StatusServiceUnavailable {
 			t.Errorf("%s: messages %d", name, msg.Code)
 		}
-		usage := e.do(http.MethodGet, "/v1/assistant/usage", user, "")
+		usage := e.do(http.MethodGet, "/v1/assistant/usage", user, nil)
 		if usage.Code != http.StatusOK || strings.TrimSpace(usage.Body.String()) != `{"enabled":false}` {
 			t.Errorf("%s: usage %d %s", name, usage.Code, usage.Body)
 		}

@@ -155,7 +155,7 @@ func TestAICallRoutesVisibility(t *testing.T) {
 
 	list := func(token, query string) wire.AICallPage {
 		t.Helper()
-		rec := e.do(http.MethodGet, "/v1/ai/calls"+query, token, "")
+		rec := e.do(http.MethodGet, "/v1/ai/calls"+query, token, nil)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("list %s: %d %s", query, rec.Code, rec.Body)
 		}
@@ -196,7 +196,7 @@ func TestAICallRoutesVisibility(t *testing.T) {
 
 	// Bad parameters give 400.
 	for _, qs := range []string{"?range=1y", "?status=bad", "?limit=0", "?limit=101", "?limit=x", "?cursor=!!"} {
-		if rec := e.do(http.MethodGet, "/v1/ai/calls"+qs, admin, ""); rec.Code != http.StatusBadRequest {
+		if rec := e.do(http.MethodGet, "/v1/ai/calls"+qs, admin, nil); rec.Code != http.StatusBadRequest {
 			t.Errorf("%s: %d, want 400", qs, rec.Code)
 		}
 	}
@@ -204,7 +204,7 @@ func TestAICallRoutesVisibility(t *testing.T) {
 	// Detail: the owner of the call and an admin read it. Another member gets 404.
 	mine, theirs := fake.rows[0], fake.rows[1]
 	get := func(token string, id uuid.UUID) *httptest.ResponseRecorder {
-		return e.do(http.MethodGet, "/v1/ai/calls/"+id.String(), token, "")
+		return e.do(http.MethodGet, "/v1/ai/calls/"+id.String(), token, nil)
 	}
 	if rec := get(member, mine.CallID); rec.Code != http.StatusOK {
 		t.Fatalf("own call: %d", rec.Code)
@@ -218,28 +218,28 @@ func TestAICallRoutesVisibility(t *testing.T) {
 		t.Fatalf("admin detail: %d %+v", rec.Code, d)
 	}
 	for _, id := range []string{uuid.NewString(), "nope"} {
-		if rec := e.do(http.MethodGet, "/v1/ai/calls/"+id, admin, ""); rec.Code != http.StatusNotFound {
+		if rec := e.do(http.MethodGet, "/v1/ai/calls/"+id, admin, nil); rec.Code != http.StatusNotFound {
 			t.Errorf("call %s: %d, want 404", id, rec.Code)
 		}
 	}
 
 	// Stats and usage follow the same rule.
-	stats := decodeBody[wire.AICallStats](t, e.do(http.MethodGet, "/v1/ai/calls/stats", member, "").Body.Bytes())
+	stats := decodeBody[wire.AICallStats](t, e.do(http.MethodGet, "/v1/ai/calls/stats", member, nil).Body.Bytes())
 	if stats.Calls != 2 || len(stats.Clients) != 1 || stats.Tools == nil {
 		t.Fatalf("member stats = %+v", stats)
 	}
-	if stats := decodeBody[wire.AICallStats](t, e.do(http.MethodGet, "/v1/ai/calls/stats", admin, "").Body.Bytes()); stats.Calls != 4 {
+	if stats := decodeBody[wire.AICallStats](t, e.do(http.MethodGet, "/v1/ai/calls/stats", admin, nil).Body.Bytes()); stats.Calls != 4 {
 		t.Fatalf("admin stats = %+v", stats)
 	}
-	usage := decodeBody[[]wire.AIUsage](t, e.do(http.MethodGet, "/v1/ai/usage", member, "").Body.Bytes())
+	usage := decodeBody[[]wire.AIUsage](t, e.do(http.MethodGet, "/v1/ai/usage", member, nil).Body.Bytes())
 	if len(usage) != 2 || usage[0].GrantID == nil || usage[0].TokenID != nil || fake.gotUser == nil || *fake.gotUser != memberID {
 		t.Fatalf("member usage = %+v", usage)
 	}
-	if usage := decodeBody[[]wire.AIUsage](t, e.do(http.MethodGet, "/v1/ai/usage?days=30", admin, "").Body.Bytes()); len(usage) != 4 || fake.gotUser != nil {
+	if usage := decodeBody[[]wire.AIUsage](t, e.do(http.MethodGet, "/v1/ai/usage?days=30", admin, nil).Body.Bytes()); len(usage) != 4 || fake.gotUser != nil {
 		t.Fatalf("admin usage = %+v", usage)
 	}
 	for _, qs := range []string{"?days=0", "?days=31", "?days=x"} {
-		if rec := e.do(http.MethodGet, "/v1/ai/usage"+qs, admin, ""); rec.Code != http.StatusBadRequest {
+		if rec := e.do(http.MethodGet, "/v1/ai/usage"+qs, admin, nil); rec.Code != http.StatusBadRequest {
 			t.Errorf("usage %s: %d, want 400", qs, rec.Code)
 		}
 	}
@@ -247,10 +247,10 @@ func TestAICallRoutesVisibility(t *testing.T) {
 	// An API key gets 403 on every route. No token gets 401.
 	key := e.create(t, member, "ci").Token
 	for _, p := range []string{"/v1/ai/calls", "/v1/ai/calls/stats", "/v1/ai/calls/" + uuid.NewString(), "/v1/ai/usage", "/v1/ai/tools"} {
-		if rec := e.do(http.MethodGet, p, key, ""); rec.Code != http.StatusForbidden {
+		if rec := e.do(http.MethodGet, p, key, nil); rec.Code != http.StatusForbidden {
 			t.Errorf("api key on %s: %d, want 403", p, rec.Code)
 		}
-		if rec := e.do(http.MethodGet, p, "", ""); rec.Code != http.StatusUnauthorized {
+		if rec := e.do(http.MethodGet, p, "", nil); rec.Code != http.StatusUnauthorized {
 			t.Errorf("no token on %s: %d, want 401", p, rec.Code)
 		}
 	}
@@ -260,11 +260,11 @@ func TestAICallRoutesNoClickHouse(t *testing.T) {
 	e := newMCPEnv(t, config.HTTPConfig{}, true)
 	user, _ := e.login(t, store.RoleOwner)
 	for _, p := range []string{"/v1/ai/calls", "/v1/ai/calls/stats", "/v1/ai/calls/" + uuid.NewString(), "/v1/ai/usage"} {
-		if rec := e.do(http.MethodGet, p, user, ""); rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"unavailable"`) {
+		if rec := e.do(http.MethodGet, p, user, nil); rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"unavailable"`) {
 			t.Errorf("%s: %d %s, want 503 unavailable", p, rec.Code, rec.Body)
 		}
 	}
-	if rec := e.do(http.MethodGet, "/v1/ai/tools", user, ""); rec.Code != http.StatusOK {
+	if rec := e.do(http.MethodGet, "/v1/ai/tools", user, nil); rec.Code != http.StatusOK {
 		t.Errorf("tools: %d, want 200", rec.Code)
 	}
 }
@@ -272,7 +272,7 @@ func TestAICallRoutesNoClickHouse(t *testing.T) {
 func TestAIToolsRoute(t *testing.T) {
 	e := newMCPEnv(t, config.HTTPConfig{}, true)
 	viewer, _ := e.login(t, store.RoleViewer)
-	rec := e.do(http.MethodGet, "/v1/ai/tools", viewer, "")
+	rec := e.do(http.MethodGet, "/v1/ai/tools", viewer, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("tools: %d %s", rec.Code, rec.Body)
 	}
@@ -296,7 +296,7 @@ func TestAIToolsRoute(t *testing.T) {
 
 	off := newMCPEnv(t, config.HTTPConfig{}, false)
 	viewer, _ = off.login(t, store.RoleViewer)
-	if rec := off.do(http.MethodGet, "/v1/ai/tools", viewer, ""); rec.Code != http.StatusNotFound {
+	if rec := off.do(http.MethodGet, "/v1/ai/tools", viewer, nil); rec.Code != http.StatusNotFound {
 		t.Errorf("tools with MCP off: %d, want 404", rec.Code)
 	}
 }
@@ -313,7 +313,7 @@ func TestMCPHTTPRecordsCall(t *testing.T) {
 		Config: &config.Config{MCP: config.MCPConfig{Enabled: true}}, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Store: st, Issuer: issuer, Roles: roles, Calls: log,
 	})
-	e := &keyEnv{srv: srv, st: st, issuer: issuer, roles: roles}
+	e := &keyEnv{testEnv: &testEnv{t: t, srv: srv, st: st, issuer: issuer}, roles: roles}
 	user, userID := e.login(t, store.RoleViewer)
 	key := e.create(t, user, "my key").Token
 
