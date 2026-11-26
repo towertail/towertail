@@ -157,6 +157,29 @@ func TestAssistantValidateWarnsWebSearchOpenAI(t *testing.T) {
 	if !strings.Contains(buf.String(), "web_search") {
 		t.Errorf("log = %q, want a web_search warning", buf.String())
 	}
+	buf.Reset()
+	if err := (AssistantConfig{APIFormat: "openai", WebSearch: true, WebSearchSupport: WebSearchAlways}).Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("log = %q, want no warning with web_search_support always", buf.String())
+	}
+}
+
+func TestAssistantWebSearchSupportValues(t *testing.T) {
+	for _, v := range []string{WebSearchAuto, WebSearchAlways, WebSearchNever} {
+		if err := (AssistantConfig{WebSearchSupport: v}).Validate(); err != nil {
+			t.Errorf("%q: %v", v, err)
+		}
+	}
+	err := (AssistantConfig{WebSearchSupport: "sometimes"}).Validate()
+	if err == nil || !strings.Contains(err.Error(), "web_search_support") {
+		t.Errorf("err = %v, want a web_search_support error", err)
+	}
+	c, err := loadAssistant(getenvOf(map[string]string{"TT_ASSISTANT": `{"web_search_support":"always"}`}))
+	if err != nil || c.WebSearchSupport != WebSearchAlways {
+		t.Errorf("load: %+v %v", c, err)
+	}
 }
 
 func TestAssistantLogValueHidesSecrets(t *testing.T) {

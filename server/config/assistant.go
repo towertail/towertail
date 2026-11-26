@@ -14,19 +14,28 @@ import (
 // AssistantConfig is the config of the assistant. It comes from the env
 // var TT_ASSISTANT, which holds one JSON object.
 type AssistantConfig struct {
-	Model         string            `json:"model"`
-	APIFormat     string            `json:"api_format"` // "anthropic" | "openai"
-	BaseURL       string            `json:"base_url"`
-	APIKey        string            `json:"api_key"`
-	APIKeyEnv     string            `json:"api_key_env"`
-	MaxTokens     int               `json:"max_tokens"`     // default 8192
-	ContextTokens int               `json:"context_tokens"` // default 100000
-	Headers       map[string]string `json:"headers"`
-	SystemExtra   string            `json:"system_extra"`
-	WebSearch     bool              `json:"web_search"` // Anthropic only
-	Effort        string            `json:"effort"`     // default "low"
-	Limits        AssistantLimits   `json:"limits"`
+	Model            string            `json:"model"`
+	APIFormat        string            `json:"api_format"` // "anthropic" | "openai"
+	BaseURL          string            `json:"base_url"`
+	APIKey           string            `json:"api_key"`
+	APIKeyEnv        string            `json:"api_key_env"`
+	MaxTokens        int               `json:"max_tokens"`     // default 8192
+	ContextTokens    int               `json:"context_tokens"` // default 100000
+	Headers          map[string]string `json:"headers"`
+	SystemExtra      string            `json:"system_extra"`
+	WebSearch        bool              `json:"web_search"`
+	WebSearchSupport string            `json:"web_search_support"` // see WebSearchAuto
+	Effort           string            `json:"effort"`             // default "low"
+	Limits           AssistantLimits   `json:"limits"`
 }
+
+// Values of AssistantConfig.WebSearchSupport. Auto sends web search only to
+// Claude models with the anthropic format.
+const (
+	WebSearchAuto   = ""
+	WebSearchAlways = "always"
+	WebSearchNever  = "never"
+)
 
 // AssistantLimits holds the limits of the plans. A zero value means no
 // limit.
@@ -152,12 +161,17 @@ func (c AssistantConfig) PlanLimits(plan string) AssistantPlanLimits {
 }
 
 // Validate checks the values. It logs a warning for web_search with the
-// openai format.
+// openai format, unless web_search_support is "always".
 func (c AssistantConfig) Validate() error {
 	switch c.APIFormat {
 	case "", "anthropic", "openai":
 	default:
 		return fmt.Errorf("assistant.api_format %q must be anthropic or openai", c.APIFormat)
+	}
+	switch c.WebSearchSupport {
+	case WebSearchAuto, WebSearchAlways, WebSearchNever:
+	default:
+		return fmt.Errorf("assistant.web_search_support %q must be empty, always or never", c.WebSearchSupport)
 	}
 	if c.Effort != "" && !slices.Contains(assistantEfforts, c.Effort) {
 		return fmt.Errorf("assistant.effort %q must be one of %s", c.Effort, strings.Join(assistantEfforts, ", "))
@@ -173,8 +187,8 @@ func (c AssistantConfig) Validate() error {
 			return err
 		}
 	}
-	if c.Format() == "openai" && c.WebSearch {
-		slog.Warn("assistant.web_search works only with the anthropic format")
+	if c.Format() == "openai" && c.WebSearch && c.WebSearchSupport != WebSearchAlways {
+		slog.Warn("assistant.web_search works with the openai format only when assistant.web_search_support is always")
 	}
 	return nil
 }
@@ -213,6 +227,7 @@ func (c AssistantConfig) LogValue() slog.Value {
 		slog.String("api_key_env", c.APIKeyEnv),
 		slog.Any("headers", slices.Sorted(maps.Keys(c.Headers))),
 		slog.Bool("web_search", c.WebSearch),
+		slog.String("web_search_support", c.WebSearchSupport),
 		slog.String("effort", c.EffortOrDefault()),
 	)
 }
