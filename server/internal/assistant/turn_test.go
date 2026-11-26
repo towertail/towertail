@@ -585,6 +585,34 @@ func TestPauseTurnContinues(t *testing.T) {
 	}
 }
 
+func TestLimitsWebSearchOpenAI(t *testing.T) {
+	yes := true
+	for _, tc := range []struct {
+		name    string
+		support string
+		want    bool
+	}{
+		{"auto", config.WebSearchAuto, false},
+		{"always", config.WebSearchAlways, true},
+		{"never", config.WebSearchNever, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.AssistantConfig{
+				Model: "deepseek-v4.1-flash", APIFormat: "openai", WebSearchSupport: tc.support,
+				Limits: config.AssistantLimits{Plans: map[string]config.AssistantPlanLimits{"team": {WebSearch: &yes}}},
+			}
+			e := newEnv(t, cfg, round{parts: []Part{txt("x"), stop(StopEnd, 1, 1)}})
+			e.svc.plans = fakePlans{plan: "team", seats: 1}
+			if _, err := e.ask(context.Background(), "q"); err != nil {
+				t.Fatal(err)
+			}
+			if got := e.model.reqs[0].WebSearch; got != tc.want {
+				t.Fatalf("WebSearch %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestShowChartBar(t *testing.T) {
 	e := newEnv(t, config.AssistantConfig{},
 		round{parts: []Part{
@@ -720,7 +748,7 @@ func TestRequestFromPlan(t *testing.T) {
 	cfg := config.AssistantConfig{
 		Model: "claude-sonnet-5-5", MaxTokens: 1000, WebSearch: false,
 		Limits: config.AssistantLimits{Plans: map[string]config.AssistantPlanLimits{
-			"team": {Model: "claude-haiku-5-5", ReplyTokens: 321, WebSearch: &yes},
+			"team": {Model: "claude-opus-5-5", ReplyTokens: 321, WebSearch: &yes},
 		}},
 	}
 	e := newEnv(t, cfg, round{parts: []Part{txt("x"), stop(StopEnd, 1, 1)}})
@@ -729,7 +757,7 @@ func TestRequestFromPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := e.model.reqs[0]
-	if r.Model != "claude-haiku-5-5" || r.MaxTokens != 321 || !r.WebSearch || r.Effort != "low" || r.NoTools {
+	if r.Model != "claude-opus-5-5" || r.MaxTokens != 321 || !r.WebSearch || r.Effort != "low" || r.NoTools {
 		t.Fatalf("request %+v", r)
 	}
 	if len(r.Conversation) != 32 || strings.Contains(r.Conversation, "-") {

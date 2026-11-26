@@ -190,7 +190,7 @@ func (m *AnthropicModel) params(r Request) (anthropic.MessageNewParams, error) {
 		}
 		p.Tools = append(p.Tools, t)
 	}
-	if r.WebSearch && webSearchSupported(r.Model) {
+	if r.WebSearch {
 		p.Tools = append(p.Tools, anthropic.ToolUnionParam{OfWebSearchTool20260209: &anthropic.WebSearchTool20260209Param{
 			MaxUses: param.NewOpt(int64(webSearchUses)),
 		}})
@@ -210,8 +210,17 @@ func (m *AnthropicModel) params(r Request) (anthropic.MessageNewParams, error) {
 	return p, nil
 }
 
-func webSearchSupported(model string) bool {
-	return slices.ContainsFunc(webSearchModels, func(p string) bool { return strings.HasPrefix(model, p) })
+// webSearchSupported tells if model can get the web search tool. Auto
+// allows only a Claude model with the anthropic format.
+func webSearchSupported(cfg config.AssistantConfig, model string) bool {
+	switch cfg.WebSearchSupport {
+	case config.WebSearchNever:
+		return false
+	case config.WebSearchAlways:
+		return true
+	}
+	return cfg.Format() == "anthropic" &&
+		slices.ContainsFunc(webSearchModels, func(p string) bool { return strings.HasPrefix(model, p) })
 }
 
 func anthropicTool(d ToolDef) (anthropic.ToolUnionParam, error) {

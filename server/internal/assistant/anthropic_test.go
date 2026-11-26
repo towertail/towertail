@@ -189,10 +189,31 @@ func TestAnthropicNoToolsAndWebSearch(t *testing.T) {
 		t.Fatalf("tool_choice %s", parse(body).get("tool_choice").raw())
 	}
 
-	r.Model, r.NoTools = "claude-haiku-4-5", false
+	// The model does not check the support. The limits do.
+	r.Model, r.NoTools = "deepseek-v4.1-flash", false
 	collect(t, m, r)
-	if strings.Contains(srv.last(), "web_search") {
-		t.Fatal("web search tool sent to a model without support")
+	if !parse(srv.last()).get("tools").find("type", "web_search_20260209").exists() {
+		t.Fatal("web search tool not sent for WebSearch")
+	}
+}
+
+func TestWebSearchSupported(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		cfg   config.AssistantConfig
+		model string
+		want  bool
+	}{
+		{"auto claude", config.AssistantConfig{}, "claude-sonnet-5-5", true},
+		{"auto haiku", config.AssistantConfig{}, "claude-haiku-4-5", false},
+		{"auto deepseek", config.AssistantConfig{}, "deepseek-v4.1-flash", false},
+		{"auto claude openai", config.AssistantConfig{APIFormat: "openai"}, "claude-sonnet-5-5", false},
+		{"always deepseek openai", config.AssistantConfig{APIFormat: "openai", WebSearchSupport: config.WebSearchAlways}, "deepseek-v4.1-flash", true},
+		{"never claude", config.AssistantConfig{WebSearchSupport: config.WebSearchNever}, "claude-sonnet-5-5", false},
+	} {
+		if got := webSearchSupported(tc.cfg, tc.model); got != tc.want {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }
 

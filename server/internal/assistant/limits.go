@@ -57,9 +57,10 @@ func (l orgLimits) maxTokens() int {
 	return l.cfg.MaxTokensOrDefault()
 }
 
-// webSearch tells if the plan allows web search. The plan value wins.
+// webSearch tells if the model supports web search and the plan allows
+// it. The plan value wins over the config value.
 func (l orgLimits) webSearch() bool {
-	if l.cfg.Format() != "anthropic" {
+	if !webSearchSupported(l.cfg, l.model) {
 		return false
 	}
 	if l.lim.WebSearch != nil {
