@@ -223,12 +223,16 @@ final class RemoteClient {
 
     private static let fleetGroupSize = 200
 
-    private static func rangeItems(from: Date, to: Date) -> [URLQueryItem] {
+    private static let rangeFormatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime]
-        return [
-            URLQueryItem(name: "from", value: f.string(from: from)),
-            URLQueryItem(name: "to", value: f.string(from: to)),
+        return f
+    }()
+
+    private static func rangeItems(from: Date, to: Date) -> [URLQueryItem] {
+        [
+            URLQueryItem(name: "from", value: rangeFormatter.string(from: from)),
+            URLQueryItem(name: "to", value: rangeFormatter.string(from: to)),
         ]
     }
 

@@ -131,6 +131,7 @@ final class CloudHistoryCacheTests: XCTestCase {
         let items = URLComponents(string: "http://x" + (server.captured.last?.path ?? ""))?.queryItems
         XCTAssertEqual(items?.first { $0.name == "step" }?.value, "10s")
         XCTAssertEqual(items?.first { $0.name == "metrics" }?.value, "cpu,mem")
+        XCTAssertEqual(items?.first { $0.name == "from" }?.value, "2027-01-15T06:00:00Z")
     }
 
     func testWindowKeyRoundsToStep() async throws {

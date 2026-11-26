@@ -48,8 +48,9 @@ struct LogsPane: View {
     }
 
     var body: some View {
+        let rows = self.rows
         VStack(alignment: .leading, spacing: 8) {
-            filterBar
+            filterBar(shown: rows.count, hosts: distinctHosts)
 
             Table(rows, selection: $selection, sortOrder: $sortOrder) {
                 TableColumn("Time", value: \.t) { row in
@@ -97,14 +98,14 @@ struct LogsPane: View {
     // MARK: Filter / footer
 
     @ViewBuilder
-    private var filterBar: some View {
+    private func filterBar(shown: Int, hosts: [String]) -> some View {
         HStack(spacing: 8) {
             Picker("Host", selection: $hostFilter) {
                 Text("All hosts").tag(HostFilter.all)
                 Text("App only").tag(HostFilter.app)
-                if !distinctHosts.isEmpty {
+                if !hosts.isEmpty {
                     Divider()
-                    ForEach(distinctHosts, id: \.self) { name in
+                    ForEach(hosts, id: \.self) { name in
                         Text(name).tag(HostFilter.host(name))
                     }
                 }
@@ -127,7 +128,7 @@ struct LogsPane: View {
 
             Spacer()
 
-            Text("\(rows.count) / \(logger.ring.count)")
+            Text("\(shown) / \(logger.ring.count)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .help("Rows shown / total in memory")
@@ -197,7 +198,7 @@ struct LogsPane: View {
                 id: entry.id,
                 t: entry.t,
                 level: entry.level,
-                levelRank: Self.rank(for: entry.level),
+                levelRank: entry.level.rank,
                 category: entry.category,
                 host: host,
                 message: entry.message,
@@ -225,15 +226,6 @@ struct LogsPane: View {
             .padding(.horizontal, 6)
             .padding(.vertical, 1)
             .background(color.opacity(0.12), in: Capsule())
-    }
-
-    private static func rank(for level: Logger.Level) -> Int {
-        switch level {
-        case .debug: return 0
-        case .info: return 1
-        case .warn: return 2
-        case .error: return 3
-        }
     }
 
     private static let timeFormatter: DateFormatter = {

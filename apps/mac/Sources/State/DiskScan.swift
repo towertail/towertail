@@ -491,12 +491,20 @@ struct DiskScanJob: Codable, Sendable, Equatable, Identifiable {
     private static func date(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> Date? {
         guard let s = try? c.decodeIfPresent(String.self, forKey: key), !s.isEmpty else { return nil }
         if let d = SampleCodec.parseRFC3339UTC(s) { return d }
+        return fractionalISO.date(from: s) ?? plainISO.date(from: s)
+    }
+
+    nonisolated(unsafe) private static let fractionalISO: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = f.date(from: s) { return d }
+        return f
+    }()
+
+    nonisolated(unsafe) private static let plainISO: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime]
-        return f.date(from: s)
-    }
+        return f
+    }()
 }
 
 /// One event of a running scan.
@@ -515,11 +523,12 @@ enum DiskScanEvent: Sendable, Equatable {
         }
     }
 
+    private static let lineDecoder = JSONDecoder()
+
     /// Decodes one NDJSON scan line.
     static func decodeLine(_ data: Data) throws -> DiskScanEvent {
         struct Head: Decodable { let t: String?; let v: Int? }
-        let decoder = JSONDecoder()
-        let raw = try decoder.decode(Head.self, from: data)
+        let raw = try lineDecoder.decode(Head.self, from: data)
         // An old sampler ignores "scan" and prints a sample without "t".
         guard let t = raw.t else { throw DiskScanError.noScanCommand }
         let head = (t: t, v: raw.v)
@@ -528,12 +537,12 @@ enum DiskScanEvent: Sendable, Equatable {
         }
         switch head.t {
         case "progress":
-            return .progress(try decoder.decode(DiskScanProgress.self, from: data))
+            return .progress(try lineDecoder.decode(DiskScanProgress.self, from: data))
         case "result":
-            return .result(try decoder.decode(DiskScanResult.self, from: data))
+            return .result(try lineDecoder.decode(DiskScanResult.self, from: data))
         case "error":
             struct Msg: Decodable { let message: String? }
-            return .error(try decoder.decode(Msg.self, from: data).message ?? "scan failed")
+            return .error(try lineDecoder.decode(Msg.self, from: data).message ?? "scan failed")
         case "cancelled":
             return .cancelled
         default:

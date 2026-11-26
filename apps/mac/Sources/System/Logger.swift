@@ -26,9 +26,17 @@ final class Logger {
         case warn = "WARN "
         case error = "ERROR"
 
+        var rank: Int {
+            switch self {
+            case .debug: return 0
+            case .info: return 1
+            case .warn: return 2
+            case .error: return 3
+            }
+        }
+
         static func < (lhs: Level, rhs: Level) -> Bool {
-            let order: [Level] = [.debug, .info, .warn, .error]
-            return order.firstIndex(of: lhs)! < order.firstIndex(of: rhs)!
+            lhs.rank < rhs.rank
         }
     }
 

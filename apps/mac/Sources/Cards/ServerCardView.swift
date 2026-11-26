@@ -216,10 +216,14 @@ struct ServerCardView: View {
 
     private var snoozeTooltip: String {
         guard let until = node?.snoozedUntil else { return "Snoozed" }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .full
-        return "Notifications snoozed \(formatter.localizedString(for: until, relativeTo: Date()))"
+        return "Notifications snoozed \(Self.snoozeFormatter.localizedString(for: until, relativeTo: Date()))"
     }
+
+    private static let snoozeFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .full
+        return f
+    }()
 
     private var subtitle: some View {
         HStack(spacing: 4) {
