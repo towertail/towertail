@@ -5,7 +5,6 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -19,8 +18,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/towertail/sampler/pkg/schema"
 
-	"github.com/towertail/towertail/server/config"
-	"github.com/towertail/towertail/server/internal/auth"
 	"github.com/towertail/towertail/server/internal/hub"
 	"github.com/towertail/towertail/server/internal/scan"
 	"github.com/towertail/towertail/server/store"
@@ -31,74 +28,40 @@ const progressLine = `{"t":"progress","v":1,"files":10,"dirs":2,"bytes":100,"no_
 
 // scanEnv is a server with two nodes: on (allowDiskScan) and off.
 type scanEnv struct {
-	t          *testing.T
-	srv        *Server
-	user       string
-	otherUser  string
-	on, off    uuid.UUID
-	samplerOn  string
-	samplerOff string
+	*testEnv
+	user, otherUser       string
+	on, off               uuid.UUID
+	samplerOn, samplerOff string
 }
 
 func newScanEnv(t *testing.T) *scanEnv {
 	t.Helper()
-	ctx := context.Background()
-	st, err := store.OpenBolt(t.TempDir())
+	e := &scanEnv{testEnv: newTestEnv(t), on: uuid.New(), off: uuid.New()}
+	scanStore, err := scan.NewStore(e.st.DB())
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
-	scanStore, err := scan.NewStore(st.DB())
-	if err != nil {
-		t.Fatal(err)
-	}
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	log := slog.New(slog.DiscardHandler)
 	h := hub.New(log, hub.Options{})
-	issuer := auth.NewIssuer(st)
-	srv := New(Deps{
-		Config:   &config.Config{},
+	e.serve(Deps{
 		Log:      log,
-		Store:    st,
-		Issuer:   issuer,
 		Hub:      h,
-		Scans:    scan.NewManager(scanStore, st, h, log, nil),
+		Scans:    scan.NewManager(scanStore, e.st, h, log, nil),
 		Channels: &fakeChannels{},
 	})
-
-	e := &scanEnv{t: t, srv: srv, on: uuid.New(), off: uuid.New()}
 	for _, n := range []store.Node{
 		{ID: e.on, DisplayName: "on", Kind: "ssh", AllowDiskScan: true},
 		{ID: e.off, DisplayName: "off", Kind: "ssh"},
 	} {
-		if err := st.PutNode(ctx, store.ZeroOrg, n); err != nil {
+		if err := e.st.PutNode(context.Background(), store.ZeroOrg, n); err != nil {
 			t.Fatal(err)
 		}
 	}
-	issue := func(org uuid.UUID, kind store.TokenKind, node *uuid.UUID) string {
-		raw, _, err := issuer.Issue(ctx, org, kind, "test", node, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return raw
-	}
-	e.user = issue(store.ZeroOrg, store.TokenKindUser, nil)
-	e.otherUser = issue(uuid.New(), store.TokenKindUser, nil)
-	e.samplerOn = issue(store.ZeroOrg, store.TokenKindSampler, &e.on)
-	e.samplerOff = issue(store.ZeroOrg, store.TokenKindSampler, &e.off)
+	e.user = e.issue(store.ZeroOrg, store.TokenKindUser, nil)
+	e.otherUser = e.issue(uuid.New(), store.TokenKindUser, nil)
+	e.samplerOn = e.issue(store.ZeroOrg, store.TokenKindSampler, &e.on)
+	e.samplerOff = e.issue(store.ZeroOrg, store.TokenKindSampler, &e.off)
 	return e
-}
-
-func (e *scanEnv) do(method, path, token string, body []byte, header ...string) *httptest.ResponseRecorder {
-	e.t.Helper()
-	req := httptest.NewRequest(method, path, bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-	for i := 0; i+1 < len(header); i += 2 {
-		req.Header.Set(header[i], header[i+1])
-	}
-	rec := httptest.NewRecorder()
-	e.srv.Handler().ServeHTTP(rec, req)
-	return rec
 }
 
 func (e *scanEnv) request(node uuid.UUID) wire.DiskScanJob {
@@ -110,20 +73,6 @@ func (e *scanEnv) request(node uuid.UUID) wire.DiskScanJob {
 	var j wire.DiskScanJob
 	decode(e.t, rec.Body.Bytes(), &j)
 	return j
-}
-
-func decode(t *testing.T, data []byte, v any) {
-	t.Helper()
-	if err := json.Unmarshal(data, v); err != nil {
-		t.Fatalf("decode %s: %v", data, err)
-	}
-}
-
-func wantCode(t *testing.T, rec *httptest.ResponseRecorder, code int) {
-	t.Helper()
-	if rec.Code != code {
-		t.Fatalf("want %d, got %d: %s", code, rec.Code, rec.Body)
-	}
 }
 
 func resultGzip(t *testing.T) []byte {

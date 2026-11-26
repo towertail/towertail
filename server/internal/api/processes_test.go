@@ -41,11 +41,11 @@ func TestHandleProcessesAt(t *testing.T) {
 		{"?ts=2026-01-02T03:04:05Z&by=io&limit=50", http.StatusServiceUnavailable},
 		{"?ts=now-1h", http.StatusServiceUnavailable},
 	} {
-		if rec := e.do(http.MethodGet, base+tc.query, user, ""); rec.Code != tc.want {
+		if rec := e.do(http.MethodGet, base+tc.query, user, nil); rec.Code != tc.want {
 			t.Errorf("GET %s: %d %s, want %d", tc.query, rec.Code, rec.Body, tc.want)
 		}
 	}
-	if rec := e.do(http.MethodGet, "/v1/nodes/x/processes/at", user, ""); rec.Code != http.StatusBadRequest {
+	if rec := e.do(http.MethodGet, "/v1/nodes/x/processes/at", user, nil); rec.Code != http.StatusBadRequest {
 		t.Errorf("bad id: %d", rec.Code)
 	}
 }
@@ -93,7 +93,7 @@ func TestHandleProcessesSeriesParam(t *testing.T) {
 		{"?series=0", http.StatusServiceUnavailable},
 		{"?series=120", http.StatusServiceUnavailable},
 	} {
-		if rec := e.do(http.MethodGet, base+tc.query, user, ""); rec.Code != tc.want {
+		if rec := e.do(http.MethodGet, base+tc.query, user, nil); rec.Code != tc.want {
 			t.Errorf("GET %s: %d %s, want %d", tc.query, rec.Code, rec.Body, tc.want)
 		}
 	}
@@ -148,11 +148,11 @@ func TestHandleProcess(t *testing.T) {
 		{"at?limit=0", http.StatusBadRequest},
 		{"at", http.StatusServiceUnavailable},
 	} {
-		if rec := e.do(http.MethodGet, node+tc.path, user, ""); rec.Code != tc.want {
+		if rec := e.do(http.MethodGet, node+tc.path, user, nil); rec.Code != tc.want {
 			t.Errorf("GET %s: %d %s, want %d", tc.path, rec.Code, rec.Body, tc.want)
 		}
 	}
-	if rec := e.do(http.MethodGet, "/v1/nodes/x/processes/"+key, user, ""); rec.Code != http.StatusBadRequest {
+	if rec := e.do(http.MethodGet, "/v1/nodes/x/processes/"+key, user, nil); rec.Code != http.StatusBadRequest {
 		t.Errorf("bad id: %d", rec.Code)
 	}
 }

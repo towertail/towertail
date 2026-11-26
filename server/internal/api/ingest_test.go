@@ -1,7 +1,6 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"log/slog"
@@ -16,7 +15,6 @@ import (
 
 	"github.com/towertail/towertail/server/config"
 	"github.com/towertail/towertail/server/internal/alerter"
-	"github.com/towertail/towertail/server/internal/auth"
 	"github.com/towertail/towertail/server/internal/hub"
 	"github.com/towertail/towertail/server/store"
 	"github.com/towertail/towertail/server/wire"
@@ -32,31 +30,15 @@ var streamIntervals = config.StreamConfig{LiveInterval: 5 * time.Second, IdleInt
 
 // ingestEnv is a server with Bolt, no ClickHouse and real sampler tokens.
 type ingestEnv struct {
-	t      *testing.T
-	srv    *Server
-	st     *store.BoltStore
-	issuer *auth.TokenIssuer
+	*testEnv
 }
 
 func newIngestEnv(t *testing.T, cfg config.Config, limits Limits) *ingestEnv {
 	t.Helper()
-	st, err := store.OpenBolt(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
-	issuer := auth.NewIssuer(st)
 	cfg.Ingest.MaxBodyBytes = 1 << 20
-	d := Deps{
-		Config: &cfg,
-		Log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Store:  st,
-		Issuer: issuer,
-	}
-	if limits != nil {
-		d.Limits = limits
-	}
-	return &ingestEnv{t: t, srv: New(d), st: st, issuer: issuer}
+	e := &ingestEnv{newTestEnv(t)}
+	e.serve(Deps{Config: &cfg, Limits: limits})
+	return e
 }
 
 // node makes an enabled node and a sampler token bound to it.
@@ -70,24 +52,14 @@ func (e *ingestEnv) node(mod func(*store.Node)) (store.Node, string) {
 	if err := e.st.PutNode(ctx, store.ZeroOrg, n); err != nil {
 		e.t.Fatal(err)
 	}
-	raw, _, err := e.issuer.Issue(ctx, store.ZeroOrg, store.TokenKindSampler, "t", &n.ID, nil)
-	if err != nil {
-		e.t.Fatal(err)
-	}
+	raw := e.issue(store.ZeroOrg, store.TokenKindSampler, &n.ID)
 	time.Sleep(2 * time.Millisecond) // distinct CreatedAt
 	return n, raw
 }
 
 func (e *ingestEnv) post(token string, body []byte, header ...string) *httptest.ResponseRecorder {
 	e.t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/v1/ingest/samples", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+token)
-	for i := 0; i+1 < len(header); i += 2 {
-		req.Header.Set(header[i], header[i+1])
-	}
-	rec := httptest.NewRecorder()
-	e.srv.Handler().ServeHTTP(rec, req)
-	return rec
+	return e.do(http.MethodPost, "/v1/ingest/samples", token, body, header...)
 }
 
 func bodyKeys(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
@@ -184,29 +156,26 @@ func (e *ingestEnv) intervalOf(tok string) (string, bool) {
 	return v, ok
 }
 
-func TestIngestIntervalLiveWhenCovered(t *testing.T) {
-	e := newIngestEnv(t, config.Config{Stream: streamIntervals}, nil)
-	e.srv.leases = fakeLeases(true)
-	_, tok := e.node(nil)
-	if got, _ := e.intervalOf(tok); got != "5s" {
-		t.Fatalf("interval %q, want 5s", got)
-	}
-}
-
-func TestIngestIntervalIdleWhenNotCovered(t *testing.T) {
-	e := newIngestEnv(t, config.Config{Stream: streamIntervals}, nil)
-	e.srv.leases = fakeLeases(false)
-	_, tok := e.node(nil)
-	if got, _ := e.intervalOf(tok); got != "30s" {
-		t.Fatalf("interval %q, want 30s", got)
-	}
-}
-
-func TestIngestNoIntervalWithoutIndex(t *testing.T) {
-	e := newIngestEnv(t, config.Config{Stream: streamIntervals}, nil)
-	_, tok := e.node(nil)
-	if got, ok := e.intervalOf(tok); ok {
-		t.Fatalf("interval %q, want no key", got)
+func TestIngestInterval(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		leases LeaseIndex
+		want   string
+		hasKey bool
+	}{
+		{"live when covered", fakeLeases(true), "5s", true},
+		{"idle when not covered", fakeLeases(false), "30s", true},
+		{"no key without index", nil, "", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newIngestEnv(t, config.Config{Stream: streamIntervals}, nil)
+			e.srv.leases = c.leases
+			_, tok := e.node(nil)
+			got, ok := e.intervalOf(tok)
+			if got != c.want || ok != c.hasKey {
+				t.Fatalf("interval %q (key %v), want %q (key %v)", got, ok, c.want, c.hasKey)
+			}
+		})
 	}
 }
 
@@ -280,11 +249,7 @@ func TestDeleteNodeKeepsSamplerToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodDelete, "/v1/nodes/"+n.ID.String(), strings.NewReader(""))
-	req.Header.Set("Authorization", "Bearer "+user)
-	rec := httptest.NewRecorder()
-	e.srv.Handler().ServeHTTP(rec, req)
-	wantCode(t, rec, http.StatusNoContent)
+	wantCode(t, e.do(http.MethodDelete, "/v1/nodes/"+n.ID.String(), user, nil), http.StatusNoContent)
 	wantCode(t, e.post(tok, []byte(sampleLine)), http.StatusGone)
 }
 

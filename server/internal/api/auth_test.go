@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -24,11 +22,6 @@ import (
 // A token that a middleware sets (a cloud session) passes the bearer
 // check, and the kind check still applies.
 func TestPresetToken(t *testing.T) {
-	st, err := store.OpenBolt(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
 	session := func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			if k := c.Request().Header.Get("X-Test-Kind"); k != "" {
@@ -37,13 +30,7 @@ func TestPresetToken(t *testing.T) {
 			return next(c)
 		}
 	}
-	srv := New(Deps{
-		Config:     &config.Config{},
-		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Store:      st,
-		Issuer:     auth.NewIssuer(st),
-		Middleware: []echo.MiddlewareFunc{session},
-	})
+	srv := newTestEnv(t).serve(Deps{Middleware: []echo.MiddlewareFunc{session}})
 	for kind, want := range map[string]int{
 		"":                             http.StatusUnauthorized,
 		"user":                         http.StatusOK,
@@ -72,11 +59,6 @@ func (f fakeRoles) Role(context.Context, uuid.UUID, uuid.UUID) (store.Role, erro
 // the X-Test-* headers describe.
 func newRoleServer(t *testing.T, roles Roles) *Server {
 	t.Helper()
-	st, err := store.OpenBolt(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
 	session := func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			h := c.Request().Header
@@ -94,11 +76,8 @@ func newRoleServer(t *testing.T, roles Roles) *Server {
 			return next(c)
 		}
 	}
-	return New(Deps{
+	return newTestEnv(t).serve(Deps{
 		Config:     &config.Config{HTTP: config.HTTPConfig{RateLimitRPS: 1000}},
-		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Store:      st,
-		Issuer:     auth.NewIssuer(st),
 		Roles:      roles,
 		Channels:   &fakeChannels{},
 		Middleware: []echo.MiddlewareFunc{session},
@@ -181,28 +160,16 @@ func TestBearerRole(t *testing.T) {
 }
 
 func TestSelfHostedUnchanged(t *testing.T) {
-	st, err := store.OpenBolt(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
+	e := newTestEnv(t)
 	hash, err := auth.HashPassword("pw")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.PutUser(context.Background(), store.User{ID: uuid.New(), OrgID: store.ZeroOrg, Email: "a@b.c", PasswordHash: hash}); err != nil {
+	if err := e.st.PutUser(context.Background(), store.User{ID: uuid.New(), OrgID: store.ZeroOrg, Email: "a@b.c", PasswordHash: hash}); err != nil {
 		t.Fatal(err)
 	}
-	srv := New(Deps{
-		Config: &config.Config{},
-		Log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Store:  st,
-		Issuer: auth.NewIssuer(st),
-	})
-	req := httptest.NewRequest(http.MethodPost, "/v1/auth/login", strings.NewReader(`{"email":"a@b.c","password":"pw"}`))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rec, req)
+	srv := e.serve(Deps{})
+	rec := e.do(http.MethodPost, "/v1/auth/login", "", []byte(`{"email":"a@b.c","password":"pw"}`))
 	var login wire.LoginResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &login); err != nil || login.Token == "" {
 		t.Fatalf("login: %d %s", rec.Code, rec.Body)

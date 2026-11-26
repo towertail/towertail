@@ -19,19 +19,19 @@ func TestAPIKeyRateLimit(t *testing.T) {
 	keyB := e.create(t, user, "b").Token
 
 	for i := 0; i < 2; i++ {
-		if rec := e.do(http.MethodGet, "/v1/nodes", keyA, ""); rec.Code != http.StatusOK {
+		if rec := e.do(http.MethodGet, "/v1/nodes", keyA, nil); rec.Code != http.StatusOK {
 			t.Fatalf("call %d: %d", i+1, rec.Code)
 		}
 	}
-	rec := e.do(http.MethodGet, "/v1/nodes", keyA, "")
+	rec := e.do(http.MethodGet, "/v1/nodes", keyA, nil)
 	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "rate_limited") {
 		t.Fatalf("third call: %d %s, want 429 rate_limited", rec.Code, rec.Body)
 	}
-	if rec := e.do(http.MethodGet, "/v1/nodes", keyB, ""); rec.Code != http.StatusOK {
+	if rec := e.do(http.MethodGet, "/v1/nodes", keyB, nil); rec.Code != http.StatusOK {
 		t.Fatalf("second key: %d, want its own budget", rec.Code)
 	}
 	for i := 0; i < 10; i++ {
-		if rec := e.do(http.MethodGet, "/v1/nodes", user, ""); rec.Code != http.StatusOK {
+		if rec := e.do(http.MethodGet, "/v1/nodes", user, nil); rec.Code != http.StatusOK {
 			t.Fatalf("user call %d: %d, want no limit", i+1, rec.Code)
 		}
 	}

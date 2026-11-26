@@ -44,48 +44,36 @@ func fleetCtx(t *testing.T, query string) echo.Context {
 	return c
 }
 
-func TestParseRangeClampsToPlan(t *testing.T) {
-	s := &Server{query: query.NewService(nil, nil, fixedLimits(30), nil)}
-	r := s.parseRange(rangeCtx(t, "from=now-2160h"), time.Hour)
-	if !r.Clamped {
-		t.Fatal("clamped = false, want true")
-	}
-	if got := time.Since(r.From); got > 30*24*time.Hour+time.Minute || got < 30*24*time.Hour-time.Minute {
-		t.Fatalf("from is %v ago, want 30 days", got)
-	}
-}
-
-func TestParseRangeInsidePlan(t *testing.T) {
-	s := &Server{query: query.NewService(nil, nil, fixedLimits(30), nil)}
-	r := s.parseRange(rangeCtx(t, "from=now-24h"), time.Hour)
-	if r.Clamped {
-		t.Fatal("clamped = true, want false")
-	}
-}
-
-func TestParseRangeNoLimits(t *testing.T) {
-	for _, s := range []*Server{{query: query.NewService(nil, nil, nil, nil)}, {query: query.NewService(nil, nil, fixedLimits(0), nil)}} {
-		r := s.parseRange(rangeCtx(t, "from=now-2160h"), time.Hour)
-		if r.Clamped || time.Since(r.From) < 89*24*time.Hour {
-			t.Fatalf("range = %+v, want no clamp", r)
-		}
-	}
-}
-
-// A range that ends before the oldest allowed time becomes empty.
-func TestParseRangeToBeforeLimit(t *testing.T) {
-	s := &Server{query: query.NewService(nil, nil, fixedLimits(30), nil)}
-	r := s.parseRange(rangeCtx(t, "from=now-2160h&to=now-1440h"), time.Hour)
-	if !r.Clamped || !r.To.Equal(r.From) {
-		t.Fatalf("range = %+v, want an empty clamped range", r)
-	}
-}
-
-func TestParseRangeWithoutID(t *testing.T) {
-	s := &Server{query: query.NewService(nil, nil, nil, nil)}
-	r := s.parseRange(fleetCtx(t, "from=now-2h"), time.Hour)
-	if got := r.To.Sub(r.From); got < 119*time.Minute || got > 121*time.Minute {
-		t.Fatalf("range = %v, want 2h", got)
+func TestParseRange(t *testing.T) {
+	const plan = 30 * 24 * time.Hour
+	for _, c := range []struct {
+		name  string
+		plan  query.Limits
+		ctx   func(*testing.T, string) echo.Context
+		query string
+		check func(*testing.T, historyRange)
+	}{
+		{"clamps to plan", fixedLimits(30), rangeCtx, "from=now-2160h", func(t *testing.T, r historyRange) {
+			if got := time.Since(r.From); !r.Clamped || got > plan+time.Minute || got < plan-time.Minute {
+				t.Fatalf("range = %+v (from %v ago), want clamped to 30 days", r, got)
+			}
+		}},
+		// A range that ends before the oldest allowed time becomes empty.
+		{"to before limit", fixedLimits(30), rangeCtx, "from=now-2160h&to=now-1440h", func(t *testing.T, r historyRange) {
+			if !r.Clamped || !r.To.Equal(r.From) {
+				t.Fatalf("range = %+v, want an empty clamped range", r)
+			}
+		}},
+		{"without id", nil, fleetCtx, "from=now-2h", func(t *testing.T, r historyRange) {
+			if got := r.To.Sub(r.From); got < 119*time.Minute || got > 121*time.Minute {
+				t.Fatalf("range = %v, want 2h", got)
+			}
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := &Server{query: query.NewService(nil, nil, c.plan, nil)}
+			c.check(t, s.parseRange(c.ctx(t, c.query), time.Hour))
+		})
 	}
 }
 

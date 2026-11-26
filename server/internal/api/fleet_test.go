@@ -35,7 +35,7 @@ func TestFleetEndpoints(t *testing.T) {
 		{"/v1/fleet/processes?by=mem&node=" + uuid.NewString(), http.StatusServiceUnavailable},
 		{"/v1/fleet/compare?metric=net_rx&window=24h", http.StatusServiceUnavailable},
 	} {
-		if rec := e.do(http.MethodGet, tc.path, user, ""); rec.Code != tc.want {
+		if rec := e.do(http.MethodGet, tc.path, user, nil); rec.Code != tc.want {
 			t.Errorf("GET %s: %d %s, want %d", tc.path, rec.Code, rec.Body, tc.want)
 		}
 	}
@@ -45,7 +45,7 @@ func TestProcessesByValue(t *testing.T) {
 	e := newKeyEnv(t, config.HTTPConfig{})
 	user, _ := e.login(t, store.RoleViewer)
 	path := "/v1/nodes/" + uuid.NewString() + "/processes?by=disk"
-	if rec := e.do(http.MethodGet, path, user, ""); rec.Code != http.StatusBadRequest {
+	if rec := e.do(http.MethodGet, path, user, nil); rec.Code != http.StatusBadRequest {
 		t.Errorf("by=disk: %d, want 400", rec.Code)
 	}
 }

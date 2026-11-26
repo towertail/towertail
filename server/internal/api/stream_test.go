@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -17,7 +16,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/towertail/towertail/server/config"
-	"github.com/towertail/towertail/server/internal/auth"
 	"github.com/towertail/towertail/server/internal/hub"
 	"github.com/towertail/towertail/server/store"
 	"github.com/towertail/towertail/server/wire"
@@ -48,39 +46,22 @@ func newStreamEnvWith(t *testing.T, o hub.Options) *streamEnv {
 // newStreamEnvCfg sets stream.compression of the server config.
 func newStreamEnvCfg(t *testing.T, o hub.Options, compression string) *streamEnv {
 	t.Helper()
-	ctx := context.Background()
-	st, err := store.OpenBolt(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	issuer := auth.NewIssuer(st)
-	h := hub.New(log, o)
-	srv := New(Deps{
+	te := newTestEnv(t)
+	h := hub.New(slog.New(slog.DiscardHandler), o)
+	srv := te.serve(Deps{
 		Config: &config.Config{
 			Ingest: config.IngestConfig{MaxBodyBytes: 1 << 20},
 			Stream: config.StreamConfig{Compression: compression},
 		},
-		Log:    log,
-		Store:  st,
-		Issuer: issuer,
-		Hub:    h,
+		Hub: h,
 	})
 	e := &streamEnv{t: t, hub: h, node: uuid.New()}
-	if err := st.PutNode(ctx, store.ZeroOrg, store.Node{ID: e.node, DisplayName: "n", Kind: "ssh", Enabled: true}); err != nil {
+	if err := te.st.PutNode(context.Background(), store.ZeroOrg, store.Node{ID: e.node, DisplayName: "n", Kind: "ssh", Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	issue := func(kind store.TokenKind, node *uuid.UUID) string {
-		raw, _, err := issuer.Issue(ctx, store.ZeroOrg, kind, "test", node, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return raw
-	}
-	e.user = issue(store.TokenKindUser, nil)
-	e.user2 = issue(store.TokenKindUser, nil)
-	e.sampler = issue(store.TokenKindSampler, &e.node)
+	e.user = te.issue(store.ZeroOrg, store.TokenKindUser, nil)
+	e.user2 = te.issue(store.ZeroOrg, store.TokenKindUser, nil)
+	e.sampler = te.issue(store.ZeroOrg, store.TokenKindSampler, &e.node)
 	e.ts = httptest.NewServer(srv.Handler())
 	t.Cleanup(e.ts.Close)
 	return e

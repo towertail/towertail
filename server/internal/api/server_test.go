@@ -1,11 +1,93 @@
 package api
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/google/uuid"
+
+	"github.com/towertail/towertail/server/config"
+	"github.com/towertail/towertail/server/internal/auth"
 	"github.com/towertail/towertail/server/store"
 )
+
+// testEnv is a Server on a temp Bolt store with a real token issuer.
+// Bolt skips fsync, so tests run fast.
+type testEnv struct {
+	t      *testing.T
+	srv    *Server
+	st     *store.BoltStore
+	issuer *auth.TokenIssuer
+}
+
+func newTestEnv(t *testing.T) *testEnv {
+	t.Helper()
+	st, err := store.OpenBolt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.DB().NoSync = true
+	t.Cleanup(func() { _ = st.Close() })
+	return &testEnv{t: t, st: st, issuer: auth.NewIssuer(st)}
+}
+
+// serve fills the empty fields of d and makes the Server.
+func (e *testEnv) serve(d Deps) *Server {
+	if d.Config == nil {
+		d.Config = &config.Config{}
+	}
+	if d.Log == nil {
+		d.Log = slog.New(slog.DiscardHandler)
+	}
+	d.Store = e.st
+	d.Issuer = e.issuer
+	e.srv = New(d)
+	return e.srv
+}
+
+func (e *testEnv) do(method, path, token string, body []byte, header ...string) *httptest.ResponseRecorder {
+	e.t.Helper()
+	req := httptest.NewRequest(method, path, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	for i := 0; i+1 < len(header); i += 2 {
+		req.Header.Set(header[i], header[i+1])
+	}
+	rec := httptest.NewRecorder()
+	e.srv.Handler().ServeHTTP(rec, req)
+	return rec
+}
+
+// issue gives the raw token of a new token.
+func (e *testEnv) issue(org uuid.UUID, kind store.TokenKind, node *uuid.UUID) string {
+	e.t.Helper()
+	raw, _, err := e.issuer.Issue(context.Background(), org, kind, "test", node, nil)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return raw
+}
+
+func decode(t *testing.T, data []byte, v any) {
+	t.Helper()
+	if err := json.Unmarshal(data, v); err != nil {
+		t.Fatalf("decode %s: %v", data, err)
+	}
+}
+
+func wantCode(t *testing.T, rec *httptest.ResponseRecorder, code int) {
+	t.Helper()
+	if rec.Code != code {
+		t.Fatalf("want %d, got %d: %s", code, rec.Code, rec.Body)
+	}
+}
 
 func TestRouteRoles(t *testing.T) {
 	const id = "00000000-0000-0000-0000-000000000001"

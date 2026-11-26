@@ -3,8 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,38 +16,15 @@ import (
 	"github.com/towertail/towertail/server/authctx"
 	"github.com/towertail/towertail/server/config"
 	"github.com/towertail/towertail/server/internal/alerter"
-	"github.com/towertail/towertail/server/internal/auth"
 	"github.com/towertail/towertail/server/internal/clickhouse"
 	"github.com/towertail/towertail/server/store"
 	"github.com/towertail/towertail/server/wire"
 )
 
 func TestSamplerTokens(t *testing.T) {
-	st, err := store.OpenBolt(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
-	issuer := auth.NewIssuer(st)
-	user := func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			authctx.Set(c, store.Token{OrgID: store.ZeroOrg, Kind: store.TokenKindUser})
-			return next(c)
-		}
-	}
-	srv := New(Deps{
-		Config:     &config.Config{},
-		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Store:      st,
-		Issuer:     issuer,
-		Middleware: []echo.MiddlewareFunc{user},
-	})
+	e := newEnrollEnv(t, config.Config{}, nil)
 	do := func(method, target, body string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(method, target, strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rec, req)
-		return rec
+		return e.do(method, target, "", []byte(body))
 	}
 	list := func() []wire.SamplerToken {
 		rec := do(http.MethodGet, "/v1/sampler/tokens", "")
@@ -74,10 +49,10 @@ func TestSamplerTokens(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &enr)
 	// A user token and a token of another org do not show.
 	ctx := context.Background()
-	if _, _, err := issuer.Issue(ctx, store.ZeroOrg, store.TokenKindUser, "me", nil, nil); err != nil {
+	if _, _, err := e.issuer.Issue(ctx, store.ZeroOrg, store.TokenKindUser, "me", nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	_, other, err := issuer.Issue(ctx, uuid.New(), store.TokenKindSampler, "other", nil, nil)
+	_, other, err := e.issuer.Issue(ctx, uuid.New(), store.TokenKindSampler, "other", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,64 +70,38 @@ func TestSamplerTokens(t *testing.T) {
 	if rec := do(http.MethodDelete, "/v1/sampler/tokens/"+got[0].ID.String(), ""); rec.Code != http.StatusNoContent {
 		t.Fatalf("delete: %d %s", rec.Code, rec.Body)
 	}
-	if _, err := issuer.Verify(ctx, enr.SamplerToken); err == nil {
+	if _, err := e.issuer.Verify(ctx, enr.SamplerToken); err == nil {
 		t.Fatal("the revoked token still works")
 	}
 	if got := list(); len(got) != 0 {
 		t.Fatalf("list after delete: %v", got)
 	}
-	if _, err := st.GetNode(ctx, store.ZeroOrg, enr.NodeID); err != nil {
+	if _, err := e.st.GetNode(ctx, store.ZeroOrg, enr.NodeID); err != nil {
 		t.Fatalf("the node must stay: %v", err)
 	}
 }
 
 // enrollEnv is a server with a user for the ZeroOrg on every request.
 type enrollEnv struct {
-	t      *testing.T
-	srv    *Server
-	st     *store.BoltStore
-	issuer *auth.TokenIssuer
+	*testEnv
 }
 
 func newEnrollEnv(t *testing.T, cfg config.Config, limits Limits) *enrollEnv {
 	t.Helper()
-	st, err := store.OpenBolt(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
-	issuer := auth.NewIssuer(st)
 	user := func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			authctx.Set(c, store.Token{OrgID: store.ZeroOrg, Kind: store.TokenKindUser})
 			return next(c)
 		}
 	}
-	d := Deps{
-		Config:     &cfg,
-		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Store:      st,
-		Issuer:     issuer,
-		Middleware: []echo.MiddlewareFunc{user},
-	}
-	if limits != nil {
-		d.Limits = limits
-	}
-	return &enrollEnv{t: t, srv: New(d), st: st, issuer: issuer}
-}
-
-func (e *enrollEnv) do(method, target, body string) *httptest.ResponseRecorder {
-	e.t.Helper()
-	req := httptest.NewRequest(method, target, strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	e.srv.Handler().ServeHTTP(rec, req)
-	return rec
+	e := &enrollEnv{newTestEnv(t)}
+	e.serve(Deps{Config: &cfg, Middleware: []echo.MiddlewareFunc{user}, Limits: limits})
+	return e
 }
 
 func (e *enrollEnv) enroll(body string) (*httptest.ResponseRecorder, wire.EnrollResponse) {
 	e.t.Helper()
-	rec := e.do(http.MethodPost, "/v1/sampler/enroll", body)
+	rec := e.do(http.MethodPost, "/v1/sampler/enroll", "", []byte(body))
 	var out wire.EnrollResponse
 	if rec.Code == http.StatusOK {
 		decode(e.t, rec.Body.Bytes(), &out)
@@ -162,7 +111,7 @@ func (e *enrollEnv) enroll(body string) (*httptest.ResponseRecorder, wire.Enroll
 
 func (e *enrollEnv) joinToken() string {
 	e.t.Helper()
-	rec := e.do(http.MethodPost, "/v1/sampler/join-tokens", `{"display_name":"new"}`)
+	rec := e.do(http.MethodPost, "/v1/sampler/join-tokens", "", []byte(`{"display_name":"new"}`))
 	wantCode(e.t, rec, http.StatusCreated)
 	var out wire.JoinTokenResponse
 	decode(e.t, rec.Body.Bytes(), &out)
@@ -172,7 +121,7 @@ func (e *enrollEnv) joinToken() string {
 func (e *enrollEnv) join(token, machine string) (*httptest.ResponseRecorder, wire.EnrollResponse) {
 	e.t.Helper()
 	body, _ := json.Marshal(wire.JoinRequest{JoinToken: token, DisplayName: "web-1", MachineID: machine})
-	rec := e.do(http.MethodPost, "/v1/sampler/join", string(body))
+	rec := e.do(http.MethodPost, "/v1/sampler/join", "", body)
 	var out wire.EnrollResponse
 	if rec.Code == http.StatusOK {
 		decode(e.t, rec.Body.Bytes(), &out)
@@ -259,9 +208,9 @@ func TestEnroll_Endpoint(t *testing.T) {
 
 func TestJoinToken_Create(t *testing.T) {
 	e := newEnrollEnv(t, config.Config{}, maxNodes(0))
-	wantCode(t, e.do(http.MethodPost, "/v1/sampler/join-tokens", ``), http.StatusPaymentRequired)
+	wantCode(t, e.do(http.MethodPost, "/v1/sampler/join-tokens", "", nil), http.StatusPaymentRequired)
 	e = newEnrollEnv(t, config.Config{}, maxNodes(1))
-	rec := e.do(http.MethodPost, "/v1/sampler/join-tokens", ``)
+	rec := e.do(http.MethodPost, "/v1/sampler/join-tokens", "", nil)
 	wantCode(t, rec, http.StatusCreated)
 	var out wire.JoinTokenResponse
 	decode(t, rec.Body.Bytes(), &out)
@@ -304,7 +253,7 @@ func TestJoin_Invalid(t *testing.T) {
 	}
 	rec, _ = e.join(raw, "")
 	wantCode(t, rec, http.StatusUnauthorized)
-	wantCode(t, e.do(http.MethodPost, "/v1/sampler/join", `{"join_token":"x"}`), http.StatusBadRequest)
+	wantCode(t, e.do(http.MethodPost, "/v1/sampler/join", "", []byte(`{"join_token":"x"}`)), http.StatusBadRequest)
 }
 
 func TestJoin_RateLimit(t *testing.T) {
@@ -360,9 +309,9 @@ func TestUpdateNode_KeepsMachineID(t *testing.T) {
 	e := newEnrollEnv(t, config.Config{}, nil)
 	_, out := e.enroll(`{"display_name":"web-1","machine_id":"m-1"}`)
 	path := "/v1/nodes/" + out.NodeID.String()
-	wantCode(t, e.do(http.MethodPut, path, `{"displayName":"renamed","kind":"ssh","enabled":true}`), http.StatusOK)
+	wantCode(t, e.do(http.MethodPut, path, "", []byte(`{"displayName":"renamed","kind":"ssh","enabled":true}`)), http.StatusOK)
 	var n store.Node
-	decode(t, e.do(http.MethodGet, path, "").Body.Bytes(), &n)
+	decode(t, e.do(http.MethodGet, path, "", nil).Body.Bytes(), &n)
 	if n.MachineID != "m-1" || n.DisplayName != "renamed" {
 		t.Fatalf("node: %+v", n)
 	}
